@@ -1,0 +1,598 @@
+File: household-state.js
+
+Purpose:
+The single source of truth for all household data in the Still Waters system. This module manages:
+
+    Loading and storing household data from masterData
+
+    In-memory caching with efficient lookups
+
+    Batch updates with change notifications
+
+    UI state management (filters, selection, view mode)
+
+    Subscriber notification system
+
+Key Features:
+
+    Single Source of Truth - All household data flows through this module
+
+    Batch Updates - Changes are queued and processed in batches for performance
+
+    Change Notifications - Subscribers are notified of all state changes
+
+    Cache Management - Maps for O(1) lookups with automatic invalidation
+
+    Recursion Guards - Prevents infinite loops in update/refresh cycles
+
+    UI State Separation - UI state is separate from data state
+
+    Error Handling - Graceful handling of missing data and invalid operations
+
+Migration Notes:
+
+    All modules should use HouseholdState.getHousehold() instead of window.getHousehold()
+
+    All modules should use HouseholdState.getAllHouseholds() instead of window.getAllHouseholds()
+
+    All modules should use HouseholdState.createHousehold() instead of window.createHousehold()
+
+    All modules should use HouseholdState.updateHousehold() instead of window.updateHousehold()
+
+    All modules should use HouseholdState.deleteHousehold() instead of window.deleteHousehold()
+
+    All modules should use HouseholdState.subscribe() to listen for changes
+
+    The householdListUI.js should use HouseholdState.getUIState() and HouseholdState.setUIState() for filters
+
+Backward Compatibility:
+The module still exports to window so existing code that uses window.getHousehold() etc. will continue to work, but should be migrated to use HouseholdState directly for consistency.
+
+File: household-commands.js
+
+Purpose:
+All write operations for household management. This module handles:
+
+    Adding, removing, and updating household members
+
+    Transferring members between households
+
+    Managing household heads (setting, removing, succession)
+
+    Managing departments (create, update, delete, set head)
+
+    Recording household changes in character history
+
+    Repairing broken data consistency
+
+Key Features:
+
+    Single Entry Point - All write operations go through this module
+
+    Validation - All operations validate input before execution
+
+    History Recording - All changes are recorded in character history
+
+    Activity Logging - All changes are logged in household activity logs
+
+    Event Logging - All changes trigger system events
+
+    Error Handling - Graceful error handling with rollback support
+
+    Recursion Guards - Prevents infinite loops during operations
+
+    Cache Invalidation - Automatically invalidates caches after changes
+
+Migration Notes:
+
+    Replace window.addHouseholdMember() with HouseholdCommands.addMember()
+
+    Replace window.removeHouseholdMember() with HouseholdCommands.removeMember()
+
+    Replace window.setHouseholdHead() with HouseholdCommands.setHead()
+
+    Replace window.createDepartment() with HouseholdCommands.addDepartment()
+
+    Replace window.deleteDepartment() with HouseholdCommands.removeDepartment()
+
+    Replace window.recordHouseholdChange() with HouseholdCommands.recordHistory()
+
+Return Values:
+
+All commands return a standardized result object:
+javascript
+
+{
+    success: true,          // or false
+    reason: '...',          // only on failure
+    // Operation-specific data
+    member: {...},
+    household: {...},
+    character: {...}
+}
+
+Recursion Safety:
+
+    _processingCommand guard prevents re-entry during command execution
+
+    _recordingHistory guard prevents history recording recursion
+
+    All operations are atomic (success/fail as a unit)
+	
+	File: household-queries.js
+
+Purpose:
+All read-only queries for household data. This module handles:
+
+    Complex search with multiple filters
+
+    Household statistics and analytics
+
+    Member analytics and demographics
+
+    Household relationships (allied, rivals, neutral)
+
+    Power ranking, wealth ranking, reputation ranking
+
+    Location-based clustering
+
+    Lineage and succession tracking
+
+    Household comparison
+
+Key Features:
+
+    Pure Queries - No side effects, only reads data
+
+    Caching - Expensive calculations are cached
+
+    Recursion Guards - Prevents infinite loops
+
+    Comprehensive Filters - All search options from original code
+
+    Statistics - Full statistical analysis of households
+
+    Ranking - Multiple ranking systems (power, wealth, reputation)
+
+    Relationships - Determines relationships between households
+
+    Succession - Tracks succession order and plans
+
+Caching Strategy:
+
+    Age Cache: Character ages are cached for performance
+
+    Power Score Cache: Power scores are cached and recalculated when needed
+
+    clearCache() function to clear all caches when data changes
+
+Migration Notes:
+
+    Replace searchHouseholds() with HouseholdQueries.search()
+
+    Replace advancedHouseholdSearch() with HouseholdQueries.advancedSearch()
+
+    Replace getHouseholdStatistics() with HouseholdQueries.getStatistics()
+
+    Replace getHouseholdDemographics() with HouseholdQueries.getDemographics()
+
+    Replace getAlliedHouseholds() with HouseholdQueries.getAllied()
+
+    Replace getHouseholdPowerRanking() with HouseholdQueries.getPowerRanking()
+
+    Replace getHouseholdsByRegion() with HouseholdQueries.getByRegion()
+
+    Replace getHouseholdSuccessionPlan() with HouseholdQueries.getSuccessionPlan()
+
+    Replace compareHouseholds() with HouseholdQueries.compare()
+
+Performance Considerations:
+
+    All functions have recursion guards
+
+    Expensive calculations are cached
+
+    Search functions are optimized with early exits
+
+    Statistics functions use efficient array operations
+	
+	File: modals-assign-staff.js
+
+Purpose:
+UI modals for staff management within households. This module handles:
+
+    Assigning staff members to departments
+
+    Removing staff from department assignments
+
+    Viewing staff by department
+
+    Viewing all staff in a household
+
+    Staff member details
+
+Key Features:
+
+    Staff Assignment - Assign unassigned staff to departments
+
+    Assignment Removal - Remove staff from departments
+
+    Department View - See all staff in a specific department
+
+    All Staff View - See all staff grouped by department
+
+    Staff Details - View and manage individual staff members
+
+    Recursion Guards - Prevents infinite loops
+
+Dependencies:
+
+    modals-core.js - Core modal utilities
+
+    modals-charSelect.js - Character selector (if needed)
+
+    HouseholdState - Data access
+
+    HouseholdCommands - Write operations
+
+Icon Policy:
+
+    All icons from icons.js via _getIcon()
+
+    NO emojis
+
+    NO icons in confirm/cancel buttons (plain text only)
+
+Migration Notes:
+
+    Replace window.openAssignStaffModal usage with this version
+
+    Staff assignment now uses HouseholdCommands.updateMember() internally
+
+    All data operations go through the state layer, not direct mutation
+	
+	File: modals-household-economy.js
+
+Purpose:
+UI modals for household economy management. This module handles:
+
+    Viewing and modifying household wealth
+
+    Managing household resources (food, livestock, goods)
+
+    Viewing income breakdown
+
+    Viewing expense breakdown
+
+    Processing annual economic cycle
+
+    Triggering economic events
+
+    Executing trades with other households
+
+    Viewing comprehensive economic summary
+
+Key Features:
+
+    Wealth Management - View, add, subtract, or set wealth with reason tracking
+
+    Debt Management - Add debt or make payments
+
+    Resource Management - Add or subtract food, livestock, goods individually or in bulk
+
+    Income Analysis - See breakdown by source with modifiers
+
+    Expense Analysis - See breakdown by category with modifiers
+
+    Annual Processing - Apply income/expenses, consume food, handle bankruptcy
+
+    Economic Events - Trigger events with wealth modifiers
+
+    Trade System - Execute trades between households
+
+    Comprehensive Summary - All economic data in one view
+
+Dependencies:
+
+    modals-core.js - Core modal utilities
+
+    household-state.js - Data access
+
+    household-commands.js - Write operations
+
+    household-economy.js - Economy business logic
+
+Integration with household-economy.js:
+
+This module expects window.HouseholdEconomy to be available with these functions:
+
+    getHouseholdWealth(), getHouseholdDebt(), getHouseholdResources()
+
+    getHouseholdEconomicTier(), updateHouseholdWealth()
+
+    modifyHouseholdDebt(), updateHouseholdResources()
+
+    calculateAnnualIncome(), calculateAnnualExpenses()
+
+    computeNetAnnualChange(), processAnnualEconomy()
+
+    triggerEconomicEvent(), getTradePartners(), executeTrade()
+
+    isUrbanLocation()
+
+Icon Policy:
+
+    All icons from icons.js via _getIcon()
+
+    NO emojis
+
+    NO icons in confirm/cancel buttons (plain text only)
+	
+	File: household-economy.js
+
+Purpose:
+Pure business logic for household economy management. This module handles:
+
+    Wealth, debt, and resource management
+
+    Income and expense calculations
+
+    Annual economic processing
+
+    Trade between households
+
+    Economic events (random and triggered)
+
+    Inheritance and bankruptcy
+
+    Integration with education, crime, and loyalty systems
+
+Key Features:
+
+    Pure Logic - No UI, only business logic
+
+    Caching - Expensive calculations are cached
+
+    Recursion Guards - Prevents infinite loops
+
+    State Integration - Uses HouseholdState for data access
+
+    Command Integration - Uses HouseholdCommands for writes
+
+    Event Logging - All economic events are logged
+
+    All Features Preserved - No functionality removed
+
+Constants Exported:
+
+    ECONOMIC_TIERS - Wealth classification
+
+    INCOME_SOURCES - Income source definitions
+
+    EXPENSE_CATEGORIES - Expense category definitions
+
+    ECONOMIC_EVENT_TYPES - Event definitions
+
+Cache Management:
+
+    clearCache() - Clear all cached calculations
+
+    Cache automatically clears on state changes
+
+Migration Notes:
+
+    All functions are available via window.HouseholdEconomy
+
+    Legacy aliases are provided for backward compatibility
+
+    Uses HouseholdState for data access (instead of direct masterData)
+
+    Uses HouseholdCommands for write operations when needed
+
+File: household-assignment.js
+
+Purpose:
+Business logic for assigning characters to households. This module handles all complex assignment scenarios:
+
+    Newborn assignment (to parent's household, with unit support)
+
+    Spouse household assignment (patrilocal/matrilocal)
+
+    Household inheritance on death
+
+    Finding eligible heirs
+
+    Transferring households to heirs
+
+    Transferring characters between households
+
+    Creating cadet branches
+
+    Merging households
+
+    Splitting households
+
+    Auto-assigning heads on succession
+
+Key Features:
+
+    Newborn Assignment - Assigns newborns to parent's household with unit support
+
+    Spouse Assignment - Patrilocal/matrilocal marriage moves
+
+    Inheritance Processing - Auto-processes succession when heads die
+
+    Heir Finding - Finds eligible heirs with priority sorting
+
+    Household Transfers - Transfer characters between households with rollback
+
+    Cadet Branches - Create new households from existing members
+
+    Merging - Combine two households into one
+
+    Splitting - Split a household into two
+
+    Auto-Head Assignment - Automatically assign new heads
+
+    History Recording - All changes recorded in character history
+
+Integration with Residence System:
+
+This module includes hooks for residence assignment:
+
+    _assignChildToUnit() - Assigns newborn to a specific unit
+
+    _findParentUnit() - Finds parent's unit for newborn
+
+    Options for residenceId and unitNumber in create/split operations
+
+    Graceful fallback if residence system is not available
+
+Recursion Safety:
+
+    _processingAssignment guard prevents re-entry
+
+    _recordingHistory guard prevents history recursion
+
+    All operations have proper try/finally blocks
+
+Dependencies:
+
+    household-state.js - Data access
+
+    household-commands.js - Write operations
+
+    household-queries.js - Read operations
+
+    accessors.js - Character lookups
+
+    family.js - Family relationships (getSpouses, getChildren, getParents)
+	
+	File: household-ui-list.js
+
+Purpose:
+Renders the household list UI with filters, search, and selection. This is the main UI component for displaying and interacting with households in the interface.
+
+Key Features:
+
+    Filter Bar - Collapsible filter section with status and location filters
+
+    Search - Debounced search by household name (plain text only)
+
+    Status Indicators - Visual indicators for Active, Vacant, Empty, Abandoned
+
+    Location Display - Shows household location with icons
+
+    Selection - Click to select a household with visual feedback
+
+    Persistence - Filters and selection persist across page loads
+
+    Auto-Refresh - Subscribes to state changes for automatic updates
+
+    Mobile-Friendly - Compact layout with responsive design
+
+Filter States:
+
+    Active - Has living members
+
+    Vacant - Has only deceased members (no living)
+
+    Empty - No members at all
+
+    Location - Hierarchical location filter with indentation
+
+Icon Policy:
+
+    All icons from icons.js via _getIcon()
+
+    NO emojis
+
+    NO icons in search field placeholder (plain text only)
+
+Persistence:
+
+    Filters and collapse state stored in localStorage
+
+    Key: household_list_state_v3
+
+Integration:
+
+    Subscribes to HouseholdState changes for auto-refresh
+
+    Uses HouseholdState.getAllHouseholds() for data
+
+    Uses HouseholdQueries for advanced filtering (if needed)
+
+Dependencies:
+
+    household-state.js - Data access
+
+    household-queries.js - Advanced queries
+
+    modals-core.js - Utilities (_escapeHtml, _getIcon, _showToast)
+
+
+File: modals-household-selector.js
+
+Purpose:
+Reusable modal for selecting a household with comprehensive filtering, search, and visual indicators. Used by other modals and components that need household selection.
+
+Key Features:
+
+    Search - Debounced search by household name
+
+    Status Filters - Active (living members), Vacant (deceased only), Empty (no members)
+
+    Location Filter - Hierarchical location dropdown with all locations
+
+    Character Indicators - Shows Relative, Spouse, Deceased indicators for members
+
+    Current Household - Highlights the target character's current household
+
+    Selection - Visual feedback for selected household
+
+    No Recursion - Protected by _openingSelector guard
+
+    Clean UI - Compact, mobile-friendly layout
+
+Filter State:
+
+    showActive - Show households with living members
+
+    showVacant - Show households with only deceased members
+
+    showEmpty - Show households with no members
+
+    locationFilter - Filter by location (hierarchical)
+
+    searchTerm - Search by household name
+
+Member Indicators:
+
+    Relative - Blood relative of the target character
+
+    Spouse - Spouse of the target character
+
+    Deceased - Deceased member (greyed out with strikethrough)
+
+    You - The target character themselves
+
+Icon Policy:
+
+    All icons from icons.js via _getIcon()
+
+    NO emojis
+
+    NO icons in confirm/cancel buttons (plain text only)
+
+Dependencies:
+
+    modals-core.js - Core modal utilities
+
+    household-state.js - Data access
+
+    household-queries.js - Advanced queries
+
+    accessors.js - Character and location lookups
+
+
