@@ -1,0 +1,687 @@
+Excellent! Now I can see the complete Household & Residence System documentation. Let me create a similar comprehensive documentation for the **Name System** following the same format and structure.
+
+---
+
+# NAME SYSTEM - COMPLETE DOCUMENTATION
+
+## TABLE OF CONTENTS
+1. NAME SYSTEM
+   1.1 name-state.js - Single Source of Truth
+   1.2 name-commands.js - Write Operations
+   1.3 name-queries.js - Read Operations
+   1.4 name-rules.js - Business Logic
+   1.5 modals-name.js - Name UI Modals
+
+2. DEPENDENCY MAP
+3. RECURSION GUARDS
+4. ICON POLICY
+
+---
+
+## 1. NAME SYSTEM
+
+### 1.1 name-state.js - Single Source of Truth
+
+**PURPOSE:** Manages the central state for all name data.
+
+**DEPENDENCIES:**
+  - accessors.js (getPlaces, getPlaceById, getCharacterById, getNameLists)
+  - storage.js (saveMasterData)
+
+**FUNCTIONS:**
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameState.getNameLists()                                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets all name lists by country.                                            │
+│                                                                             │
+│ RETURNS: Object - Name lists mapping by country ID                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameState.getNameList(countryId)                                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets a name list for a specific country.                                   │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   countryId (string) - Country ID                                          │
+│                                                                             │
+│ RETURNS: { male: [], female: [], surnames: [], rules: null } | null        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameState.getSurnameHistory(characterId)                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets surname history for a character.                                      │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│                                                                             │
+│ RETURNS: { birthSurname: string, entries: Array, lastUpdated: number }     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameState.getUiState()                                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the current UI state for name generation.                             │
+│                                                                             │
+│ RETURNS: { selectedCountry, selectedGender, previewName, previewSurname,   │
+│           generationMode, filters: { gender, minAge, maxAge } }            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameState.setUiState(updates)                                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Updates UI state values.                                                   │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   updates (Object) - State updates to apply                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameState.invalidateCache()                                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Invalidates all caches (random names, random surnames, etc.).              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameState.refreshFromMasterData()                                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Refreshes state from masterData and invalidates caches.                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameState.subscribe(callback)                                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Subscribes to state changes.                                               │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   callback (function) - Callback receiving { type, data } event object     │
+│                                                                             │
+│ RETURNS: function - Unsubscribe function                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+### 1.2 name-commands.js - Write Operations
+
+**PURPOSE:** All write operations for name management.
+
+**DEPENDENCIES:**
+  - name-state.js (NameState)
+  - accessors.js (getCharacterById, getCharacters, getCurrentYear)
+  - eventLogger.js (logEvent)
+  - storage.js (saveMasterData)
+
+**FUNCTIONS:**
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameCommands.recordSurnameChange(character, newSurname, year, reason,     │
+│                                  options)                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Records a surname change with full history tracking.                       │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   character (Object) - Character object                                    │
+│   newSurname (string) - New surname                                        │
+│   year (number) - Year of change (default: current)                        │
+│   reason (string) - Reason for change (e.g., 'marriage', 'inheritance')    │
+│   options.spouseId (string) - Spouse ID (if applicable)                    │
+│   options.notes (string) - Additional notes                                │
+│   options.surnameSource (string) - Source of surname                       │
+│   options.surnameRules (Object) - Rules used                               │
+│   options.previousSurname (string) - Override previous surname             │
+│                                                                             │
+│ RETURNS: { surname, year, reason, previousSurname, spouseId, notes,       │
+│           timestamp } | null                                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameCommands.recordBirthSurname(character, birthSurname)                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Records the birth surname for a character.                                 │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   character (Object) - Character object                                    │
+│   birthSurname (string) - Surname at birth                                 │
+│                                                                             │
+│ RETURNS: Object - Surname history object                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameCommands.applyMarriageSurnames(person, spouse, rule, year, notes)     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Applies marriage surname changes to both spouses.                          │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   person (Object) - First spouse character                                 │
+│   spouse (Object) - Second spouse character                                │
+│   rule (string) - 'wife_takes_husband', 'husband_takes_wife',              │
+│                   'hyphenate', 'keep'                                      │
+│   year (number) - Marriage year (default: current)                         │
+│   notes (string) - Additional notes                                        │
+│                                                                             │
+│ RETURNS: { personChanged: boolean, spouseChanged: boolean,                 │
+│           personNewSurname: string, spouseNewSurname: string } | null      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameCommands.revertLastSurnameChange(character)                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Reverts the last surname change for a character.                           │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   character (Object) - Character object                                    │
+│                                                                             │
+│ RETURNS: { surname, year, reason, previousSurname } | null                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameCommands.addNameToList(countryId, name, gender, category)              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Adds a name to a country's name list.                                      │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   countryId (string) - Country ID                                          │
+│   name (string) - Name to add                                              │
+│   gender (string) - 'male', 'female', or 'all'                             │
+│   category (string) - 'given' or 'surname'                                 │
+│                                                                             │
+│ RETURNS: boolean - True if added                                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+### 1.3 name-queries.js - Read Operations
+
+**PURPOSE:** All read-only queries for name generation and lookup.
+
+**DEPENDENCIES:**
+  - name-state.js (NameState)
+  - accessors.js (getCharacterById, getPlaceById, getPlaces, getCurrentYear)
+
+**FUNCTIONS:**
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameQueries.getRandomName(countryId, gender)                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets a random given name from a country's name list.                       │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   countryId (string) - Country ID                                          │
+│   gender (string) - 'male', 'female', or 'all' (default: 'all')            │
+│                                                                             │
+│ RETURNS: string|null - Random name or null                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameQueries.getRandomSurname(countryId)                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets a random surname from a country's name list.                          │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   countryId (string) - Country ID                                          │
+│                                                                             │
+│ RETURNS: string - Random surname or empty string                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameQueries.generateFamilySurname(father, mother, rules)                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Generates a family surname from parents.                                   │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   father (Object) - Father character                                       │
+│   mother (Object) - Mother character                                       │
+│   rules.source (string) - 'father', 'mother', 'both' (default: 'both')     │
+│   rules.order (string) - 'father_first' or 'mother_first'                  │
+│   rules.count (number) - 1 or 2 (default: 1)                               │
+│   rules.position (string) - 'first' or 'last' (default: 'first')           │
+│   rules.connector (string) - 'space', 'hyphen', 'none', 'custom'           │
+│   rules.customConnector (string) - Custom connector string                 │
+│                                                                             │
+│ RETURNS: string - Generated surname                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameQueries.generatePatronymicSurname(parent, childGender, rules)          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Generates a patronymic surname from a parent.                              │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   parent (Object) - Parent character                                       │
+│   childGender (string) - 'male' or 'female'                                │
+│   rules.source (string) - 'father' or 'mother'                             │
+│   rules.malePrefix (string) - Prefix for male children                     │
+│   rules.maleSuffix (string) - Suffix for male children                     │
+│   rules.femalePrefix (string) - Prefix for female children                 │
+│   rules.femaleSuffix (string) - Suffix for female children                 │
+│   rules.usePrefix (boolean) - Whether to use prefix (default: true)        │
+│   rules.useSuffix (boolean) - Whether to use suffix (default: true)        │
+│                                                                             │
+│ RETURNS: string - Generated surname                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameQueries.generateChainSurname(character, rules)                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Generates a chain surname from multiple generations.                       │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   character (Object) - Character object                                    │
+│   rules.order (Array) - Ancestor types in order (e.g., ['father', 'mother'])│
+│   rules.depth (number) - Generations to go back (default: 1)               │
+│   rules.source (string) - 'firstname' or 'surname' (default: 'firstname')  │
+│   rules.connector (string) - 'space', 'hyphen', 'none', 'custom'           │
+│   rules.customConnector (string) - Custom connector string                 │
+│                                                                             │
+│ RETURNS: string - Generated surname                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameQueries.generateSurnameFromRules(mother, father, childGender, rules)   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Unified surname generation from rules object.                              │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   mother (Object) - Mother character                                       │
+│   father (Object) - Father character                                       │
+│   childGender (string) - 'male', 'female', or 'unknown'                    │
+│   rules.type (string) - 'random', 'family', 'patronymic', 'chain'          │
+│   rules.family (Object) - Family rules (if type is 'family')               │
+│   rules.patronymic (Object) - Patronymic rules (if type is 'patronymic')   │
+│   rules.chain (Object) - Chain rules (if type is 'chain')                  │
+│                                                                             │
+│ RETURNS: string - Generated surname                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameQueries.getAncestorChain(character, maxDepth)                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the ancestor chain for a character.                                   │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   character (Object) - Character object                                    │
+│   maxDepth (number) - Maximum depth to traverse (default: 5)               │
+│                                                                             │
+│ RETURNS: Array of { id, name, firstName, surname, gender, depth,           │
+│           characterId, birthYear, deathYear }                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameQueries.getSurnameHistory(characterId)                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets surname history for a character.                                      │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│                                                                             │
+│ RETURNS: { birthSurname, entries, lastUpdated } | null                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameQueries.getBirthSurname(characterId)                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the birth surname for a character.                                    │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│                                                                             │
+│ RETURNS: string - Birth surname or empty string                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameQueries.getCurrentSurname(characterId)                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the current surname for a character.                                  │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│                                                                             │
+│ RETURNS: string - Current surname or empty string                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameQueries.getSurnameChanges(characterId)                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets all surname changes for a character.                                  │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│                                                                             │
+│ RETURNS: Array - Array of change entries                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameQueries.getSurnameChangeCount(characterId)                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the number of surname changes for a character.                        │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│                                                                             │
+│ RETURNS: number - Number of changes                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameQueries.getCountrySurnameRules(countryId)                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets surname rules for a country.                                          │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   countryId (string) - Country ID                                          │
+│                                                                             │
+│ RETURNS: Object|null - Rules object or null                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameQueries.getCharacterCountryId(character)                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the country ID for a character (walks up location hierarchy).         │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   character (Object) - Character object                                    │
+│                                                                             │
+│ RETURNS: string|null - Country ID or null                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameQueries.determineNewbornSurname(mother, father, countryId)             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Determines the surname for a newborn based on location rules.              │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   mother (Object) - Mother character                                       │
+│   father (Object) - Father character                                       │
+│   countryId (string) - Country ID (fallback)                               │
+│                                                                             │
+│ RETURNS: { surname: string, surnameSource: string, surnameRules: Object,   │
+│           countryId: string } | null                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+### 1.4 name-rules.js - Business Logic
+
+**PURPOSE:** Business logic for name generation rules.
+
+**DEPENDENCIES:**
+  - name-queries.js (NameQueries)
+
+**CONSTANTS:**
+
+RULE_TYPES:
+┌──────────────┬──────────────────────────────────────────────────────────────┐
+│ ID           │ Description                                                 │
+├──────────────┼──────────────────────────────────────────────────────────────┤
+│ random       │ Random name from cultural pool                              │
+│ family       │ Surname derived from parents                                │
+│ patronymic   │ Surname derived from parent (with prefix/suffix)            │
+│ chain        │ Surname from multiple generations                           │
+│ hyphenated   │ Surname combining both parents with hyphen                  │
+│ custom       │ Custom rule logic                                           │
+└──────────────┴──────────────────────────────────────────────────────────────┘
+
+RULE_PRESETS:
+┌──────────────┬──────────────────────────────────────────────────────────────┐
+│ Preset       │ Description                                                 │
+├──────────────┼──────────────────────────────────────────────────────────────┤
+│ european     │ Father's surname only                                       │
+│ spanish      │ Father's surname + Mother's surname                         │
+│ icelandic    │ Patronymic: son/dottir suffix                               │
+│ russian      │ Patronymic: ovich/ovna suffix                               │
+│ arabic       │ Chain: ibn/bin/bint from father/grandfather                 │
+│ hyphenated   │ Hyphenated: father-mother                                   │
+└──────────────┴──────────────────────────────────────────────────────────────┘
+
+**FUNCTIONS:**
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameRules.validateRules(rules)                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Validates a rules object.                                                  │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   rules (Object) - Rules object to validate                                │
+│                                                                             │
+│ RETURNS: { valid: boolean, reason: string }                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameRules.generateSurnameFromRules(mother, father, childGender, rules)     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Generates surname from validated rules.                                    │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   mother (Object) - Mother character                                       │
+│   father (Object) - Father character                                       │
+│   childGender (string) - 'male', 'female', or 'unknown'                    │
+│   rules (Object) - Validated rules object                                  │
+│                                                                             │
+│ RETURNS: string - Generated surname                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameRules.getRuleDescription(rules)                                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets a human-readable description of rules.                                │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   rules (Object) - Rules object                                            │
+│                                                                             │
+│ RETURNS: string - Description                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameRules.getRulePreset(presetName)                                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets a rule preset by name.                                                │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   presetName (string) - 'european', 'spanish', 'icelandic', etc.           │
+│                                                                             │
+│ RETURNS: Object|null - Preset rules or null                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NameRules.getRulePresetNames()                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets all available rule preset names.                                      │
+│                                                                             │
+│ RETURNS: Array - Array of preset names                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+### 1.5 modals-name.js - Name UI Modals
+
+**PURPOSE:** UI modals for name generation and surname management.
+
+**DEPENDENCIES:**
+  - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
+  - name-state.js (NameState)
+  - name-queries.js (NameQueries)
+  - name-commands.js (NameCommands)
+  - name-rules.js (NameRules)
+  - accessors.js (getPlaceById, getPlaces, getCharacterById)
+
+**EXPORTS:**
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openNameGeneratorModal(options)                                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to generate a random name with country/gender selection.       │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   options.title (string) - Modal title (default: 'Generate Name')          │
+│   options.countryId (string) - Pre-selected country                        │
+│   options.gender (string) - Pre-selected gender ('all', 'male', 'female')  │
+│   options.onSelect (function) - Callback with selected name                │
+│   options.characterId (string) - Character ID for history display          │
+│                                                                             │
+│ RETURNS: Object|null - Modal instance or null                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openSurnameManagementModal(characterId, onSuccess)                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to view and manage surname history.                            │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│   onSuccess (function) - Callback on success                               │
+│                                                                             │
+│ RETURNS: Object|null - Modal instance or null                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+## 2. DEPENDENCY MAP
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    CORE DEPENDENCIES                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  modals-core.js ─────────────────────────────────────────────────────────┐ │
+│  ├── openModal()                                                         │ │
+│  ├── closeTopModal()                                                     │ │
+│  ├── _escapeHtml()                                                       │ │
+│  ├── _showToast()                                                        │ │
+│  ├── _getIcon()                                                          │ │
+│  ├── _getCurrentYear()                                                   │ │
+│  ├── _getCharacterById()                                                 │ │
+│  ├── _getCharacters()                                                    │ │
+│  └── _getPlaceById()                                                     │ │
+│                                                                             │
+│  accessors.js ──────────────────────────────────────────────────────────┐ │
+│  ├── getCharacterById()                                                  │ │
+│  ├── getCharacters()                                                     │ │
+│  ├── getPlaceById()                                                      │ │
+│  ├── getPlaces()                                                         │ │
+│  ├── getNameLists()                                                      │ │
+│  └── getCurrentYear()                                                    │ │
+│                                                                             │
+│  storage.js ────────────────────────────────────────────────────────────┐ │
+│  └── saveMasterData()                                                    │ │
+│                                                                             │
+│  eventLogger.js ────────────────────────────────────────────────────────┐ │
+│  └── logEvent()                                                          │ │
+│                                                                             │
+│  icons.js ──────────────────────────────────────────────────────────────┐ │
+│  └── Icons                                                               │ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    NAME SYSTEM DEPENDENCIES                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  name-state.js ──────────────────────────────────────────────────────────┐ │
+│  ├── accessors.js                                                        │ │
+│  └── storage.js                                                          │ │
+│                                                                             │
+│  name-commands.js ──────────────────────────────────────────────────────┐ │
+│  ├── name-state.js                                                       │ │
+│  ├── accessors.js                                                        │ │
+│  ├── eventLogger.js                                                      │ │
+│  └── storage.js                                                          │ │
+│                                                                             │
+│  name-queries.js ───────────────────────────────────────────────────────┐ │
+│  ├── name-state.js                                                       │ │
+│  └── accessors.js                                                        │ │
+│                                                                             │
+│  name-rules.js ─────────────────────────────────────────────────────────┐ │
+│  └── name-queries.js                                                     │ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    UI MODAL DEPENDENCIES                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  modals-name.js ─────────────────────────────────────────────────────────┐ │
+│  ├── modals-core.js                                                       │ │
+│  ├── name-state.js                                                        │ │
+│  ├── name-queries.js                                                      │ │
+│  ├── name-commands.js                                                     │ │
+│  ├── name-rules.js                                                        │ │
+│  └── accessors.js                                                         │ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+
+## 3. RECURSION GUARDS
+
+All modules implement recursion guards to prevent infinite loops:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ GUARD NAME          │ LOCATION                     │ PURPOSE              │
+├─────────────────────┼─────────────────────────────┼───────────────────────┤
+│ _processingCommand  │ name-commands.js            │ Prevent command re-   │
+│                     │                             │ entry                 │
+├─────────────────────┼─────────────────────────────┼───────────────────────┤
+│ _processingQuery    │ name-queries.js             │ Prevent query re-entry│
+├─────────────────────┼─────────────────────────────┼───────────────────────┤
+│ _processingRules    │ name-rules.js               │ Prevent rules re-entry│
+├─────────────────────┼─────────────────────────────┼───────────────────────┤
+│ _initializingState  │ name-state.js               │ Prevent state         │
+│                     │                             │ re-initialization     │
+├─────────────────────┼─────────────────────────────┼───────────────────────┤
+│ _notifyingSubscribers│ name-state.js              │ Prevent subscriber    │
+│                     │                             │ re-entry              │
+└─────────────────────┴─────────────────────────────┴───────────────────────┘
+
+
+## 4. ICON POLICY
+
+All icons must come from icons.js via the `_getIcon()` function:
+
+| RULE | DESCRIPTION |
+|------|-------------|
+| RULE 1 | NO emojis in code or UI |
+| RULE 2 | All icons from icons.js via `_getIcon()` |
+| RULE 3 | NO icons in confirm/cancel buttons (plain text only) |
+| RULE 4 | Use `_getIconSafe()` for safe icon retrieval |
+
+**AVAILABLE ICONS USED BY NAME SYSTEM:**
+
+| CATEGORY | ICONS |
+|----------|-------|
+| Basic Shapes | CIRCLE, CIRCLE_DOT, CIRCLE_OUTLINE |
+| Cross/Check | X_HEAVY, CHECK_SIMPLE |
+| UI Elements | SEARCH, REFRESH, UNDO, BOOK, PERSON |
+| Objects | LOCATION |
+
+---
+
+## 5. SUMMARY
+
+The Name System follows the same clean architecture pattern as the Household System:
+
+1. **name-state.js** - Single source of truth with caching and change notifications
+2. **name-commands.js** - All write operations with validation and logging
+3. **name-queries.js** - All read operations with performance caching
+4. **name-rules.js** - Business logic for name generation rules
+5. **modals-name.js** - UI for name generation and surname management
+
+### Key Features:
+- ✅ **Recursion guards** on all public functions
+- ✅ **Single source of truth** via NameState
+- ✅ **Command-Query Separation** (CQS pattern)
+- ✅ **Caching** for performance (random names, surnames, ancestry)
+- ✅ **Change notifications** (observer pattern)
+- ✅ **No emojis** - only SVG icons from icons.js
+- ✅ **Clean exports** - each file exports a single object
+- ✅ **No icons in confirm buttons** - plain text only
+- ✅ **Full backward compatibility** via legacy wrapper
+
+This system handles all name-related operations including:
+- Random name/surname generation by country
+- Family surname inheritance (father/mother/both)
+- Patronymic/Matronymic surname generation
+- Chain surname generation from multiple generations
+- Surname history tracking with undo
+- Marriage surname changes
+- Location-based cultural rules
+- Name list management
+
+---
+
+**END OF DOCUMENTATION**

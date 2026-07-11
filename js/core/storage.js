@@ -5,71 +5,16 @@
  * 
  * LOCATION: js/core/storage.js
  * 
- * Handles all data persistence including education system storage.
+ * Handles all data persistence.
  * 
- * ICON STYLE: Monochrome, simple icons using standard unicode/text symbols
+ * CACHE INVALIDATION: Uses window.invalidateAccessorCaches() from accessors.js
  * 
  * DEPENDENCIES:
- *   - js/core/ui/ui.js (for showToast - will use if available)
- *   - js/core/time.js (for getCurrentYearSafe - optional)
+ *   - accessors.js: invalidateAccessorCaches, refreshCaches
+ *   - ui.js: showToast
+ *   - time.js: getCurrentYearSafe
  * 
- * FIXED:
- *   - invalidateAccessorCaches called on all data changes
- *   - characterDataChanged event dispatched for selector refresh
- *   - forceReloadData function for aggressive cache clearing
- *   - Recursion guards on all cache invalidation functions
- * 
- * =============================================================================
- * EXPORTED FUNCTIONS & PROPERTIES (on window):
- * =============================================================================
- * 
- * Global Data Object:
- *   - window.masterData - Main data store with version, lastUpdated, and data object
- * 
- * Constants:
- *   - window.CONFIG - Configuration object with STORAGE_KEY, DEFAULT_YEAR, MAX_HIERARCHY_DEPTH, TOAST_DURATION, MAX_ITERATIONS, MAX_TOASTS
- * 
- * Core CRUD Operations:
- *   - loadMasterData() - Loads data from localStorage and initializes masterData
- *   - saveMasterData() - Saves current masterData to localStorage
- *   - exportData() - Exports complete master data as downloadable JSON file
- *   - importData() - Imports data from JSON file (handles multiple export formats)
- *   - resetMasterData() - Resets ALL data (destructive, with confirmation dialog)
- * 
- * Education Statistics:
- *   - getEducationStatistics() - Quick stats about education system (institution count, students, teachers, graduates)
- * 
- * Cross-Tab Sync:
- *   - initCrossTabSync() - Auto-initialized on load, syncs changes across tabs
- * 
- * Events:
- *   - 'masterDataUpdated' - Custom event dispatched after load, save, import, or reset
- *   - 'characterDataChanged' - Custom event dispatched after data changes (for selector refresh)
- * 
- * Backward Compatibility (Deprecated):
- *   - window.showToastMessage(message, type) - @deprecated Use window.showToast() from ui.js instead
- * 
- * =============================================================================
- * NOTES:
- * =============================================================================
- * 
- * Import handles three export formats:
- *   1. {"type": "master", "data": {...}} - Full master export
- *   2. {"data": {"characters": [...], ...}} - Nested data export
- *   3. {"characters": [...], ...} - Direct data export
- * 
- * Cache Invalidation After Data Changes:
- *   - Calls invalidateAccessorCaches() if available (from accessors.js)
- *   - Calls refreshCaches() if available (from accessors.js)
- *   - Dispatches characterDataChanged event for selector refresh
- * 
- * Education System Storage:
- *   - educationalInstitutions[] - Array of institution objects
- *   - educationalSubjects{} - Mapping of subject IDs to subject definitions
- *   - subjectProgress{} - Character proficiency tracking
- * 
- * RESIDENCE SYSTEM STORAGE:
- *   - residences[] - Array of residence objects (buildings, properties)
+ * ICON POLICY: No emojis. No icons.
  * 
  * =============================================================================
  */
@@ -78,17 +23,16 @@
 // 0. PREVENT RECURSIVE CALLS - FLAGS
 // =============================================================================
 
-let _isLoading = false;
-let _isSaving = false;
-let _saveTimeout = null;
-let _invalidatingStorage = false;
-let _storageListenerAdded = false;
+var _isLoading = false;
+var _isSaving = false;
+var _saveTimeout = null;
+var _storageListenerAdded = false;
+var _invalidationPending = false;
 
 // =============================================================================
-// 1. INITIALIZE MASTER DATA GLOBALLY (MUST BE FIRST)
+// 1. INITIALIZE MASTER DATA GLOBALLY
 // =============================================================================
 
-// Initialize window.masterData BEFORE anything tries to read it
 if (typeof window.masterData === 'undefined') {
     window.masterData = {
         version: "2.0",
@@ -104,12 +48,11 @@ if (typeof window.masterData === 'undefined') {
             cityNameParts: {},
             governments: [],
             households: [],
-            residences: [],           // RESIDENCE SYSTEM - stores all buildings/properties
+            residences: [],
             rankInheritanceRules: {},
             disasters: [],
             eventLog: [],
             currentYear: 1250,
-            // Education system storage arrays
             educationalInstitutions: [],
             educationalSubjects: {},
             subjectProgress: {}
@@ -121,7 +64,7 @@ if (typeof window.masterData === 'undefined') {
 // 2. CONSTANTS
 // =============================================================================
 
-const CONFIG = {
+var CONFIG = {
     STORAGE_KEY: 'stillwaters_master',
     DEFAULT_YEAR: 1250,
     MAX_HIERARCHY_DEPTH: 20,
@@ -131,97 +74,69 @@ const CONFIG = {
 };
 
 // =============================================================================
-// 3. TOAST HELPER (uses ui.js if available, otherwise console fallback)
+// 3. TOAST HELPER
 // =============================================================================
 
-/**
- * Shows a toast message using the UI system if available
- * @param {string} message - Message to display
- * @param {string} type - 'success', 'error', 'warning', 'info'
- */
 function _showToast(message, type) {
-    // Prefer the modern UI toast system
     if (typeof window.showToast === 'function') {
         window.showToast(message, type);
-    } 
-    // Fallback to console with monochrome icons if UI not loaded yet
-    else {
-        const prefix = type === 'error' ? '✗' : (type === 'success' ? '✓' : '⌇');
-        console.log(`${prefix} ${message}`);
     }
 }
 
 // =============================================================================
-// 4. CACHE INVALIDATION HELPER - FIXED with recursion guard
+// 4. CACHE INVALIDATION - USES CENTRALIZED ACCESSORS CACHE
 // =============================================================================
 
 function _invalidateCaches() {
-    // PREVENT INFINITE RECURSION
-    if (_invalidatingStorage) {
-        console.warn('_invalidateCaches: already running, skipping');
+    if (_invalidationPending) {
         return;
     }
-    _invalidatingStorage = true;
+    _invalidationPending = true;
     
     try {
-        // Invalidate accessor caches
+        // Use the centralized cache invalidation from accessors.js
         if (typeof window.invalidateAccessorCaches === 'function') {
             window.invalidateAccessorCaches();
         }
-        // Refresh caches
+        
+        // Also refresh caches to ensure data is current
         if (typeof window.refreshCaches === 'function') {
             window.refreshCaches();
         }
-        // Invalidate world cache
+        
+        // Invalidate world cache if available
         if (typeof window.invalidateWorldCache === 'function') {
             window.invalidateWorldCache();
         }
-        // Invalidate settlement cache
-        if (typeof window.invalidateSettlementCache === 'function') {
-            window.invalidateSettlementCache();
-        }
-        // Invalidate population cache
-        if (typeof window.invalidatePopulationCache === 'function') {
-            window.invalidatePopulationCache();
-        }
-        // Invalidate character selector
-        if (typeof window.invalidateCharacterSelector === 'function') {
-            window.invalidateCharacterSelector();
-        }
+        
         // Dispatch events for UI refresh
         try {
             if (typeof window.dispatchEvent === 'function') {
-                window.dispatchEvent(new CustomEvent('masterDataUpdated', { detail: { source: 'invalidate' } }));
+                window.dispatchEvent(new CustomEvent('masterDataUpdated', { detail: { source: 'storage' } }));
                 window.dispatchEvent(new CustomEvent('characterDataChanged'));
             }
         } catch(e) {}
-    } catch(e) {
-        console.warn('Error in _invalidateCaches:', e);
-    } finally {
-        _invalidatingStorage = false;
+    } catch(e) {}
+    finally {
+        _invalidationPending = false;
     }
 }
 
 // =============================================================================
-// 5. LOAD FUNCTION (with recursion prevention)
+// 5. LOAD FUNCTION
 // =============================================================================
 
 function loadMasterData() {
-    // Prevent recursive calls
     if (_isLoading) {
-        console.warn('loadMasterData already in progress, skipping recursive call');
         return false;
     }
-    
     _isLoading = true;
     
     try {
-        const stored = localStorage.getItem(CONFIG.STORAGE_KEY);
+        var stored = localStorage.getItem(CONFIG.STORAGE_KEY);
         if (stored) {
-            const parsed = JSON.parse(stored);
-            
-            // Ensure all required data structures exist
-            const loadedData = parsed.data || {};
+            var parsed = JSON.parse(stored);
+            var loadedData = parsed.data || {};
             
             window.masterData = {
                 version: parsed.version || "2.0",
@@ -237,61 +152,44 @@ function loadMasterData() {
                     cityNameParts: loadedData.cityNameParts || {},
                     governments: loadedData.governments || [],
                     households: loadedData.households || [],
-                    residences: loadedData.residences || [],           // LOAD RESIDENCES
+                    residences: loadedData.residences || [],
                     rankInheritanceRules: loadedData.rankInheritanceRules || {},
                     disasters: loadedData.disasters || [],
                     eventLog: loadedData.eventLog || [],
                     currentYear: loadedData.currentYear || CONFIG.DEFAULT_YEAR,
-                    // Load education data if exists, otherwise initialize empty
                     educationalInstitutions: loadedData.educationalInstitutions || [],
                     educationalSubjects: loadedData.educationalSubjects || {},
                     subjectProgress: loadedData.subjectProgress || {}
                 }
             };
-            
-            console.log('✓ Master data loaded from localStorage');
-            console.log(`   Institutions: ${window.masterData.data.educationalInstitutions?.length || 0}`);
-            console.log(`   Characters: ${window.masterData.data.characters?.length || 0}`);
-            console.log(`   Residences: ${window.masterData.data.residences?.length || 0}`);
-        } else {
-            console.log('No saved master data found, using defaults');
         }
         
         // Invalidate caches after load
         _invalidateCaches();
         
-        // Dispatch event for other modules
-        if (typeof window.dispatchEvent === 'function') {
-            window.dispatchEvent(new CustomEvent('masterDataUpdated', { detail: { source: 'load' } }));
-            window.dispatchEvent(new CustomEvent('characterDataChanged'));
-        }
-        
         _isLoading = false;
         return true;
     } catch (e) {
-        console.error('Error loading master data', e);
         _isLoading = false;
         return false;
     }
 }
 
 // =============================================================================
-// 6. SAVE FUNCTION (with debounce and recursion prevention)
+// 6. SAVE FUNCTION
 // =============================================================================
 
 function saveMasterData(immediate) {
     immediate = immediate || false;
     
-    // Prevent recursive calls
     if (_isSaving) {
-        console.warn('saveMasterData already in progress, skipping recursive call');
         return false;
     }
     
-    const saveOperation = function() {
+    var saveOperation = function() {
         _isSaving = true;
         try {
-            // Ensure data structure is complete before saving
+            // Ensure all required data structures exist
             if (!window.masterData.data.educationalInstitutions) {
                 window.masterData.data.educationalInstitutions = [];
             }
@@ -311,30 +209,19 @@ function saveMasterData(immediate) {
             window.masterData.lastUpdated = new Date().toISOString();
             window.masterData.data.currentYear = window.masterData.data.currentYear || CONFIG.DEFAULT_YEAR;
             localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(window.masterData));
-            console.log('⌇ Master data saved to localStorage');
-            console.log(`   Institutions saved: ${window.masterData.data.educationalInstitutions?.length || 0}`);
-            console.log(`   Residences saved: ${window.masterData.data.residences?.length || 0}`);
             
             // Invalidate caches after save
             _invalidateCaches();
             
-            // Dispatch event for other modules
-            if (typeof window.dispatchEvent === 'function') {
-                window.dispatchEvent(new CustomEvent('masterDataUpdated', { detail: { source: 'save' } }));
-                window.dispatchEvent(new CustomEvent('characterDataChanged'));
-            }
-            
             _isSaving = false;
             return true;
         } catch (e) {
-            console.error('Error saving master data', e);
             _showToast('Failed to save data', 'error');
             _isSaving = false;
             return false;
         }
     };
     
-    // Clear any pending timeout
     if (_saveTimeout) {
         clearTimeout(_saveTimeout);
         _saveTimeout = null;
@@ -343,7 +230,6 @@ function saveMasterData(immediate) {
     if (immediate) {
         return saveOperation();
     } else {
-        // Debounce saves to prevent excessive writes
         _saveTimeout = setTimeout(saveOperation, 100);
         return true;
     }
@@ -353,22 +239,19 @@ function saveMasterData(immediate) {
 // 7. EDUCATION STATISTICS HELPER
 // =============================================================================
 
-/**
- * Gets education statistics from master data (fast, no processing)
- * @returns {Object} Education statistics
- */
 function getEducationStatistics() {
-    const institutions = window.masterData.data.educationalInstitutions || [];
-    let totalStudents = 0;
-    let totalTeachers = 0;
-    let totalGraduates = 0;
-    let totalReputation = 0;
-    let totalCapacity = 0;
+    var institutions = window.masterData.data.educationalInstitutions || [];
+    var totalStudents = 0;
+    var totalTeachers = 0;
+    var totalGraduates = 0;
+    var totalReputation = 0;
+    var totalCapacity = 0;
     
-    for (const inst of institutions) {
-        totalStudents += inst.students?.length || 0;
-        totalTeachers += inst.teachers?.length || 0;
-        totalGraduates += inst.graduates?.length || 0;
+    for (var i = 0; i < institutions.length; i++) {
+        var inst = institutions[i];
+        totalStudents += inst.students ? inst.students.length : 0;
+        totalTeachers += inst.teachers ? inst.teachers.length : 0;
+        totalGraduates += inst.graduates ? inst.graduates.length : 0;
         totalReputation += inst.reputation || 50;
         totalCapacity += inst.maxStudents || 0;
     }
@@ -391,47 +274,45 @@ function getEducationStatistics() {
 
 function exportData() {
     try {
-        const exportObj = {
+        var exportObj = {
             type: "master",
             version: "2.0",
             exportDate: new Date().toISOString(),
-            data: JSON.parse(JSON.stringify(window.masterData.data)) // deep clone
+            data: JSON.parse(JSON.stringify(window.masterData.data))
         };
         
-        const dataStr = JSON.stringify(exportObj, null, 2);
-        const blob = new Blob([dataStr], { type: 'application/json' });
-        const a = document.createElement('a');
+        var dataStr = JSON.stringify(exportObj, null, 2);
+        var blob = new Blob([dataStr], { type: 'application/json' });
+        var a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        const dateStr = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
-        a.download = `stillwaters_master_${dateStr}.json`;
+        var dateStr = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+        a.download = 'stillwaters_master_' + dateStr + '.json';
         a.click();
         URL.revokeObjectURL(a.href);
         
         _showToast('Complete master data exported', 'success');
     } catch (e) {
-        console.error('Export failed:', e);
         _showToast('Export failed', 'error');
     }
 }
 
 // =============================================================================
-// 9. IMPORT FUNCTION - FIXED with cache invalidation
+// 9. IMPORT FUNCTION
 // =============================================================================
 
 function importData() {
-    const input = document.createElement('input');
+    var input = document.createElement('input');
     input.type = 'file';
     input.accept = 'application/json';
     input.onchange = function(e) {
-        const file = e.target.files[0];
+        var file = e.target.files[0];
         if (!file) return;
         
-        const reader = new FileReader();
+        var reader = new FileReader();
         reader.onload = function(ev) {
             try {
-                const imported = JSON.parse(ev.target.result);
+                var imported = JSON.parse(ev.target.result);
                 
-                // Handle different export formats
                 if (imported.type === "master" && imported.data) {
                     window.masterData.data = imported.data;
                 } else if (imported.data && imported.data.characters) {
@@ -448,7 +329,7 @@ function importData() {
                         cityNameParts: imported.cityNameParts || {},
                         governments: imported.governments || [],
                         households: imported.households || [],
-                        residences: imported.residences || [],           // IMPORT RESIDENCES
+                        residences: imported.residences || [],
                         rankInheritanceRules: imported.rankInheritanceRules || {},
                         disasters: imported.disasters || [],
                         eventLog: imported.eventLog || [],
@@ -462,33 +343,22 @@ function importData() {
                     return;
                 }
                 
-                // Ensure education arrays exist
+                // Ensure all required data structures exist
                 if (!window.masterData.data.educationalInstitutions) window.masterData.data.educationalInstitutions = [];
                 if (!window.masterData.data.educationalSubjects) window.masterData.data.educationalSubjects = {};
                 if (!window.masterData.data.subjectProgress) window.masterData.data.subjectProgress = {};
                 if (!window.masterData.data.residences) window.masterData.data.residences = [];
                 if (!window.masterData.data.households) window.masterData.data.households = [];
                 
-                // Force immediate save
                 saveMasterData(true);
-                
-                // CRITICAL: Invalidate all caches after import
                 _invalidateCaches();
                 
-                // Force reload of data
                 if (typeof window.forceReloadData === 'function') {
                     window.forceReloadData();
                 }
                 
-                // Dispatch events for UI refresh
-                if (typeof window.dispatchEvent === 'function') {
-                    window.dispatchEvent(new CustomEvent('masterDataUpdated', { detail: { source: 'import' } }));
-                    window.dispatchEvent(new CustomEvent('characterDataChanged'));
-                }
-                
-                // Show success message with count
-                const charCount = window.masterData.data.characters?.length || 0;
-                _showToast(`✓ Data imported successfully (${charCount} characters)`, 'success');
+                var charCount = window.masterData.data.characters ? window.masterData.data.characters.length : 0;
+                _showToast('Data imported successfully (' + charCount + ' characters)', 'success');
                 
             } catch(err) {
                 _showToast('Invalid JSON: ' + err.message, 'error');
@@ -503,11 +373,11 @@ function importData() {
 }
 
 // =============================================================================
-// 10. RESET FUNCTION (with cache invalidation)
+// 10. RESET FUNCTION
 // =============================================================================
 
 function resetMasterData() {
-    if (confirm('⚠️ WARNING: This will delete ALL data. Are you sure?')) {
+    if (confirm('WARNING: This will delete ALL data. Are you sure?')) {
         window.masterData = {
             version: "2.0",
             lastUpdated: new Date().toISOString(),
@@ -534,47 +404,28 @@ function resetMasterData() {
         };
         localStorage.removeItem(CONFIG.STORAGE_KEY);
         saveMasterData(true);
-        
-        // Invalidate caches
         _invalidateCaches();
-        
-        if (typeof window.dispatchEvent === 'function') {
-            window.dispatchEvent(new CustomEvent('masterDataUpdated', { detail: { source: 'reset' } }));
-            window.dispatchEvent(new CustomEvent('characterDataChanged'));
-        }
         
         _showToast('Master data reset', 'info');
     }
 }
 
 // =============================================================================
-// 11. FORCE RELOAD FUNCTION - FIXED with recursion guard
+// 11. FORCE RELOAD FUNCTION
 // =============================================================================
 
-let _forceReloading = false;
+var _forceReloading = false;
 
-/**
- * Forces a complete reload of all data and invalidates all caches
- * This is the most aggressive cache clearing function
- */
 function forceReloadData() {
-    // PREVENT INFINITE RECURSION
     if (_forceReloading) {
-        console.warn('forceReloadData: already running, skipping');
         return;
     }
     _forceReloading = true;
     
     try {
-        console.log('⌇ Force reloading all data...');
-        
-        // Reload from storage
         loadMasterData();
-        
-        // Invalidate all caches
         _invalidateCaches();
         
-        // Force refresh in accessors
         if (typeof window.refreshCaches === 'function') {
             window.refreshCaches();
         }
@@ -582,31 +433,26 @@ function forceReloadData() {
             window.invalidateAccessorCaches();
         }
         
-        // Dispatch events
         try {
             if (typeof window.dispatchEvent === 'function') {
                 window.dispatchEvent(new CustomEvent('masterDataUpdated', { detail: { source: 'forceReload' } }));
                 window.dispatchEvent(new CustomEvent('characterDataChanged'));
             }
         } catch(e) {}
-        
-        console.log(`✓ Data reloaded: ${window.masterData.data.characters?.length || 0} characters`);
-    } catch(e) {
-        console.warn('Error in forceReloadData:', e);
-    } finally {
+    } catch(e) {}
+    finally {
         _forceReloading = false;
     }
 }
 
 // =============================================================================
-// 12. CROSS-TAB SYNC (with debounce and recursion guard)
+// 12. CROSS-TAB SYNC
 // =============================================================================
 
-let _syncTimeout = null;
-let _syncing = false;
+var _syncTimeout = null;
+var _syncing = false;
 
 function initCrossTabSync() {
-    // Prevent multiple initializations
     if (_storageListenerAdded) {
         return;
     }
@@ -614,13 +460,11 @@ function initCrossTabSync() {
     
     window.addEventListener('storage', function(e) {
         if (e.key === CONFIG.STORAGE_KEY) {
-            // Prevent recursive sync
             if (_syncing) {
                 return;
             }
             _syncing = true;
             
-            // Debounce sync to prevent multiple rapid updates
             if (_syncTimeout) {
                 clearTimeout(_syncTimeout);
             }
@@ -628,10 +472,6 @@ function initCrossTabSync() {
                 try {
                     loadMasterData();
                     _invalidateCaches();
-                    if (typeof window.dispatchEvent === 'function') {
-                        window.dispatchEvent(new CustomEvent('masterDataUpdated', { detail: { source: 'storage' } }));
-                        window.dispatchEvent(new CustomEvent('characterDataChanged'));
-                    }
                     _showToast('Data updated from another tab', 'info');
                 } finally {
                     _syncing = false;
@@ -641,44 +481,34 @@ function initCrossTabSync() {
     });
 }
 
-// Initialize cross-tab sync (only once)
 if (typeof window._crossTabSyncInitialized === 'undefined') {
     window._crossTabSyncInitialized = true;
     initCrossTabSync();
 }
 
 // =============================================================================
-// 13. BACKWARD COMPATIBILITY WRAPPERS
+// 13. BACKWARD COMPATIBILITY WRAPPER
 // =============================================================================
 
-/**
- * @deprecated Use _showToast or window.showToast instead
- * Kept for backward compatibility with older code
- */
 function showToastMessage(message, type) {
     _showToast(message, type);
 }
 
 // =============================================================================
-// 14. AUTO-LOAD ON PAGE LOAD (with protection)
+// 14. AUTO-LOAD
 // =============================================================================
 
-// Only auto-load if not already loaded and not in a recursive loop
 if (typeof window._storageInitialized === 'undefined') {
     window._storageInitialized = true;
-    
-    // Small delay to ensure other modules are ready
     setTimeout(function() {
         try {
             loadMasterData();
-        } catch (e) {
-            console.error('Failed to auto-load master data:', e);
-        }
+        } catch (e) {}
     }, 50);
 }
 
 // =============================================================================
-// 15. EXPORTS
+// 15. EXPORTS - SINGLE SOURCE OF TRUTH
 // =============================================================================
 
 window.loadMasterData = loadMasterData;
@@ -690,9 +520,5 @@ window.getEducationStatistics = getEducationStatistics;
 window.forceReloadData = forceReloadData;
 window.CONFIG = CONFIG;
 
-// Backward compatibility (deprecated - will be removed in future)
+// Backward compatibility (deprecated)
 window.showToastMessage = showToastMessage;
-
-console.log(`   Characters: ${window.masterData.data.characters?.length || 0}`);
-console.log(`   Institutions: ${window.masterData.data.educationalInstitutions?.length || 0}`);
-console.log(`   Residences: ${window.masterData.data.residences?.length || 0}`);

@@ -1,12 +1,15 @@
 /**
  * =============================================================================
- * STILL WATERS - APPRENTICESHIP SYSTEM (Wrapper)
+ * STILL WATERS - APPRENTICESHIP SYSTEM (CONSOLIDATED)
  * =============================================================================
  * 
- * LOCATION: js/systems/roles/apprenticeship-system.js
+ * This file REPLACES:
+ *   - apprenticeship-state.js
+ *   - apprenticeship-commands.js
+ *   - apprenticeship-queries.js
+ *   - apprenticeship-learning.js
  * 
- * This file re-exports all apprenticeship functions from the modular structure.
- * Kept for backward compatibility with existing code.
+ * All functionality now delegates to ProfessionalLogic.
  * 
  * =============================================================================
  */
@@ -15,9 +18,18 @@
     'use strict';
 
     // =========================================================================
-    // 1. CONSTANTS (from apprenticeship-constants.js)
+    // 1. CHECK DEPENDENCIES
     // =========================================================================
 
+    if (typeof window.ProfessionalLogic === 'undefined') {
+        console.warn('⚠️ ProfessionalLogic not loaded. Apprenticeship functions may not work.');
+    }
+
+    // =========================================================================
+    // 2. CONSTANTS (from apprenticeship-constants.js)
+    // =========================================================================
+
+    // These should be loaded from apprenticeship-constants.js
     if (typeof window.APPRENTICESHIP_STAGES === 'undefined') {
         window.APPRENTICESHIP_STAGES = {
             NOVICE: { id: 'novice', name: 'Novice', minLevel: 0, maxLevel: 25, icon: '⌇', requiredYears: 2 },
@@ -50,230 +62,387 @@
     }
 
     // =========================================================================
-    // 2. RE-EXPORT FUNCTIONS
+    // 3. RE-EXPORT FROM ProfessionalLogic
     // =========================================================================
 
-    // State layer (apprenticeship-state.js)
-    if (typeof window.ApprenticeshipState !== 'undefined') {
-        if (typeof window.subscribeApprenticeships === 'undefined') {
-            window.subscribeApprenticeships = function(callback) {
-                return window.ApprenticeshipState.subscribe(callback);
+    var PL = window.ProfessionalLogic || {};
+
+    // ---- COMMANDS ----
+
+    window.createApprenticeship = function(masterId, apprenticeId, options) {
+        if (PL.createApprenticeship) {
+            return PL.createApprenticeship(masterId, apprenticeId, options);
+        }
+        console.warn('ProfessionalLogic.createApprenticeship not available');
+        return null;
+    };
+
+    window.updateApprenticeship = function(masterId, apprenticeId, updates) {
+        if (PL.updateApprenticeship) {
+            return PL.updateApprenticeship(masterId, apprenticeId, updates);
+        }
+        console.warn('ProfessionalLogic.updateApprenticeship not available');
+        return false;
+    };
+
+    window.setSkillLevel = function(masterId, apprenticeId, level) {
+        if (PL.setSkillLevel) {
+            return PL.setSkillLevel(masterId, apprenticeId, level);
+        }
+        console.warn('ProfessionalLogic.setSkillLevel not available');
+        return false;
+    };
+
+    window.progressApprenticeship = function(masterId, apprenticeId, amount) {
+        if (PL.progressApprenticeship) {
+            return PL.progressApprenticeship(masterId, apprenticeId, amount);
+        }
+        console.warn('ProfessionalLogic.progressApprenticeship not available');
+        return { success: false, reason: 'Not available' };
+    };
+
+    window.completeApprenticeship = function(masterId, apprenticeId, finalSkillLevel) {
+        if (PL.completeApprenticeship) {
+            return PL.completeApprenticeship(masterId, apprenticeId, finalSkillLevel);
+        }
+        console.warn('ProfessionalLogic.completeApprenticeship not available');
+        return false;
+    };
+
+    window.endApprenticeship = function(masterId, apprenticeId, options) {
+        if (PL.endApprenticeship) {
+            return PL.endApprenticeship(masterId, apprenticeId, options);
+        }
+        console.warn('ProfessionalLogic.endApprenticeship not available');
+        return false;
+    };
+
+    window.cancelApprenticeship = function(masterId, apprenticeId, reason) {
+        if (PL.cancelApprenticeship) {
+            return PL.cancelApprenticeship(masterId, apprenticeId, reason);
+        }
+        console.warn('ProfessionalLogic.cancelApprenticeship not available');
+        return false;
+    };
+
+    window.terminateApprenticeship = function(masterId, apprenticeId, reason) {
+        if (PL.terminateApprenticeship) {
+            return PL.terminateApprenticeship(masterId, apprenticeId, reason);
+        }
+        console.warn('ProfessionalLogic.terminateApprenticeship not available');
+        return false;
+    };
+
+    window.progressApprenticeshipStage = function(masterId, apprenticeId, stageId) {
+        if (PL.progressApprenticeshipStage) {
+            return PL.progressApprenticeshipStage(masterId, apprenticeId, stageId);
+        }
+        console.warn('ProfessionalLogic.progressApprenticeshipStage not available');
+        return false;
+    };
+
+    // ---- QUERIES ----
+
+    window.getMaster = function(characterId) {
+        if (PL.getMaster) {
+            return PL.getMaster(characterId);
+        }
+        console.warn('ProfessionalLogic.getMaster not available');
+        return null;
+    };
+
+    window.getApprentices = function(masterId, activeOnly) {
+        if (PL.getApprentices) {
+            return PL.getApprentices(masterId, activeOnly);
+        }
+        console.warn('ProfessionalLogic.getApprentices not available');
+        return [];
+    };
+
+    window.isApprentice = function(characterId) {
+        if (PL.isApprentice) {
+            return PL.isApprentice(characterId);
+        }
+        return window.getMaster(characterId) !== null;
+    };
+
+    window.isMaster = function(characterId) {
+        if (PL.isMaster) {
+            return PL.isMaster(characterId);
+        }
+        return window.getApprentices(characterId, true).length > 0;
+    };
+
+    window.getApprenticeship = function(masterId, apprenticeId) {
+        if (PL.getApprenticeship) {
+            return PL.getApprenticeship(masterId, apprenticeId);
+        }
+        if (typeof window.getRelationshipBetween === 'function') {
+            var rel = window.getRelationshipBetween(masterId, apprenticeId);
+            if (rel && rel.type === 'apprenticeship') return rel;
+        }
+        return null;
+    };
+
+    window.getSkillLevel = function(characterId, roleId) {
+        if (PL.getSkillLevel) {
+            return PL.getSkillLevel(characterId, roleId);
+        }
+        console.warn('ProfessionalLogic.getSkillLevel not available');
+        return 0;
+    };
+
+    window.getSkillLevelName = function(level) {
+        if (PL.getSkillLevelName) {
+            return PL.getSkillLevelName(level);
+        }
+        if (level >= 91) return 'Master';
+        if (level >= 76) return 'Expert';
+        if (level >= 51) return 'Journeyman';
+        if (level >= 26) return 'Apprentice';
+        if (level >= 1) return 'Novice';
+        return 'Untrained';
+    };
+
+    window.getSkillModifier = function(characterId, roleId) {
+        if (PL.getSkillModifier) {
+            return PL.getSkillModifier(characterId, roleId);
+        }
+        console.warn('ProfessionalLogic.getSkillModifier not available');
+        return 0;
+    };
+
+    window.getApprenticeshipStage = function(characterId, roleId) {
+        if (PL.getApprenticeshipStage) {
+            return PL.getApprenticeshipStage(characterId, roleId);
+        }
+        console.warn('ProfessionalLogic.getApprenticeshipStage not available');
+        return { id: 'novice', name: 'Novice', minLevel: 0, maxLevel: 25 };
+    };
+
+    window.getApprenticeshipProgress = function(characterId, roleId) {
+        if (PL.getApprenticeshipProgress) {
+            return PL.getApprenticeshipProgress(characterId, roleId);
+        }
+        console.warn('ProfessionalLogic.getApprenticeshipProgress not available');
+        return 0;
+    };
+
+    window.getApprenticeshipRole = function(characterId) {
+        if (PL.getApprenticeshipRole) {
+            return PL.getApprenticeshipRole(characterId);
+        }
+        console.warn('ProfessionalLogic.getApprenticeshipRole not available');
+        return null;
+    };
+
+    window.getTeachableSkills = function(characterId, minSkillLevel) {
+        if (PL.getTeachableSkills) {
+            return PL.getTeachableSkills(characterId, minSkillLevel);
+        }
+        console.warn('ProfessionalLogic.getTeachableSkills not available');
+        return [];
+    };
+
+    window.findPotentialMasters = function(roleId, locationId, minSkillLevel) {
+        if (PL.findPotentialMasters) {
+            return PL.findPotentialMasters(roleId, locationId, minSkillLevel);
+        }
+        console.warn('ProfessionalLogic.findPotentialMasters not available');
+        return [];
+    };
+
+    window.recommendMastersForCharacter = function(characterId, roleId) {
+        if (PL.recommendMastersForCharacter) {
+            return PL.recommendMastersForCharacter(characterId, roleId);
+        }
+        console.warn('ProfessionalLogic.recommendMastersForCharacter not available');
+        return [];
+    };
+
+    window.canTeach = function(characterId, roleId, minSkillLevel) {
+        if (PL.canTeach) {
+            return PL.canTeach(characterId, roleId, minSkillLevel);
+        }
+        console.warn('ProfessionalLogic.canTeach not available');
+        return false;
+    };
+
+    // ---- LEARNING ----
+
+    window.teachSkill = function(masterId, apprenticeId, method) {
+        if (PL.teachSkill) {
+            return PL.teachSkill(masterId, apprenticeId, method);
+        }
+        console.warn('ProfessionalLogic.teachSkill not available');
+        return { success: false, reason: 'Not available' };
+    };
+
+    window.teachSpecialization = function(masterId, apprenticeId, specialization) {
+        if (PL.teachSpecialization) {
+            return PL.teachSpecialization(masterId, apprenticeId, specialization);
+        }
+        console.warn('ProfessionalLogic.teachSpecialization not available');
+        return { success: false, reason: 'Not available' };
+    };
+
+    window.conductTeachingSession = function(masterId, apprenticeId, hours) {
+        if (PL.conductTeachingSession) {
+            return PL.conductTeachingSession(masterId, apprenticeId, hours);
+        }
+        console.warn('ProfessionalLogic.conductTeachingSession not available');
+        return { success: false, reason: 'Not available' };
+    };
+
+    window.advanceApprenticeshipSkills = function(year) {
+        if (PL.advanceApprenticeshipSkills) {
+            return PL.advanceApprenticeshipSkills(year);
+        }
+        console.warn('ProfessionalLogic.advanceApprenticeshipSkills not available');
+        return [];
+    };
+
+    window.preserveKnowledgeOnDeath = function(dyingId, heirId) {
+        if (PL.preserveKnowledgeOnDeath) {
+            return PL.preserveKnowledgeOnDeath(dyingId, heirId);
+        }
+        console.warn('ProfessionalLogic.preserveKnowledgeOnDeath not available');
+        return [];
+    };
+
+    window.assessKnowledgeLoss = function(characterId) {
+        if (PL.assessKnowledgeLoss) {
+            return PL.assessKnowledgeLoss(characterId);
+        }
+        console.warn('ProfessionalLogic.assessKnowledgeLoss not available');
+        return { hasKnowledge: false, uniqueSkills: [], lossSeverity: 0, isCritical: false };
+    };
+
+    // ---- STATE (using registry) ----
+
+    window.getAllApprenticeships = function() {
+        if (typeof window.getAllRelationships === 'function') {
+            var allRelationships = window.getAllRelationships();
+            return allRelationships.filter(function(r) { return r.type === 'apprenticeship'; });
+        }
+        return [];
+    };
+
+    window.getApprenticeshipById = function(id) {
+        if (typeof window.getRelationshipById === 'function') {
+            var rel = window.getRelationshipById(id);
+            if (rel && rel.type === 'apprenticeship') return rel;
+        }
+        return null;
+    };
+
+    window.getApprenticeshipsByMaster = function(masterId) {
+        if (typeof window.getRelationshipsForCharacter === 'function') {
+            return window.getRelationshipsForCharacter(masterId, { type: 'apprenticeship' });
+        }
+        return [];
+    };
+
+    window.getApprenticeshipsByApprentice = function(apprenticeId) {
+        if (typeof window.getRelationshipsForCharacter === 'function') {
+            return window.getRelationshipsForCharacter(apprenticeId, { type: 'apprenticeship' });
+        }
+        return [];
+    };
+
+    window.getApprenticeshipBetween = function(masterId, apprenticeId) {
+        if (typeof window.getRelationshipBetween === 'function') {
+            var rel = window.getRelationshipBetween(masterId, apprenticeId);
+            if (rel && rel.type === 'apprenticeship') return rel;
+        }
+        return null;
+    };
+
+    window.subscribeApprenticeships = function(callback) {
+        // No-op in consolidated version - use registry events
+        console.warn('subscribeApprenticeships: Use relationship registry events instead');
+        return function() {};
+    };
+
+    // =========================================================================
+    // 4. INTERNAL HELPERS (for backward compatibility)
+    // =========================================================================
+
+    window._getApprenticeships = window.getAllApprenticeships;
+    window._getAllApprenticeships = window.getAllApprenticeships;
+    window._validateApprenticeship = function(masterId, apprenticeId, roleId) {
+        var master = window.getCharacterById ? window.getCharacterById(masterId) : null;
+        var apprentice = window.getCharacterById ? window.getCharacterById(apprenticeId) : null;
+
+        if (!master || !apprentice) {
+            return { valid: false, reason: 'Character not found' };
+        }
+
+        var masterSkill = window.getSkillLevel ? window.getSkillLevel(masterId, roleId) : 0;
+        if (masterSkill < 51) {
+            return {
+                valid: false,
+                reason: 'Master is only ' + (window.getSkillLevelName ? window.getSkillLevelName(masterSkill) : masterSkill) + '. Need Journeyman level (51+) to teach.'
             };
         }
-        if (typeof window.getAllApprenticeships === 'undefined') {
-            window.getAllApprenticeships = function() {
-                return window.ApprenticeshipState.getAllApprenticeships();
-            };
-        }
-        if (typeof window.getApprenticeshipById === 'undefined') {
-            window.getApprenticeshipById = function(id) {
-                return window.ApprenticeshipState.getApprenticeshipById(id);
-            };
-        }
-    }
 
-    // Queries (apprenticeship-queries.js)
-    if (typeof window.ApprenticeshipQueries !== 'undefined') {
-        if (typeof window.getMaster === 'undefined') {
-            window.getMaster = window.ApprenticeshipQueries.getMaster;
-        }
-        if (typeof window.getApprentices === 'undefined') {
-            window.getApprentices = window.ApprenticeshipQueries.getApprentices;
-        }
-        if (typeof window.isApprentice === 'undefined') {
-            window.isApprentice = window.ApprenticeshipQueries.isApprentice;
-        }
-        if (typeof window.isMaster === 'undefined') {
-            window.isMaster = window.ApprenticeshipQueries.isMaster;
-        }
-        if (typeof window.getApprenticeship === 'undefined') {
-            window.getApprenticeship = window.ApprenticeshipQueries.getApprenticeship;
-        }
-        if (typeof window.getSkillLevel === 'undefined') {
-            window.getSkillLevel = window.ApprenticeshipQueries.getSkillLevel;
-        }
-        if (typeof window.getSkillLevelName === 'undefined') {
-            window.getSkillLevelName = window.ApprenticeshipQueries.getSkillLevelName;
-        }
-        if (typeof window.getSkillModifier === 'undefined') {
-            window.getSkillModifier = window.ApprenticeshipQueries.getSkillModifier;
-        }
-        if (typeof window.getApprenticeshipStage === 'undefined') {
-            window.getApprenticeshipStage = window.ApprenticeshipQueries.getApprenticeshipStage;
-        }
-        if (typeof window.getApprenticeshipProgress === 'undefined') {
-            window.getApprenticeshipProgress = window.ApprenticeshipQueries.getApprenticeshipProgress;
-        }
-        if (typeof window.getApprenticeshipRole === 'undefined') {
-            window.getApprenticeshipRole = window.ApprenticeshipQueries.getApprenticeshipRole;
-        }
-        if (typeof window.getTeachableSkills === 'undefined') {
-            window.getTeachableSkills = window.ApprenticeshipQueries.getTeachableSkills;
-        }
-        if (typeof window.findPotentialMasters === 'undefined') {
-            window.findPotentialMasters = window.ApprenticeshipQueries.findPotentialMasters;
-        }
-        if (typeof window.recommendMastersForCharacter === 'undefined') {
-            window.recommendMastersForCharacter = window.ApprenticeshipQueries.recommendMastersForCharacter;
-        }
-        if (typeof window.canTeach === 'undefined') {
-            window.canTeach = window.ApprenticeshipQueries.canTeach;
-        }
-    }
+        return { valid: true, reason: 'Valid apprenticeship' };
+    };
 
-    // Commands (apprenticeship-commands.js)
-    if (typeof window.ApprenticeshipCommands !== 'undefined') {
-        if (typeof window.createApprenticeship === 'undefined') {
-            window.createApprenticeship = window.ApprenticeshipCommands.createApprenticeship;
-        }
-        if (typeof window.updateApprenticeship === 'undefined') {
-            window.updateApprenticeship = window.ApprenticeshipCommands.updateApprenticeship;
-        }
-        if (typeof window.setSkillLevel === 'undefined') {
-            window.setSkillLevel = window.ApprenticeshipCommands.setSkillLevel;
-        }
-        if (typeof window.progressApprenticeship === 'undefined') {
-            window.progressApprenticeship = window.ApprenticeshipCommands.progressApprenticeship;
-        }
-        if (typeof window.completeApprenticeship === 'undefined') {
-            window.completeApprenticeship = window.ApprenticeshipCommands.completeApprenticeship;
-        }
-        if (typeof window.endApprenticeship === 'undefined') {
-            window.endApprenticeship = window.ApprenticeshipCommands.endApprenticeship;
-        }
-        if (typeof window.cancelApprenticeship === 'undefined') {
-            window.cancelApprenticeship = window.ApprenticeshipCommands.cancelApprenticeship;
-        }
-        if (typeof window.terminateApprenticeship === 'undefined') {
-            window.terminateApprenticeship = window.ApprenticeshipCommands.terminateApprenticeship;
-        }
-        if (typeof window.progressApprenticeshipStage === 'undefined') {
-            window.progressApprenticeshipStage = window.ApprenticeshipCommands.progressApprenticeshipStage;
-        }
-    }
+    window._getApprenticeshipSkillLevel = function(masterId, apprenticeId) {
+        var app = window.getApprenticeship(masterId, apprenticeId);
+        return app?.metadata?.skillLevel || 0;
+    };
 
-    // Learning (apprenticeship-learning.js)
-    if (typeof window.ApprenticeshipLearning !== 'undefined') {
-        if (typeof window.teachSkill === 'undefined') {
-            window.teachSkill = window.ApprenticeshipLearning.teachSkill;
+    window._getApprenticeshipStage = function(masterId, apprenticeId) {
+        var app = window.getApprenticeship(masterId, apprenticeId);
+        if (app) {
+            var stageId = app.metadata?.stage || 'novice';
+            var stages = window.APPRENTICESHIP_STAGES || {};
+            return stages[stageId.toUpperCase()] || stages.NOVICE || { id: 'novice', name: 'Novice', minLevel: 0, maxLevel: 25 };
         }
-        if (typeof window.teachSpecialization === 'undefined') {
-            window.teachSpecialization = window.ApprenticeshipLearning.teachSpecialization;
+        return { id: 'novice', name: 'Novice', minLevel: 0, maxLevel: 25 };
+    };
+
+    window._getApprenticeshipProgress = function(masterId, apprenticeId) {
+        var app = window.getApprenticeship(masterId, apprenticeId);
+        if (app) {
+            var skillLevel = app.metadata?.skillLevel || 0;
+            var stage = window._getApprenticeshipStage(masterId, apprenticeId);
+            var range = stage.maxLevel - stage.minLevel;
+            if (range === 0) return 100;
+            var stageProgress = ((skillLevel - stage.minLevel) / range) * 100;
+            return Math.min(100, Math.max(0, Math.floor(stageProgress)));
         }
-        if (typeof window.conductTeachingSession === 'undefined') {
-            window.conductTeachingSession = window.ApprenticeshipLearning.conductTeachingSession;
+        return 0;
+    };
+
+    window._getApprenticeshipRole = function(masterId, apprenticeId) {
+        var app = window.getApprenticeship(masterId, apprenticeId);
+        var roleId = app?.metadata?.roleId;
+        if (roleId && typeof window.getRoleById === 'function') {
+            return window.getRoleById(roleId);
         }
-        if (typeof window.advanceApprenticeshipSkills === 'undefined') {
-            window.advanceApprenticeshipSkills = window.ApprenticeshipLearning.advanceApprenticeshipSkills;
-        }
-        if (typeof window.preserveKnowledgeOnDeath === 'undefined') {
-            window.preserveKnowledgeOnDeath = window.ApprenticeshipLearning.preserveKnowledgeOnDeath;
-        }
-        if (typeof window.assessKnowledgeLoss === 'undefined') {
-            window.assessKnowledgeLoss = window.ApprenticeshipLearning.assessKnowledgeLoss;
-        }
-    }
+        return null;
+    };
 
     // =========================================================================
-    // 3. INTERNAL FUNCTIONS (for wrappers)
+    // 5. LOGGING
     // =========================================================================
 
-    if (typeof window._getApprenticeships === 'undefined') {
-        window._getApprenticeships = function() {
-            if (typeof window.getAllApprenticeships === 'function') {
-                return window.getAllApprenticeships();
-            }
-            return [];
-        };
-    }
-
-    if (typeof window._validateApprenticeship === 'undefined') {
-        window._validateApprenticeship = function(masterId, apprenticeId, roleId) {
-            // Simple validation - defer to commands
-            var master = typeof window.getCharacterById === 'function' ? window.getCharacterById(masterId) : null;
-            var apprentice = typeof window.getCharacterById === 'function' ? window.getCharacterById(apprenticeId) : null;
-
-            if (!master || !apprentice) {
-                return { valid: false, reason: 'Character not found' };
-            }
-
-            var masterSkill = typeof window.getSkillLevel === 'function' ? window.getSkillLevel(masterId, roleId) : 0;
-            if (masterSkill < 51) {
-                return {
-                    valid: false,
-                    reason: 'Master is only ' + (typeof window.getSkillLevelName === 'function' ? window.getSkillLevelName(masterSkill) : masterSkill) + '. Need Journeyman level (51+) to teach.'
-                };
-            }
-
-            return { valid: true, reason: 'Valid apprenticeship' };
-        };
-    }
-
-    if (typeof window._getAllApprenticeships === 'undefined') {
-        window._getAllApprenticeships = function() {
-            if (typeof window.getAllApprenticeships === 'function') {
-                return window.getAllApprenticeships();
-            }
-            return [];
-        };
-    }
-
-    if (typeof window._getApprenticeshipSkillLevel === 'undefined') {
-        window._getApprenticeshipSkillLevel = function(masterId, apprenticeId) {
-            if (typeof window.getApprenticeship === 'function') {
-                var app = window.getApprenticeship(masterId, apprenticeId);
-                return app?.metadata?.skillLevel || 0;
-            }
-            return 0;
-        };
-    }
-
-    if (typeof window._getApprenticeshipStage === 'undefined') {
-        window._getApprenticeshipStage = function(masterId, apprenticeId) {
-            if (typeof window.getApprenticeshipStage === 'function') {
-                return window.getApprenticeshipStage(masterId, apprenticeId);
-            }
-            return { id: 'novice', name: 'Novice', minLevel: 0, maxLevel: 25 };
-        };
-    }
-
-    if (typeof window._getApprenticeshipProgress === 'undefined') {
-        window._getApprenticeshipProgress = function(masterId, apprenticeId) {
-            if (typeof window.getApprenticeshipProgress === 'function') {
-                return window.getApprenticeshipProgress(masterId, apprenticeId);
-            }
-            return 0;
-        };
-    }
-
-    if (typeof window._getApprenticeshipRole === 'undefined') {
-        window._getApprenticeshipRole = function(masterId, apprenticeId) {
-            if (typeof window.getApprenticeshipRole === 'function') {
-                return window.getApprenticeshipRole(masterId, apprenticeId);
-            }
-            return null;
-        };
-    }
-
-    // =========================================================================
-    // 4. LOGGING
-    // =========================================================================
-
-    console.log('✅ apprenticeship-system.js loaded (modular wrapper - NO TRUST)');
+    console.log('✅ Apprenticeship system loaded (consolidated - uses ProfessionalLogic)');
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
-            // Constants
             APPRENTICESHIP_STAGES: window.APPRENTICESHIP_STAGES,
             SKILL_LEVELS: window.SKILL_LEVELS,
             SKILL_TRANSFER_METHODS: window.SKILL_TRANSFER_METHODS,
-
-            // State
-            subscribeApprenticeships: window.subscribeApprenticeships,
-            getAllApprenticeships: window.getAllApprenticeships,
-            getApprenticeshipById: window.getApprenticeshipById,
-
-            // Queries
+            createApprenticeship: window.createApprenticeship,
+            updateApprenticeship: window.updateApprenticeship,
+            setSkillLevel: window.setSkillLevel,
+            progressApprenticeship: window.progressApprenticeship,
+            completeApprenticeship: window.completeApprenticeship,
+            endApprenticeship: window.endApprenticeship,
             getMaster: window.getMaster,
             getApprentices: window.getApprentices,
             isApprentice: window.isApprentice,
@@ -281,27 +450,11 @@
             getApprenticeship: window.getApprenticeship,
             getSkillLevel: window.getSkillLevel,
             getSkillLevelName: window.getSkillLevelName,
-            getSkillModifier: window.getSkillModifier,
-            getApprenticeshipStage: window.getApprenticeshipStage,
-            getApprenticeshipProgress: window.getApprenticeshipProgress,
-            getApprenticeshipRole: window.getApprenticeshipRole,
-            getTeachableSkills: window.getTeachableSkills,
-            findPotentialMasters: window.findPotentialMasters,
-            recommendMastersForCharacter: window.recommendMastersForCharacter,
-            canTeach: window.canTeach,
-
-            // Commands
-            createApprenticeship: window.createApprenticeship,
-            updateApprenticeship: window.updateApprenticeship,
-            setSkillLevel: window.setSkillLevel,
-            progressApprenticeship: window.progressApprenticeship,
-            completeApprenticeship: window.completeApprenticeship,
-            endApprenticeship: window.endApprenticeship,
-            cancelApprenticeship: window.cancelApprenticeship,
-            terminateApprenticeship: window.terminateApprenticeship,
-            progressApprenticeshipStage: window.progressApprenticeshipStage,
-
-            // Learning
+            getAllApprenticeships: window.getAllApprenticeships,
+            getApprenticeshipById: window.getApprenticeshipById,
+            getApprenticeshipsByMaster: window.getApprenticeshipsByMaster,
+            getApprenticeshipsByApprentice: window.getApprenticeshipsByApprentice,
+            getApprenticeshipBetween: window.getApprenticeshipBetween,
             teachSkill: window.teachSkill,
             teachSpecialization: window.teachSpecialization,
             conductTeachingSession: window.conductTeachingSession,

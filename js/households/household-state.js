@@ -3,30 +3,7 @@
  * HOUSEHOLD STATE (household-state.js)
  * =============================================================================
  * 
- * PURPOSE: Single source of truth for all household data and UI state.
- *          Manages data access, caching, and state change notifications.
- * 
- * UPDATED: Removed vendetta data - vendettas now in vendetta-system.js
- * 
- * DEPENDENCIES:
- *   - accessors.js (for getCharacters, getPlaceById, getCurrentYear)
- *   - storage.js (for saveMasterData)
- * 
- * EXPORTS:
- *   - HouseholdState.getState()          - Get current state snapshot
- *   - HouseholdState.getHousehold()      - Get single household
- *   - HouseholdState.getAllHouseholds()  - Get all households
- *   - HouseholdState.getCharacterHousehold() - Get character's household
- *   - HouseholdState.setHouseholds()     - Update all households (internal)
- *   - HouseholdState.addHousehold()      - Add new household
- *   - HouseholdState.updateHousehold()   - Update household
- *   - HouseholdState.deleteHousehold()   - Delete household
- *   - HouseholdState.subscribe()         - Subscribe to state changes
- *   - HouseholdState.unsubscribe()       - Unsubscribe from state changes
- *   - HouseholdState.getUIState()        - Get UI state (filters, selection)
- *   - HouseholdState.setUIState()        - Update UI state
- *   - HouseholdState.invalidateCache()   - Invalidate all caches
- *   - HouseholdState.refresh()           - Force refresh from masterData
+ * UPDATED: Added crime-related fields for household-crime integration
  * 
  * =============================================================================
  */
@@ -47,10 +24,6 @@
     // 1. STATE
     // =========================================================================
 
-    /**
-     * The internal state object.
-     * @private
-     */
     var _state = {
         // Data
         households: [],
@@ -66,7 +39,7 @@
                 statusFilter: 'all',
                 locationFilter: 'all'
             },
-            viewMode: 'list', // 'list', 'details', 'edit', 'create'
+            viewMode: 'list',
             expandedHouseholds: {}
         },
         
@@ -80,20 +53,11 @@
         // Subscribers
         subscribers: [],
         
-        // Version (for change detection)
+        // Version
         version: 0
     };
 
-    /**
-     * Pending updates queue (for batching)
-     * @private
-     */
     var _pendingUpdates = [];
-
-    /**
-     * Update timeout handle
-     * @private
-     */
     var _updateTimeout = null;
 
     // =========================================================================
@@ -158,10 +122,6 @@
     // 3. CACHE MANAGEMENT
     // =========================================================================
 
-    /**
-     * Builds a map for efficient ID-based lookups
-     * @private
-     */
     function _buildIdMap(items) {
         var map = new Map();
         for (var i = 0; i < items.length; i++) {
@@ -172,10 +132,6 @@
         return map;
     }
 
-    /**
-     * Builds a map of character -> household
-     * @private
-     */
     function _buildCharacterHouseholdMap(households) {
         var map = new Map();
         for (var i = 0; i < households.length; i++) {
@@ -191,29 +147,17 @@
         return map;
     }
 
-    /**
-     * Rebuilds all caches
-     * @private
-     */
     function _rebuildCaches() {
         var households = _state.households;
-        
         _state.cache.householdMap = _buildIdMap(households);
         _state.cache.characterHouseholdMap = _buildCharacterHouseholdMap(households);
         _state.cache.lastUpdated = Date.now();
-        
-        // Update version
         _state.version++;
     }
 
-    /**
-     * Invalidates all caches (marks for rebuild)
-     * @private
-     */
     function _invalidateCaches() {
         if (_invalidating) return;
         _invalidating = true;
-        
         try {
             _state.cache.householdMap = null;
             _state.cache.characterHouseholdMap = null;
@@ -224,14 +168,6 @@
         }
     }
 
-    // =========================================================================
-    // 4. ENSURING CACHES ARE UP TO DATE
-    // =========================================================================
-
-    /**
-     * Ensures caches are built
-     * @private
-     */
     function _ensureCaches() {
         if (!_state.cache.householdMap) {
             _rebuildCaches();
@@ -239,13 +175,9 @@
     }
 
     // =========================================================================
-    // 5. NOTIFICATION SYSTEM
+    // 4. NOTIFICATION SYSTEM
     // =========================================================================
 
-    /**
-     * Notifies all subscribers of a state change
-     * @private
-     */
     function _notifySubscribers(event, data) {
         var subscribers = _state.subscribers.slice();
         var eventObj = {
@@ -254,32 +186,25 @@
             version: _state.version,
             timestamp: Date.now()
         };
-        
         for (var i = 0; i < subscribers.length; i++) {
             try {
                 subscribers[i](eventObj);
             } catch (e) {
-                // Silent fail for subscriber errors
+                // Silent fail
             }
         }
     }
 
-    /**
-     * Processes pending updates in batch
-     * @private
-     */
     function _processPendingUpdates() {
         if (_updateTimeout) {
             clearTimeout(_updateTimeout);
             _updateTimeout = null;
         }
-        
         if (_pendingUpdates.length === 0) return;
-        
+
         var updates = _pendingUpdates.slice();
         _pendingUpdates = [];
-        
-        // Apply all updates
+
         for (var i = 0; i < updates.length; i++) {
             var update = updates[i];
             switch (update.type) {
@@ -303,47 +228,28 @@
                     break;
             }
         }
-        
-        // Rebuild caches
+
         _rebuildCaches();
-        
-        // Update version
         _state.version++;
-        
-        // Save to masterData
         _saveToMaster();
-        
-        // Notify subscribers
         _notifySubscribers('change', {
             updates: updates,
             householdCount: _state.households.length
         });
-        
-        // Invalidate accessor caches
         _invalidateAccessorCaches();
     }
 
-    /**
-     * Queues an update for batch processing
-     * @private
-     */
     function _queueUpdate(type, data) {
         _pendingUpdates.push({ type: type, data: data });
-        
         if (_updateTimeout) {
             clearTimeout(_updateTimeout);
         }
         _updateTimeout = setTimeout(_processPendingUpdates, 10);
     }
 
-    /**
-     * Saves current state to masterData
-     * @private
-     */
     function _saveToMaster() {
         if (_saving) return;
         _saving = true;
-        
         try {
             if (window.masterData && window.masterData.data) {
                 window.masterData.data.households = _state.households.slice();
@@ -355,64 +261,60 @@
     }
 
     // =========================================================================
-    // 6. INITIALIZATION - UPDATED: Removed vendettas
+    // 5. INITIALIZATION
     // =========================================================================
 
-    /**
-     * Initializes the state from masterData
-     * @private
-     */
     function _initialize() {
         if (_loading) return;
         _loading = true;
-        
         try {
-            // Load from masterData
             var households = _getHouseholdsFromMaster();
             var characters = _getCharacters();
             var places = _getPlaces();
-            
-            // Initialize each household
+
             for (var i = 0; i < households.length; i++) {
                 _ensureHouseholdInitialized(households[i]);
             }
-            
+
             _state.households = households.slice();
             _state.characters = characters.slice();
             _state.places = places.slice();
-            
-            // Rebuild caches
             _rebuildCaches();
-            
-            // Update version
             _state.version++;
         } finally {
             _loading = false;
         }
     }
 
-    /**
-     * Ensures a household object has all required fields
-     * UPDATED: Removed vendettas and alliances
-     * @private
-     */
     function _ensureHouseholdInitialized(household) {
         if (!household) return;
-        
+
         if (!household.members) household.members = [];
         if (!household.departments) household.departments = [];
         if (!household.nameHistory) household.nameHistory = [];
         if (!household.activityLog) household.activityLog = [];
-        // REMOVED: vendettas and alliances - now in vendetta-system.js
-        
+
+        // =====================================================================
+        // NEW: Crime-related fields for Household ↔ Crime integration
+        // =====================================================================
+        if (household.prestige === undefined) household.prestige = 50;
+        if (household.criminalCount === undefined) household.criminalCount = 0;
+        if (household.victimCount === undefined) household.victimCount = 0;
+        if (household.executedCount === undefined) household.executedCount = 0;
+        if (household.criminalMembers === undefined) household.criminalMembers = [];
+        if (household.victimMembers === undefined) household.victimMembers = [];
+        if (household.crimeHistory === undefined) household.crimeHistory = [];
+        if (household.vendettaCount === undefined) household.vendettaCount = 0;
+        if (household.activeVendettaCount === undefined) household.activeVendettaCount = 0;
+        // =====================================================================
+
         if (household.reputation === undefined) household.reputation = 50;
         if (household.wealth === undefined) household.wealth = 0;
         if (household.powerScore === undefined) household.powerScore = 0;
         if (household.foundedYear === undefined) household.foundedYear = _getCurrentYear();
         if (household.status === undefined) household.status = 'active';
         if (household.currentNameSince === undefined) household.currentNameSince = household.foundedYear;
-        
-        // Ensure current name is in history
+
         var hasCurrentName = household.nameHistory.some(function(h) {
             return h.newName === household.name && h.isCurrent !== false;
         });
@@ -425,8 +327,7 @@
                 reason: 'Household founded'
             });
         }
-        
-        // Ensure only one current name in history
+
         var currentCount = 0;
         for (var i = 0; i < household.nameHistory.length; i++) {
             if (household.nameHistory[i].isCurrent) {
@@ -436,8 +337,7 @@
                 }
             }
         }
-        
-        // Ensure at least one name in history
+
         if (household.nameHistory.length === 0 && household.name) {
             household.nameHistory.push({
                 oldName: null,
@@ -450,25 +350,17 @@
     }
 
     // =========================================================================
-    // 7. PUBLIC API - DATA ACCESS
+    // 6. PUBLIC API - DATA ACCESS
     // =========================================================================
 
-    /**
-     * Gets a snapshot of the current state
-     * @param {Object} options - Options
-     * @param {boolean} options.includeUI - Include UI state (default: false)
-     * @returns {Object} State snapshot
-     */
     function getState(options) {
         options = options || {};
         var includeUI = options.includeUI !== undefined ? options.includeUI : false;
-        
         var snapshot = {
             households: _state.households.slice(),
             version: _state.version,
             timestamp: Date.now()
         };
-        
         if (includeUI) {
             snapshot.ui = {
                 selectedHouseholdId: _state.ui.selectedHouseholdId,
@@ -478,98 +370,60 @@
                 expandedHouseholds: { ..._state.ui.expandedHouseholds }
             };
         }
-        
         return snapshot;
     }
 
-    /**
-     * Gets a single household by ID
-     * @param {string} householdId - Household ID
-     * @returns {Object|null} Household or null
-     */
     function getHousehold(householdId) {
         if (!householdId) return null;
         _ensureCaches();
         return _state.cache.householdMap.get(householdId) || null;
     }
 
-    /**
-     * Gets all households
-     * @param {Object} options - Options
-     * @param {boolean} options.includeDeprecated - Include deprecated households (default: false)
-     * @returns {Array} Array of households
-     */
     function getAllHouseholds(options) {
         options = options || {};
         var includeDeprecated = options.includeDeprecated || false;
-        
         if (includeDeprecated) {
             return _state.households.slice();
         }
-        
         return _state.households.filter(function(h) {
             return h.status !== 'deprecated';
         });
     }
 
-    /**
-     * Gets the household a character belongs to
-     * @param {string} characterId - Character ID
-     * @returns {Object|null} Household or null
-     */
     function getCharacterHousehold(characterId) {
         if (!characterId) return null;
         _ensureCaches();
         return _state.cache.characterHouseholdMap.get(characterId) || null;
     }
 
-    /**
-     * Gets households by location
-     * @param {string} locationId - Location ID
-     * @param {Object} options - Options
-     * @returns {Array} Array of households
-     */
     function getHouseholdsByLocation(locationId, options) {
         options = options || {};
         var includeDeprecated = options.includeDeprecated || false;
-        
         var households = getAllHouseholds({ includeDeprecated: includeDeprecated });
         return households.filter(function(h) {
             return h.locationId === locationId;
         });
     }
 
-    /**
-     * Gets households by status
-     * @param {string} status - Status ('active', 'vacant', 'abandoned', 'declining', 'deprecated')
-     * @param {Object} options - Options
-     * @returns {Array} Array of households
-     */
     function getHouseholdsByStatus(status, options) {
         options = options || {};
         var includeDeprecated = options.includeDeprecated || false;
-        
         var households = getAllHouseholds({ includeDeprecated: includeDeprecated });
         return households.filter(function(h) {
             return h.status === status;
         });
     }
 
-    /**
-     * Gets household members with full character data
-     * @param {string} householdId - Household ID
-     * @returns {Array} Array of members with character data
-     */
     function getHouseholdMembersWithCharacters(householdId) {
         var household = getHousehold(householdId);
         if (!household || !household.members) return [];
-        
+
         var characters = _state.characters;
         var charMap = {};
         for (var i = 0; i < characters.length; i++) {
             charMap[characters[i].id] = characters[i];
         }
-        
+
         var result = [];
         for (var i = 0; i < household.members.length; i++) {
             var member = household.members[i];
@@ -592,29 +446,23 @@
         return result;
     }
 
-    /**
-     * Gets household head
-     * @param {string} householdId - Household ID
-     * @returns {Object|null} Character or null
-     */
     function getHouseholdHead(householdId) {
         var household = getHousehold(householdId);
         if (!household || !household.members) return null;
-        
+
         var characters = _state.characters;
         var charMap = {};
         for (var i = 0; i < characters.length; i++) {
             charMap[characters[i].id] = characters[i];
         }
-        
+
         for (var i = 0; i < household.members.length; i++) {
             if (household.members[i].isHead) {
                 var char = charMap[household.members[i].characterId];
                 if (char) return char;
             }
         }
-        
-        // Fallback: return oldest living member
+
         var livingMembers = [];
         for (var i = 0; i < household.members.length; i++) {
             var char = charMap[household.members[i].characterId];
@@ -622,23 +470,16 @@
                 livingMembers.push(char);
             }
         }
-        
         if (livingMembers.length === 0) return null;
-        
+
         livingMembers.sort(function(a, b) {
             var ageA = a.birthYear ? _getCurrentYear() - a.birthYear : 0;
             var ageB = b.birthYear ? _getCurrentYear() - b.birthYear : 0;
             return ageB - ageA;
         });
-        
         return livingMembers[0];
     }
 
-    /**
-     * Gets the status of a household
-     * @param {string} householdId - Household ID
-     * @returns {Object} Status object
-     */
     function getHouseholdStatus(householdId) {
         var household = getHousehold(householdId);
         if (!household) {
@@ -654,7 +495,7 @@
                 statusMessage: 'Household does not exist'
             };
         }
-        
+
         var livingCount = 0;
         var deceasedCount = 0;
         var characters = _state.characters;
@@ -662,7 +503,7 @@
         for (var i = 0; i < characters.length; i++) {
             charMap[characters[i].id] = characters[i];
         }
-        
+
         if (household.members) {
             for (var i = 0; i < household.members.length; i++) {
                 var char = charMap[household.members[i].characterId];
@@ -677,16 +518,16 @@
                 }
             }
         }
-        
+
         var totalMembers = household.members ? household.members.length : 0;
         var isEmpty = livingCount === 0;
         var isVacant = totalMembers === 0;
-        
+
         var status = 'active';
         var statusIcon = '';
         var statusMessage = 'Occupied and active';
         var statusColor = '#4a9e6a';
-        
+
         if (isVacant) {
             status = 'vacant';
             statusIcon = '⌇';
@@ -703,8 +544,7 @@
             statusMessage = 'Declining - few living members';
             statusColor = '#c8a844';
         }
-        
-        // Override with stored status if different
+
         if (household.status && household.status !== 'active') {
             status = household.status;
             if (status === 'abandoned') {
@@ -721,7 +561,7 @@
                 statusColor = '#6a6a6a';
             }
         }
-        
+
         return {
             exists: true,
             isEmpty: isEmpty,
@@ -738,13 +578,9 @@
     }
 
     // =========================================================================
-    // 8. PUBLIC API - UI STATE
+    // 7. PUBLIC API - UI STATE
     // =========================================================================
 
-    /**
-     * Gets the current UI state
-     * @returns {Object} UI state
-     */
     function getUIState() {
         return {
             selectedHouseholdId: _state.ui.selectedHouseholdId,
@@ -755,22 +591,12 @@
         };
     }
 
-    /**
-     * Sets a UI state value
-     * @param {string} key - State key
-     * @param {*} value - New value
-     * @param {Object} options - Options
-     * @param {boolean} options.notify - Notify subscribers (default: true)
-     */
     function setUIState(key, value, options) {
         options = options || {};
         var notify = options.notify !== false;
-        
         var oldValue = _state.ui[key];
         if (oldValue === value) return;
-        
         _state.ui[key] = value;
-        
         if (notify) {
             _notifySubscribers('uiChange', {
                 key: key,
@@ -780,16 +606,9 @@
         }
     }
 
-    /**
-     * Updates multiple UI state values at once
-     * @param {Object} updates - Updates object
-     * @param {Object} options - Options
-     * @param {boolean} options.notify - Notify subscribers (default: true)
-     */
     function updateUIState(updates, options) {
         options = options || {};
         var notify = options.notify !== false;
-        
         var changed = false;
         for (var key in updates) {
             if (updates.hasOwnProperty(key)) {
@@ -800,7 +619,6 @@
                 }
             }
         }
-        
         if (changed && notify) {
             _notifySubscribers('uiChange', {
                 updates: updates,
@@ -810,43 +628,25 @@
     }
 
     // =========================================================================
-    // 9. PUBLIC API - HOUSEHOLD CRUD
+    // 8. PUBLIC API - HOUSEHOLD CRUD
     // =========================================================================
 
-    /**
-     * Creates a new household
-     * UPDATED: Removed vendettas and alliances from initialization
-     * @param {string} name - Household name
-     * @param {string} locationId - Location ID (optional)
-     * @param {Object} options - Options
-     * @param {number} options.foundedYear - Founded year (defaults to current)
-     * @param {number} options.reputation - Initial reputation (default: 50)
-     * @param {number} options.wealth - Initial wealth (default: 0)
-     * @param {string} options.notes - Notes
-     * @param {string} options.founderId - Founder character ID
-     * @param {Array} options.initialMembers - Array of member objects
-     * @param {boolean} options.isHistorical - Is this a historical household
-     * @returns {Object} Created household or null
-     */
     function createHousehold(name, locationId, options) {
         options = options || {};
-        
-        // Validate
         if (!name || name.trim() === '') {
             return null;
         }
-        
+
         var currentYear = _getCurrentYear();
         var trimmedName = name.trim();
-        
-        // Check for duplicate name
+
         var existing = _state.households.some(function(h) {
             return h.name && h.name.toLowerCase() === trimmedName.toLowerCase();
         });
         if (existing) {
             return null;
         }
-        
+
         var newHousehold = {
             id: _generateId('house'),
             name: trimmedName,
@@ -858,7 +658,6 @@
             wealth: options.wealth !== undefined ? options.wealth : 0,
             powerScore: 0,
             foundedYear: options.foundedYear !== undefined ? options.foundedYear : currentYear,
-            // REMOVED: vendettas and alliances
             status: 'active',
             nameHistory: [],
             currentNameSince: options.foundedYear !== undefined ? options.foundedYear : currentYear,
@@ -867,10 +666,23 @@
             updatedAt: Date.now(),
             notes: options.notes || '',
             previousName: null,
-            isHistorical: options.isHistorical || false
+            isHistorical: options.isHistorical || false,
+
+            // =====================================================================
+            // NEW: Crime-related fields for Household ↔ Crime integration
+            // =====================================================================
+            prestige: options.prestige !== undefined ? options.prestige : 50,
+            criminalCount: 0,
+            victimCount: 0,
+            executedCount: 0,
+            criminalMembers: [],
+            victimMembers: [],
+            crimeHistory: [],
+            vendettaCount: 0,
+            activeVendettaCount: 0
+            // =====================================================================
         };
-        
-        // Initialize with name history
+
         newHousehold.nameHistory.push({
             oldName: null,
             newName: trimmedName,
@@ -879,8 +691,7 @@
             reason: 'Household founded',
             changedBy: options.founderId || null
         });
-        
-        // Add founder if provided
+
         if (options.founderId) {
             var founder = _state.characters.find(function(c) { return c.id === options.founderId; });
             if (founder) {
@@ -896,8 +707,7 @@
                 });
             }
         }
-        
-        // Add initial members
+
         if (options.initialMembers && Array.isArray(options.initialMembers)) {
             for (var i = 0; i < options.initialMembers.length; i++) {
                 var member = options.initialMembers[i];
@@ -918,51 +728,42 @@
                 }
             }
         }
-        
-        // Set location name
+
         if (locationId) {
             var place = _state.places.find(function(p) { return p.id === locationId; });
             if (place) {
                 newHousehold.locationName = place.displayName;
             }
         }
-        
-        // Queue the update
+
         _queueUpdate('add', newHousehold);
-        
         return newHousehold;
     }
 
-    /**
-     * Updates an existing household
-     * @param {string} householdId - Household ID
-     * @param {Object} updates - Updates to apply
-     * @param {Object} options - Options
-     * @param {boolean} options.recordHistory - Record name changes in history (default: true)
-     * @param {number} options.changeYear - Year of change (default: current)
-     * @param {string} options.changeReason - Reason for change
-     * @param {string} options.changedBy - Who made the change
-     * @returns {Object|null} Updated household or null
-     */
     function updateHousehold(householdId, updates, options) {
         options = options || {};
-        
         var household = getHousehold(householdId);
         if (!household) return null;
-        
+
         var recordHistory = options.recordHistory !== false;
         var changeYear = options.changeYear || _getCurrentYear();
         var changeReason = options.changeReason || 'Edited';
         var changedBy = options.changedBy || null;
-        
-        // Create a copy to avoid mutating cached version
+
         var updated = { ...household };
         var changed = false;
         var nameChanged = false;
         var oldName = household.name;
-        
-        // Apply updates
-        var allowedFields = ['name', 'locationId', 'notes', 'status', 'foundedYear'];
+
+        // =====================================================================
+        // NEW: Allow updating crime-related fields
+        // =====================================================================
+        var allowedFields = ['name', 'locationId', 'notes', 'status', 'foundedYear', 
+            'prestige', 'criminalCount', 'victimCount', 'executedCount', 
+            'criminalMembers', 'victimMembers', 'crimeHistory', 'vendettaCount', 
+            'activeVendettaCount'];
+        // =====================================================================
+
         for (var i = 0; i < allowedFields.length; i++) {
             var field = allowedFields[i];
             if (updates[field] !== undefined && updates[field] !== null) {
@@ -984,20 +785,16 @@
                 }
             }
         }
-        
-        // Handle name history
+
         if (nameChanged && recordHistory) {
             if (!updated.nameHistory) {
                 updated.nameHistory = [];
             }
-            
-            // Mark previous current as not current
             for (var i = 0; i < updated.nameHistory.length; i++) {
                 if (updated.nameHistory[i].isCurrent) {
                     updated.nameHistory[i].isCurrent = false;
                 }
             }
-            
             updated.nameHistory.push({
                 oldName: oldName,
                 newName: updated.name,
@@ -1007,52 +804,35 @@
                 changedBy: changedBy,
                 timestamp: Date.now()
             });
-            
             updated.currentNameSince = changeYear;
             updated.previousName = oldName;
         } else if (nameChanged && !recordHistory) {
-            // Name change without history
             updated.previousName = oldName;
         }
-        
+
         updated.updatedAt = Date.now();
-        
+
         if (changed) {
             _queueUpdate('update', updated);
         }
-        
+
         return updated;
     }
 
-    /**
-     * Deletes a household
-     * @param {string} householdId - Household ID
-     * @param {Object} options - Options
-     * @param {boolean} options.force - Force deletion even if not empty (default: false)
-     * @param {string} options.reason - Reason for deletion
-     * @returns {boolean} True if deleted
-     */
     function deleteHousehold(householdId, options) {
         options = options || {};
         var force = options.force || false;
-        
         var household = getHousehold(householdId);
         if (!household) return false;
-        
-        // Check if household has members
+
         if (!force && household.members && household.members.length > 0) {
             return false;
         }
-        
-        // Remove from state
+
         _queueUpdate('delete', householdId);
-        
         return true;
     }
 
-    /**
-     * Refreshes the state from masterData
-     */
     function refresh() {
         _initialize();
         _rebuildCaches();
@@ -1061,9 +841,6 @@
         });
     }
 
-    /**
-     * Invalidates all caches
-     */
     function invalidateCache() {
         _invalidateCaches();
         _notifySubscribers('cacheInvalidated', {
@@ -1072,20 +849,12 @@
     }
 
     // =========================================================================
-    // 10. PUBLIC API - SUBSCRIPTIONS
+    // 9. PUBLIC API - SUBSCRIPTIONS
     // =========================================================================
 
-    /**
-     * Subscribes to state changes
-     * @param {Function} callback - Callback function
-     * @returns {Function} Unsubscribe function
-     */
     function subscribe(callback) {
         if (typeof callback !== 'function') return null;
-        
         _state.subscribers.push(callback);
-        
-        // Return unsubscribe function
         return function unsubscribe() {
             var index = _state.subscribers.indexOf(callback);
             if (index !== -1) {
@@ -1094,11 +863,6 @@
         };
     }
 
-    /**
-     * Unsubscribes a callback
-     * @param {Function} callback - Callback to remove
-     * @returns {boolean} True if removed
-     */
     function unsubscribe(callback) {
         var index = _state.subscribers.indexOf(callback);
         if (index === -1) return false;
@@ -1107,13 +871,11 @@
     }
 
     // =========================================================================
-    // 11. EXPORTS
+    // 10. EXPORTS
     // =========================================================================
 
-    // Initialize on load
     _initialize();
 
-    // Expose public API
     window.HouseholdState = {
         // Data access
         getState: getState,
@@ -1125,27 +887,26 @@
         getHouseholdMembersWithCharacters: getHouseholdMembersWithCharacters,
         getHouseholdHead: getHouseholdHead,
         getHouseholdStatus: getHouseholdStatus,
-        
+
         // UI State
         getUIState: getUIState,
         setUIState: setUIState,
         updateUIState: updateUIState,
-        
+
         // CRUD
         createHousehold: createHousehold,
         updateHousehold: updateHousehold,
         deleteHousehold: deleteHousehold,
-        
+
         // Maintenance
         refresh: refresh,
         invalidateCache: invalidateCache,
-        
+
         // Subscriptions
         subscribe: subscribe,
         unsubscribe: unsubscribe
     };
 
-    // ES Module exports
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
             getState: getState,

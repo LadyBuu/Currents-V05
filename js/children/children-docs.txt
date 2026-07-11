@@ -1,0 +1,892 @@
+# 📚 **CHILDREN SYSTEM - COMPLETE DOCUMENTATION**
+
+---
+
+## 📋 **TABLE OF CONTENTS**
+
+1. System Overview
+2. File Structure
+3. children-state.js - Single Source of Truth
+4. children-commands.js - Write Operations
+5. children-queries.js - Read Operations
+6. children-lifecycle.js - Business Logic
+7. adoption-service.js - Adoption Logic
+8. pregnancy-service.js - Pregnancy Logic
+9. surrogacy-service.js - Surrogacy Logic
+10. modals-birth.js - Birth UI Modals
+11. modals-adoption.js - Adoption UI Modals
+12. modals-surrogacy.js - Surrogacy UI Modals
+13. Dependency Map
+14. Recursion Guards
+15. Icon Policy
+16. Data Schema
+17. Legacy Aliases
+
+---
+
+## 1. SYSTEM OVERVIEW
+
+The Children System manages all aspects of child-related data in the Still Waters simulation:
+
+| Feature | Description |
+|---------|-------------|
+| **Birth** | Recording births, creating child characters, tracking pregnancy history |
+| **Adoption** | Legal adoption, guardianship, foster care placement |
+| **Surrogacy** | Traditional and gestational surrogacy, swap arrangements |
+| **Pregnancy** | Fertility calculations, pregnancy simulation, complications |
+| **Legitimization** | Declaring children legitimate heirs with inheritance rights |
+
+**KEY PRINCIPLES:**
+- Single Source of Truth (children-state.js)
+- Command-Query Separation (commands vs queries)
+- Separation of Concerns (state, commands, queries, lifecycle, UI)
+- Recursion Guards on all public functions
+- Change Notifications via subscriptions
+- No direct masterData access outside state
+- NO TRUST/LOYALTY systems
+
+---
+
+## 2. FILE STRUCTURE
+
+```
+js/core/children/
+├── children-state.js          # Single source of truth + cache + notifications
+├── children-commands.js       # All write operations (birth, adoption, surrogacy)
+├── children-queries.js        # All read operations (stats, history)
+├── children-lifecycle.js      # Business logic (fertility, pregnancy, inheritance)
+├── adoption-service.js        # Adoption logic (queries, validation, creation)
+├── pregnancy-service.js       # Pregnancy logic (fertility, simulation, history)
+├── surrogacy-service.js       # Surrogacy logic (arrangements, swaps, queries)
+│
+└── ui/
+    ├── modals-birth.js        # Birth UI modals
+    ├── modals-adoption.js     # Adoption UI modals
+    └── modals-surrogacy.js    # Surrogacy UI modals
+```
+
+---
+
+## 3. CHILDREN-STATE.JS - Single Source of Truth
+
+**PURPOSE:** Manages the central state for all child-related data.
+
+**DEPENDENCIES:**
+- storage.js (masterData)
+- accessors.js (getCharacters, getCharacterById)
+
+**DATA STRUCTURES:**
+
+```javascript
+_state = {
+    // Adoption records (childId -> array of adoption records)
+    adoptionRecords: new Map(),
+    
+    // Pregnancy records (historical)
+    pregnancyRecords: [],
+    
+    // Surrogacy records
+    surrogacyRecords: [],
+    
+    // Cache
+    cache: {
+        adoptedChildren: new Map(),      // parentId -> [childId]
+        adoptiveParents: new Map(),      // childId -> [parentId]
+        childrenByParent: new Map(),     // parentId -> [childId]
+        pregnanciesByMother: new Map(),  // motherId -> [pregnancy]
+        surrogaciesByParent: new Map()   // parentId -> [surrogacy]
+    },
+    
+    // Subscribers
+    subscribers: [],
+    _processingState: false,
+    _initialized: false,
+    lastUpdated: null
+}
+```
+
+**FUNCTIONS:**
+
+```javascript
+// ---- Adoption ----
+ChildrenState.getAdoptionRecords(childId)          // Array of adoption records
+ChildrenState.getAdoptiveParents(childId)          // Array of { character, record }
+ChildrenState.getAdoptedChildren(parentId)         // Array of child characters
+ChildrenState.isAdopted(childId)                   // boolean
+
+// ---- Pregnancy ----
+ChildrenState.getPregnancyRecords(motherId)        // Array of pregnancy records
+
+// ---- Surrogacy ----
+ChildrenState.getSurrogacyRecords()                // Array of surrogacy records
+ChildrenState.getSurrogacyRecordsForParent(parentId) // Array of surrogacy records
+
+// ---- Children ----
+ChildrenState.getChildren(parentId, includeAdopted) // { biological: [], adopted: [] }
+ChildrenState.getTotalChildren(parentId, includeAdopted) // number
+
+// ---- Subscriptions ----
+ChildrenState.subscribe(callback)                  // Returns unsubscribe function
+
+// ---- Cache ----
+ChildrenState.invalidateCache()                    // Rebuilds all caches
+
+// ---- Internal ----
+ChildrenState._addAdoptionRecord(childId, adoption)
+ChildrenState._removeAdoptionRecord(childId, parentId)
+ChildrenState._addPregnancyRecord(record)
+ChildrenState._addSurrogacyRecord(record)
+ChildrenState._updateSurrogacyRecord(index, updates)
+ChildrenState._loadData()
+ChildrenState._rebuildCaches()
+```
+
+---
+
+## 4. CHILDREN-COMMANDS.JS - Write Operations
+
+**PURPOSE:** All write operations for children (birth, adoption, surrogacy, legitimization).
+
+**DEPENDENCIES:**
+- children-state.js (ChildrenState)
+- character-commands.js (CharacterCommands)
+- family-logic.js (FamilyLogic)
+- accessors.js (getCharacterById, getCharacters)
+
+**FUNCTIONS:**
+
+```javascript
+// ---- Birth ----
+ChildrenCommands.recordBirth(mother, father, birthYear, options)
+// options: { gender, isStillborn, name, surname, notes, birthplaceId, autoAssignHousehold }
+// RETURNS: { success: boolean, child: Object, reason: string }
+
+// ---- Adoption ----
+ChildrenCommands.recordAdoption(parent, child, options)
+// options: { year, type: 'legal'|'guardianship'|'foster', notes, parentType, partner }
+// RETURNS: { success: boolean, child: Object, adoption: Object, reason: string }
+
+// ---- Remove Adoption ----
+ChildrenCommands.removeAdoption(parent, child, options)
+// options: { endYear, reason, keepHistory }
+// RETURNS: { success: boolean, reason: string }
+
+// ---- Legitimize Child ----
+ChildrenCommands.legitimizeChild(child, father, mother, options)
+// options: { year, changeSurname: 'none'|'father'|'mother'|'hyphenated', 
+//           inheritanceRights: 'full'|'limited'|'none', notes, autoAssignHousehold }
+// RETURNS: { success: boolean, child: Object, year: number, inheritanceRights: string }
+
+// ---- Surrogacy ----
+ChildrenCommands.recordSurrogacy(intendedParent, surrogate, options)
+// options: { childCount, birthYear, spermDonor, eggDonor, notes }
+// RETURNS: { success: boolean, children: Array, surrogacyRecord: Object }
+
+// ---- Update Surrogacy ----
+ChildrenCommands.updateSurrogacyRecord(recordId, updates)
+// updates: { status, actualBirthYear, childIds, notes }
+// RETURNS: updated record or null
+```
+
+**LEGACY ALIASES:**
+```javascript
+window.generateNewborn = ChildrenCommands.recordBirth
+window.createAdoption = ChildrenCommands.recordAdoption
+window.removeAdoption = ChildrenCommands.removeAdoption
+window.createSurrogacyArrangement = ChildrenCommands.recordSurrogacy
+```
+
+---
+
+## 5. CHILDREN-QUERIES.JS - Read Operations
+
+**PURPOSE:** All read-only queries for children data.
+
+**DEPENDENCIES:**
+- children-state.js (ChildrenState)
+- accessors.js (getCharacterById, getCharacters)
+- family-logic.js (FamilyLogic)
+
+**FUNCTIONS:**
+
+```javascript
+// ---- Adoption Queries ----
+ChildrenQueries.getAdoptionRecords(childId)              // Array of adoption records
+ChildrenQueries.getAdoptiveParents(childId)              // Array of { character, record }
+ChildrenQueries.getAdoptedChildren(parentId)             // Array of child characters
+ChildrenQueries.isAdopted(childId)                       // boolean
+ChildrenQueries.isAdoptiveParent(parentId, childId)      // boolean
+ChildrenQueries.getAdoptionType(parentId, childId)       // 'legal'|'guardianship'|'foster'|null
+ChildrenQueries.getAdoptionYear(parentId, childId)       // number|null
+
+// ---- Pregnancy Queries ----
+ChildrenQueries.getPregnancyRecords(motherId)            // Array of pregnancy records
+ChildrenQueries.getChildrenByMother(motherId, includeStillborn) // Array of children
+ChildrenQueries.getChildrenByFather(fatherId, includeStillborn) // Array of children
+ChildrenQueries.getChildrenByCouple(parentId1, parentId2, includeStillborn) // Array of children
+
+// ---- Surrogacy Queries ----
+ChildrenQueries.getSurrogacyRecords()                    // Array of surrogacy records
+ChildrenQueries.getSurrogacyRecordsForParent(parentId)   // Array of surrogacy records
+ChildrenQueries.getSurrogacyRecordsForSurrogate(surrogateId) // Array of surrogacy records
+ChildrenQueries.getSurrogacyChildrenForParent(parentId)  // Array of child characters
+ChildrenQueries.isSurrogacyChild(childId)                // boolean
+ChildrenQueries.getSurrogacyGeneticParents(childId)      // { geneticMother, geneticFather, birthMother }
+
+// ---- Statistics ----
+ChildrenQueries.getParentChildrenStatistics(parentId)    // { total, living, deceased, male, female, biological, adopted, surrogacy }
+ChildrenQueries.getAllChildrenOfParent(parentId, includeStillborn) // Array of all children
+```
+
+---
+
+## 6. CHILDREN-LIFECYCLE.JS - Business Logic
+
+**PURPOSE:** Business logic for children lifecycle (fertility, pregnancy, inheritance).
+
+**DEPENDENCIES:**
+- children-state.js (ChildrenState)
+- children-commands.js (ChildrenCommands)
+- children-queries.js (ChildrenQueries)
+- accessors.js (getCharacterById, getCharacters)
+- time.js (calculateAge, getCurrentYearSafe)
+- randomness.js (chance, random, randomInt, randomFloat)
+
+**CONSTANTS:**
+
+```javascript
+FERTILITY_CONFIG = {
+    MIN_AGE: 14,
+    MAX_AGE: 47,
+    BASE_CHANCE: 0.20,
+    MULTIPLE_BIRTH_CHANCE: 0.02,
+    TRIPLET_CHANCE: 0.002,
+    MISCARRIAGE_BASE_CHANCE: 0.05,
+    STILLBORN_BASE_CHANCE: 0.02,
+    CHILDBED_FEVER_BASE_CHANCE: 0.03,
+    DEFAULT_MIN_CHILD_SPACING: 2,
+    DEFAULT_MAX_CHILD_SPACING: 3
+}
+```
+
+**FUNCTIONS:**
+
+```javascript
+// ---- Fertility ----
+ChildrenLifecycle.getFertilityAgeModifier(character)     // number (0-1)
+ChildrenLifecycle.getConceptionChance(mother, father)    // number (0-1)
+ChildrenLifecycle.canConceive(mother, father)            // { canConceive: boolean, reason: string }
+
+// ---- Expected Children ----
+ChildrenLifecycle.calculateExpectedChildren(mother, father) // number
+ChildrenLifecycle.getExistingChildrenCount(mother, father)  // number
+ChildrenLifecycle.getExpectedRemainingChildren(mother, father) // number
+
+// ---- Birth Years ----
+ChildrenLifecycle.calculateBirthYears(mother, father, childCount) // Array of years
+
+// ---- Pregnancy Outcomes ----
+ChildrenLifecycle.rollPregnancyComplications(mother, pregnancyNumber) // boolean
+ChildrenLifecycle.rollMiscarriage(mother, currentAge)       // boolean
+ChildrenLifecycle.rollStillbirth(mother, currentAge, hasComplications) // boolean
+
+// ---- Child Spacing ----
+ChildrenLifecycle.calculateChildSpacing(existingBirthYears, minSpacing, maxSpacing) // number
+
+// ---- Batch Generation ----
+ChildrenLifecycle.generateChildrenForCouple(mother, father, count, baseYear, options) // Array of children
+
+// ---- Inheritance ----
+ChildrenLifecycle.getInheritanceOrder(parentId, options)   // Array of children
+ChildrenLifecycle.getPrimaryHeir(parentId, options)        // Object|null
+ChildrenLifecycle.canInherit(childId, parentId)            // boolean
+```
+
+---
+
+## 7. ADOPTION-SERVICE.JS - Adoption Logic
+
+**PURPOSE:** Pure adoption logic with NO UI.
+
+**DEPENDENCIES:**
+- children-state.js (ChildrenState)
+- children-commands.js (ChildrenCommands)
+- children-queries.js (ChildrenQueries)
+- accessors.js (getCharacterById, getCharacters)
+
+**CONSTANTS:**
+
+```javascript
+ADOPTION_TYPES = {
+    LEGAL: 'legal',
+    GUARDIANSHIP: 'guardianship',
+    FOSTER: 'foster'
+}
+
+ADOPTION_TYPE_NAMES = {
+    legal: 'Legal Adoption',
+    guardianship: 'Guardianship',
+    foster: 'Foster Placement'
+}
+```
+
+**FUNCTIONS:**
+
+```javascript
+// ---- Queries ----
+AdoptionService.getAdoptiveParents(childId)               // Array of { parent, record }
+AdoptionService.getAdoptedChildren(parentId)              // Array of { child, record }
+AdoptionService.hasAdoptiveParents(childId)               // boolean
+AdoptionService.hasAdoptedChildren(parentId)              // boolean
+AdoptionService.isAdoptiveParent(parentId, childId)       // boolean
+AdoptionService.getAdoptionType(parentId, childId)        // string|null
+AdoptionService.getAdoptionYear(parentId, childId)        // number|null
+AdoptionService.getAdoptionRecord(parentId, childId)      // Object|null
+
+// ---- Validation ----
+AdoptionService.validateAdoption(parent, child, options)  // { isValid: boolean, reasons: Array }
+
+// ---- Creation ----
+AdoptionService.createAdoption(parentId, childId, options) // { success, child, adoption }
+AdoptionService.createGuardianship(guardianId, childId, year, options) // { success, child }
+AdoptionService.createFosterPlacement(fosterId, childId, year, options) // { success, child }
+
+// ---- Removal ----
+AdoptionService.removeAdoption(parentId, childId, options) // { success }
+AdoptionService.removeAllAdoptiveParents(childId, options) // number removed
+
+// ---- Statistics ----
+AdoptionService.getAdoptionStats(characterId)            // { asParent, asChild, legalAdoptions, guardianships, fosterPlacements }
+```
+
+---
+
+## 8. PREGNANCY-SERVICE.JS - Pregnancy Logic
+
+**PURPOSE:** Pure pregnancy logic with NO UI.
+
+**DEPENDENCIES:**
+- children-state.js (ChildrenState)
+- children-commands.js (ChildrenCommands)
+- children-queries.js (ChildrenQueries)
+- children-lifecycle.js (ChildrenLifecycle)
+- accessors.js (getCharacterById, getCharacters)
+
+**CONSTANTS:**
+
+```javascript
+PREGNANCY_CONFIG = {
+    GESTATION_MONTHS: 9,
+    FERTILITY_BASE_CHANCE: 0.20,
+    FERTILITY_MAX_AGE: 47,
+    FERTILITY_MIN_AGE: 14,
+    MULTIPLE_BIRTH_CHANCE: 0.02,
+    TRIPLET_CHANCE: 0.002,
+    MISCARRIAGE_BASE_CHANCE: 0.05,
+    STILLBORN_BASE_CHANCE: 0.02,
+    CHILDBED_FEVER_BASE_CHANCE: 0.03,
+    DEFAULT_MIN_CHILD_SPACING: 2,
+    DEFAULT_MAX_CHILD_SPACING: 3
+}
+```
+
+**FUNCTIONS:**
+
+```javascript
+// ---- Fertility ----
+PregnancyService.getFertilityAgeModifier(character)      // number (0-1)
+PregnancyService.getConceptionChance(mother, father)     // number (0-1)
+PregnancyService.canConceive(mother, father)             // { canConceive, reason }
+
+// ---- Expected Children ----
+PregnancyService.calculateExpectedChildren(mother, father) // number
+PregnancyService.getExistingChildrenCount(mother, father)  // number
+PregnancyService.getExpectedRemainingChildren(mother, father) // number
+
+// ---- Birth Years ----
+PregnancyService.calculateBirthYears(mother, father, childCount) // Array of years
+
+// ---- Complications ----
+PregnancyService.rollPregnancyComplications(mother, pregnancyNumber) // boolean
+PregnancyService.rollMiscarriage(mother, currentAge)       // boolean
+PregnancyService.rollStillbirth(mother, currentAge, hasComplications) // boolean
+PregnancyService.rollMaternalDeath(mother, currentAge, hasComplications, isMultiple) // boolean
+
+// ---- Simulation ----
+PregnancyService.simulatePregnancyAttempt(mother, father, year, options) // Object
+PregnancyService.simulatePregnancyAndBirth(mother, father, year, options) // Object
+PregnancyService.simulateMultiplePregnancies(mother, father, startYear, endYear, options) // Array
+
+// ---- History ----
+PregnancyService.getPregnancyHistory(motherId)           // Array of records
+PregnancyService.getPregnancyCount(motherId)             // number
+PregnancyService.getChildbirthCount(motherId)            // number
+PregnancyService.getPregnancyStatistics(motherId)        // { pregnancies, miscarriages, births, children, stillbirths, multipleBirths, maternalDeaths, successRate }
+```
+
+---
+
+## 9. SURROGACY-SERVICE.JS - Surrogacy Logic
+
+**PURPOSE:** Pure surrogacy logic with NO UI.
+
+**DEPENDENCIES:**
+- children-state.js (ChildrenState)
+- children-commands.js (ChildrenCommands)
+- children-queries.js (ChildrenQueries)
+- accessors.js (getCharacterById, getCharacters)
+
+**CONSTANTS:**
+
+```javascript
+SURROGACY_TYPES = {
+    TRADITIONAL: 'traditional',   // Surrogate is also egg donor
+    GESTATIONAL: 'gestational'    // Surrogate carries, egg donor separate
+}
+
+SURROGACY_STATUS = {
+    ACTIVE: 'active',
+    COMPLETED: 'completed',
+    CANCELLED: 'cancelled'
+}
+```
+
+**FUNCTIONS:**
+
+```javascript
+// ---- Validation ----
+SurrogacyService.validateSurrogacy(intendedParent, surrogate, options) // { valid, errors }
+
+// ---- Creation ----
+SurrogacyService.createSurrogacyArrangement(intendedParent, surrogate, options) // { success, children, surrogacyRecord }
+SurrogacyService.createSwapArrangements(femaleCouple, maleCouple, options) // { success, arrangement1, arrangement2, child1, child2 }
+
+// ---- Queries ----
+SurrogacyService.getSurrogacyArrangements()                  // Array of records
+SurrogacyService.getSurrogacyArrangementsForCharacter(characterId) // Array of records
+SurrogacyService.getSurrogacyArrangementsBySurrogate(surrogateId) // Array of records
+SurrogacyService.getSurrogacyArrangementsAsIntendedParent(characterId) // Array of records
+SurrogacyService.getSurrogacyChildrenForParent(parentId)      // Array of children
+SurrogacyService.isSurrogacyChild(childId)                    // boolean
+SurrogacyService.getSurrogacyGeneticParents(childId)          // { geneticMother, geneticFather, birthMother }
+
+// ---- Updates ----
+SurrogacyService.updateSurrogacyArrangement(arrangementId, updates) // Updated record
+SurrogacyService.completeSurrogacyArrangement(arrangementId, birthYear, childIds) // Updated record
+SurrogacyService.cancelSurrogacyArrangement(arrangementId, reason) // Updated record
+```
+
+---
+
+## 10. MODALS-BIRTH.JS - Birth UI Modals
+
+**PURPOSE:** UI modals for recording births.
+
+**DEPENDENCIES:**
+- modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast)
+- modals-char-select.js (openCharacterSelector)
+- children-commands.js (ChildrenCommands)
+- children-queries.js (ChildrenQueries)
+- children-lifecycle.js (ChildrenLifecycle)
+- pregnancy-service.js (PregnancyService)
+
+**FUNCTIONS:**
+
+```javascript
+// ---- Record a new birth (active) ----
+openBirthModal(motherId, fatherId, onSuccess)
+// Opens modal with: Birth Year, Gender, Stillborn checkbox, Auto-assign household, Notes
+
+// ---- Random surprise birth ----
+openSurpriseBirthModal(mother, father, onSuccess)
+// Randomizes: 1-4 children, birth years, genders, stillbirth chance
+
+// ---- Add multiple children (active) ----
+openAddChildrenModal(mother, father, onSuccess)
+// Allows: Number of children (1-5), Birth year range, Auto-assign household
+
+// ---- Add existing children retroactively ----
+openAddChildForCoupleModal(motherId, fatherId, onSuccess)
+// For: Adding historical children, Multiple children spacing, Auto-assign household
+```
+
+---
+
+## 11. MODALS-ADOPTION.JS - Adoption UI Modals
+
+**PURPOSE:** UI modals for adoption management.
+
+**DEPENDENCIES:**
+- modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast)
+- modals-char-select.js (openCharacterSelector)
+- children-commands.js (ChildrenCommands)
+- children-queries.js (ChildrenQueries)
+- adoption-service.js (AdoptionService)
+
+**FUNCTIONS:**
+
+```javascript
+// ---- Set Birth Parents ----
+openSetBirthParentsModal(child, father, mother, onSuccess)
+// Sets biological parents with birth year and location
+
+// ---- Create Adoption/Guardianship ----
+openCreateAdoptionModal(child, guardian, partner, onSuccess)
+// Creates: Legal adoption, Guardianship, or Foster care
+// NO AGE LIMITS, includes household transfer
+
+// ---- Edit Adoption ----
+openEditAdoptionModal(child, parent, adoptionRecord, onSuccess)
+// Edits: Type, year, status, notes
+
+// ---- Remove Adoption ----
+openRemoveAdoptionModal(child, guardian, partner, onSuccess)
+// Removes with: Reason, end year, keep history option
+
+// ---- Adoption Search ----
+openAdoptionSearchModal(onSelect, options)
+// Finds adoptable children with filters: age, status, location, gender
+
+// ---- Legitimize Child ----
+openLegitimizationModal(child, father, mother, onSuccess)
+// Declares child legitimate with: Surname change, Inheritance rights, Household transfer
+```
+
+---
+
+## 12. MODALS-SURROGACY.JS - Surrogacy UI Modals
+
+**PURPOSE:** UI modals for surrogacy management.
+
+**DEPENDENCIES:**
+- modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast)
+- modals-char-select.js (openCharacterSelector)
+- children-commands.js (ChildrenCommands)
+- surrogacy-service.js (SurrogacyService)
+
+**FUNCTIONS:**
+
+```javascript
+// ---- Donor Selection ----
+openDonorSelectionModal(couple, onSuccess)
+// Selects sperm donor with filters: location, age, single status, search
+
+// ---- Surrogate Selection ----
+openSurrogateSelectionModal(couple, onSuccess)
+// Selects surrogate with filters: location, age, single status, search
+
+// ---- Intended Parent Selection ----
+openIntendedParentSelectModal(couple, donorOrSurrogate, type, onSuccess)
+// Selects which parent in a couple is the intended parent
+
+// ---- Complete Surrogacy ----
+openCompleteSurrogacyModal(couple, donor, surrogate, intendedParent, type, onSuccess)
+// Completes arrangement with: child count (1-3), birth year, notes
+
+// ---- Swap Confirmation ----
+openSwapConfirmationModal(femaleCouple, maleCouple, onSuccess)
+// Confirms swap arrangement between two couples
+
+// ---- Legacy Surrogacy Agreement ----
+openSurrogacyAgreementModal(intendedParent, intendedPartner, surrogate, onSuccess)
+// Legacy agreement modal (kept for backward compatibility)
+```
+
+---
+
+## 13. DEPENDENCY MAP
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    CORE DEPENDENCIES                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  modals-core.js ─────────────────────────────────────────────────────────┐ │
+│  ├── openModal()                                                         │ │
+│  ├── closeTopModal()                                                     │ │
+│  ├── _escapeHtml()                                                       │ │
+│  ├── _showToast()                                                        │ │
+│  ├── _getIcon()                                                          │ │
+│  └── _getCharacterById()                                                 │ │
+│                                                                             │
+│  modals-char-select.js ─────────────────────────────────────────────────┐ │
+│  └── openCharacterSelector()                                             │ │
+│                                                                             │
+│  accessors.js ──────────────────────────────────────────────────────────┐ │
+│  ├── getCharacterById()                                                  │ │
+│  ├── getCharacters()                                                     │ │
+│  ├── getPlaceById()                                                      │ │
+│  ├── getPlaces()                                                         │ │
+│  ├── getCurrentYear()                                                    │ │
+│  └── getLocationTypeById()                                               │ │
+│                                                                             │
+│  storage.js ────────────────────────────────────────────────────────────┐ │
+│  └── saveMasterData()                                                    │ │
+│                                                                             │
+│  time.js ───────────────────────────────────────────────────────────────┐ │
+│  ├── calculateAge()                                                      │ │
+│  └── getCurrentYearSafe()                                                │ │
+│                                                                             │
+│  constants.js ──────────────────────────────────────────────────────────┐ │
+│  ├── AGE_GROUPS                                                          │ │
+│  └── AGE_GROUPS_MAP                                                      │ │
+│                                                                             │
+│  icons.js ──────────────────────────────────────────────────────────────┐ │
+│  └── Icons                                                               │ │
+│                                                                             │
+│  randomness.js ─────────────────────────────────────────────────────────┐ │
+│  ├── chance()                                                            │ │
+│  ├── random()                                                            │ │
+│  ├── randomInt()                                                         │ │
+│  └── randomFloat()                                                       │ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    CHILDREN SYSTEM DEPENDENCIES                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  children-state.js ─────────────────────────────────────────────────────┐ │
+│  ├── storage.js                                                          │ │
+│  └── accessors.js                                                        │ │
+│                                                                             │
+│  children-commands.js ──────────────────────────────────────────────────┐ │
+│  ├── children-state.js                                                   │ │
+│  ├── character-commands.js                                               │ │
+│  ├── family-logic.js                                                     │ │
+│  └── accessors.js                                                        │ │
+│                                                                             │
+│  children-queries.js ───────────────────────────────────────────────────┐ │
+│  ├── children-state.js                                                   │ │
+│  ├── accessors.js                                                        │ │
+│  └── family-logic.js                                                     │ │
+│                                                                             │
+│  children-lifecycle.js ─────────────────────────────────────────────────┐ │
+│  ├── children-state.js                                                   │ │
+│  ├── children-commands.js                                                │ │
+│  ├── children-queries.js                                                 │ │
+│  ├── accessors.js                                                        │ │
+│  ├── time.js                                                             │ │
+│  └── randomness.js                                                       │ │
+│                                                                             │
+│  adoption-service.js ───────────────────────────────────────────────────┐ │
+│  ├── children-state.js                                                   │ │
+│  ├── children-commands.js                                                │ │
+│  ├── children-queries.js                                                 │ │
+│  └── accessors.js                                                        │ │
+│                                                                             │
+│  pregnancy-service.js ──────────────────────────────────────────────────┐ │
+│  ├── children-state.js                                                   │ │
+│  ├── children-commands.js                                                │ │
+│  ├── children-queries.js                                                 │ │
+│  ├── children-lifecycle.js                                               │ │
+│  ├── accessors.js                                                        │ │
+│  └── randomness.js                                                       │ │
+│                                                                             │
+│  surrogacy-service.js ──────────────────────────────────────────────────┐ │
+│  ├── children-state.js                                                   │ │
+│  ├── children-commands.js                                                │ │
+│  ├── children-queries.js                                                 │ │
+│  └── accessors.js                                                        │ │
+│                                                                             │
+│  modals-birth.js ──────────────────────────────────────────────────────┐ │
+│  ├── modals-core.js                                                      │ │
+│  ├── modals-char-select.js                                               │ │
+│  ├── children-commands.js                                                │ │
+│  ├── children-queries.js                                                 │ │
+│  ├── children-lifecycle.js                                               │ │
+│  └── pregnancy-service.js                                                │ │
+│                                                                             │
+│  modals-adoption.js ────────────────────────────────────────────────────┐ │
+│  ├── modals-core.js                                                      │ │
+│  ├── modals-char-select.js                                               │ │
+│  ├── children-commands.js                                                │ │
+│  ├── children-queries.js                                                 │ │
+│  └── adoption-service.js                                                 │ │
+│                                                                             │
+│  modals-surrogacy.js ───────────────────────────────────────────────────┐ │
+│  ├── modals-core.js                                                      │ │
+│  ├── modals-char-select.js                                               │ │
+│  ├── children-commands.js                                                │ │
+│  ├── children-queries.js                                                 │ │
+│  └── surrogacy-service.js                                                │ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 14. RECURSION GUARDS
+
+All modules implement recursion guards to prevent infinite loops:
+
+| Guard Name | Location | Purpose |
+|------------|----------|---------|
+| `_processingState` | children-state.js | Prevent state mutation re-entry |
+| `_processing` | children-commands.js | Prevent command re-entry |
+| `_processing` | children-queries.js | Prevent query re-entry |
+| `_processing` | children-lifecycle.js | Prevent lifecycle operation re-entry |
+| `_processing` | adoption-service.js | Prevent adoption operation re-entry |
+| `_processing` | pregnancy-service.js | Prevent pregnancy operation re-entry |
+| `_processing` | surrogacy-service.js | Prevent surrogacy operation re-entry |
+
+**Pattern:**
+```javascript
+function someFunction() {
+    if (_processing) {
+        return { success: false, reason: 'Already processing' };
+    }
+    _processing = true;
+    try {
+        // ... function logic ...
+    } finally {
+        _processing = false;
+    }
+}
+```
+
+---
+
+## 15. ICON POLICY
+
+**RULES:**
+1. **NO emojis** in code or UI
+2. **All icons** from icons.js via `_getIcon()`
+3. **NO icons** in confirm/cancel buttons (plain text only)
+
+**AVAILABLE ICONS FOR CHILDREN SYSTEM:**
+
+| Usage | Icon |
+|-------|------|
+| Child/Person | `PERSON` |
+| Household | `HOUSEHOLD` |
+| Location | `LOCATION` |
+| Warning | `WARNING` |
+| Success | `CHECK_SIMPLE` |
+| Edit | `EDIT` |
+| Delete | `X_HEAVY` |
+| Info | `CIRCLE_DOT` |
+| Gender Male | `MALE` |
+| Gender Female | `FEMALE` |
+| Gender Unknown | `GENDER_NEUTRAL` |
+| Crown (Legitimization) | `CROWN` |
+| Search | `SEARCH` |
+| Star (Surprise) | `STAR_4` |
+
+**Usage:**
+```javascript
+var infoIcon = _getIcon('CIRCLE_DOT');
+var personIcon = _getIcon('PERSON');
+```
+
+---
+
+## 16. DATA SCHEMA
+
+### Adoption Record Schema
+
+```javascript
+{
+    parentId: string,           // Adoptive parent ID
+    parentName: string,         // Adoptive parent name
+    year: number,               // Year of adoption
+    type: 'legal'|'guardianship'|'foster',  // Adoption type
+    notes: string,              // Notes about the adoption
+    status: 'active'|'ended'|'dissolved',   // Current status
+    timestamp: number,          // Creation timestamp
+    endedYear?: number,         // Year ended (if status is ended)
+    endedReason?: string        // Reason ended (if status is ended)
+}
+```
+
+### Pregnancy Record Schema
+
+```javascript
+{
+    motherId: string,           // Mother character ID
+    fatherId: string|null,      // Father character ID
+    childIds: Array<string>,    // Child character IDs
+    birthYear: number,          // Year of birth
+    gender: string,             // 'male', 'female', or 'mixed'
+    isMultiple: boolean,        // Multiple birth
+    fetusCount: number,         // Number of fetuses
+    hasComplications: boolean,  // Pregnancy complications
+    maternalDeath: boolean,     // Maternal death occurred
+    notes: string               // Notes about the pregnancy
+}
+```
+
+### Surrogacy Record Schema
+
+```javascript
+{
+    id: string,                 // Surrogacy record ID
+    intendedParentId: string,   // Intended parent ID
+    intendedPartnerId: string|null, // Intended partner ID
+    surrogateId: string,        // Surrogate character ID
+    spermDonorId: string|null,  // Sperm donor ID
+    eggDonorId: string|null,    // Egg donor ID
+    arrangementYear: number,    // Year arrangement made
+    expectedBirthYear: number,  // Expected birth year
+    actualBirthYear: number|null, // Actual birth year
+    childIds: Array<string>,    // Child character IDs
+    status: 'active'|'completed'|'cancelled', // Current status
+    type: 'traditional'|'gestational', // Surrogacy type
+    notes: string               // Notes about the arrangement
+}
+```
+
+### Child Surrogacy Info Schema
+
+```javascript
+// Added to child character object when born via surrogacy
+{
+    surrogateId: string,        // Surrogate character ID
+    intendedParentId: string,   // Intended parent ID
+    intendedPartnerId: string|null, // Intended partner ID
+    arrangementYear: number,    // Year arrangement made
+    birthYear: number,          // Birth year
+    type: 'traditional'|'gestational' // Surrogacy type
+}
+```
+
+---
+
+## 17. LEGACY ALIASES
+
+For backward compatibility, legacy aliases are provided:
+
+| Legacy Function | New Function |
+|-----------------|--------------|
+| `generateNewborn(mother, father, birthYear, options)` | `ChildrenCommands.recordBirth(mother, father, birthYear, options)` |
+| `createAdoption(parentId, childId, options)` | `ChildrenCommands.recordAdoption(parent, child, options)` |
+| `removeAdoption(parentId, childId, options)` | `ChildrenCommands.removeAdoption(parent, child, options)` |
+| `createSurrogacyArrangement(intendedParent, surrogate, options)` | `SurrogacyService.createSurrogacyArrangement(intendedParent, surrogate, options)` |
+| `createSwapArrangements(femaleCouple, maleCouple, options)` | `SurrogacyService.createSwapArrangements(femaleCouple, maleCouple, options)` |
+| `getSurrogacyArrangements()` | `SurrogacyService.getSurrogacyArrangements()` |
+| `isSurrogacyChild(childId)` | `ChildrenQueries.isSurrogacyChild(childId)` |
+| `getSurrogacyGeneticParents(childId)` | `ChildrenQueries.getSurrogacyGeneticParents(childId)` |
+| `getFertilityAgeModifier(character)` | `ChildrenLifecycle.getFertilityAgeModifier(character)` |
+| `canConceive(mother, father)` | `ChildrenLifecycle.canConceive(mother, father)` |
+| `generateChildrenForCouple(mother, father, count, baseYear, options)` | `ChildrenLifecycle.generateChildrenForCouple(...)` |
+
+---
+
+## 18. SUMMARY
+
+| File | Status | Purpose |
+|------|--------|---------|
+| `children-state.js` | ✅ COMPLETE | Single source of truth for children data |
+| `children-commands.js` | ✅ COMPLETE | All write operations (birth, adoption, surrogacy) |
+| `children-queries.js` | ✅ COMPLETE | All read operations (stats, history) |
+| `children-lifecycle.js` | ✅ COMPLETE | Business logic (fertility, pregnancy, inheritance) |
+| `adoption-service.js` | ✅ COMPLETE | Adoption logic (queries, validation, creation) |
+| `pregnancy-service.js` | ✅ COMPLETE | Pregnancy logic (fertility, simulation, history) |
+| `surrogacy-service.js` | ✅ COMPLETE | Surrogacy logic (arrangements, swaps, queries) |
+| `modals-birth.js` | ✅ COMPLETE | Birth UI modals |
+| `modals-adoption.js` | ✅ COMPLETE | Adoption UI modals |
+| `modals-surrogacy.js` | ✅ COMPLETE | Surrogacy UI modals |
+
+---
+
+**END OF CHILDREN SYSTEM DOCUMENTATION**

@@ -1,0 +1,1338 @@
+# LOCATION & MOVEMENT SYSTEM - COMPLETE DOCUMENTATION
+
+## TABLE OF CONTENTS
+1. LOCATION & MOVEMENT SYSTEM
+   1.1 location-state.js - Single Source of Truth
+   1.2 location-commands.js - Write Operations
+   1.3 location-queries.js - Read Operations
+   1.4 location-hierarchy.js - Hierarchy Business Logic
+   1.5 location-movement.js - Movement Business Logic
+   1.6 location-ui-list.js - UI List Rendering
+   1.7 modals-location.js - Location UI Modals
+   1.8 modals-moves.js - Move UI Modals
+
+2. DEPENDENCY MAP
+3. RECURSION GUARDS
+4. ICON POLICY
+5. DATA STRUCTURES
+
+---
+
+## 1. LOCATION & MOVEMENT SYSTEM
+
+### 1.1 location-state.js - Single Source of Truth
+
+**PURPOSE:** Manages the central state for all location and movement data with caching and change notifications.
+
+**DEPENDENCIES:**
+  - accessors.js (getPlaces, getPlaceById, getCharacters, getCharacterById, getLocationTypes, getLocationTypeById)
+  - storage.js (saveMasterData)
+
+**FUNCTIONS:**
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getPlace(placeId)                                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets a single place by ID with caching.                                    │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   placeId (string) - Place ID                                              │
+│                                                                             │
+│ RETURNS: Object|null - Place object or null                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getAllPlaces(options)                                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets all places with optional filtering.                                   │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   options.includeDeprecated (boolean) - Include deprecated (default: false)│
+│   options.typeId (string) - Filter by type ID                              │
+│   options.status (string) - Filter by status                               │
+│                                                                             │
+│ RETURNS: Array - Array of place objects                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getPlacesByParent(parentId, options)                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets places by parent ID.                                                  │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   parentId (string) - Parent place ID                                      │
+│   options.includeDeprecated (boolean) - Include deprecated                 │
+│                                                                             │
+│ RETURNS: Array - Array of place objects                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getPlacesByType(typeId, options)                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets places by location type ID.                                           │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   typeId (string) - Location type ID                                       │
+│   options.includeDeprecated (boolean) - Include deprecated                 │
+│                                                                             │
+│ RETURNS: Array - Array of place objects                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getLocationTypes()                                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets all location types.                                                   │
+│                                                                             │
+│ RETURNS: Array - Array of location type objects                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getLocationType(typeId)                                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets a location type by ID.                                                │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   typeId (string) - Location type ID                                       │
+│                                                                             │
+│ RETURNS: Object|null - Location type object or null                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getLocationTypePriority(typeId)                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets location type priority (1-5, lower = higher).                         │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   typeId (string) - Location type ID                                       │
+│                                                                             │
+│ RETURNS: number - Priority (default: 5)                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getLocationTypeName(typeId)                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets location type display name.                                           │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   typeId (string) - Location type ID                                       │
+│                                                                             │
+│ RETURNS: string - Display name or 'Unknown'                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getPlaceHierarchy(placeId)                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the full hierarchy path for a place (root to place).                  │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   placeId (string) - Place ID                                              │
+│                                                                             │
+│ RETURNS: Array - Array of place objects from root to target                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getPlaceChildren(placeId, recursive)                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets children of a place.                                                  │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   placeId (string) - Place ID                                              │
+│   recursive (boolean) - Include all descendants (default: false)           │
+│                                                                             │
+│ RETURNS: Array - Array of child place objects                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getAllSubLocationIds(locationId)                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets all sub-location IDs including the location itself.                   │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   locationId (string) - Location ID                                        │
+│                                                                             │
+│ RETURNS: Array - Array of location IDs                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getRootPlaces()                                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets all places with no parent.                                            │
+│                                                                             │
+│ RETURNS: Array - Array of root place objects                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getCountryId(placeId)                                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the country ID for a place (walks up hierarchy to priority 1).        │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   placeId (string) - Place ID                                              │
+│                                                                             │
+│ RETURNS: string|null - Country ID or null                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getLocationCountry(placeId)                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the country name for a place.                                         │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   placeId (string) - Place ID                                              │
+│                                                                             │
+│ RETURNS: string - Country name or 'Other Locations'                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getLocationDistrict(placeId)                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the district (priority 3) for a place.                                │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   placeId (string) - Place ID                                              │
+│                                                                             │
+│ RETURNS: string|null - District name or null                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getParentChain(placeId)                                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the parent chain for a place (excluding the place itself).            │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   placeId (string) - Place ID                                              │
+│                                                                             │
+│ RETURNS: Array - Array of parent place objects                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getLocationAtPriority(placeId, targetPriority)               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the location with a specific priority in the hierarchy.               │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   placeId (string) - Place ID                                              │
+│   targetPriority (number) - Target priority (1-5)                          │
+│                                                                             │
+│ RETURNS: Object|null - Place object or null                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.isAncestorOf(ancestorId, placeId)                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Checks if one place is an ancestor of another.                             │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   ancestorId (string) - Potential ancestor ID                              │
+│   placeId (string) - Place ID                                              │
+│                                                                             │
+│ RETURNS: boolean - True if ancestor                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.areInSameCountry(placeId1, placeId2)                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Checks if two places are in the same country.                              │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   placeId1 (string) - First place ID                                       │
+│   placeId2 (string) - Second place ID                                      │
+│                                                                             │
+│ RETURNS: boolean - True if same country                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.findLowestCommonAncestor(placeId1, placeId2)                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Finds the lowest common ancestor of two places.                            │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   placeId1 (string) - First place ID                                       │
+│   placeId2 (string) - Second place ID                                      │
+│                                                                             │
+│ RETURNS: Object|null - Common ancestor place or null                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getLocationHierarchyDisplay(placeId)                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets a formatted hierarchy display string.                                 │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   placeId (string) - Place ID                                              │
+│                                                                             │
+│ RETURNS: string - Formatted hierarchy (e.g., "Country > Region > Town")    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getPopulationCount(locationId, includeDeceased)              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets total population at a location (including sub-locations).             │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   locationId (string) - Location ID                                        │
+│   includeDeceased (boolean) - Include deceased characters                  │
+│                                                                             │
+│ RETURNS: number - Population count                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getOwnPopulation(locationId, includeDeceased)                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets direct population at a location (excluding sub-locations).            │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   locationId (string) - Location ID                                        │
+│   includeDeceased (boolean) - Include deceased characters                  │
+│                                                                             │
+│ RETURNS: number - Direct population count                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getMoveHistory(characterId)                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets move history for a character with enriched data.                      │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│                                                                             │
+│ RETURNS: Array - Array of { year, locationId, locationName, note,          │
+│           fromLocationId, fromLocationName, isBirthMove }                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getLastMove(characterId)                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the last (most recent) move for a character.                          │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│                                                                             │
+│ RETURNS: Object|null - Last move object or null                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getCurrentLocation(characterId)                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the current location for a character.                                 │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│                                                                             │
+│ RETURNS: { id: string, name: string } | null                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getCurrentLocationId(characterId)                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the current location ID for a character.                              │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│                                                                             │
+│ RETURNS: string|null - Location ID or null                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getCurrentLocationName(characterId)                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the current location name for a character.                            │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│                                                                             │
+│ RETURNS: string - Location name or 'Unknown'                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getLocationAtYear(characterId, year)                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the location for a character at a specific year.                      │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│   year (number) - Year                                                     │
+│                                                                             │
+│ RETURNS: string|null - Location name or null                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getCharacterMoves(characterId)                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets raw move data for a character.                                        │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│                                                                             │
+│ RETURNS: Array - Raw move objects                                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.getUIState()                                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the current UI state.                                                 │
+│                                                                             │
+│ RETURNS: { selectedLocationId, selectedLocationTypeId, viewMode,           │
+│           expandedLocations: Set, filters: { searchTerm, typeFilter,       │
+│           statusFilter } }                                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.setUIState(key, value, options)                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Sets a UI state value.                                                     │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   key (string) - State key                                                 │
+│   value (*) - New value                                                    │
+│   options.notify (boolean) - Notify subscribers (default: true)            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.updateUIState(updates, options)                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Updates multiple UI state values at once.                                  │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   updates (Object) - Updates object                                        │
+│   options.notify (boolean) - Notify subscribers (default: true)            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.invalidateCache()                                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Invalidates all caches (hierarchy, population, moves).                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.refreshFromMasterData()                                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Refreshes state from masterData and invalidates caches.                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationState.subscribe(callback)                                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Subscribes to state changes.                                               │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   callback (function) - Callback receiving { type, data } event object     │
+│                                                                             │
+│ RETURNS: function - Unsubscribe function                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+### 1.2 location-commands.js - Write Operations
+
+**PURPOSE:** All write operations for location and movement management.
+
+**DEPENDENCIES:**
+  - location-state.js (LocationState)
+  - accessors.js (getCharacterById, getPlaceById, getCurrentYear)
+  - eventLogger.js (logEvent)
+  - storage.js (saveMasterData)
+
+**FUNCTIONS:**
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationCommands.createPlace(data)                                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Creates a new place/location.                                              │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   data.displayName (string) - Place name                                   │
+│   data.typeId (string) - Location type ID                                  │
+│   data.parentId (string) - Parent place ID                                 │
+│   data.variableKey (string) - Internal reference key                       │
+│   data.status (string) - 'active', 'disputed', 'abandoned', 'ruined'       │
+│   data.isCapital (boolean) - Whether this is a capital                     │
+│   data.notes (string) - Additional notes                                   │
+│                                                                             │
+│ RETURNS: Object|null - Created place or null                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationCommands.updatePlace(placeId, updates)                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Updates an existing place.                                                 │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   placeId (string) - Place ID                                              │
+│   updates.displayName (string) - New name                                  │
+│   updates.typeId (string) - New location type ID                           │
+│   updates.parentId (string) - New parent place ID                          │
+│   updates.variableKey (string) - New variable key                          │
+│   updates.status (string) - New status                                     │
+│   updates.isCapital (boolean) - New capital status                         │
+│   updates.notes (string) - New notes                                       │
+│                                                                             │
+│ RETURNS: Object|null - Updated place or null                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationCommands.deletePlace(placeId, options)                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Deletes a place.                                                           │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   placeId (string) - Place ID                                              │
+│   options.cascade (boolean) - Delete children (default: false)             │
+│                                                                             │
+│ RETURNS: boolean - True if deleted                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationCommands.createLocationType(data)                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Creates a new location type.                                               │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   data.displayName (string) - Type name                                    │
+│   data.priority (number) - Priority (1-5)                                  │
+│   data.icon (string) - Icon symbol                                         │
+│   data.description (string) - Description                                  │
+│                                                                             │
+│ RETURNS: Object|null - Created type or null                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationCommands.updateLocationType(typeId, updates)                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Updates a location type.                                                   │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   typeId (string) - Location type ID                                       │
+│   updates.displayName (string) - New name                                  │
+│   updates.priority (number) - New priority                                 │
+│   updates.icon (string) - New icon                                         │
+│   updates.description (string) - New description                           │
+│                                                                             │
+│ RETURNS: Object|null - Updated type or null                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationCommands.deleteLocationType(typeId)                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Deletes a location type.                                                   │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   typeId (string) - Location type ID                                       │
+│                                                                             │
+│ RETURNS: boolean - True if deleted                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationCommands.recordMove(characterId, locationId, options)              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Records a character move.                                                  │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│   locationId (string) - Destination location ID                            │
+│   options.year (number) - Year of move (default: current)                  │
+│   options.note (string) - Note about the move                              │
+│   options.skipBirthRecord (boolean) - Skip birth record                    │
+│   options.fromLocationId (string) - Origin location ID                     │
+│   options.isBirthMove (boolean) - Is a birth move                          │
+│                                                                             │
+│ RETURNS: boolean - True if recorded                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationCommands.editMove(characterId, moveIndex, updates)                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Edits an existing move.                                                    │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│   moveIndex (number) - Index of move in history                            │
+│   updates.year (number) - New year                                         │
+│   updates.locationId (string) - New location ID                            │
+│   updates.note (string) - New note                                         │
+│                                                                             │
+│ RETURNS: boolean - True if updated                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationCommands.deleteMove(characterId, moveIndex)                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Deletes a move from history.                                               │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│   moveIndex (number) - Index of move to delete                             │
+│                                                                             │
+│ RETURNS: boolean - True if deleted                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationCommands.bulkRecordMoves(moves)                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Records multiple moves in bulk.                                            │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   moves (Array) - Array of { characterId, locationId, year, note,          │
+│                   skipBirthRecord, fromLocationId, isBirthMove }           │
+│                                                                             │
+│ RETURNS: { success: [], failed: [], total: number }                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationCommands.assignGovernment(placeId, governmentTypeId,               │
+│                                   governmentStyle)                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Assigns government to a place.                                             │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   placeId (string) - Place ID                                              │
+│   governmentTypeId (string) - Government type ID                           │
+│   governmentStyle (string) - Custom style name                             │
+│                                                                             │
+│ RETURNS: boolean - True if assigned                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationCommands.assignLeader(placeId, characterId, startYear, title)      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Assigns a leader to a place.                                               │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   placeId (string) - Place ID                                              │
+│   characterId (string) - Character ID                                      │
+│   startYear (number) - Year started (default: current)                     │
+│   title (string) - Leader title (default: 'Leader')                        │
+│                                                                             │
+│ RETURNS: Object|null - Assignment object or null                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationCommands.endLeaderTerm(placeId, characterId, endYear)              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Ends a leader's term.                                                      │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   placeId (string) - Place ID                                              │
+│   characterId (string) - Character ID                                      │
+│   endYear (number) - Year ended (default: current)                         │
+│                                                                             │
+│ RETURNS: boolean - True if ended                                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationCommands.fixUnknownLocations(options)                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Fixes characters with "Unknown" locations.                                 │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   options.saveAfter (boolean) - Save after fixing (default: true)          │
+│                                                                             │
+│ RETURNS: number - Number of characters fixed                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationCommands.validatePlace(data, isUpdate)                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Validates place data before creation/update.                               │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   data (Object) - Place data to validate                                   │
+│   isUpdate (boolean) - Whether this is an update                           │
+│                                                                             │
+│ RETURNS: { valid: boolean, reason: string }                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationCommands.validateLocationType(data, isUpdate)                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Validates location type data before creation/update.                       │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   data (Object) - Location type data to validate                           │
+│   isUpdate (boolean) - Whether this is an update                           │
+│                                                                             │
+│ RETURNS: { valid: boolean, reason: string }                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationCommands.validateMove(characterId, locationId, year)               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Validates if a move is possible.                                           │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│   locationId (string) - Destination location ID                            │
+│   year (number) - Year of move                                             │
+│                                                                             │
+│ RETURNS: { valid: boolean, reason: string }                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+### 1.3 location-queries.js - Read Operations
+
+**PURPOSE:** Complex read operations with analytics and statistics for location data.
+
+**DEPENDENCIES:**
+  - location-state.js (LocationState)
+  - accessors.js (getCharacters, getPlaces, getCurrentYear)
+
+**FUNCTIONS:**
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationQueries.searchLocations(options)                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Searches locations with various filters.                                   │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   options.search (string) - Search term                                    │
+│   options.typeId (string) - Type filter                                    │
+│   options.parentId (string) - Parent filter                                │
+│   options.status (string) - Status filter                                  │
+│   options.isCapital (boolean) - Capital filter                             │
+│   options.hasChildren (boolean) - Has children filter                      │
+│   options.sortBy (string) - Sort field ('name', 'type', 'createdAt')       │
+│   options.sortOrder (string) - 'asc' or 'desc'                             │
+│   options.limit (number) - Max results                                     │
+│   options.includeDeprecated (boolean) - Include deprecated                 │
+│                                                                             │
+│ RETURNS: Array - Array of matching place objects                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationQueries.getLocationStatistics(locationId)                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets comprehensive statistics for a location.                              │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   locationId (string) - Location ID                                        │
+│                                                                             │
+│ RETURNS: { id, name, type, typePriority, status, isCapital, parentId,      │
+│           parentName, depth, childCount, totalDescendants, ownPopulation,  │
+│           totalPopulation, variableKey, notes, createdAt, updatedAt }      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationQueries.getGlobalLocationStatistics()                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets global location statistics.                                           │
+│                                                                             │
+│ RETURNS: { totalLocations, byType: {}, byStatus: {}, capitals: 0,          │
+│           rootLocations: 0, withChildren: 0, totalPopulation: 0,           │
+│           typeCounts: {}, typeNames: {}, averagePopulation: 0 }            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationQueries.getPopulationTrends(locationId, years)                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets population trends over a number of years.                             │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   locationId (string) - Location ID                                        │
+│   years (number) - Number of years to analyze (default: 10)                │
+│                                                                             │
+│ RETURNS: { locationId, locationName, years, startYear, endYear,           │
+│           data: { year: { alive, born, died, netChange } },               │
+│           trends: { averagePopulation, totalBirths, totalDeaths,           │
+│           netGrowth, growthRate } }                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationQueries.compareLocations(locationId1, locationId2)                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Compares two locations side by side.                                       │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   locationId1 (string) - First location ID                                 │
+│   locationId2 (string) - Second location ID                                │
+│                                                                             │
+│ RETURNS: { location1: {...}, location2: {...}, comparison: {              │
+│           populationDifference, depthDifference, childCountDifference,     │
+│           larger, deeper, moreChildren } }                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationQueries.getLargestLocations(limit)                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets locations sorted by population.                                       │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   limit (number) - Max results (default: 10)                               │
+│                                                                             │
+│ RETURNS: Array - Array of { location, population, typeName, isCapital }    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationQueries.getMostDenseLocations(limit)                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets locations sorted by population density.                               │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   limit (number) - Max results (default: 10)                               │
+│                                                                             │
+│ RETURNS: Array - Array of { location, population, density, typeName,       │
+│           isCapital }                                                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationQueries.getMoveStatistics(characterId)                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets move statistics for a character.                                      │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│                                                                             │
+│ RETURNS: { characterId, characterName, totalMoves, uniqueLocations,        │
+│           firstMove: { year, locationName }, lastMove: { year,             │
+│           locationName }, averageYearsBetweenMoves, byLocation: {},        │
+│           byDecade: {} }                                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationQueries.getMigrationPatterns(locationId, years)                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets migration patterns for a location.                                    │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   locationId (string) - Location ID                                        │
+│   years (number) - Number of years to analyze (default: 10)                │
+│                                                                             │
+│ RETURNS: { locationId, locationName, years, startYear, endYear,           │
+│           totalInMigration, totalOutMigration, netMigration,              │
+│           byYear: { year: { in: 0, out: 0 } } }                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+### 1.4 location-hierarchy.js - Hierarchy Business Logic
+
+**PURPOSE:** Business logic for location hierarchy validation and relationship detection.
+
+**DEPENDENCIES:**
+  - location-state.js (LocationState)
+
+**FUNCTIONS:**
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationHierarchy.validateHierarchy(placeId, newParentId)                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Validates if a place can be moved to a new parent.                         │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   placeId (string) - Place ID                                              │
+│   newParentId (string) - Proposed parent ID                                │
+│                                                                             │
+│ RETURNS: { valid: boolean, reason: string }                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationHierarchy.getInheritanceChain(placeId)                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the inheritance chain for a place (with type info).                   │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   placeId (string) - Place ID                                              │
+│                                                                             │
+│ RETURNS: Array - Array of { id, name, type, typePriority, isCapital,       │
+│           status }                                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationHierarchy.isAncestorOf(ancestorId, placeId)                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Checks if one place is an ancestor of another.                             │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   ancestorId (string) - Potential ancestor ID                              │
+│   placeId (string) - Place ID                                              │
+│                                                                             │
+│ RETURNS: boolean - True if ancestor                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationHierarchy.areInSameCountry(placeId1, placeId2)                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Checks if two places are in the same country.                              │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   placeId1 (string) - First place ID                                       │
+│   placeId2 (string) - Second place ID                                      │
+│                                                                             │
+│ RETURNS: boolean - True if same country                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationHierarchy.findLowestCommonAncestor(placeId1, placeId2)             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Finds the lowest common ancestor of two places.                            │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   placeId1 (string) - First place ID                                       │
+│   placeId2 (string) - Second place ID                                      │
+│                                                                             │
+│ RETURNS: Object|null - Common ancestor place or null                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationHierarchy.getLocationDepth(placeId)                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the depth of a place in the hierarchy.                                │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   placeId (string) - Place ID                                              │
+│                                                                             │
+│ RETURNS: number - Depth (0 = root)                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationHierarchy.getTypeHierarchy(typePriority)                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets all places of a specific type priority.                               │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   typePriority (number) - Type priority (1-5)                              │
+│                                                                             │
+│ RETURNS: Array - Array of place objects                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+### 1.5 location-movement.js - Movement Business Logic
+
+**PURPOSE:** Business logic for character movement validation and travel rules.
+
+**DEPENDENCIES:**
+  - location-state.js (LocationState)
+  - location-hierarchy.js (LocationHierarchy)
+  - accessors.js (getCharacterById, getCurrentYear)
+
+**FUNCTIONS:**
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationMovement.canMoveTo(characterId, locationId, year)                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Validates if a character can move to a location.                           │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│   locationId (string) - Destination location ID                            │
+│   year (number) - Year of move                                             │
+│                                                                             │
+│ RETURNS: { valid: boolean, reason: string }                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationMovement.validateMoveSequence(characterId, moves)                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Validates a sequence of moves for a character.                             │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│   moves (Array) - Array of { year, locationId }                            │
+│                                                                             │
+│ RETURNS: { valid: boolean, errors: Array }                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationMovement.getTravelTime(fromLocationId, toLocationId)               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Estimates travel time between two locations.                               │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   fromLocationId (string) - Origin location ID                             │
+│   toLocationId (string) - Destination location ID                          │
+│                                                                             │
+│ RETURNS: number - Estimated days to travel                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationMovement.isLocationAccessible(characterId, locationId)             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Checks if a location is accessible to a character.                         │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│   locationId (string) - Location ID                                        │
+│                                                                             │
+│ RETURNS: boolean - True if accessible                                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationMovement.getTravelRestrictions(characterId)                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets travel restrictions for a character.                                  │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│                                                                             │
+│ RETURNS: Array - Array of restriction messages                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+### 1.6 location-ui-list.js - UI List Rendering
+
+**PURPOSE:** Renders location lists with filters, selection, and sorting.
+
+**DEPENDENCIES:**
+  - location-state.js (LocationState)
+  - location-queries.js (LocationQueries)
+  - modals-core.js (_escapeHtml, _getIcon, _showToast)
+
+**FUNCTIONS:**
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationUI.renderLocationList(containerId, options)                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Renders a list of locations with filters and selection.                    │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   containerId (string) - DOM element ID                                    │
+│   options.typeId (string) - Filter by type                                 │
+│   options.searchTerm (string) - Search term                                │
+│   options.onSelect (function) - Selection callback                         │
+│   options.selectedId (string) - Selected location ID                       │
+│   options.sortBy (string) - Sort field ('name', 'type', 'population')      │
+│   options.sortOrder (string) - 'asc' or 'desc'                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationUI.renderHierarchyList(containerId, locationId, options)           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Renders a hierarchy list for a location.                                   │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   containerId (string) - DOM element ID                                    │
+│   locationId (string) - Location ID                                        │
+│   options.onSelect (function) - Selection callback                         │
+│   options.selectedId (string) - Selected location ID                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LocationUI.renderMoveList(containerId, characterId, options)               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Renders a move history list for a character.                               │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   containerId (string) - DOM element ID                                    │
+│   characterId (string) - Character ID                                      │
+│   options.onSelect (function) - Selection callback                         │
+│   options.selectedId (string) - Selected move index                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+### 1.7 modals-location.js - Location UI Modals
+
+**PURPOSE:** UI modals for location management (CRUD, hierarchy view, location types).
+
+**DEPENDENCIES:**
+  - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
+  - location-state.js (LocationState)
+  - location-commands.js (LocationCommands)
+  - location-queries.js (LocationQueries)
+
+**EXPORTS:**
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openAddPlaceModal(parentId, onSuccess)                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to create a new location.                                      │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   parentId (string) - Parent location ID (optional)                        │
+│   onSuccess (function) - Callback with created location ID                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openEditPlaceModal(placeId, onSuccess)                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to edit a location.                                            │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   placeId (string) - Location ID                                           │
+│   onSuccess (function) - Callback on success                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openDeletePlaceModal(placeId, onSuccess)                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to delete a location with cascade option.                      │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   placeId (string) - Location ID                                           │
+│   onSuccess (function) - Callback on success                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openViewHierarchyModal(locationId, onSelect)                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to view location hierarchy.                                    │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   locationId (string) - Location ID                                        │
+│   onSelect (function) - Callback when location selected                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openAddLocationTypeModal(onSuccess)                                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to create a new location type.                                 │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   onSuccess (function) - Callback with created type ID                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openEditLocationTypeModal(typeId, onSuccess)                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to edit a location type.                                       │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   typeId (string) - Location type ID                                       │
+│   onSuccess (function) - Callback on success                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openDeleteLocationTypeModal(typeId, onSuccess)                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to delete a location type.                                     │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   typeId (string) - Location type ID                                       │
+│   onSuccess (function) - Callback on success                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+### 1.8 modals-moves.js - Move UI Modals
+
+**PURPOSE:** UI modals for move management (single, bulk, history).
+
+**DEPENDENCIES:**
+  - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
+  - location-state.js (LocationState)
+  - location-commands.js (LocationCommands)
+  - location-movement.js (LocationMovement)
+
+**EXPORTS:**
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openMoveCharacterModal(characterId, onSuccess)                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to move a single character.                                    │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│   onSuccess (function) - Callback on success                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openBulkMoveModal(fromPlaceId, onSuccess)                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to bulk move characters from a location.                       │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   fromPlaceId (string) - Source location ID                                │
+│   onSuccess (function) - Callback with results                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openMoveHistoryModal(characterId)                                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to view a character's move history.                            │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+## 2. DEPENDENCY MAP
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    CORE DEPENDENCIES                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  modals-core.js ─────────────────────────────────────────────────────────┐ │
+│  ├── openModal()                                                         │ │
+│  ├── closeTopModal()                                                     │ │
+│  ├── _escapeHtml()                                                       │ │
+│  ├── _showToast()                                                        │ │
+│  ├── _getIcon()                                                          │ │
+│  ├── _getCurrentYear()                                                   │ │
+│  ├── _getCharacterById()                                                 │ │
+│  ├── _getCharacters()                                                    │ │
+│  ├── _getPlaceById()                                                     │ │
+│  ├── _getPlaces()                                                        │ │
+│  ├── _getLocationTypeById()                                              │ │
+│  └── buildLocationDropdown()                                             │ │
+│                                                                             │
+│  accessors.js ──────────────────────────────────────────────────────────┐ │
+│  ├── getCharacterById()                                                  │ │
+│  ├── getCharacters()                                                     │ │
+│  ├── getPlaceById()                                                      │ │
+│  ├── getPlaces()                                                         │ │
+│  ├── getLocationTypes()                                                  │ │
+│  ├── getLocationTypeById()                                               │ │
+│  ├── getRanks()                                                          │ │
+│  └── getCurrentYear()                                                    │ │
+│                                                                             │
+│  storage.js ────────────────────────────────────────────────────────────┐ │
+│  └── saveMasterData()                                                    │ │
+│                                                                             │
+│  eventLogger.js ────────────────────────────────────────────────────────┐ │
+│  └── logEvent()                                                          │ │
+│                                                                             │
+│  icons.js ──────────────────────────────────────────────────────────────┐ │
+│  └── Icons                                                               │ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    LOCATION SYSTEM DEPENDENCIES                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  location-state.js ──────────────────────────────────────────────────────┐ │
+│  ├── accessors.js                                                        │ │
+│  └── storage.js                                                          │ │
+│                                                                             │
+│  location-commands.js ──────────────────────────────────────────────────┐ │
+│  ├── location-state.js                                                   │ │
+│  ├── accessors.js                                                        │ │
+│  ├── eventLogger.js                                                      │ │
+│  └── storage.js                                                          │ │
+│                                                                             │
+│  location-queries.js ───────────────────────────────────────────────────┐ │
+│  ├── location-state.js                                                   │ │
+│  └── accessors.js                                                        │ │
+│                                                                             │
+│  location-hierarchy.js ─────────────────────────────────────────────────┐ │
+│  └── location-state.js                                                   │ │
+│                                                                             │
+│  location-movement.js ──────────────────────────────────────────────────┐ │
+│  ├── location-state.js                                                   │ │
+│  ├── location-hierarchy.js                                               │ │
+│  └── accessors.js                                                        │ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    UI MODAL DEPENDENCIES                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  location-ui-list.js ───────────────────────────────────────────────────┐ │
+│  ├── location-state.js                                                   │ │
+│  ├── location-queries.js                                                 │ │
+│  └── modals-core.js                                                      │ │
+│                                                                             │
+│  modals-location.js ────────────────────────────────────────────────────┐ │
+│  ├── modals-core.js                                                      │ │
+│  ├── location-state.js                                                   │ │
+│  ├── location-commands.js                                                │ │
+│  └── location-queries.js                                                 │ │
+│                                                                             │
+│  modals-moves.js ───────────────────────────────────────────────────────┐ │
+│  ├── modals-core.js                                                      │ │
+│  ├── location-state.js                                                   │ │
+│  ├── location-commands.js                                                │ │
+│  └── location-movement.js                                                │ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+
+## 3. RECURSION GUARDS
+
+All modules implement recursion guards to prevent infinite loops:
+
+| GUARD NAME | LOCATION | PURPOSE |
+|------------|----------|---------|
+| `_processingCommand` | location-commands.js | Prevent command re-entry |
+| `_processingQuery` | location-queries.js | Prevent query re-entry |
+| `_processingHierarchy` | location-hierarchy.js | Prevent hierarchy re-entry |
+| `_processingMovement` | location-movement.js | Prevent movement re-entry |
+| `_rendering` | location-ui-list.js | Prevent rendering re-entry |
+| `_openingModal` | All modals files | Prevent modal re-entry |
+| `_initializingState` | location-state.js | Prevent state re-initialization |
+| `_notifyingSubscribers` | location-state.js | Prevent subscriber re-entry |
+
+
+## 4. ICON POLICY
+
+All icons must come from icons.js via the `_getIcon()` function:
+
+| RULE | DESCRIPTION |
+|------|-------------|
+| RULE 1 | NO emojis in code or UI |
+| RULE 2 | All icons from icons.js via `_getIcon()` |
+| RULE 3 | NO icons in confirm/cancel buttons (plain text only) |
+
+**AVAILABLE ICONS USED BY LOCATION SYSTEM:**
+
+| CATEGORY | ICONS |
+|----------|-------|
+| Basic Shapes | CIRCLE, CIRCLE_DOT |
+| UI Elements | LOCATION, HOME, PERSON, SEARCH |
+| Status | SUCCESS, WARNING, DANGER |
+
+
+## 5. DATA STRUCTURES
+
+### Place Object
+```javascript
+{
+    id: string,                    // Unique place ID
+    displayName: string,           // Display name
+    typeId: string,                // Location type ID
+    parentId: string,              // Parent place ID (null if root)
+    variableKey: string,           // Internal reference key
+    status: string,                // 'active', 'disputed', 'abandoned', 'ruined'
+    isCapital: boolean,            // Whether this is a capital
+    notes: string,                 // Additional notes
+    governmentTypeId: string,      // Government type ID
+    governmentStyle: string,       // Government style
+    leaderId: string,              // Current leader ID
+    leaderAssignments: [],         // Array of leader assignment objects
+    settlementData: Object,        // Settlement data
+    createdAt: number,             // Timestamp created
+    updatedAt: number              // Timestamp updated
+}
+```
+
+### Location Type Object
+```javascript
+{
+    id: string,                    // Unique type ID
+    displayName: string,           // Display name
+    priority: number,              // 1-5 (1 = highest)
+    icon: string,                  // Icon symbol
+    description: string            // Optional description
+}
+```
+
+### Move Object
+```javascript
+{
+    year: number,                  // Year of move
+    locationId: string,            // Destination location ID
+    locationName: string,          // Destination location name
+    note: string,                  // Optional note
+    fromLocationId: string,        // Origin location ID
+    fromLocationName: string,      // Origin location name
+    isBirthMove: boolean,          // Whether this is a birth record
+    timestamp: number              // When recorded
+}
+```
+
+### Leader Assignment Object
+```javascript
+{
+    id: string,                    // Unique assignment ID
+    characterId: string,           // Character ID
+    characterName: string,         // Character name
+    startYear: number,             // Year started
+    endYear: number,               // Year ended (null if active)
+    title: string,                 // Leader title
+    isActive: boolean,             // Whether currently active
+    notes: string,                 // Additional notes
+    timestamp: number              // When created
+}
+```
+
+---
+
+**END OF DOCUMENTATION**

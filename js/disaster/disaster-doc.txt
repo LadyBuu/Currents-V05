@@ -1,0 +1,539 @@
+# Disaster System Documentation
+
+## Overview
+
+The Disaster System is a modular, clean-architecture implementation for managing natural disasters, calamities, and their effects on the Still Waters world simulation. It provides complete CRUD operations, disaster generation with location-based modifiers, and integration with settlement, crime, and education systems.
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       DISASTER SYSTEM ARCHITECTURE                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                 DISASTER CONSTANTS (disaster-constants.js)           │   │
+│  │                                                                     │   │
+│  │  - DISASTER_TYPES: 12 disaster types with weights, severity ranges  │   │
+│  │  - MASS_DEATH_TYPES: Plague, Famine definitions                     │   │
+│  │  - LOCATION_KEYWORDS: Terrain keywords for location modifiers       │   │
+│  │  - DEFAULT_DISASTER: Default disaster structure                     │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    DISASTER STATE (disaster-state.js)               │   │
+│  │                                                                     │   │
+│  │  - Single source of truth for ALL disaster data                    │   │
+│  │  - Caches: byId, byLocation, byYear                                │   │
+│  │  - Change notifications (subscribe/unsubscribe)                     │   │
+│  │  - Integrates with masterData.data.disasters                       │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                 DISASTER QUERIES (disaster-queries.js)              │   │
+│  │                                                                     │   │
+│  │  - All read operations (no side effects)                           │   │
+│  │  - getDisaster, getAllDisasters, getDisastersByLocation            │   │
+│  │  - getDisasterStats, getDisasterTypeDistribution                   │   │
+│  │  - getLocationDisasterRisk, getDeadliestDisasters                  │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                DISASTER COMMANDS (disaster-commands.js)             │   │
+│  │                                                                     │   │
+│  │  - All write operations                                             │   │
+│  │  - generateDisaster, triggerPlague, triggerFamine                  │   │
+│  │  - applyDisasterEffects (settlement, crime, education)             │   │
+│  │  - simulateRandomDisaster                                           │   │
+│  │  - getDisasterLocationModifier                                      │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    UI LAYER                                         │   │
+│  │                                                                     │   │
+│  │  - modals-disaster.js: Create, Details, Stats modals               │   │
+│  │  - disaster-ui-stats.js: Stats panel, List, Chart, Risk indicator  │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## File Reference
+
+### 1. disaster-constants.js
+
+**Purpose:** Centralized constants for disaster types, mass death events, and location keywords.
+
+**Exports:**
+
+| Constant | Type | Description |
+|----------|------|-------------|
+| `DISASTER_TYPES` | Array | 12 disaster type definitions with weights and severity ranges |
+| `MASS_DEATH_TYPES` | Object | Plague and Famine definitions with mortality rates |
+| `LOCATION_KEYWORDS` | Object | Terrain keywords for location-based disaster modifiers |
+| `DEFAULT_DISASTER` | Object | Default disaster structure template |
+
+**DISASTER_TYPES Structure:**
+```javascript
+{
+    id: "earthquake",
+    name: "Earthquake",
+    icon: "⌇",
+    weight: 25,              // Base weight for random selection
+    severityRange: [5, 40],  // Min/Max severity
+    desc: "The ground shakes violently...",
+    locationModifiers: {     // Terrain-based modifiers
+        mountain: 1.5,
+        coastal: 0.8
+    }
+}
+```
+
+**Full Disaster Types List:**
+| ID | Name | Weight | Severity Range |
+|----|------|--------|----------------|
+| earthquake | Earthquake | 25 | 5-40 |
+| tsunami | Tsunami | 15 | 10-50 |
+| volcano | Volcanic Eruption | 10 | 15-60 |
+| fire | Forest Fire | 20 | 5-35 |
+| flood | Flood | 25 | 5-30 |
+| hurricane | Hurricane/Cyclone | 15 | 10-45 |
+| landslide | Landslide | 10 | 5-25 |
+| drought | Drought | 15 | 10-30 |
+| plague | Plague | 20 | 20-70 |
+| famine | Famine | 15 | 15-50 |
+| avalanche | Avalanche | 5 | 5-20 |
+| tornado | Tornado | 10 | 5-25 |
+
+---
+
+### 2. disaster-state.js
+
+**Purpose:** Single source of truth for ALL disaster data with caching and notifications.
+
+**Exports:**
+
+| Function | Description |
+|----------|-------------|
+| `DisasterState.getDisaster(id)` | Get disaster by ID |
+| `DisasterState.getAllDisasters()` | Get all disasters |
+| `DisasterState.getDisastersByLocation(locationId)` | Get disasters by location |
+| `DisasterState.getDisastersInYearRange(startYear, endYear)` | Get disasters by year range |
+| `DisasterState.getDisasterCount()` | Get total disaster count |
+| `DisasterState.getDisasterTypeCount(disasterId)` | Get count by disaster type |
+| `DisasterState.addDisaster(disasterData)` | Add a new disaster |
+| `DisasterState.updateDisaster(disasterId, updates)` | Update a disaster |
+| `DisasterState.deleteDisaster(disasterId)` | Delete a disaster |
+| `DisasterState.subscribe(callback)` | Subscribe to state changes |
+| `DisasterState.invalidateCache()` | Clear all caches |
+
+**Disaster Data Structure:**
+```javascript
+{
+    id: "disaster_1234567890_abc123",
+    year: 1250,
+    disasterType: "Earthquake",
+    disasterId: "earthquake",
+    locationId: "place_123",
+    locationName: "City Name",
+    severity: 35,                    // 0-100
+    deaths: 120,
+    population: 5000,
+    prosperityLoss: 8,
+    crimeIncrease: 0.035,
+    schoolsDestroyed: 2,
+    description: "The ground shakes violently...",
+    actualDeaths: 118,               // Actual deaths after character processing
+    metadata: {                      // Additional data
+        severityText: "major",
+        locationModifier: 1.2,
+        forced: false
+    },
+    createdAt: 1234567890
+}
+```
+
+---
+
+### 3. disaster-queries.js
+
+**Purpose:** All read operations for disaster data (no side effects).
+
+**Exports:**
+
+| Function | Description |
+|----------|-------------|
+| `DisasterQueries.getDisaster(id)` | Get disaster by ID |
+| `DisasterQueries.getAllDisasters()` | Get all disasters |
+| `DisasterQueries.getDisastersByLocation(locationId)` | Get disasters by location |
+| `DisasterQueries.getDisastersInYearRange(startYear, endYear)` | Get disasters by year range |
+| `DisasterQueries.getDisasterCount()` | Get total count |
+| `DisasterQueries.getDisasterTypeCount(disasterId)` | Get count by type |
+| `DisasterQueries.getDisasterStats(locationId)` | Get comprehensive disaster statistics |
+| `DisasterQueries.getDisasterTypeDistribution()` | Get distribution by type |
+| `DisasterQueries.getDisasterSeverityStats()` | Get severity statistics |
+| `DisasterQueries.getMostRecentDisaster(locationId)` | Get most recent disaster |
+| `DisasterQueries.getDeadliestDisasters(limit)` | Get deadliest disasters |
+| `DisasterQueries.getLocationDisasterRisk(locationId)` | Get disaster risk assessment |
+
+**getDisasterStats Return:**
+```javascript
+{
+    total: 5,
+    totalDeaths: 320,
+    totalProsperityLoss: 24,
+    totalSchoolsDestroyed: 3,
+    averageSeverity: 42,
+    byType: { "Earthquake": 2, "Flood": 1, "Plague": 2 },
+    byYear: { 1250: 1, 1251: 2, 1252: 2 },
+    deadliest: { /* disaster object */ },
+    mostRecent: { /* disaster object */ }
+}
+```
+
+**getLocationDisasterRisk Return:**
+```javascript
+{
+    score: 35,           // 0-100
+    level: 'moderate',   // 'low', 'moderate', 'high', 'critical'
+    history: 3,          // Number of past disasters
+    mostCommon: 'Flood',
+    deadliest: { /* disaster object */ },
+    totalDeaths: 45
+}
+```
+
+---
+
+### 4. disaster-commands.js
+
+**Purpose:** All write operations for disaster data.
+
+**Exports:**
+
+| Function | Description |
+|----------|-------------|
+| `DisasterCommands.generateDisaster(locationId, year, forcedType)` | Generate a disaster |
+| `DisasterCommands.triggerPlague(locationId, year, options)` | Trigger a plague |
+| `DisasterCommands.triggerFamine(locationId, year, options)` | Trigger a famine |
+| `DisasterCommands.triggerDisaster(locationId, disasterType, year, options)` | Trigger any disaster |
+| `DisasterCommands.applyDisasterEffects(locationId, disaster)` | Apply all effects |
+| `DisasterCommands.applyDisasterSettlementEffects(locationId, disaster)` | Apply settlement effects |
+| `DisasterCommands.applyDisasterCrimeEffect(locationId, disaster)` | Apply crime effects |
+| `DisasterCommands.applyDisasterEducationEffects(locationId, disaster)` | Apply education effects |
+| `DisasterCommands.simulateRandomDisaster(year, baseChance)` | Simulate random disaster |
+| `DisasterCommands.getDisasterLocationModifier(location, disasterType)` | Get location modifier |
+
+**Return Format:** All commands return `{ success: boolean, data: any, error: string }`
+
+**Usage Example:**
+```javascript
+// Trigger a plague
+var result = DisasterCommands.triggerPlague('place_123', 1250, {
+    applyEffects: true
+});
+
+if (result.success) {
+    console.log('Plague killed', result.data.deaths, 'people');
+    console.log('Prosperity lost:', result.data.prosperityLoss);
+}
+
+// Generate a random disaster
+var result = DisasterCommands.generateDisaster('place_123', 1250);
+
+// Simulate random world disaster
+var result = DisasterCommands.simulateRandomDisaster(1250, 0.05);
+```
+
+---
+
+### 5. modals-disaster.js
+
+**Purpose:** UI modal dialogs for disaster operations.
+
+**Exports:**
+
+| Function | Description |
+|----------|-------------|
+| `DisasterModals.openCreateDisasterModal(options)` | Open create disaster modal |
+| `DisasterModals.openDisasterDetailsModal(disasterId)` | Open disaster details modal |
+| `DisasterModals.openDisasterStatsModal(locationId)` | Open disaster statistics modal |
+
+**Usage Example:**
+```javascript
+// Open create disaster modal
+DisasterModals.openCreateDisasterModal({
+    title: 'Create Disaster',
+    onComplete: function(disaster) {
+        console.log('Disaster created:', disaster);
+    }
+});
+
+// Open disaster details
+DisasterModals.openDisasterDetailsModal('disaster_123');
+
+// Open disaster statistics
+DisasterModals.openDisasterStatsModal('place_123');
+```
+
+---
+
+### 6. disaster-ui-stats.js
+
+**Purpose:** UI rendering for disaster statistics and lists.
+
+**Exports:**
+
+| Function | Description |
+|----------|-------------|
+| `DisasterStatsUI.renderStatsPanel(containerId, locationId)` | Render statistics panel |
+| `DisasterStatsUI.renderDisasterList(containerId, disasters, options)` | Render disaster list |
+| `DisasterStatsUI.renderDisasterChart(containerId, data, type)` | Render disaster chart |
+| `DisasterStatsUI.renderRiskIndicator(containerId, locationId)` | Render risk indicator |
+| `DisasterStatsUI.refreshAll()` | Refresh all disaster UI components |
+
+**Usage Example:**
+```javascript
+// Render statistics panel
+DisasterStatsUI.renderStatsPanel('statsContainer', 'place_123');
+
+// Render disaster list
+var disasters = DisasterQueries.getDisastersByLocation('place_123');
+DisasterStatsUI.renderDisasterList('listContainer', disasters, {
+    showActions: true,
+    limit: 10
+});
+
+// Render risk indicator
+DisasterStatsUI.renderRiskIndicator('riskContainer', 'place_123');
+
+// Render disaster chart (by type)
+var distribution = DisasterQueries.getDisasterTypeDistribution();
+DisasterStatsUI.renderDisasterChart('chartContainer', distribution, 'type');
+```
+
+---
+
+## Dependency Requirements
+
+The Disaster System requires the following core modules (loaded in order):
+
+```
+1. constants.js (or disaster-constants.js can replace it for disaster types)
+2. ids.js
+3. time.js
+4. randomness.js
+5. accessors.js
+6. storage.js
+7. formatting.js
+8. modals-core.js
+9. locationDropdown.js
+10. eventLogger.js (if available)
+11. characterLifeCycle.js (if available)
+12. settlementSystem.js (if available)
+13. crimeSystem.js (if available)
+14. educationSystem.js (if available)
+```
+
+**Load Order for Disaster System:**
+```html
+<script src="js/core/disaster/disaster-constants.js"></script>
+<script src="js/core/disaster/disaster-state.js"></script>
+<script src="js/core/disaster/disaster-queries.js"></script>
+<script src="js/core/disaster/disaster-commands.js"></script>
+<script src="js/core/disaster/modals-disaster.js"></script>
+<script src="js/core/disaster/disaster-ui-stats.js"></script>
+```
+
+---
+
+## Integration with Existing Systems
+
+### Settlement System Integration
+
+```javascript
+// In disaster-commands.js
+if (typeof window.modifySettlementProsperity === 'function') {
+    window.modifySettlementProsperity(locationId, -prosperityLoss, disaster.disasterType);
+}
+```
+
+### Crime System Integration
+
+```javascript
+// In disaster-commands.js
+if (typeof window.modifySettlementCrimeRate === 'function') {
+    window.modifySettlementCrimeRate(locationId, crimeIncrease, disaster.disasterType + ' aftermath');
+}
+```
+
+### Education System Integration
+
+```javascript
+// In disaster-commands.js
+if (typeof window.getInstitutionsAtLocation === 'function' && 
+    typeof window.deleteEducationalInstitution === 'function') {
+    var institutions = window.getInstitutionsAtLocation(locationId);
+    // Filter schools and destroy them based on chance
+}
+```
+
+### Character System Integration
+
+```javascript
+// In disaster-commands.js
+if (typeof window.killCharacter === 'function') {
+    window.killCharacter(victim, disaster.year, disaster.disasterType, {
+        notes: 'Died in ' + disaster.disasterType + ' at ' + location.displayName
+    });
+}
+```
+
+### Event Logger Integration
+
+```javascript
+// In disaster-commands.js
+if (typeof window.logEvent === 'function') {
+    window.logEvent('disaster', disaster.disasterType, disaster.description, [], location.displayName);
+}
+```
+
+---
+
+## Disaster Severity Levels
+
+| Severity Range | Level | Description |
+|----------------|-------|-------------|
+| 1-25 | Minor | Small-scale, localized damage |
+| 26-50 | Moderate | Significant damage, some deaths |
+| 51-75 | Major | Widespread damage, many deaths |
+| 76-100 | Catastrophic | Complete destruction, massive casualties |
+
+---
+
+## Location Modifiers
+
+Disasters are more or less likely based on location terrain keywords:
+
+| Terrain | Affected Disasters | Modifier |
+|---------|-------------------|----------|
+| coastal | Tsunami, Hurricane, Flood | 1.5-2.0x |
+| mountain | Earthquake, Landslide, Avalanche | 1.3-2.5x |
+| volcanic | Volcano | 2.5x |
+| forest | Forest Fire | 2.0x |
+| river | Flood | 2.0x |
+| urban | Plague | 2.0x |
+| agricultural | Famine, Drought | 1.5-2.0x |
+| arid | Drought | 2.0x |
+| plains | Tornado | 2.0x |
+
+---
+
+## Example Workflows
+
+### 1. Generating a Random Disaster
+
+```javascript
+var result = DisasterCommands.generateDisaster('place_123', 1250);
+
+if (result.success) {
+    var disaster = result.data;
+    var disasterType = result.disasterType;
+    console.log('Generated:', disasterType.name);
+    console.log('Severity:', disaster.severity);
+    console.log('Estimated deaths:', disaster.deaths);
+}
+```
+
+### 2. Triggering a Specific Disaster with Effects
+
+```javascript
+var result = DisasterCommands.triggerPlague('place_123', 1250, {
+    applyEffects: true
+});
+
+if (result.success) {
+    console.log('Plague killed', result.data.deaths, 'people');
+    console.log('Prosperity lost:', result.data.prosperityLoss);
+    console.log('Schools destroyed:', result.data.schoolsDestroyed);
+}
+```
+
+### 3. Getting Disaster Statistics
+
+```javascript
+var stats = DisasterQueries.getDisasterStats('place_123');
+console.log('Total disasters:', stats.total);
+console.log('Total deaths:', stats.totalDeaths);
+console.log('Average severity:', stats.averageSeverity);
+
+var deadliest = stats.deadliest;
+if (deadliest) {
+    console.log('Deadliest:', deadliest.disasterType, '(', deadliest.deaths, 'deaths)');
+}
+```
+
+### 4. Checking Location Disaster Risk
+
+```javascript
+var risk = DisasterQueries.getLocationDisasterRisk('place_123');
+console.log('Risk level:', risk.level);
+console.log('Risk score:', risk.score);
+console.log('Most common disaster:', risk.mostCommon);
+```
+
+### 5. Simulating Random World Disasters
+
+```javascript
+// Annual simulation with 5% chance per location
+var result = DisasterCommands.simulateRandomDisaster(1250, 0.05);
+
+if (result.success && result.data) {
+    console.log('Disaster occurred at', result.data.disaster.locationName);
+    console.log('Type:', result.data.disaster.disasterType);
+    console.log('Deaths:', result.data.deaths);
+}
+```
+
+---
+
+## Error Handling
+
+All commands return a consistent result object:
+
+```javascript
+{
+    success: true/false,
+    data: { /* result data */ },  // Only if success
+    error: 'Error message'         // Only if failure
+}
+```
+
+**Common Errors:**
+- `'Location not found'` - Invalid location ID
+- `'Disaster type not found'` - Invalid disaster type ID
+- `'Already processing a command'` - Recursion guard triggered
+- `'Failed to save disaster'` - Storage error
+- `'No populated locations available'` - No places with population
+
+---
+
+## Summary
+
+The Disaster System provides a complete, modular solution for managing natural disasters and their effects in the Still Waters world simulation. Its clean architecture ensures:
+
+- **Separation of Concerns**: State, queries, commands, and UI are clearly separated
+- **Testability**: Pure functions with no side effects in queries
+- **Maintainability**: Clear file structure and responsibilities
+- **Integration**: Seamless connection with settlement, crime, education, and character systems
+- **Extensibility**: Easy to add new disaster types or effects
+
+The system supports both manual disaster triggering and random simulation, making it suitable for both player-driven events and automated world simulation.

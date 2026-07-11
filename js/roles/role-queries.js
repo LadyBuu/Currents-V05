@@ -11,6 +11,7 @@
  *   - role-state.js (RoleState)
  *   - role-constants.js (TEACHING_THRESHOLDS)
  *   - accessors.js (getCharacterById, getCharacters, getRoleById)
+ *   - apprenticeship-queries.js (getSkillLevel, getSkillLevelName)
  * 
  * =============================================================================
  */
@@ -19,45 +20,21 @@
     'use strict';
 
     // =========================================================================
-    // 1. RECURSION GUARDS
+    // 1. RECURSION GUARD
     // =========================================================================
 
     var _processingQuery = false;
 
     // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
+    // 2. DEPENDENCIES - Direct references to global functions
     // =========================================================================
 
-    function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(id);
-        }
-        return null;
-    }
+    // All functions are available globally from accessors.js
+    // No wrapper functions needed - use them directly!
 
-    function _getCharacters() {
-        if (typeof window.getCharacters === 'function') {
-            return window.getCharacters();
-        }
-        return [];
-    }
-
-    function _getRoleById(id) {
-        if (typeof window.getRoleById === 'function') {
-            return window.getRoleById(id);
-        }
-        return null;
-    }
-
-    function _getSkillLevel(characterId, roleId) {
-        if (typeof window.ApprenticeshipQueries !== 'undefined') {
-            return window.ApprenticeshipQueries.getSkillLevel(characterId, roleId);
-        }
-        if (typeof window.getSkillLevel === 'function') {
-            return window.getSkillLevel(characterId, roleId);
-        }
-        return 0;
-    }
+    // =========================================================================
+    // 3. HELPER FUNCTIONS
+    // =========================================================================
 
     function _getSkillLevelName(level) {
         if (typeof window.ApprenticeshipQueries !== 'undefined') {
@@ -66,6 +43,7 @@
         if (typeof window.getSkillLevelName === 'function') {
             return window.getSkillLevelName(level);
         }
+        // Fallback
         if (level >= 91) return 'Master';
         if (level >= 76) return 'Expert';
         if (level >= 51) return 'Journeyman';
@@ -84,8 +62,18 @@
         };
     }
 
+    function _getSkillLevel(characterId, roleId) {
+        if (typeof window.ApprenticeshipQueries !== 'undefined') {
+            return window.ApprenticeshipQueries.getSkillLevel(characterId, roleId);
+        }
+        if (typeof window.getSkillLevel === 'function') {
+            return window.getSkillLevel(characterId, roleId);
+        }
+        return 0;
+    }
+
     // =========================================================================
-    // 3. ROLE QUERIES
+    // 4. ROLE QUERIES
     // =========================================================================
 
     /**
@@ -154,7 +142,7 @@
             var role = RoleState.getRole(roleId);
             if (!role) return [];
 
-            var characters = _getCharacters();
+            var characters = window.getCharacters();
             var results = [];
             var thresholds = _getTeachingThresholds();
 
@@ -454,7 +442,7 @@
     }
 
     // =========================================================================
-    // 4. EXPORTS
+    // 5. EXPORTS
     // =========================================================================
 
     window.RoleQueries = {

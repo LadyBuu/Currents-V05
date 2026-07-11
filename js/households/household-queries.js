@@ -8,8 +8,10 @@
  * DEPENDS ON:
  *   - household-state.js (HouseholdState)
  *   - accessors.js (getCharacterById, getCharacters, getPlaceById, getCurrentYear)
+ *   - time.js (calculateAge)
  *   - constants.js (AGE_GROUPS)
  *   - icons.js (Icons)
+ *   - world.js (getLocationCountry)
  * 
  * EXPORTS:
  *   - HouseholdQueries.search()
@@ -44,78 +46,11 @@
     var _processingQuery = false;
 
     // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
+    // 1. DEPENDENCIES - Direct references to global functions
     // =========================================================================
 
-    function _getCurrentYear() {
-        if (typeof window.getCurrentYearSafe === 'function') {
-            return window.getCurrentYearSafe();
-        }
-        if (typeof window.getCurrentYear === 'function') {
-            return window.getCurrentYear();
-        }
-        return 1250;
-    }
-
-    function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(id);
-        }
-        return null;
-    }
-
-    function _getCharacters() {
-        if (typeof window.getCharacters === 'function') {
-            return window.getCharacters();
-        }
-        return window.masterData?.data?.characters || [];
-    }
-
-    function _getPlaceById(id) {
-        if (typeof window.getPlaceById === 'function') {
-            return window.getPlaceById(id);
-        }
-        return null;
-    }
-
-    function _getSpouses(characterId) {
-        if (typeof window.getSpouses === 'function') {
-            return window.getSpouses(characterId);
-        }
-        return [];
-    }
-
-    function _getChildren(characterId) {
-        if (typeof window.getChildren === 'function') {
-            return window.getChildren(characterId);
-        }
-        return [];
-    }
-
-    function _getLocationCountry(place) {
-        if (typeof window.getLocationCountry === 'function') {
-            return window.getLocationCountry(place);
-        }
-        return null;
-    }
-
-    function _calculateAge(birthYear, isDeceased, deathYear) {
-        if (typeof window.calculateAge === 'function') {
-            return window.calculateAge(birthYear, isDeceased, deathYear);
-        }
-        var currentYear = _getCurrentYear();
-        if (!birthYear) return 0;
-        if (isDeceased && deathYear) return Math.max(0, deathYear - birthYear);
-        return Math.max(0, currentYear - birthYear);
-    }
-
-    function _escapeHtml(str) {
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
+    // All functions are available globally from accessors.js, time.js, world.js
+    // No wrapper functions needed - use them directly!
 
     // =========================================================================
     // 2. ICON HELPERS - FROM icons.js
@@ -186,9 +121,9 @@
         if (_ageCache[characterId] !== undefined) {
             return _ageCache[characterId];
         }
-        var char = _getCharacterById(characterId);
+        var char = window.getCharacterById(characterId);
         if (!char) return 0;
-        var age = _calculateAge(char.birthYear, char.isDeceased, char.deathYear);
+        var age = window.calculateAge(char.birthYear, char.isDeceased, char.deathYear);
         _ageCache[characterId] = age;
         return age;
     }
@@ -249,7 +184,7 @@
     function _getMembersWithCharacters(household) {
         if (!household || !household.members) return [];
         
-        var characters = _getCharacters();
+        var characters = window.getCharacters();
         var charMap = {};
         for (var i = 0; i < characters.length; i++) {
             charMap[characters[i].id] = characters[i];
@@ -320,7 +255,7 @@
             
             var households = _state.getAllHouseholds({ includeDeprecated: includeDeprecated });
             var results = [];
-            var characters = _getCharacters();
+            var characters = window.getCharacters();
             var charMap = {};
             for (var i = 0; i < characters.length; i++) {
                 charMap[characters[i].id] = characters[i];
@@ -484,7 +419,7 @@
             filters = filters || {};
             options = options || {};
             var includeDeprecated = options.includeDeprecated || false;
-            var currentYear = _getCurrentYear();
+            var currentYear = window.getCurrentYear();
             
             // Basic search
             var households = search({
@@ -590,7 +525,7 @@
             var includeDeprecated = options.includeDeprecated || false;
             
             var searchLower = memberName.toLowerCase();
-            var allChars = _getCharacters();
+            var allChars = window.getCharacters();
             
             var matchingChars = [];
             for (var i = 0; i < allChars.length; i++) {
@@ -989,7 +924,7 @@
                 demographics.living++;
                 
                 // Age
-                var age = _calculateAge(char.birthYear, false, null);
+                var age = window.calculateAge(char.birthYear, false, null);
                 
                 if (age < 13) demographics.children++;
                 else if (age < 18) demographics.youth++;
@@ -1067,22 +1002,24 @@
                     continue;
                 }
                 
-                // Check marriages
+                // Check marriages - use window.getSpouses if available
                 var memberCharacters = [];
                 for (var id in memberIds) {
-                    var char = _getCharacterById(id);
+                    var char = window.getCharacterById(id);
                     if (char) memberCharacters.push(char);
                 }
                 
                 var otherMemberCharacters = [];
                 for (var id in otherMemberIds) {
-                    var char = _getCharacterById(id);
+                    var char = window.getCharacterById(id);
                     if (char) otherMemberCharacters.push(char);
                 }
                 
                 var marriageFound = false;
                 for (var j = 0; j < memberCharacters.length && !marriageFound; j++) {
-                    var spouses = _getSpouses(memberCharacters[j].id);
+                    var spouses = typeof window.getSpouses === 'function' 
+                        ? window.getSpouses(memberCharacters[j].id) 
+                        : [];
                     for (var k = 0; k < spouses.length && !marriageFound; k++) {
                         for (var l = 0; l < otherMemberCharacters.length; l++) {
                             if (spouses[k].id === otherMemberCharacters[l].id) {
@@ -1344,12 +1281,14 @@
             
             for (var i = 0; i < households.length; i++) {
                 var h = households[i];
-                var location = _getPlaceById(h.locationId);
+                var location = window.getPlaceById(h.locationId);
                 var region = 'Unknown';
                 
                 if (location) {
-                    var country = _getLocationCountry(location);
-                    region = country !== 'Other Locations' ? country : location.displayName;
+                    var country = typeof window.getLocationCountry === 'function'
+                        ? window.getLocationCountry(location)
+                        : null;
+                    region = country !== 'Other Locations' && country ? country : location.displayName;
                 }
                 
                 if (!byRegion[region]) byRegion[region] = [];
@@ -1391,7 +1330,7 @@
                 var result = [];
                 for (var i = 0; i < household.lineage.length; i++) {
                     var entry = household.lineage[i];
-                    var head = _getCharacterById(entry.headId);
+                    var head = window.getCharacterById(entry.headId);
                     if (head) {
                         result.push({
                             head: head,
@@ -1410,7 +1349,7 @@
             
             return [{
                 head: currentHead,
-                startYear: household.foundedYear || _getCurrentYear(),
+                startYear: household.foundedYear || window.getCurrentYear(),
                 endYear: null,
                 reason: 'Founder'
             }];
@@ -1438,7 +1377,7 @@
             var familyMembers = [];
             for (var i = 0; i < household.members.length; i++) {
                 if (household.members[i].type === 'family') {
-                    var char = _getCharacterById(household.members[i].characterId);
+                    var char = window.getCharacterById(household.members[i].characterId);
                     if (char) {
                         familyMembers.push({
                             character: char,
@@ -1455,15 +1394,15 @@
                 if (a.character.id === currentHeadId) return 1;
                 if (b.character.id === currentHeadId) return -1;
                 
-                var ageA = _calculateAge(a.character.birthYear, a.character.isDeceased, a.character.deathYear);
-                var ageB = _calculateAge(b.character.birthYear, b.character.isDeceased, b.character.deathYear);
+                var ageA = window.calculateAge(a.character.birthYear, a.character.isDeceased, a.character.deathYear);
+                var ageB = window.calculateAge(b.character.birthYear, b.character.isDeceased, b.character.deathYear);
                 return ageB - ageA;
             });
             
             var result = [];
             for (var i = 0; i < sorted.length; i++) {
                 var item = sorted[i];
-                var age = _calculateAge(item.character.birthYear, item.character.isDeceased, item.character.deathYear);
+                var age = window.calculateAge(item.character.birthYear, item.character.isDeceased, item.character.deathYear);
                 var isQualified = item.character.isLiterate === true || (item.character.professions && item.character.professions.length > 0);
                 result.push({
                     character: item.character,
@@ -1534,7 +1473,7 @@
             
             if (!h1 || !h2) return null;
             
-            var currentYear = _getCurrentYear();
+            var currentYear = window.getCurrentYear();
             var age1 = currentYear - (h1.foundedYear || currentYear);
             var age2 = currentYear - (h2.foundedYear || currentYear);
             

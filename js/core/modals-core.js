@@ -5,19 +5,137 @@
  * 
  * LOCATION: js/core/modals/modals-core.js
  * 
- * Core modal system - modal manager, dependency wrappers, simple dialogs.
- * Also contains unified character selector wrapper and location dropdown builder.
+ * Core modal system - modal manager, simple dialogs.
  * 
- * FIXED: _showToast now handles SVG icons correctly (innerHTML instead of textContent)
- * FIXED: All confirm buttons use simple text (no SVG leaks)
- * FIXED: Toast duration increased for better readability
+ * DEPENDENCIES (uses external single sources):
+ *   - formatting.js: escapeHtml, escapeHtmlPreserveSvg, containsSvg
+ *   - ui.js: showToast
+ *   - accessors.js: getCharacterById, getCharacters, getPlaces, getPlaceById
+ *   - time.js: getCurrentYearSafe, calculateAge
+ *   - icons.js: Icons
+ * 
+ * ICON POLICY: Minimal icons from icons.js only
  * 
  * =============================================================================
  */
 
 // =============================================================================
-// 1. ICON HELPERS (using icons.js)
+// 0. DEPENDENCY VERIFICATION
 // =============================================================================
+
+if (typeof window.escapeHtml !== 'function') {
+    throw new Error('modals-core.js: escapeHtml not loaded. Ensure formatting.js loads first.');
+}
+
+// =============================================================================
+// 1. DEPENDENCY WRAPPERS - ALIASES TO CANONICAL SOURCES
+// =============================================================================
+
+function _escapeHtml(str) {
+    return window.escapeHtml(str);
+}
+
+function _escapeHtmlPreserveSvg(str) {
+    if (typeof window.escapeHtmlPreserveSvg === 'function') {
+        return window.escapeHtmlPreserveSvg(str);
+    }
+    return window.escapeHtml(str);
+}
+
+function _containsSvg(str) {
+    if (typeof window.containsSvg === 'function') {
+        return window.containsSvg(str);
+    }
+    return str && str.includes('<svg') && str.includes('</svg>');
+}
+
+function _showToast(message, type) {
+    if (typeof window.showToast === 'function') {
+        window.showToast(message, type);
+    }
+}
+
+function _getCurrentYear() {
+    if (typeof window.getCurrentYearSafe === 'function') {
+        return window.getCurrentYearSafe();
+    }
+    if (typeof window.getCurrentYear === 'function') {
+        return window.getCurrentYear();
+    }
+    return 1250;
+}
+
+function _calculateAge(birthYear, isDeceased, deathYear) {
+    if (typeof window.calculateAge === 'function') {
+        return window.calculateAge(birthYear, isDeceased, deathYear);
+    }
+    var currentYear = _getCurrentYear();
+    if (!birthYear) return 0;
+    if (isDeceased && deathYear) return Math.max(0, deathYear - birthYear);
+    return Math.max(0, currentYear - birthYear);
+}
+
+function _getCharacterById(id) {
+    if (typeof window.getCharacterById === 'function') {
+        return window.getCharacterById(id);
+    }
+    return null;
+}
+
+function _getCharacters() {
+    if (typeof window.getCharacters === 'function') {
+        return window.getCharacters();
+    }
+    return [];
+}
+
+function _getPlaces() {
+    if (typeof window.getPlaces === 'function') {
+        return window.getPlaces();
+    }
+    return [];
+}
+
+function _getPlaceById(id) {
+    if (typeof window.getPlaceById === 'function') {
+        return window.getPlaceById(id);
+    }
+    return null;
+}
+
+function _getCurrentLocation(character) {
+    if (typeof window.getCurrentLocation === 'function') {
+        return window.getCurrentLocation(character);
+    }
+    return 'Unknown';
+}
+
+function _getActiveRankDisplay(character) {
+    if (typeof window.getActiveRankDisplay === 'function') {
+        return window.getActiveRankDisplay(character);
+    }
+    return null;
+}
+
+function _getLocationTypeById(id) {
+    if (typeof window.getLocationTypeById === 'function') {
+        return window.getLocationTypeById(id);
+    }
+    return null;
+}
+
+function _getLocationTypePriority(typeId) {
+    if (typeof window.getLocationTypePriority === 'function') {
+        return window.getLocationTypePriority(typeId);
+    }
+    return 5;
+}
+
+function _saveMasterData() {
+    if (typeof window.saveMasterData === 'function') {
+        window.saveMasterData();
+    }
+}
 
 function _getIcon(name) {
     if (window.Icons && window.Icons[name]) {
@@ -30,278 +148,24 @@ function _getIcon(name) {
 }
 
 // =============================================================================
-// 2. DEPENDENCY WRAPPERS (Safe fallbacks)
-// =============================================================================
-
-/**
- * Safe wrapper for escapeHtml - uses ui.js version if available
- * @param {string} str - String to escape
- * @returns {string} Escaped string
- */
-function _escapeHtml(str) {
-    if (typeof window.escapeHtml === 'function') {
-        return window.escapeHtml(str);
-    }
-    if (!str) return '';
-    return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
-
-/**
- * Safe wrapper for showToast - uses ui.js version if available
- * FIXED: Handles SVG icons properly, longer duration
- * @param {string} message - Toast message
- * @param {string} type - Toast type (success, error, info, warning)
- */
-function _showToast(message, type) {
-    if (typeof window.showToast === 'function') {
-        window.showToast(message, type);
-    } else if (typeof window.showToastMessage === 'function') {
-        window.showToastMessage(message, type);
-    } else {
-        _showToastFallback(message, type);
-    }
-}
-
-/**
- * Fallback toast implementation for when window.showToast is not available
- * Uses innerHTML to properly render SVG icons
- * FIXED: Longer duration (5 seconds)
- */
-function _showToastFallback(message, type) {
-    var toast = document.createElement('div');
-    toast.style.cssText = 
-        'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:10001;' +
-        'background:var(--bg3);border:1px solid ' + (type === 'error' ? '#c84444' : type === 'warning' ? '#c8a844' : 'var(--accent)') + ';' +
-        'border-radius:8px;padding:10px 20px;max-width:90%;' +
-        'box-shadow:0 4px 12px rgba(0,0,0,0.5);' +
-        'color:var(--text);font-size:0.8rem;';
-    
-    toast.innerHTML = message;
-    document.body.appendChild(toast);
-    
-    setTimeout(function() {
-        if (toast.parentNode) {
-            toast.style.opacity = '0';
-            toast.style.transition = 'opacity 0.3s';
-            setTimeout(function() {
-                if (toast.parentNode) toast.remove();
-            }, 300);
-        }
-    }, 5000);
-}
-
-/**
- * Safe wrapper for getCurrentYearSafe
- * @returns {number} Current year
- */
-function _getCurrentYear() {
-    if (typeof window.getCurrentYearSafe === 'function') {
-        return window.getCurrentYearSafe();
-    }
-    if (typeof window.getCurrentYear === 'function') {
-        return window.getCurrentYear();
-    }
-    return 1250;
-}
-
-/**
- * Safe wrapper for calculateAge
- * @param {number} birthYear - Birth year
- * @param {boolean} isDeceased - Whether character is deceased
- * @param {number} deathYear - Death year (if deceased)
- * @returns {number} Age in years
- */
-function _calculateAge(birthYear, isDeceased, deathYear) {
-    if (typeof window.calculateAge === 'function') {
-        return window.calculateAge(birthYear, isDeceased, deathYear);
-    }
-    var currentYear = _getCurrentYear();
-    if (!birthYear) return 0;
-    if (isDeceased && deathYear) return Math.max(0, deathYear - birthYear);
-    return Math.max(0, currentYear - birthYear);
-}
-
-/**
- * Safe wrapper for getCharacterById - uses accessors.js
- * @param {string} id - Character ID
- * @returns {Object|null} Character object or null
- */
-function _getCharacterById(id) {
-    if (typeof window.getCharacterById === 'function') {
-        return window.getCharacterById(id);
-    }
-    return null;
-}
-
-/**
- * Safe wrapper for getCharacters - uses accessors.js
- * @returns {Array} Array of character objects
- */
-function _getCharacters() {
-    if (typeof window.getCharacters === 'function') {
-        return window.getCharacters();
-    }
-    return [];
-}
-
-/**
- * Safe wrapper for getPlaces - uses accessors.js
- * @returns {Array} Array of place objects
- */
-function _getPlaces() {
-    if (typeof window.getPlaces === 'function') {
-        return window.getPlaces();
-    }
-    return [];
-}
-
-/**
- * Safe wrapper for getPlaceById - uses accessors.js
- * @param {string} id - Place ID
- * @returns {Object|null} Place object or null
- */
-function _getPlaceById(id) {
-    if (typeof window.getPlaceById === 'function') {
-        return window.getPlaceById(id);
-    }
-    return null;
-}
-
-/**
- * Safe wrapper for getCurrentLocation - uses accessors.js/world.js
- * @param {Object} character - Character object
- * @returns {string} Location name
- */
-function _getCurrentLocation(character) {
-    if (typeof window.getCurrentLocation === 'function') {
-        return window.getCurrentLocation(character);
-    }
-    return 'Unknown';
-}
-
-/**
- * Safe wrapper for getActiveRankDisplay - uses accessors.js
- * @param {Object} character - Character object
- * @returns {Object|null} Rank display object or null
- */
-function _getActiveRankDisplay(character) {
-    if (typeof window.getActiveRankDisplay === 'function') {
-        return window.getActiveRankDisplay(character);
-    }
-    return null;
-}
-
-/**
- * Safe wrapper for getLocationTypeById - uses accessors.js
- * @param {string} id - Location type ID
- * @returns {Object|null} Location type object or null
- */
-function _getLocationTypeById(id) {
-    if (typeof window.getLocationTypeById === 'function') {
-        return window.getLocationTypeById(id);
-    }
-    return null;
-}
-
-/**
- * Safe wrapper for getLocationTypePriority - uses accessors.js
- * @param {string} typeId - Location type ID
- * @returns {number} Priority or 5
- */
-function _getLocationTypePriority(typeId) {
-    if (typeof window.getLocationTypePriority === 'function') {
-        return window.getLocationTypePriority(typeId);
-    }
-    return 5;
-}
-
-/**
- * Safe wrapper for saveMasterData
- */
-function _saveMasterData() {
-    if (typeof window.saveMasterData === 'function') {
-        window.saveMasterData();
-    }
-}
-
-// =============================================================================
-// 3. SVG HANDLING HELPERS
-// =============================================================================
-
-/**
- * Checks if a string contains SVG markup
- * @param {string} str - String to check
- * @returns {boolean} True if string contains SVG
- */
-function _containsSvg(str) {
-    if (!str) return false;
-    return str.includes('<svg') && str.includes('</svg>');
-}
-
-/**
- * Safely escapes HTML except for SVG content
- * @param {string} str - String to escape
- * @returns {string} Escaped string with SVG preserved
- */
-function _escapeHtmlPreserveSvg(str) {
-    if (!str) return '';
-    
-    if (_containsSvg(str)) {
-        var parts = str.split(/(<svg[^>]*>.*?<\/svg>)/gi);
-        var result = '';
-        for (var i = 0; i < parts.length; i++) {
-            var part = parts[i];
-            if (_containsSvg(part)) {
-                result += part;
-            } else {
-                result += _escapeHtml(part);
-            }
-        }
-        return result;
-    }
-    
-    return _escapeHtml(str);
-}
-
-// =============================================================================
-// 4. MODAL MANAGER
+// 2. MODAL MANAGER
 // =============================================================================
 
 var _modalStack = [];
 var _currentModalId = 0;
 
-/**
- * Opens a modal dialog
- * @param {Object} options - Modal configuration
- * @param {string} options.title - Modal title
- * @param {string} options.content - HTML content for modal body
- * @param {Function} options.onConfirm - Callback when confirm button is clicked
- * @param {Function} options.onCancel - Callback when cancel button is clicked
- * @param {Function} options.onOpen - Callback when modal is opened (after DOM is ready)
- * @param {string} options.confirmText - Text for confirm button (default 'Confirm')
- * @param {string} options.cancelText - Text for cancel button (default 'Cancel')
- * @param {boolean} options.closeOnOverlay - Whether clicking overlay closes modal (default true)
- * @param {boolean} options.showCloseButton - Whether to show X close button (default true)
- * @param {string} options.size - Modal size: 'small', 'medium', 'large' (default 'medium')
- * @returns {HTMLElement} The created modal element
- */
 function openModal(options) {
-    var _options = options || {};
-    var title = _options.title || 'Modal';
-    var content = _options.content || '';
-    var onConfirm = _options.onConfirm || null;
-    var onCancel = _options.onCancel || null;
-    var onOpen = _options.onOpen || null;
-    var confirmText = _options.confirmText || 'Confirm';
-    var cancelText = _options.cancelText || 'Cancel';
-    var closeOnOverlay = _options.closeOnOverlay !== undefined ? _options.closeOnOverlay : true;
-    var showCloseButton = _options.showCloseButton !== undefined ? _options.showCloseButton : true;
-    var size = _options.size || 'medium';
+    options = options || {};
+    var title = options.title || 'Modal';
+    var content = options.content || '';
+    var onConfirm = options.onConfirm || null;
+    var onCancel = options.onCancel || null;
+    var onOpen = options.onOpen || null;
+    var confirmText = options.confirmText || 'Confirm';
+    var cancelText = options.cancelText || 'Cancel';
+    var closeOnOverlay = options.closeOnOverlay !== undefined ? options.closeOnOverlay : true;
+    var showCloseButton = options.showCloseButton !== undefined ? options.showCloseButton : true;
+    var size = options.size || 'medium';
     
     var modalId = 'modal_' + (++_currentModalId);
     
@@ -376,7 +240,7 @@ function openModal(options) {
     }
     
     var escapeHandler = function(e) {
-        if (e.key === 'Escape' && _modalStack[_modalStack.length - 1]?.id === modalId) {
+        if (e.key === 'Escape' && _modalStack[_modalStack.length - 1] && _modalStack[_modalStack.length - 1].id === modalId) {
             closeModal();
             document.removeEventListener('keydown', escapeHandler);
         }
@@ -386,31 +250,20 @@ function openModal(options) {
     return modal;
 }
 
-/**
- * Closes the topmost (most recently opened) modal
- */
 function closeTopModal() {
     var modal = _modalStack.pop();
     if (modal) modal.remove();
 }
 
-/**
- * Closes all open modals
- */
 function closeAllModals() {
     _modalStack.forEach(function(m) { m.remove(); });
     _modalStack = [];
 }
 
 // =============================================================================
-// 5. SIMPLE DIALOGS - FIXED: Simple text confirm buttons
+// 3. SIMPLE DIALOGS
 // =============================================================================
 
-/**
- * Simple alert dialog with OK button
- * @param {string} message - Alert message
- * @param {string} title - Dialog title (default 'Notice')
- */
 function alertDialog(message, title) {
     title = title || 'Notice';
     openModal({ 
@@ -421,12 +274,6 @@ function alertDialog(message, title) {
     });
 }
 
-/**
- * Confirmation dialog with Yes/No buttons
- * @param {string} message - Confirmation message
- * @param {string} title - Dialog title (default 'Confirm')
- * @param {Function} onConfirm - Callback when Yes is clicked
- */
 function confirmDialog(message, title, onConfirm) {
     title = title || 'Confirm';
     openModal({ 
@@ -438,11 +285,6 @@ function confirmDialog(message, title, onConfirm) {
     });
 }
 
-/**
- * Success dialog with green checkmark
- * @param {string} message - Success message
- * @param {string} title - Dialog title (default 'Success')
- */
 function successDialog(message, title) {
     title = title || 'Success';
     var checkIcon = _getIcon('CHECK_SIMPLE');
@@ -454,11 +296,6 @@ function successDialog(message, title) {
     });
 }
 
-/**
- * Error dialog with red X
- * @param {string} message - Error message
- * @param {string} title - Dialog title (default 'Error')
- */
 function errorDialog(message, title) {
     title = title || 'Error';
     var xIcon = _getIcon('X_HEAVY');
@@ -471,22 +308,9 @@ function errorDialog(message, title) {
 }
 
 // =============================================================================
-// 6. UNIFIED CHARACTER SELECTOR WRAPPER
+// 4. UNIFIED CHARACTER SELECTOR WRAPPER - FORWARDS TO modals-char-select.js
 // =============================================================================
 
-/**
- * Opens the unified character selector from modals-charSelect.js
- * This is the single entry point for character selection across all modals.
- * 
- * @param {Object} options
- * @param {string} options.title - Modal title
- * @param {string} options.targetId - Character ID to exclude or target
- * @param {Function} options.onSelect - Callback when character is selected
- * @param {Object} options.filters - Filter options (gender, status, location, etc.)
- * @param {string} options.preset - Preset name (partner, father, mother, child, etc.)
- * @param {Function} options.onCancel - Callback when cancelled
- * @returns {boolean} True if selector was opened
- */
 function openUnifiedCharacterSelector(options) {
     options = options || {};
     var title = options.title || 'Select Character';
@@ -496,28 +320,14 @@ function openUnifiedCharacterSelector(options) {
     var preset = options.preset || null;
     var onCancel = options.onCancel || null;
     
-    // Use the unified selector from modals-charSelect.js
     if (typeof window.openCharacterSelector === 'function') {
         window.openCharacterSelector({
             title: title,
             targetId: targetId,
             onSelect: onSelect,
             filters: filters,
-            preset: preset
-        });
-        return true;
-    }
-    
-    // Fallback to legacy selector (deprecated)
-    if (typeof window.openCharacterSelectModal === 'function') {
-        console.warn('Using deprecated openCharacterSelectModal. Please use openUnifiedCharacterSelector.');
-        window.openCharacterSelectModal({
-            title: title,
-            targetCharacterId: targetId,
-            onSelect: onSelect,
-            filterFn: filters.filterFn || null,
-            includeDeceased: filters.showDeceased || false,
-            excludeId: filters.excludeId || null
+            preset: preset,
+            onCancel: onCancel
         });
         return true;
     }
@@ -527,116 +337,53 @@ function openUnifiedCharacterSelector(options) {
 }
 
 // =============================================================================
-// 7. UNIFIED LOCATION DROPDOWN BUILDER
+// 5. UNIFIED LOCATION DROPDOWN BUILDER - FORWARDS TO locationDropdown.js
 // =============================================================================
 
-/**
- * Builds a hierarchical location dropdown using accessors.js
- * This is the single entry point for location dropdowns across all modals.
- * 
- * @param {string} selectedId - Currently selected location ID
- * @param {string} placeholderText - Optional placeholder text (default: '-- Select a location --')
- * @param {boolean} includeAll - Whether to include "All Locations" option (default: true)
- * @param {boolean} includeUnknown - Whether to include "Unknown Location" option (default: true)
- * @returns {string} HTML for select options
- */
 function buildLocationDropdown(selectedId, placeholderText, includeAll, includeUnknown) {
-    placeholderText = placeholderText || '-- Select a location --';
-    includeAll = includeAll !== undefined ? includeAll : true;
-    includeUnknown = includeUnknown !== undefined ? includeUnknown : true;
+    if (typeof window.buildHierarchicalLocationOptions === 'function' && 
+        typeof window.renderHierarchicalLocationOptionsHtml === 'function') {
+        var allPlaces = _getPlaces();
+        var options = window.buildHierarchicalLocationOptions(allPlaces);
+        return window.renderHierarchicalLocationOptionsHtml(options, selectedId);
+    }
     
     var places = _getPlaces();
     var html = '';
-    
     if (placeholderText) {
         html += '<option value="">' + _escapeHtml(placeholderText) + '</option>';
     }
     if (includeAll) {
-        html += '<option value="all">🌍 All Locations</option>';
+        html += '<option value="all"' + (selectedId === 'all' ? ' selected' : '') + '>All Locations</option>';
     }
-    
-    // Build hierarchy using parentId
-    var map = {};
-    var roots = [];
-    
     for (var i = 0; i < places.length; i++) {
-        map[places[i].id] = places[i];
-        if (!places[i].parentId) {
-            roots.push(places[i]);
-        }
+        var selected = (selectedId === places[i].id) ? 'selected' : '';
+        html += '<option value="' + places[i].id + '" ' + selected + '>' + _escapeHtml(places[i].displayName) + '</option>';
     }
-    
-    // Sort roots by type priority
-    roots.sort(function(a, b) {
-        var pa = _getLocationTypePriority(a.typeId);
-        var pb = _getLocationTypePriority(b.typeId);
-        return pa - pb;
-    });
-    
-    function renderChildren(parentId, level) {
-        var children = [];
-        for (var id in map) {
-            if (map[id].parentId === parentId) {
-                children.push(map[id]);
-            }
-        }
-        children.sort(function(a, b) {
-            var pa = _getLocationTypePriority(a.typeId);
-            var pb = _getLocationTypePriority(b.typeId);
-            return pa - pb;
-        });
-        
-        var indent = '&nbsp;&nbsp;&nbsp;&nbsp;'.repeat(level);
-        for (var i = 0; i < children.length; i++) {
-            var child = children[i];
-            var selected = (selectedId === child.id) ? 'selected' : '';
-            var type = _getLocationTypeById(child.typeId);
-            var icon = (type && type.icon) ? type.icon : '⌂';
-            var label = indent + icon + ' ' + _escapeHtml(child.displayName);
-            if (type && type.displayName) {
-                label += ' (' + _escapeHtml(type.displayName) + ')';
-            }
-            
-            html += '<option value="' + child.id + '" ' + selected + '>' + label + '</option>';
-            renderChildren(child.id, level + 1);
-        }
-    }
-    
-    for (var i = 0; i < roots.length; i++) {
-        renderChildren(roots[i].id, 0);
-    }
-    
-    // Unknown location option
     if (includeUnknown) {
-        html += '<option value="unknown" ' + (selectedId === 'unknown' ? 'selected' : '') + '>❓ Unknown Location</option>';
+        html += '<option value="unknown"' + (selectedId === 'unknown' ? ' selected' : '') + '>Unknown Location</option>';
     }
-    
     return html;
 }
 
-/**
- * Gets a location name from an ID
- * @param {string} locationId - Location ID
- * @returns {string} Location display name
- */
 function getLocationName(locationId) {
+    if (typeof window.getPlaceName === 'function') {
+        return window.getPlaceName(locationId);
+    }
     if (!locationId) return 'Unknown';
     if (locationId === 'all') return 'All Locations';
     if (locationId === 'unknown') return 'Unknown Location';
-    
     var place = _getPlaceById(locationId);
     if (place) return place.displayName;
     return 'Unknown';
 }
 
-/**
- * Gets a location ID from a display name
- * @param {string} name - Location display name
- * @returns {string|null} Location ID or null
- */
 function getLocationIdByName(name) {
+    if (typeof window.getPlaceByDisplayName === 'function') {
+        var place = window.getPlaceByDisplayName(name);
+        return place ? place.id : null;
+    }
     if (!name) return null;
-    
     var places = _getPlaces();
     for (var i = 0; i < places.length; i++) {
         if (places[i].displayName === name || places[i].variableKey === name) {
@@ -647,20 +394,12 @@ function getLocationIdByName(name) {
 }
 
 // =============================================================================
-// 8. UNDO MANAGER
+// 6. UNDO MANAGER
 // =============================================================================
 
 var _undoStack = [];
 var _redoStack = [];
 
-/**
- * Records an action for potential undo/redo
- * @param {Object} action - Action to record
- * @param {string} action.description - Human-readable description
- * @param {Function} action.undo - Function to call to undo the action
- * @param {Function} action.redo - Function to call to redo the action
- * @private
- */
 function _recordAction(action) {
     _undoStack.push({
         description: action.description,
@@ -673,17 +412,12 @@ function _recordAction(action) {
     _redoStack.length = 0;
 }
 
-/**
- * Undoes the last action
- * @returns {boolean} True if an action was undone, false otherwise
- */
 function undo() {
     var action = _undoStack.pop();
     if (!action) {
         _showToast('Nothing to undo', 'info');
         return false;
     }
-    
     if (action.undo && typeof action.undo === 'function') {
         action.undo();
         _redoStack.push(action);
@@ -693,17 +427,12 @@ function undo() {
     return false;
 }
 
-/**
- * Redoes the last undone action
- * @returns {boolean} True if an action was redone, false otherwise
- */
 function redo() {
     var action = _redoStack.pop();
     if (!action) {
         _showToast('Nothing to redo', 'info');
         return false;
     }
-    
     if (action.redo && typeof action.redo === 'function') {
         action.redo();
         _undoStack.push(action);
@@ -713,13 +442,6 @@ function redo() {
     return false;
 }
 
-/**
- * Shows a temporary undo prompt after an action
- * @param {string} actionDescription - Description of the action (e.g., "Moved character")
- * @param {Function} undoFunction - Function to call to undo the action
- * @param {Function} redoFunction - Function to call to redo the action (optional)
- * @param {number} timeoutMs - How long to show the prompt (default 5000ms)
- */
 function showUndoPrompt(actionDescription, undoFunction, redoFunction, timeoutMs) {
     timeoutMs = timeoutMs || 5000;
     _recordAction({
@@ -747,48 +469,38 @@ function showUndoPrompt(actionDescription, undoFunction, redoFunction, timeoutMs
 }
 
 // =============================================================================
-// 9. PREVIEW MODAL - FIXED: Simple text confirm buttons
+// 7. PREVIEW MODAL
 // =============================================================================
 
-/**
- * Opens a preview modal with consequences before confirming an action
- * @param {Object} options - Options
- * @param {string} options.title - Modal title
- * @param {Array} options.consequences - Array of consequence objects { message, severity }
- * @param {string} options.actionDescription - Description of the action for undo
- * @param {Function} options.actionUndo - Function to undo the action
- * @param {Function} options.actionRedo - Function to redo the action
- * @param {Function} options.onConfirm - Callback when action is confirmed
- */
 function openPreviewModal(options) {
-    var _options = options || {};
+    options = options || {};
     var warningIcon = _getIcon('WARNING');
     var infoIcon = _getIcon('CIRCLE_DOT');
     var xIcon = _getIcon('X_HEAVY');
     
-    var consequencesHtml = (_options.consequences || []).map(function(c) {
+    var consequencesHtml = (options.consequences || []).map(function(c) {
         var icon = c.severity === 'error' ? xIcon : (c.severity === 'warning' ? warningIcon : infoIcon);
         var color = c.severity === 'error' ? '#c62828' : (c.severity === 'warning' ? '#c87040' : 'var(--dim)');
-        return '<div style="display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border-light);">' +
-            '<span style="width: 24px;">' + icon + '</span>' +
-            '<span style="color: ' + color + ';">' + _escapeHtml(c.message) + '</span>' +
+        return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border-light);">' +
+            '<span style="width:24px;">' + icon + '</span>' +
+            '<span style="color:' + color + ';">' + _escapeHtml(c.message) + '</span>' +
         '</div>';
     }).join('');
     
     var modalContent = 
         '<div class="preview-modal">' +
-            (consequencesHtml ? '<div style="margin-bottom: 16px;"><div style="font-weight: bold; margin-bottom: 8px;">Consequences:</div>' + consequencesHtml + '</div>' : '') +
-            '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: flex; align-items: center; gap: 8px;">' +
+            (consequencesHtml ? '<div style="margin-bottom:16px;"><div style="font-weight:bold;margin-bottom:8px;">Consequences:</div>' + consequencesHtml + '</div>' : '') +
+            '<div class="form-group" style="margin-bottom:12px;">' +
+                '<label style="display:flex;align-items:center;gap:8px;">' +
                     '<input type="checkbox" id="previewConfirmCheckbox">' +
-                    '<span style="font-size: 0.7rem;">I understand the consequences and wish to proceed</span>' +
+                    '<span style="font-size:0.7rem;">I understand the consequences and wish to proceed</span>' +
                 '</label>' +
             '</div>' +
-            (_options.actionDescription ? '<div class="info-note" style="margin-top: 12px; padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.6rem;">This action can be undone: "' + _escapeHtml(_options.actionDescription) + '"</div>' : '') +
+            (options.actionDescription ? '<div class="info-note" style="margin-top:12px;padding:8px;background:var(--bg3);border-radius:6px;font-size:0.6rem;">This action can be undone: "' + _escapeHtml(options.actionDescription) + '"</div>' : '') +
         '</div>';
     
     openModal({
-        title: _options.title || 'Confirm Action',
+        title: options.title || 'Confirm Action',
         content: modalContent,
         confirmText: 'Confirm',
         cancelText: 'Cancel',
@@ -807,13 +519,12 @@ function openPreviewModal(options) {
             }
         },
         onConfirm: function() {
-            if (_options.onConfirm) _options.onConfirm();
-            
-            if (_options.actionUndo && _options.actionRedo) {
+            if (options.onConfirm) options.onConfirm();
+            if (options.actionUndo && options.actionRedo) {
                 showUndoPrompt(
-                    _options.actionDescription || 'Action',
-                    _options.actionUndo,
-                    _options.actionRedo
+                    options.actionDescription || 'Action',
+                    options.actionUndo,
+                    options.actionRedo
                 );
             }
         }
@@ -821,7 +532,7 @@ function openPreviewModal(options) {
 }
 
 // =============================================================================
-// 10. EXPORTS (for use by other modal files)
+// 8. EXPORTS
 // =============================================================================
 
 // Modal manager
@@ -841,7 +552,7 @@ window.undo = undo;
 window.redo = redo;
 window.showUndoPrompt = showUndoPrompt;
 
-// Core helpers
+// Core helpers - FORWARDING to canonical sources
 window._escapeHtml = _escapeHtml;
 window._escapeHtmlPreserveSvg = _escapeHtmlPreserveSvg;
 window._containsSvg = _containsSvg;
@@ -859,46 +570,10 @@ window._getLocationTypePriority = _getLocationTypePriority;
 window._saveMasterData = _saveMasterData;
 window._getIcon = _getIcon;
 
-// Unified character selector
+// Unified character selector - FORWARDING
 window.openUnifiedCharacterSelector = openUnifiedCharacterSelector;
 
-// Unified location dropdown
+// Unified location dropdown - FORWARDING
 window.buildLocationDropdown = buildLocationDropdown;
 window.getLocationName = getLocationName;
 window.getLocationIdByName = getLocationIdByName;
-
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = {
-        openModal: openModal,
-        closeTopModal: closeTopModal,
-        closeAllModals: closeAllModals,
-        alertDialog: alertDialog,
-        confirmDialog: confirmDialog,
-        successDialog: successDialog,
-        errorDialog: errorDialog,
-        undo: undo,
-        redo: redo,
-        showUndoPrompt: showUndoPrompt,
-        openPreviewModal: openPreviewModal,
-        openUnifiedCharacterSelector: openUnifiedCharacterSelector,
-        buildLocationDropdown: buildLocationDropdown,
-        getLocationName: getLocationName,
-        getLocationIdByName: getLocationIdByName,
-        _escapeHtml: _escapeHtml,
-        _escapeHtmlPreserveSvg: _escapeHtmlPreserveSvg,
-        _containsSvg: _containsSvg,
-        _showToast: _showToast,
-        _getCurrentYear: _getCurrentYear,
-        _calculateAge: _calculateAge,
-        _getCharacterById: _getCharacterById,
-        _getCharacters: _getCharacters,
-        _getPlaces: _getPlaces,
-        _getPlaceById: _getPlaceById,
-        _getCurrentLocation: _getCurrentLocation,
-        _getActiveRankDisplay: _getActiveRankDisplay,
-        _getLocationTypeById: _getLocationTypeById,
-        _getLocationTypePriority: _getLocationTypePriority,
-        _saveMasterData: _saveMasterData,
-        _getIcon: _getIcon
-    };
-}

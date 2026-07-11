@@ -9,7 +9,8 @@
  * 
  * DEPENDENCIES:
  *   - industry-state.js (IndustryState)
- *   - accessors.js (getCharacterById, getPlaceById)
+ *   - accessors.js (getCharacterById, getPlaceById, getHouseholdById)
+ *   - time.js (getCurrentYearSafe)
  * 
  * =============================================================================
  */
@@ -18,46 +19,11 @@
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
+    // 1. DEPENDENCY REFERENCES
     // =========================================================================
 
-    function _getState() {
-        return typeof window.IndustryState !== 'undefined' ? window.IndustryState : null;
-    }
-
-    function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(id);
-        }
-        return null;
-    }
-
-    function _getHousehold(id) {
-        if (typeof window.getHousehold === 'function') {
-            return window.getHousehold(id);
-        }
-        if (typeof window.getHouseholdById === 'function') {
-            return window.getHouseholdById(id);
-        }
-        return null;
-    }
-
-    function _getPlaceById(id) {
-        if (typeof window.getPlaceById === 'function') {
-            return window.getPlaceById(id);
-        }
-        return null;
-    }
-
-    function _getCurrentYear() {
-        if (typeof window.getCurrentYearSafe === 'function') {
-            return window.getCurrentYearSafe();
-        }
-        if (typeof window.getCurrentYear === 'function') {
-            return window.getCurrentYear();
-        }
-        return 1250;
-    }
+    // All functions are available globally from accessors.js and time.js
+    // No wrapper functions needed - use them directly!
 
     // =========================================================================
     // 2. RECURSION GUARD
@@ -73,7 +39,7 @@
         if (_processing) return null;
         _processing = true;
         try {
-            var state = _getState();
+            var state = window.IndustryState;
             if (!state) return null;
             return state.getEnterprise(id);
         } finally {
@@ -85,7 +51,7 @@
         if (_processing) return [];
         _processing = true;
         try {
-            var state = _getState();
+            var state = window.IndustryState;
             if (!state) return [];
             return state.getAllEnterprises();
         } finally {
@@ -97,7 +63,7 @@
         if (_processing) return [];
         _processing = true;
         try {
-            var state = _getState();
+            var state = window.IndustryState;
             if (!state) return [];
             return state.getEnterprisesByOwner(ownerId, ownerType);
         } finally {
@@ -109,7 +75,7 @@
         if (_processing) return [];
         _processing = true;
         try {
-            var state = _getState();
+            var state = window.IndustryState;
             if (!state) return [];
             return state.getEnterprisesByLocation(locationId);
         } finally {
@@ -121,7 +87,7 @@
         if (_processing) return [];
         _processing = true;
         try {
-            var state = _getState();
+            var state = window.IndustryState;
             if (!state) return [];
             var all = state.getAllEnterprises();
             var result = [];
@@ -140,7 +106,7 @@
         if (_processing) return [];
         _processing = true;
         try {
-            var state = _getState();
+            var state = window.IndustryState;
             if (!state) return [];
             return state.getEnterprisesByStatus(status);
         } finally {
@@ -152,7 +118,7 @@
         if (_processing) return [];
         _processing = true;
         try {
-            var state = _getState();
+            var state = window.IndustryState;
             if (!state) return [];
             var all = state.getAllEnterprises();
             var result = [];
@@ -208,13 +174,13 @@
             var owner = null;
             if (enterprise.ownerId) {
                 if (enterprise.ownerType === 'character') {
-                    owner = _getCharacterById(enterprise.ownerId);
+                    owner = window.getCharacterById(enterprise.ownerId);
                     ownerName = owner ? owner.name + ' ' + (owner.surname || '') : ownerName;
                 } else if (enterprise.ownerType === 'household') {
-                    var household = _getHousehold(enterprise.ownerId);
+                    var household = window.getHouseholdById(enterprise.ownerId);
                     ownerName = household ? household.name : ownerName;
                 } else if (enterprise.ownerType === 'state') {
-                    var place = _getPlaceById(enterprise.ownerId);
+                    var place = window.getPlaceById(enterprise.ownerId);
                     ownerName = place ? place.displayName : ownerName;
                 }
             }

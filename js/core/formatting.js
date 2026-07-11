@@ -5,96 +5,41 @@
  * 
  * LOCATION: js/core/formatting.js
  * 
- * This file contains ALL formatting functions including:
+ * This is the SINGLE SOURCE OF TRUTH for:
  * - HTML escaping
+ * - String formatting
+ * - Text manipulation
  * - Year formatting
- * - Name formatting (character names, full names)
- * - Title formatting (rank + name combinations)
+ * - Name formatting
+ * - Title formatting
  * - Dynasty/lineage labels
- * - Relationship description formatting
- * - Location hierarchy display
+ * - Relationship formatting
+ * - Location hierarchy formatting
  * - Age formatting
  * - Date range formatting
  * - List formatting
+ * - Gender formatting
+ * - String utilities
+ * - Additional utilities
  * 
- * PURPOSE: Consistent output formatting across all modules
- * 
- * DEPENDENCIES: None (pure formatting, standalone)
- * =============================================================================
- * EXPORTED FUNCTIONS (on window):
- * =============================================================================
- * 
- * HTML Escaping:
- *   - escapeHtml(str) - Escapes HTML special characters to prevent XSS
- *   - escapeHtmlWithBreaks(str) - Escapes HTML and converts \n to <br>
- * 
- * Year Formatting:
- *   - formatYear(year, useAsteriskForZero) - Formats year (e.g., "125", "50 BC", "*" for 0)
- *   - formatYearRange(startYear, endYear, separator) - Formats year range (e.g., "100–150")
- * 
- * Name Formatting:
- *   - formatCharacterName(char, getCharacterById) - Formats full name (e.g., "John Smith")
- *   - formatCharacterNameWithRank(char, getActiveRankDisplay) - Formats name with rank prefix
- *   - formatCharacterNameWithGender(char) - Formats name with gender symbol (♂ ♀ ⚥)
- *   - formatCharacterNameWithAge(char, age) - Formats name with age in parentheses
- * 
- * Title Formatting:
- *   - formatTitle(rank, number) - Formats title (e.g., "♔ King III")
- *   - formatCharacterTitles(char, rankAssignments, getRankById) - Formats comma-separated titles
- * 
- * Dynasty / Lineage Labels:
- *   - formatDynasty(houseName, prefix) - Formats dynasty name (e.g., "House of Tudor")
- *   - formatSuccessionNumber(number) - Converts number to Roman numeral (I, II, III...)
- * 
- * Relationship Formatting:
- *   - formatRelationshipStatus(status) - Formats status with emoji (❤️ Ongoing, 💔 Ended, † Widowed)
- *   - formatRelationshipType(type) - Formats type with emoji (💕 Serious, 💍 Betrothed, etc.)
- *   - formatFriendship(details, currentYear) - Formats friendship description with duration
- * 
- * Location Hierarchy Formatting:
- *   - formatLocationHierarchy(place, getPlaceById, getLocationTypeById) - Formats breadcrumb (e.g., "Kingdom → Duchy → County")
- *   - formatLocationType(type) - Formats location type with priority level
- *   - formatPopulation(population) - Formats population (e.g., "1,234", "1.2k", "1.5M")
- * 
- * Age Formatting:
- *   - formatAge(age) - Formats age (e.g., "25 years", "6 months", "2 days")
- *   - formatCharacterAge(char, currentYear) - Formats age with birth/death context
- *   - formatAgeRange(minAge, maxAge) - Formats age range (e.g., "18–35 years")
- * 
- * Date Range Formatting:
- *   - formatDateRange(startYear, endYear, isCurrent) - Formats reign/tenure range (e.g., "1200 – Present")
- * 
- * List Formatting:
- *   - formatList(items, conjunction) - Formats array as human-readable list (e.g., "A, B, and C")
- *   - formatCount(count, singular, plural) - Formats count with singular/plural (e.g., "5 characters")
- * 
- * Gender Formatting:
- *   - getGenderSymbol(gender) - Returns symbol (♂ for male, ♀ for female, ⚥ for other)
- *   - getGenderLabel(gender) - Returns label ("Male", "Female", "Unknown")
- * 
- * String Utilities:
- *   - truncateString(str, maxLength, ellipsis) - Unicode-safe truncation with ellipsis
- *   - truncateLocation(locationName, maxLength) - Truncates location name (default max 25)
- * 
- * Additional Utilities:
- *   - formatPercentage(value, isDecimal, decimals) - Formats percentage (e.g., "75.5%")
- *   - formatDuration(years) - Formats duration (e.g., "1 year", "2.5 decades")
+ * All other modules should use these functions via window object.
  * 
  * =============================================================================
  */
 
 // =============================================================================
-// 1. HTML ESCAPING
+// 1. HTML ESCAPING - PRIMARY DEFINITION
 // =============================================================================
 
 /**
  * Escapes HTML special characters to prevent XSS attacks
+ * This is the CANONICAL version - all modules should use this
+ * 
  * @param {*} str - Input string (converted to string if not already)
  * @returns {string} HTML-escaped string
  */
 function escapeHtml(str) {
     if (str === null || str === undefined) return '';
-    // Handle non-string inputs gracefully
     const stringVal = String(str);
     return stringVal
         .replace(/&/g, '&amp;')
@@ -105,6 +50,13 @@ function escapeHtml(str) {
 }
 
 /**
+ * Alias for escapeHtml - for internal use and backward compatibility
+ */
+function _escapeHtml(str) {
+    return escapeHtml(str);
+}
+
+/**
  * Escapes HTML but preserves line breaks (converts \n to <br>)
  * @param {string} str - Input string
  * @returns {string} HTML-escaped string with line breaks
@@ -112,6 +64,41 @@ function escapeHtml(str) {
 function escapeHtmlWithBreaks(str) {
     if (!str) return '';
     return escapeHtml(str).replace(/\n/g, '<br>');
+}
+
+/**
+ * Checks if a string contains SVG markup
+ * @param {string} str - String to check
+ * @returns {boolean} True if string contains SVG
+ */
+function containsSvg(str) {
+    if (!str) return false;
+    return str.includes('<svg') && str.includes('</svg>');
+}
+
+/**
+ * Safely escapes HTML except for SVG content
+ * @param {string} str - String to escape
+ * @returns {string} Escaped string with SVG preserved
+ */
+function escapeHtmlPreserveSvg(str) {
+    if (!str) return '';
+    
+    if (containsSvg(str)) {
+        const parts = str.split(/(<svg[^>]*>.*?<\/svg>)/gi);
+        let result = '';
+        for (let i = 0; i < parts.length; i++) {
+            const part = parts[i];
+            if (containsSvg(part)) {
+                result += part;
+            } else {
+                result += escapeHtml(part);
+            }
+        }
+        return result;
+    }
+    
+    return escapeHtml(str);
 }
 
 // =============================================================================
@@ -151,12 +138,10 @@ function formatYearRange(startYear, endYear, separator = '–') {
     if (start === '?') return `Until ${end}`;
     if (end === '?') return `From ${start}`;
     
-    // Handle BCE years specially to avoid confusion (e.g., "500 BC – 200 BC")
     const isStartBC = startYear < 0;
     const isEndBC = endYear < 0;
     
     if (isStartBC && isEndBC && startYear !== endYear) {
-        // Both BCE, show as "500–200 BC" (more concise)
         return `${Math.abs(startYear)}–${Math.abs(endYear)} BC`;
     }
     
@@ -174,16 +159,12 @@ function formatYearRange(startYear, endYear, separator = '–') {
  * @returns {string} Formatted full name
  */
 function formatCharacterName(char, getCharacterById = null) {
-    // If we got an ID and have a resolver, fetch the character
     if (typeof char === 'string' && getCharacterById) {
         char = getCharacterById(char);
     }
-    
     if (!char || typeof char !== 'object') return 'Unknown';
-    
     const name = char.name || '?';
     const surname = char.surname || '';
-    
     if (surname) {
         return `${name} ${surname}`;
     }
@@ -198,7 +179,6 @@ function formatCharacterName(char, getCharacterById = null) {
  */
 function formatCharacterNameWithRank(char, getActiveRankDisplay = null) {
     if (!char) return 'Unknown';
-    
     let rankPrefix = '';
     if (getActiveRankDisplay) {
         const rank = getActiveRankDisplay(char);
@@ -206,7 +186,6 @@ function formatCharacterNameWithRank(char, getActiveRankDisplay = null) {
             rankPrefix = `${rank.display} `;
         }
     }
-    
     return `${rankPrefix}${formatCharacterName(char)}`;
 }
 
@@ -217,10 +196,8 @@ function formatCharacterNameWithRank(char, getActiveRankDisplay = null) {
  */
 function formatCharacterNameWithGender(char) {
     if (!char) return 'Unknown';
-    
     const name = formatCharacterName(char);
     const genderSymbol = getGenderSymbol(char.gender);
-    
     return `${genderSymbol} ${name}`;
 }
 
@@ -248,11 +225,9 @@ function formatCharacterNameWithAge(char, age) {
  */
 function formatTitle(rank, number = null) {
     if (!rank) return '';
-    
     const symbol = rank.symbol || '';
     const name = rank.name || '';
     let numberStr = '';
-    
     if (number) {
         if (typeof number === 'number' && number >= 1 && number <= 10) {
             const romanNumerals = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
@@ -261,7 +236,6 @@ function formatTitle(rank, number = null) {
             numberStr = ` ${number}`;
         }
     }
-    
     return `${symbol} ${name}${numberStr}`.trim();
 }
 
@@ -274,7 +248,6 @@ function formatTitle(rank, number = null) {
  */
 function formatCharacterTitles(char, rankAssignments, getRankById) {
     if (!rankAssignments || rankAssignments.length === 0) return '';
-    
     const titles = [];
     for (const assignment of rankAssignments) {
         if (assignment.isDeprecated) continue;
@@ -283,7 +256,6 @@ function formatCharacterTitles(char, rankAssignments, getRankById) {
             titles.push(formatTitle(rank, assignment.number));
         }
     }
-    
     return titles.join(', ');
 }
 
@@ -309,15 +281,12 @@ function formatDynasty(houseName, prefix = 'House of ') {
  */
 function formatSuccessionNumber(number) {
     if (!number || number < 1) return '';
-    
-    // Roman numerals up to 20
     const romanNumerals = {
         1: 'I', 2: 'II', 3: 'III', 4: 'IV', 5: 'V',
         6: 'VI', 7: 'VII', 8: 'VIII', 9: 'IX', 10: 'X',
         11: 'XI', 12: 'XII', 13: 'XIII', 14: 'XIV', 15: 'XV',
         16: 'XVI', 17: 'XVII', 18: 'XVIII', 19: 'XIX', 20: 'XX'
     };
-    
     if (number <= 20) {
         return romanNumerals[number];
     }
@@ -367,7 +336,6 @@ function formatRelationshipType(type) {
  */
 function formatFriendship(details, currentYear) {
     if (!details) return '';
-    
     const parts = [];
     if (details.startYear) {
         const yearsAgo = currentYear - details.startYear;
@@ -380,7 +348,6 @@ function formatFriendship(details, currentYear) {
     if (details.notes) {
         parts.push(`📝 ${details.notes}`);
     }
-    
     return parts.join(' · ');
 }
 
@@ -397,12 +364,10 @@ function formatFriendship(details, currentYear) {
  */
 function formatLocationHierarchy(place, getPlaceById, getLocationTypeById) {
     if (!place) return '';
-    
     const hierarchy = [];
     let current = place;
     let safety = 0;
     const maxDepth = 20;
-    
     while (current && safety < maxDepth) {
         hierarchy.unshift(current.displayName);
         if (!current.parentId) break;
@@ -410,7 +375,6 @@ function formatLocationHierarchy(place, getPlaceById, getLocationTypeById) {
         if (!current) break;
         safety++;
     }
-    
     return hierarchy.join(' → ');
 }
 
@@ -442,7 +406,6 @@ function formatPopulation(population) {
     }
     if (population >= 1000) {
         const formatted = (population / 1000).toFixed(1);
-        // Remove .0 if present
         return `${formatted.replace(/\.0$/, '')}k`;
     }
     return population.toLocaleString();
@@ -460,12 +423,10 @@ function formatPopulation(population) {
 function formatAge(age) {
     if (age === null || age === undefined) return '?';
     if (typeof age !== 'number' || isNaN(age)) return '?';
-    
     if (age < 0) return 'Unborn (invalid)';
     if (age === 0) return '<1 year';
     if (age === 1) return '1 year';
-    if (age < 12) return `${age} years`;  // Could add months for babies, but keep simple
-    
+    if (age < 12) return `${age} years`;
     return `${age} years`;
 }
 
@@ -477,13 +438,11 @@ function formatAge(age) {
  */
 function formatCharacterAge(char, currentYear) {
     if (!char || !char.birthYear) return 'Age unknown';
-    
     if (char.isDeceased && char.deathYear) {
         const age = char.deathYear - char.birthYear;
         const ageStr = formatAge(age);
         return `Died at ${ageStr} (${formatYear(char.birthYear)}–${formatYear(char.deathYear)})`;
     }
-    
     const age = currentYear - char.birthYear;
     const ageStr = formatAge(age);
     return `${ageStr} (b. ${formatYear(char.birthYear)})`;
@@ -498,7 +457,6 @@ function formatCharacterAge(char, currentYear) {
 function formatAgeRange(minAge, maxAge) {
     const hasMin = minAge !== undefined && minAge !== null;
     const hasMax = maxAge !== undefined && maxAge !== null;
-    
     if (!hasMin && !hasMax) return 'Any age';
     if (hasMin && hasMax) {
         if (minAge === maxAge) return `${minAge} years`;
@@ -539,13 +497,9 @@ function formatDateRange(startYear, endYear, isCurrent = false) {
  */
 function formatList(items, conjunction = 'and') {
     if (!items || items.length === 0) return '';
-    
-    // Create a copy to avoid mutating the original
     const itemsCopy = [...items];
-    
     if (itemsCopy.length === 1) return itemsCopy[0];
     if (itemsCopy.length === 2) return `${itemsCopy[0]} ${conjunction} ${itemsCopy[1]}`;
-    
     const last = itemsCopy.pop();
     return `${itemsCopy.join(', ')} ${conjunction} ${last}`;
 }
@@ -607,13 +561,9 @@ function getGenderLabel(gender) {
 function truncateString(str, maxLength, ellipsis = '…') {
     if (!str) return '';
     if (maxLength <= 0) return '';
-    
-    // Use Array.from to properly handle Unicode characters (including emojis)
     const chars = Array.from(str);
     const ellipsisChars = Array.from(ellipsis);
-    
     if (chars.length <= maxLength) return str;
-    
     const truncated = chars.slice(0, maxLength - ellipsisChars.length);
     return truncated.join('') + ellipsis;
 }
@@ -642,10 +592,8 @@ function truncateLocation(locationName, maxLength = 25) {
 function formatPercentage(value, isDecimal = true, decimals = 1) {
     if (value === null || value === undefined) return '?';
     if (typeof value !== 'number') return '?';
-    
     let percent = isDecimal ? value * 100 : value;
     percent = Math.min(100, Math.max(0, percent));
-    
     return `${percent.toFixed(decimals)}%`;
 }
 
@@ -659,12 +607,9 @@ function formatDuration(years) {
     if (years < 0) return 'Invalid';
     if (years === 0) return '<1 year';
     if (years === 1) return '1 year';
-    
     if (years < 12) return `${years} years`;
-    
     const decades = Math.floor(years / 10);
     const remainder = years % 10;
-    
     if (remainder === 0) {
         return `${decades} decades`;
     }
@@ -675,9 +620,12 @@ function formatDuration(years) {
 // 14. EXPORTS (Global Availability)
 // =============================================================================
 
-// HTML escaping
+// HTML escaping - PRIMARY EXPORTS
 window.escapeHtml = escapeHtml;
+window._escapeHtml = _escapeHtml;
 window.escapeHtmlWithBreaks = escapeHtmlWithBreaks;
+window.containsSvg = containsSvg;
+window.escapeHtmlPreserveSvg = escapeHtmlPreserveSvg;
 
 // Year formatting
 window.formatYear = formatYear;

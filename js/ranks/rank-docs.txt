@@ -1,0 +1,1089 @@
+# Rank System Documentation
+
+## Overview
+
+The Rank System is a modular, clean-architecture implementation for managing hierarchical titles, ranks, and inheritance in the Still Waters world simulation. It provides complete CRUD operations, assignment logic, numbering systems, surname rules, and spouse inheritance.
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         RANK SYSTEM ARCHITECTURE                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    RANK CONSTANTS (rank-constants.js)                │   │
+│  │                                                                     │   │
+│  │  - RANK_LEVELS: Level definitions (Sovereign, Noble, etc.)         │   │
+│  │  - AVAILABLE_SYMBOLS: Allowed rank symbols                         │   │
+│  │  - DEFAULT_RANK: Default rank structure                            │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    RANK STATE (rank-state.js)                       │   │
+│  │                                                                     │   │
+│  │  - Single source of truth for ALL rank data                        │   │
+│  │  - Caches: byId, byPriority, byName                                │   │
+│  │  - Inheritance rules storage                                        │   │
+│  │  - Change notifications (subscribe/unsubscribe)                     │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    RANK QUERIES (rank-queries.js)                   │   │
+│  │                                                                     │   │
+│  │  - All read operations (no side effects)                           │   │
+│  │  - getRank, getAllRanks, getRanksByPriority                       │   │
+│  │  - getRankHierarchy, getRankHolderStats                           │   │
+│  │  - getCharactersWithRank, getRankSurnameRule                      │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    RANK COMMANDS (rank-commands.js)                 │   │
+│  │                                                                     │   │
+│  │  - All write operations                                             │   │
+│  │  - createRank, updateRank, deleteRank                              │   │
+│  │  - addInheritanceRule, removeInheritanceRule                      │   │
+│  │  - Bulk operations (bulkAssignRank, bulkDeprecateRank)            │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    RANK ASSIGNMENT (rank-assignment.js)             │   │
+│  │                                                                     │   │
+│  │  - Complex business logic                                           │   │
+│  │  - assignRankToCharacter, deprecateRankAssignment                  │   │
+│  │  - getNextRankNumber (ordinal/roman numbering)                     │   │
+│  │  - renumberRankHolders, generateSurnameFromRankRule               │   │
+│  │  - Spouse inheritance logic                                        │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    UI LAYER                                         │   │
+│  │                                                                     │   │
+│  │  - modals-rank.js: Create, Edit, Assign, Details modals            │   │
+│  │  - rank-ui-list.js: List, Hierarchy, Tree, Selector rendering      │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## File Reference
+
+### 1. rank-constants.js
+
+**Purpose:** Centralized constants for rank levels, symbols, and default structures.
+
+**Exports:**
+| Constant | Type | Description |
+|----------|------|-------------|
+| `RANK_LEVELS` | Object | Level definitions with name, icon, description |
+| `AVAILABLE_SYMBOLS` | Array | Allowed rank symbols for UI selection |
+| `DEFAULT_RANK` | Object | Default rank structure template |
+
+**RANK_LEVELS Structure:**
+```javascript
+RANK_LEVELS = {
+    1: { name: "Sovereign", icon: "◉", description: "Highest level - Rulers, monarchs, emperors" },
+    2: { name: "High Noble", icon: "◧", description: "Dukes, princes, high lords" },
+    3: { name: "Noble", icon: "◈", description: "Counts, earls, barons" },
+    4: { name: "Gentry", icon: "⟡", description: "Knights, esquires, landed gentry" },
+    5: { name: "Commoner", icon: "⌂", description: "Merchants, artisans, peasants" }
+}
+```
+
+---
+
+### 2. rank-state.js
+
+**Purpose:** Single source of truth for ALL rank data with caching and notifications.
+
+**Exports:**
+
+| Function | Description |
+|----------|-------------|
+| `RankState.getRank(id)` | Get rank by ID |
+| `RankState.getAllRanks()` | Get all ranks |
+| `RankState.getRanksByPriority(priority)` | Get ranks by priority level |
+| `RankState.getRankHierarchy()` | Get hierarchical rank structure |
+| `RankState.getInheritanceRules()` | Get all inheritance rules |
+| `RankState.getInheritanceRulesForRank(rankId)` | Get rules for a rank |
+| `RankState.getRankCount()` | Get total rank count |
+| `RankState.addRank(rankData)` | Add a new rank |
+| `RankState.updateRank(rankId, updates)` | Update a rank |
+| `RankState.deleteRank(rankId)` | Delete a rank |
+| `RankState.addInheritanceRule(parentRankId, childRankId, minChildAge, order)` | Add inheritance rule |
+| `RankState.removeInheritanceRule(parentRankId, ruleIndex)` | Remove inheritance rule |
+| `RankState.subscribe(callback)` | Subscribe to state changes |
+| `RankState.invalidateCache()` | Clear all caches |
+
+**Rank Data Structure:**
+```javascript
+{
+    id: "rank_1234567890_abc123",
+    name: "Duke of Example",
+    priority: 2,                // 1-5 (Sovereign to Commoner)
+    numbered: true,
+    numberingType: 'reign',     // 'reign' or 'birth'
+    numberingPrefix: '',        // e.g., "Prince "
+    numberingSuffix: '',        // e.g., " of England"
+    symbol: "◧",
+    genderRestriction: 'either', // 'either', 'male', 'female'
+    locationTypeId: null,
+    deprecateOnDeath: false,
+    spouseInheritance: null,    // Rank ID that spouse inherits
+    allowsMultipleSpouses: false,
+    parentRankId: null,         // Parent rank in hierarchy
+    customSurnameRule: false,
+    surnameConnector: 'of',     // 'of', 'from', 'van', 'de' (free text)
+    surnamePrefix: '',          // 'Mac', 'Fitz'
+    surnameSuffix: '',          // 'son', 'dottir'
+    createdAt: 1234567890,
+    updatedAt: 1234567890
+}
+```
+
+---
+
+### 3. rank-queries.js
+
+**Purpose:** All read operations for rank data (no side effects).
+
+**Exports:**
+
+| Function | Description |
+|----------|-------------|
+| `RankQueries.getRank(id)` | Get rank by ID |
+| `RankQueries.getAllRanks()` | Get all ranks |
+| `RankQueries.getRanksByPriority(priority)` | Get ranks by priority |
+| `RankQueries.getRankHierarchy()` | Get hierarchical structure |
+| `RankQueries.getInheritanceRules()` | Get all inheritance rules |
+| `RankQueries.getInheritanceRulesForRank(rankId)` | Get rules for a rank |
+| `RankQueries.getRankCount()` | Get total count |
+| `RankQueries.getRankLevelName(priority)` | Get level name |
+| `RankQueries.getRankLevelIcon(priority)` | Get level icon |
+| `RankQueries.getRankLevelDescription(priority)` | Get level description |
+| `RankQueries.getAvailableSymbols()` | Get all available symbols |
+| `RankQueries.getCharactersWithRank(rankId, includeDeprecated)` | Get characters holding rank |
+| `RankQueries.getRankHolderCount(rankId, includeDeprecated)` | Get holder count |
+| `RankQueries.getRankHolderStats(rankId)` | Get detailed holder statistics |
+| `RankQueries.getRanksWithSurnameRules()` | Get ranks with custom surname rules |
+| `RankQueries.getRankSurnameRule(rankId)` | Get surname rule for a rank |
+| `RankQueries.getSpouseInheritanceRanks(characterId)` | Get ranks inherited from spouse |
+| `RankQueries.isValidRank(rank)` | Validate rank object |
+
+**getRankHolderStats Return:**
+```javascript
+{
+    total: 5,
+    male: 3,
+    female: 2,
+    living: 4,
+    deceased: 1,
+    minors: 0,      // age < 18
+    adults: 3,      // age 18-60
+    elders: 1       // age > 60
+}
+```
+
+---
+
+### 4. rank-commands.js
+
+**Purpose:** All write operations for rank data.
+
+**Exports:**
+
+| Function | Description |
+|----------|-------------|
+| `RankCommands.createRank(rankData)` | Create a new rank |
+| `RankCommands.updateRank(rankId, updates)` | Update a rank |
+| `RankCommands.deleteRank(rankId)` | Delete a rank |
+| `RankCommands.addInheritanceRule(parentRankId, childRankId, minChildAge, order)` | Add inheritance rule |
+| `RankCommands.removeInheritanceRule(parentRankId, ruleIndex)` | Remove inheritance rule |
+| `RankCommands.assignRankToCharacter(characterId, rankId, options)` | Assign rank to character |
+| `RankCommands.deprecateRankAssignment(characterId, rankId)` | Deprecate rank assignment |
+| `RankCommands.renumberRankHolders(rankId)` | Renumber all holders of a rank |
+| `RankCommands.updateRankSurnameRule(rankId, ruleSettings)` | Update surname rule |
+| `RankCommands.applySpouseInheritanceFixes(fixes)` | Apply spouse inheritance fixes |
+| `RankCommands.bulkAssignRank(characterIds, rankId, options)` | Bulk assign rank |
+| `RankCommands.bulkDeprecateRank(characterIds, rankId)` | Bulk deprecate rank |
+| `RankCommands.rebuildAllRankNumbering()` | Rebuild numbering for all ranks |
+
+**Return Format:** All commands return `{ success: boolean, data: any, error: string }`
+
+---
+
+### 5. rank-assignment.js
+
+**Purpose:** Complex business logic for rank assignment and numbering.
+
+**Exports:**
+
+| Function | Description |
+|----------|-------------|
+| `RankAssignment.assignRankToCharacter(characterId, rankId, options)` | Assign rank |
+| `RankAssignment.deprecateRankAssignment(characterId, rankId)` | Deprecate rank |
+| `RankAssignment.getNextRankNumber(rankId, characterId, characterName, gender)` | Get next number |
+| `RankAssignment.renumberRankHolders(rankId)` | Renumber holders |
+| `RankAssignment.fixAllNumberingForCharacter(characterId)` | Fix numbering for character |
+| `RankAssignment.toOrdinal(n)` | Convert to ordinal (1st, 2nd, 3rd...) |
+| `RankAssignment.toRoman(n)` | Convert to Roman numeral (I, II, III...) |
+| `RankAssignment.generateSurnameFromRankRule(character, context)` | Generate surname from rule |
+| `RankAssignment.updateRankSurnameRule(rankId, ruleSettings)` | Update surname rule |
+| `RankAssignment.checkAndSpouseInheritance()` | Check spouse inheritance |
+| `RankAssignment.applySpouseInheritanceFixes(fixes)` | Apply spouse inheritance fixes |
+
+**Numbering Types:**
+- `'reign'`: Numbered by reign (e.g., Henry I, Henry II, Henry III)
+- `'birth'`: Numbered by birth order (e.g., 1st Duke, 2nd Duke, 3rd Duke)
+
+**Surname Rule Context:**
+```javascript
+var context = {
+    locationName: "Patagonia"  // The location name used in surname generation
+};
+
+// With connector "of", prefix "Mac", suffix "son":
+// Result: "Macof Patagoniason" → "Macof Patagoniason"
+// With connector "of" only:
+// Result: "of Patagonia"
+```
+
+---
+
+### 6. modals-rank.js
+
+**Purpose:** UI modal dialogs for rank operations.
+
+**Exports:**
+
+| Function | Description |
+|----------|-------------|
+| `RankModals.openCreateRankModal(options)` | Open create rank modal |
+| `RankModals.openEditRankModal(rankId, options)` | Open edit rank modal |
+| `RankModals.openAssignRankModal(options)` | Open assign rank modal |
+| `RankModals.openRankDetailsModal(rankId)` | Open rank details modal |
+
+**Usage Example:**
+```javascript
+// Open create rank modal
+RankModals.openCreateRankModal({
+    title: 'Create New Rank',
+    parentRankId: 'rank_123',
+    onComplete: function(newRank) {
+        console.log('Rank created:', newRank);
+    }
+});
+
+// Open assign rank modal
+RankModals.openAssignRankModal({
+    characterId: 'char_456',
+    rankId: 'rank_123',
+    onComplete: function(assignment) {
+        console.log('Rank assigned:', assignment);
+    }
+});
+```
+
+---
+
+### 7. rank-ui-list.js
+
+**Purpose:** UI rendering for rank lists, hierarchies, and selectors.
+
+**Exports:**
+
+| Function | Description |
+|----------|-------------|
+| `RankUI.renderRankList(containerId, options)` | Render rank list |
+| `RankUI.renderRankHierarchy(containerId, options)` | Render rank hierarchy |
+| `RankUI.renderRankTree(containerId, options)` | Render compact rank tree |
+| `RankUI.renderRankSelector(containerId, options)` | Render dropdown selector |
+| `RankUI.refreshAll()` | Refresh all rank UI components |
+
+**Usage Example:**
+```javascript
+// Render rank list with actions
+RankUI.renderRankList('rankListContainer', {
+    showActions: true,
+    emptyMessage: 'No ranks defined yet'
+});
+
+// Render rank tree with selection
+RankUI.renderRankTree('rankTreeContainer', {
+    selectedId: 'rank_123',
+    onSelect: function(rank) {
+        console.log('Selected rank:', rank.name);
+    }
+});
+
+// Render rank selector dropdown
+RankUI.renderRankSelector('rankSelectContainer', {
+    selectedId: 'rank_123',
+    placeholder: 'Select a rank...',
+    includeEmpty: true,
+    filterFn: function(rank) {
+        return rank.priority <= 3; // Only high ranks
+    }
+});
+```
+
+---
+
+## Dependency Requirements
+
+The Rank System requires the following core modules (loaded in order):
+
+```
+1. constants.js (or rank-constants.js can replace it)
+2. ids.js
+3. time.js
+4. accessors.js
+5. storage.js
+6. formatting.js
+7. modals-core.js
+8. modals-char-select.js
+9. modals-household-selector.js
+```
+
+**Load Order for Rank System:**
+```html
+<script src="js/core/rank/rank-constants.js"></script>
+<script src="js/core/rank/rank-state.js"></script>
+<script src="js/core/rank/rank-queries.js"></script>
+<script src="js/core/rank/rank-commands.js"></script>
+<script src="js/core/rank/rank-assignment.js"></script>
+<script src="js/core/rank/modals-rank.js"></script>
+<script src="js/core/rank/rank-ui-list.js"></script>
+```
+
+---
+
+## Integration with Existing Systems
+
+### Accessors Integration
+
+The Rank System uses accessors.js for character lookups:
+```javascript
+// Inside rank-queries.js
+function _getCharacters() {
+    return typeof window.getCharacters === 'function' ? window.getCharacters() : [];
+}
+
+function _getCharacterById(id) {
+    return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+}
+```
+
+### Storage Integration
+
+All rank data is stored in `masterData.data.ranks`:
+```javascript
+// In rank-state.js
+window.masterData.data.ranks = _state.ranks.all;
+window.masterData.data.rankInheritanceRules = _state.inheritanceRules;
+_saveMasterData();
+```
+
+### Character Integration
+
+Ranks are assigned to characters via `character.rankAssignments`:
+```javascript
+character.rankAssignments = [
+    {
+        rankId: 'rank_123',
+        customTitle: null,
+        number: { rawNumber: 1, display: 'I', type: 'roman' },
+        isActive: true,
+        isDeprecated: false,
+        assignedYear: 1250,
+        notes: 'Inherited from father'
+    }
+];
+character.activeRankId = 'rank_123';  // Currently active rank
+```
+
+---
+
+## Migration from Legacy Systems
+
+### From rankSystem.js
+
+| Old Function | New Equivalent |
+|--------------|----------------|
+| `getRanks()` | `RankQueries.getAllRanks()` |
+| `getRankById(id)` | `RankQueries.getRank(id)` |
+| `createRank(data)` | `RankCommands.createRank(data)` |
+| `updateRank(id, updates)` | `RankCommands.updateRank(id, updates)` |
+| `deleteRank(id)` | `RankCommands.deleteRank(id)` |
+| `assignRankToCharacter(charId, rankId, options)` | `RankCommands.assignRankToCharacter(charId, rankId, options)` |
+| `deprecateRankAssignment(charId, rankId)` | `RankCommands.deprecateRankAssignment(charId, rankId)` |
+| `renumberRankHolders(rankId)` | `RankCommands.renumberRankHolders(rankId)` |
+| `toOrdinal(n)` | `RankAssignment.toOrdinal(n)` |
+| `toRoman(n)` | `RankAssignment.toRoman(n)` |
+
+### From rankDisplay.js
+
+| Old Function | New Equivalent |
+|--------------|----------------|
+| `getCompactRankDisplay(char)` | Custom implementation using RankQueries |
+| `getAllRankSymbols(char)` | Custom implementation using RankQueries |
+
+**Legacy Compatibility:** The new system maintains global aliases (`window._rankState`, `window._rankQueries`, `window._rankCommands`, `window._rankAssignment`, `window._rankModals`, `window._rankUI`) for backward compatibility.
+
+---
+
+## Example Workflows
+
+### 1. Creating a New Rank
+
+```javascript
+var result = RankCommands.createRank({
+    name: 'Duke of Example',
+    priority: 2,
+    symbol: '◧',
+    numbered: true,
+    numberingType: 'reign',
+    genderRestriction: 'either',
+    customSurnameRule: true,
+    surnameConnector: 'of'
+});
+
+if (result.success) {
+    console.log('Rank created:', result.data);
+} else {
+    console.error('Failed:', result.error);
+}
+```
+
+### 2. Assigning a Rank to a Character
+
+```javascript
+var result = RankCommands.assignRankToCharacter('char_123', 'rank_456', {
+    notes: 'Appointed by king',
+    assignedYear: 1250
+});
+
+if (result.success) {
+    console.log('Rank assigned:', result.data.assignment);
+}
+```
+
+### 3. Getting Rank Holder Statistics
+
+```javascript
+var stats = RankQueries.getRankHolderStats('rank_456');
+console.log('Total holders:', stats.total);
+console.log('Living:', stats.living);
+console.log('Male:', stats.male);
+console.log('Female:', stats.female);
+```
+
+### 4. Checking for Spouse Inheritance
+
+```javascript
+var fixes = RankAssignment.checkAndSpouseInheritance();
+if (fixes.success && fixes.fixes.length > 0) {
+    console.log('Found', fixes.fixes.length, 'spouse inheritance issues');
+    
+    var applied = RankAssignment.applySpouseInheritanceFixes(fixes.fixes);
+    console.log('Applied', applied.applied, 'fixes');
+}
+```
+
+### 5. Rebuilding All Rank Numbering
+
+```javascript
+var result = RankCommands.rebuildAllRankNumbering();
+console.log('Fixed', result.totalFixed, 'numbering issues');
+```
+
+---
+
+## Best Practices
+
+1. **Always use RankCommands for writes** - Never modify rank data directly
+2. **Always use RankQueries for reads** - Leverages caching for performance
+3. **Subscribe to state changes** - Use `RankState.subscribe()` for reactive UI updates
+4. **Validate before deletion** - Check for holders before deleting a rank
+5. **Use bulk operations for multiple assignments** - More efficient than individual calls
+6. **Handle errors properly** - All commands return `{ success, data, error }`
+
+---
+
+## Error Handling
+
+All commands return a consistent result object:
+
+```javascript
+{
+    success: true/false,
+    data: { /* result data */ },  // Only if success
+    error: 'Error message'         // Only if failure
+}
+```
+
+**Common Errors:**
+- `'Rank not found'` - Invalid rank ID
+- `'Character not found'` - Invalid character ID
+- `'Gender restriction does not match'` - Gender mismatch
+- `'Character already has this rank'` - Duplicate assignment
+- `'Cannot delete rank with X active holder(s)'` - Rank in use
+
+---
+
+## Summary
+
+The Rank System provides a complete, modular solution for managing hierarchical titles and ranks in the Still Waters world simulation. Its clean architecture ensures separation of concerns, testability, and maintainability while integrating seamlessly with existing systems through accessors and storage modules.# Rank System Documentation
+
+## Overview
+
+The Rank System is a modular, clean-architecture implementation for managing hierarchical titles, ranks, and inheritance in the Still Waters world simulation. It provides complete CRUD operations, assignment logic, numbering systems, surname rules, and spouse inheritance.
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         RANK SYSTEM ARCHITECTURE                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    RANK CONSTANTS (rank-constants.js)                │   │
+│  │                                                                     │   │
+│  │  - RANK_LEVELS: Level definitions (Sovereign, Noble, etc.)         │   │
+│  │  - AVAILABLE_SYMBOLS: Allowed rank symbols                         │   │
+│  │  - DEFAULT_RANK: Default rank structure                            │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    RANK STATE (rank-state.js)                       │   │
+│  │                                                                     │   │
+│  │  - Single source of truth for ALL rank data                        │   │
+│  │  - Caches: byId, byPriority, byName                                │   │
+│  │  - Inheritance rules storage                                        │   │
+│  │  - Change notifications (subscribe/unsubscribe)                     │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    RANK QUERIES (rank-queries.js)                   │   │
+│  │                                                                     │   │
+│  │  - All read operations (no side effects)                           │   │
+│  │  - getRank, getAllRanks, getRanksByPriority                       │   │
+│  │  - getRankHierarchy, getRankHolderStats                           │   │
+│  │  - getCharactersWithRank, getRankSurnameRule                      │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    RANK COMMANDS (rank-commands.js)                 │   │
+│  │                                                                     │   │
+│  │  - All write operations                                             │   │
+│  │  - createRank, updateRank, deleteRank                              │   │
+│  │  - addInheritanceRule, removeInheritanceRule                      │   │
+│  │  - Bulk operations (bulkAssignRank, bulkDeprecateRank)            │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    RANK ASSIGNMENT (rank-assignment.js)             │   │
+│  │                                                                     │   │
+│  │  - Complex business logic                                           │   │
+│  │  - assignRankToCharacter, deprecateRankAssignment                  │   │
+│  │  - getNextRankNumber (ordinal/roman numbering)                     │   │
+│  │  - renumberRankHolders, generateSurnameFromRankRule               │   │
+│  │  - Spouse inheritance logic                                        │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    UI LAYER                                         │   │
+│  │                                                                     │   │
+│  │  - modals-rank.js: Create, Edit, Assign, Details modals            │   │
+│  │  - rank-ui-list.js: List, Hierarchy, Tree, Selector rendering      │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## File Reference
+
+### 1. rank-constants.js
+
+**Purpose:** Centralized constants for rank levels, symbols, and default structures.
+
+**Exports:**
+| Constant | Type | Description |
+|----------|------|-------------|
+| `RANK_LEVELS` | Object | Level definitions with name, icon, description |
+| `AVAILABLE_SYMBOLS` | Array | Allowed rank symbols for UI selection |
+| `DEFAULT_RANK` | Object | Default rank structure template |
+
+**RANK_LEVELS Structure:**
+```javascript
+RANK_LEVELS = {
+    1: { name: "Sovereign", icon: "◉", description: "Highest level - Rulers, monarchs, emperors" },
+    2: { name: "High Noble", icon: "◧", description: "Dukes, princes, high lords" },
+    3: { name: "Noble", icon: "◈", description: "Counts, earls, barons" },
+    4: { name: "Gentry", icon: "⟡", description: "Knights, esquires, landed gentry" },
+    5: { name: "Commoner", icon: "⌂", description: "Merchants, artisans, peasants" }
+}
+```
+
+---
+
+### 2. rank-state.js
+
+**Purpose:** Single source of truth for ALL rank data with caching and notifications.
+
+**Exports:**
+
+| Function | Description |
+|----------|-------------|
+| `RankState.getRank(id)` | Get rank by ID |
+| `RankState.getAllRanks()` | Get all ranks |
+| `RankState.getRanksByPriority(priority)` | Get ranks by priority level |
+| `RankState.getRankHierarchy()` | Get hierarchical rank structure |
+| `RankState.getInheritanceRules()` | Get all inheritance rules |
+| `RankState.getInheritanceRulesForRank(rankId)` | Get rules for a rank |
+| `RankState.getRankCount()` | Get total rank count |
+| `RankState.addRank(rankData)` | Add a new rank |
+| `RankState.updateRank(rankId, updates)` | Update a rank |
+| `RankState.deleteRank(rankId)` | Delete a rank |
+| `RankState.addInheritanceRule(parentRankId, childRankId, minChildAge, order)` | Add inheritance rule |
+| `RankState.removeInheritanceRule(parentRankId, ruleIndex)` | Remove inheritance rule |
+| `RankState.subscribe(callback)` | Subscribe to state changes |
+| `RankState.invalidateCache()` | Clear all caches |
+
+**Rank Data Structure:**
+```javascript
+{
+    id: "rank_1234567890_abc123",
+    name: "Duke of Example",
+    priority: 2,                // 1-5 (Sovereign to Commoner)
+    numbered: true,
+    numberingType: 'reign',     // 'reign' or 'birth'
+    numberingPrefix: '',        // e.g., "Prince "
+    numberingSuffix: '',        // e.g., " of England"
+    symbol: "◧",
+    genderRestriction: 'either', // 'either', 'male', 'female'
+    locationTypeId: null,
+    deprecateOnDeath: false,
+    spouseInheritance: null,    // Rank ID that spouse inherits
+    allowsMultipleSpouses: false,
+    parentRankId: null,         // Parent rank in hierarchy
+    customSurnameRule: false,
+    surnameConnector: 'of',     // 'of', 'from', 'van', 'de' (free text)
+    surnamePrefix: '',          // 'Mac', 'Fitz'
+    surnameSuffix: '',          // 'son', 'dottir'
+    createdAt: 1234567890,
+    updatedAt: 1234567890
+}
+```
+
+---
+
+### 3. rank-queries.js
+
+**Purpose:** All read operations for rank data (no side effects).
+
+**Exports:**
+
+| Function | Description |
+|----------|-------------|
+| `RankQueries.getRank(id)` | Get rank by ID |
+| `RankQueries.getAllRanks()` | Get all ranks |
+| `RankQueries.getRanksByPriority(priority)` | Get ranks by priority |
+| `RankQueries.getRankHierarchy()` | Get hierarchical structure |
+| `RankQueries.getInheritanceRules()` | Get all inheritance rules |
+| `RankQueries.getInheritanceRulesForRank(rankId)` | Get rules for a rank |
+| `RankQueries.getRankCount()` | Get total count |
+| `RankQueries.getRankLevelName(priority)` | Get level name |
+| `RankQueries.getRankLevelIcon(priority)` | Get level icon |
+| `RankQueries.getRankLevelDescription(priority)` | Get level description |
+| `RankQueries.getAvailableSymbols()` | Get all available symbols |
+| `RankQueries.getCharactersWithRank(rankId, includeDeprecated)` | Get characters holding rank |
+| `RankQueries.getRankHolderCount(rankId, includeDeprecated)` | Get holder count |
+| `RankQueries.getRankHolderStats(rankId)` | Get detailed holder statistics |
+| `RankQueries.getRanksWithSurnameRules()` | Get ranks with custom surname rules |
+| `RankQueries.getRankSurnameRule(rankId)` | Get surname rule for a rank |
+| `RankQueries.getSpouseInheritanceRanks(characterId)` | Get ranks inherited from spouse |
+| `RankQueries.isValidRank(rank)` | Validate rank object |
+
+**getRankHolderStats Return:**
+```javascript
+{
+    total: 5,
+    male: 3,
+    female: 2,
+    living: 4,
+    deceased: 1,
+    minors: 0,      // age < 18
+    adults: 3,      // age 18-60
+    elders: 1       // age > 60
+}
+```
+
+---
+
+### 4. rank-commands.js
+
+**Purpose:** All write operations for rank data.
+
+**Exports:**
+
+| Function | Description |
+|----------|-------------|
+| `RankCommands.createRank(rankData)` | Create a new rank |
+| `RankCommands.updateRank(rankId, updates)` | Update a rank |
+| `RankCommands.deleteRank(rankId)` | Delete a rank |
+| `RankCommands.addInheritanceRule(parentRankId, childRankId, minChildAge, order)` | Add inheritance rule |
+| `RankCommands.removeInheritanceRule(parentRankId, ruleIndex)` | Remove inheritance rule |
+| `RankCommands.assignRankToCharacter(characterId, rankId, options)` | Assign rank to character |
+| `RankCommands.deprecateRankAssignment(characterId, rankId)` | Deprecate rank assignment |
+| `RankCommands.renumberRankHolders(rankId)` | Renumber all holders of a rank |
+| `RankCommands.updateRankSurnameRule(rankId, ruleSettings)` | Update surname rule |
+| `RankCommands.applySpouseInheritanceFixes(fixes)` | Apply spouse inheritance fixes |
+| `RankCommands.bulkAssignRank(characterIds, rankId, options)` | Bulk assign rank |
+| `RankCommands.bulkDeprecateRank(characterIds, rankId)` | Bulk deprecate rank |
+| `RankCommands.rebuildAllRankNumbering()` | Rebuild numbering for all ranks |
+
+**Return Format:** All commands return `{ success: boolean, data: any, error: string }`
+
+---
+
+### 5. rank-assignment.js
+
+**Purpose:** Complex business logic for rank assignment and numbering.
+
+**Exports:**
+
+| Function | Description |
+|----------|-------------|
+| `RankAssignment.assignRankToCharacter(characterId, rankId, options)` | Assign rank |
+| `RankAssignment.deprecateRankAssignment(characterId, rankId)` | Deprecate rank |
+| `RankAssignment.getNextRankNumber(rankId, characterId, characterName, gender)` | Get next number |
+| `RankAssignment.renumberRankHolders(rankId)` | Renumber holders |
+| `RankAssignment.fixAllNumberingForCharacter(characterId)` | Fix numbering for character |
+| `RankAssignment.toOrdinal(n)` | Convert to ordinal (1st, 2nd, 3rd...) |
+| `RankAssignment.toRoman(n)` | Convert to Roman numeral (I, II, III...) |
+| `RankAssignment.generateSurnameFromRankRule(character, context)` | Generate surname from rule |
+| `RankAssignment.updateRankSurnameRule(rankId, ruleSettings)` | Update surname rule |
+| `RankAssignment.checkAndSpouseInheritance()` | Check spouse inheritance |
+| `RankAssignment.applySpouseInheritanceFixes(fixes)` | Apply spouse inheritance fixes |
+
+**Numbering Types:**
+- `'reign'`: Numbered by reign (e.g., Henry I, Henry II, Henry III)
+- `'birth'`: Numbered by birth order (e.g., 1st Duke, 2nd Duke, 3rd Duke)
+
+**Surname Rule Context:**
+```javascript
+var context = {
+    locationName: "Patagonia"  // The location name used in surname generation
+};
+
+// With connector "of", prefix "Mac", suffix "son":
+// Result: "Macof Patagoniason" → "Macof Patagoniason"
+// With connector "of" only:
+// Result: "of Patagonia"
+```
+
+---
+
+### 6. modals-rank.js
+
+**Purpose:** UI modal dialogs for rank operations.
+
+**Exports:**
+
+| Function | Description |
+|----------|-------------|
+| `RankModals.openCreateRankModal(options)` | Open create rank modal |
+| `RankModals.openEditRankModal(rankId, options)` | Open edit rank modal |
+| `RankModals.openAssignRankModal(options)` | Open assign rank modal |
+| `RankModals.openRankDetailsModal(rankId)` | Open rank details modal |
+
+**Usage Example:**
+```javascript
+// Open create rank modal
+RankModals.openCreateRankModal({
+    title: 'Create New Rank',
+    parentRankId: 'rank_123',
+    onComplete: function(newRank) {
+        console.log('Rank created:', newRank);
+    }
+});
+
+// Open assign rank modal
+RankModals.openAssignRankModal({
+    characterId: 'char_456',
+    rankId: 'rank_123',
+    onComplete: function(assignment) {
+        console.log('Rank assigned:', assignment);
+    }
+});
+```
+
+---
+
+### 7. rank-ui-list.js
+
+**Purpose:** UI rendering for rank lists, hierarchies, and selectors.
+
+**Exports:**
+
+| Function | Description |
+|----------|-------------|
+| `RankUI.renderRankList(containerId, options)` | Render rank list |
+| `RankUI.renderRankHierarchy(containerId, options)` | Render rank hierarchy |
+| `RankUI.renderRankTree(containerId, options)` | Render compact rank tree |
+| `RankUI.renderRankSelector(containerId, options)` | Render dropdown selector |
+| `RankUI.refreshAll()` | Refresh all rank UI components |
+
+**Usage Example:**
+```javascript
+// Render rank list with actions
+RankUI.renderRankList('rankListContainer', {
+    showActions: true,
+    emptyMessage: 'No ranks defined yet'
+});
+
+// Render rank tree with selection
+RankUI.renderRankTree('rankTreeContainer', {
+    selectedId: 'rank_123',
+    onSelect: function(rank) {
+        console.log('Selected rank:', rank.name);
+    }
+});
+
+// Render rank selector dropdown
+RankUI.renderRankSelector('rankSelectContainer', {
+    selectedId: 'rank_123',
+    placeholder: 'Select a rank...',
+    includeEmpty: true,
+    filterFn: function(rank) {
+        return rank.priority <= 3; // Only high ranks
+    }
+});
+```
+
+---
+
+## Dependency Requirements
+
+The Rank System requires the following core modules (loaded in order):
+
+```
+1. constants.js (or rank-constants.js can replace it)
+2. ids.js
+3. time.js
+4. accessors.js
+5. storage.js
+6. formatting.js
+7. modals-core.js
+8. modals-char-select.js
+9. modals-household-selector.js
+```
+
+**Load Order for Rank System:**
+```html
+<script src="js/core/rank/rank-constants.js"></script>
+<script src="js/core/rank/rank-state.js"></script>
+<script src="js/core/rank/rank-queries.js"></script>
+<script src="js/core/rank/rank-commands.js"></script>
+<script src="js/core/rank/rank-assignment.js"></script>
+<script src="js/core/rank/modals-rank.js"></script>
+<script src="js/core/rank/rank-ui-list.js"></script>
+```
+
+---
+
+## Integration with Existing Systems
+
+### Accessors Integration
+
+The Rank System uses accessors.js for character lookups:
+```javascript
+// Inside rank-queries.js
+function _getCharacters() {
+    return typeof window.getCharacters === 'function' ? window.getCharacters() : [];
+}
+
+function _getCharacterById(id) {
+    return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+}
+```
+
+### Storage Integration
+
+All rank data is stored in `masterData.data.ranks`:
+```javascript
+// In rank-state.js
+window.masterData.data.ranks = _state.ranks.all;
+window.masterData.data.rankInheritanceRules = _state.inheritanceRules;
+_saveMasterData();
+```
+
+### Character Integration
+
+Ranks are assigned to characters via `character.rankAssignments`:
+```javascript
+character.rankAssignments = [
+    {
+        rankId: 'rank_123',
+        customTitle: null,
+        number: { rawNumber: 1, display: 'I', type: 'roman' },
+        isActive: true,
+        isDeprecated: false,
+        assignedYear: 1250,
+        notes: 'Inherited from father'
+    }
+];
+character.activeRankId = 'rank_123';  // Currently active rank
+```
+
+---
+
+## Migration from Legacy Systems
+
+### From rankSystem.js
+
+| Old Function | New Equivalent |
+|--------------|----------------|
+| `getRanks()` | `RankQueries.getAllRanks()` |
+| `getRankById(id)` | `RankQueries.getRank(id)` |
+| `createRank(data)` | `RankCommands.createRank(data)` |
+| `updateRank(id, updates)` | `RankCommands.updateRank(id, updates)` |
+| `deleteRank(id)` | `RankCommands.deleteRank(id)` |
+| `assignRankToCharacter(charId, rankId, options)` | `RankCommands.assignRankToCharacter(charId, rankId, options)` |
+| `deprecateRankAssignment(charId, rankId)` | `RankCommands.deprecateRankAssignment(charId, rankId)` |
+| `renumberRankHolders(rankId)` | `RankCommands.renumberRankHolders(rankId)` |
+| `toOrdinal(n)` | `RankAssignment.toOrdinal(n)` |
+| `toRoman(n)` | `RankAssignment.toRoman(n)` |
+
+### From rankDisplay.js
+
+| Old Function | New Equivalent |
+|--------------|----------------|
+| `getCompactRankDisplay(char)` | Custom implementation using RankQueries |
+| `getAllRankSymbols(char)` | Custom implementation using RankQueries |
+
+**Legacy Compatibility:** The new system maintains global aliases (`window._rankState`, `window._rankQueries`, `window._rankCommands`, `window._rankAssignment`, `window._rankModals`, `window._rankUI`) for backward compatibility.
+
+---
+
+## Example Workflows
+
+### 1. Creating a New Rank
+
+```javascript
+var result = RankCommands.createRank({
+    name: 'Duke of Example',
+    priority: 2,
+    symbol: '◧',
+    numbered: true,
+    numberingType: 'reign',
+    genderRestriction: 'either',
+    customSurnameRule: true,
+    surnameConnector: 'of'
+});
+
+if (result.success) {
+    console.log('Rank created:', result.data);
+} else {
+    console.error('Failed:', result.error);
+}
+```
+
+### 2. Assigning a Rank to a Character
+
+```javascript
+var result = RankCommands.assignRankToCharacter('char_123', 'rank_456', {
+    notes: 'Appointed by king',
+    assignedYear: 1250
+});
+
+if (result.success) {
+    console.log('Rank assigned:', result.data.assignment);
+}
+```
+
+### 3. Getting Rank Holder Statistics
+
+```javascript
+var stats = RankQueries.getRankHolderStats('rank_456');
+console.log('Total holders:', stats.total);
+console.log('Living:', stats.living);
+console.log('Male:', stats.male);
+console.log('Female:', stats.female);
+```
+
+### 4. Checking for Spouse Inheritance
+
+```javascript
+var fixes = RankAssignment.checkAndSpouseInheritance();
+if (fixes.success && fixes.fixes.length > 0) {
+    console.log('Found', fixes.fixes.length, 'spouse inheritance issues');
+    
+    var applied = RankAssignment.applySpouseInheritanceFixes(fixes.fixes);
+    console.log('Applied', applied.applied, 'fixes');
+}
+```
+
+### 5. Rebuilding All Rank Numbering
+
+```javascript
+var result = RankCommands.rebuildAllRankNumbering();
+console.log('Fixed', result.totalFixed, 'numbering issues');
+```
+
+---
+
+## Best Practices
+
+1. **Always use RankCommands for writes** - Never modify rank data directly
+2. **Always use RankQueries for reads** - Leverages caching for performance
+3. **Subscribe to state changes** - Use `RankState.subscribe()` for reactive UI updates
+4. **Validate before deletion** - Check for holders before deleting a rank
+5. **Use bulk operations for multiple assignments** - More efficient than individual calls
+6. **Handle errors properly** - All commands return `{ success, data, error }`
+
+---
+
+## Error Handling
+
+All commands return a consistent result object:
+
+```javascript
+{
+    success: true/false,
+    data: { /* result data */ },  // Only if success
+    error: 'Error message'         // Only if failure
+}
+```
+
+**Common Errors:**
+- `'Rank not found'` - Invalid rank ID
+- `'Character not found'` - Invalid character ID
+- `'Gender restriction does not match'` - Gender mismatch
+- `'Character already has this rank'` - Duplicate assignment
+- `'Cannot delete rank with X active holder(s)'` - Rank in use
+
+---
+
+## Summary
+
+The Rank System provides a complete, modular solution for managing hierarchical titles and ranks in the Still Waters world simulation. Its clean architecture ensures separation of concerns, testability, and maintainability while integrating seamlessly with existing systems through accessors and storage modules.
