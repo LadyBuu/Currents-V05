@@ -1,0 +1,1069 @@
+# INDUSTRY & ENTERPRISE SYSTEM - COMPLETE DOCUMENTATION
+
+================================================================================
+TABLE OF CONTENTS
+=================
+1. INDUSTRY SYSTEM
+   1.1 industry-state.js - Single Source of Truth
+   1.2 industry-commands.js - Write Operations
+   1.3 industry-queries.js - Read Operations
+   1.4 industry-types.js - Enterprise Type Registry
+   1.5 industry-processor.js - Annual Processing
+   1.6 industry-ui-list.js - UI List Rendering
+   1.7 modals-industry.js - Industry UI Modals
+
+2. DEPENDENCY MAP
+3. RECURSION GUARDS
+4. ICON POLICY
+5. ENTERPRISE TYPE REFERENCE
+
+================================================================================
+1. INDUSTRY SYSTEM
+================================================================================
+
+1.1 industry-state.js - Single Source of Truth
+----------------------------------------------
+
+PURPOSE: Manages the central state for all enterprise data.
+
+DEPENDENCIES:
+  - storage.js (masterData)
+  - ids.js (generateId)
+  - accessors.js (getPlaceById)
+
+FUNCTIONS:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryState.getEnterprise(id)                                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets a single enterprise by ID.                                            │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   id (string) - Enterprise ID                                              │
+│                                                                             │
+│ RETURNS: Object|null - Enterprise object or null                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryState.getAllEnterprises()                                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets all enterprises.                                                      │
+│                                                                             │
+│ RETURNS: Array - Array of enterprise objects                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryState.getEnterprisesByOwner(ownerId, ownerType)                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets enterprises by owner.                                                 │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   ownerId (string) - Owner ID                                              │
+│   ownerType (string) - 'character', 'household', or 'state'                │
+│                                                                             │
+│ RETURNS: Array - Array of enterprise objects                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryState.getEnterprisesByLocation(locationId)                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets enterprises by location.                                              │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   locationId (string) - Location ID                                        │
+│                                                                             │
+│ RETURNS: Array - Array of enterprise objects                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryState.getEnterprisesByType(typeId)                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets enterprises by type.                                                  │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   typeId (string) - Enterprise type ID                                     │
+│                                                                             │
+│ RETURNS: Array - Array of enterprise objects                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryState.getEnterprisesByStatus(status)                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets enterprises by status.                                                │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   status (string) - 'active', 'inactive', 'bankrupt', 'closed'             │
+│                                                                             │
+│ RETURNS: Array - Array of enterprise objects                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryState.getEnterpriseTypes()                                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets all enterprise types.                                                 │
+│                                                                             │
+│ RETURNS: Array - Array of enterprise type objects                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryState.getEnterpriseTypeById(id)                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets an enterprise type by ID.                                             │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   id (string) - Enterprise type ID                                         │
+│                                                                             │
+│ RETURNS: Object|null - Enterprise type object or null                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryState.invalidateCache()                                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Invalidates all caches.                                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryState.subscribe(callback)                                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Subscribes to state changes.                                               │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   callback (function) - Callback function receiving event object           │
+│                                                                             │
+│ RETURNS: function - Unsubscribe function                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryState._setEnterprises(enterprises)                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ INTERNAL: Sets the enterprises array and triggers updates.                 │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   enterprises (Array) - New enterprises array                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryState._setEnterpriseTypes(types)                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ INTERNAL: Sets the enterprise types array and triggers updates.            │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   types (Array) - New enterprise types array                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryState._loadData()                                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ INTERNAL: Loads data from masterData.                                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryState._getState()                                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ INTERNAL: Gets the internal state object.                                  │
+│                                                                             │
+│ RETURNS: Object - Internal state                                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryState.isProcessing()                                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Checks if the state is currently processing.                               │
+│                                                                             │
+│ RETURNS: boolean - True if processing                                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+1.2 industry-commands.js - Write Operations
+-------------------------------------------
+
+PURPOSE: All write operations for enterprise management.
+
+DEPENDENCIES:
+  - industry-state.js (IndustryState)
+  - accessors.js (getCharacterById, getHousehold, getPlaceById)
+  - ids.js (generateId)
+
+FUNCTIONS:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryCommands.createEnterprise(data)                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Creates a new enterprise.                                                  │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   data.name (string) - Enterprise name                                     │
+│   data.typeId (string) - Enterprise type ID                                │
+│   data.ownerType (string) - 'character', 'household', 'state', 'none'      │
+│   data.ownerId (string) - Owner ID (optional)                              │
+│   data.ownerName (string) - Owner name (optional)                          │
+│   data.locationId (string) - Location ID (optional)                        │
+│   data.wealth (number) - Initial wealth (default: 0)                       │
+│   data.debt (number) - Initial debt (default: 0)                           │
+│   data.income (number) - Annual income (default: type base)                │
+│   data.expenses (number) - Annual expenses (default: type base)            │
+│   data.wages (number) - Per-worker wage (default: type base)               │
+│   data.workerCount (number) - Initial workers (default: type base)         │
+│   data.maxWorkers (number) - Max workers (default: type max)               │
+│   data.workerList (Array) - Initial worker IDs (optional)                  │
+│   data.workerWages (Object) - Per-worker wages (optional)                  │
+│   data.status (string) - 'active', 'inactive' (default: 'active')          │
+│   data.foundedYear (number) - Founded year (default: current)              │
+│   data.notes (string) - Notes (optional)                                   │
+│                                                                             │
+│ RETURNS: { success: boolean, data: Object, reason: string }               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryCommands.updateEnterprise(enterpriseId, updates)                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Updates an existing enterprise.                                            │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   enterpriseId (string) - Enterprise ID                                    │
+│   updates (Object) - Updates to apply                                      │
+│                                                                             │
+│ ALLOWED FIELDS:                                                             │
+│   name, typeId, ownerType, ownerId, ownerName, locationId, locationName,   │
+│   wealth, debt, income, expenses, wages, workerCount, maxWorkers,         │
+│   workerList, workerWages, status, notes                                   │
+│                                                                             │
+│ RETURNS: { success: boolean, data: Object, reason: string }               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryCommands.deleteEnterprise(enterpriseId)                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Deletes an enterprise.                                                     │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   enterpriseId (string) - Enterprise ID                                    │
+│                                                                             │
+│ RETURNS: { success: boolean, reason: string }                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryCommands.addWorkerToEnterprise(enterpriseId, workerId, wage)      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Adds a worker to an enterprise.                                            │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   enterpriseId (string) - Enterprise ID                                    │
+│   workerId (string) - Character ID                                         │
+│   wage (number) - Wage for this worker (default: enterprise wage)          │
+│                                                                             │
+│ RETURNS: { success: boolean, data: { workerId, wage }, reason: string }   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryCommands.removeWorkerFromEnterprise(enterpriseId, workerId)       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Removes a worker from an enterprise.                                       │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   enterpriseId (string) - Enterprise ID                                    │
+│   workerId (string) - Character ID                                         │
+│                                                                             │
+│ RETURNS: { success: boolean, reason: string }                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryCommands.setWorkerWage(enterpriseId, workerId, wage)              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Sets a worker's wage.                                                      │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   enterpriseId (string) - Enterprise ID                                    │
+│   workerId (string) - Character ID                                         │
+│   wage (number) - New wage                                                 │
+│                                                                             │
+│ RETURNS: { success: boolean, reason: string }                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryCommands.updateEnterpriseWealth(enterpriseId, amount, reason)     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Updates enterprise wealth.                                                 │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   enterpriseId (string) - Enterprise ID                                    │
+│   amount (number) - Change in wealth                                       │
+│   reason (string) - Reason for change                                      │
+│                                                                             │
+│ RETURNS: { success: boolean, data: { newWealth: number } }                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryCommands.updateEnterpriseDebt(enterpriseId, amount, reason)       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Updates enterprise debt.                                                   │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   enterpriseId (string) - Enterprise ID                                    │
+│   amount (number) - Change in debt                                         │
+│   reason (string) - Reason for change                                      │
+│                                                                             │
+│ RETURNS: { success: boolean, data: { newDebt: number } }                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+1.3 industry-queries.js - Read Operations
+-----------------------------------------
+
+PURPOSE: All read-only queries for enterprise data.
+
+DEPENDENCIES:
+  - industry-state.js (IndustryState)
+  - accessors.js (getCharacterById, getHousehold, getPlaceById)
+
+FUNCTIONS:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryQueries.getEnterprise(id)                                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets a single enterprise by ID.                                            │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   id (string) - Enterprise ID                                              │
+│                                                                             │
+│ RETURNS: Object|null - Enterprise object or null                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryQueries.getAllEnterprises()                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets all enterprises.                                                      │
+│                                                                             │
+│ RETURNS: Array - Array of enterprise objects                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryQueries.getEnterprisesByOwner(ownerId, ownerType)                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets enterprises by owner.                                                 │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   ownerId (string) - Owner ID                                              │
+│   ownerType (string) - 'character', 'household', 'state'                   │
+│                                                                             │
+│ RETURNS: Array - Array of enterprise objects                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryQueries.getEnterprisesByLocation(locationId)                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets enterprises by location.                                              │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   locationId (string) - Location ID                                        │
+│                                                                             │
+│ RETURNS: Array - Array of enterprise objects                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryQueries.getEnterprisesByCategory(category)                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets enterprises by category.                                              │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   category (string) - 'agricultural', 'craft', 'industrial',               │
+│                     'commercial', 'transport', 'mining'                    │
+│                                                                             │
+│ RETURNS: Array - Array of enterprise objects                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryQueries.getEnterprisesByStatus(status)                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets enterprises by status.                                                │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   status (string) - 'active', 'inactive', 'bankrupt', 'closed'             │
+│                                                                             │
+│ RETURNS: Array - Array of enterprise objects                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryQueries.getStateEnterprises(locationId)                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets state-owned enterprises at a location.                                │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   locationId (string) - Location ID                                        │
+│                                                                             │
+│ RETURNS: Array - Array of enterprise objects                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryQueries.getWorkerWage(enterpriseId, workerId)                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets a worker's wage.                                                      │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   enterpriseId (string) - Enterprise ID                                    │
+│   workerId (string) - Character ID                                         │
+│                                                                             │
+│ RETURNS: number - Wage amount                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryQueries.getEnterpriseSummary(enterpriseId)                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets a summary of an enterprise.                                           │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   enterpriseId (string) - Enterprise ID                                    │
+│                                                                             │
+│ RETURNS: Object|null - Summary object or null                              │
+│                                                                             │
+│ SUMMARY FIELDS:                                                             │
+│   id, name, type, category, ownerType, ownerId, ownerName,                 │
+│   locationId, locationName, wealth, debt, income, expenses, wages,        │
+│   totalWages, workerCount, maxWorkers, annualProfit, status,              │
+│   foundedYear, lastProcessedYear, notes                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryQueries.getOwnerEnterprisesSummary(ownerId, ownerType)            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets summaries of enterprises by owner.                                    │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   ownerId (string) - Owner ID                                              │
+│   ownerType (string) - 'character', 'household', 'state'                   │
+│                                                                             │
+│ RETURNS: Array - Array of summary objects                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryQueries.getLocationEnterprisesSummary(locationId)                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets summaries of enterprises by location.                                 │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   locationId (string) - Location ID                                        │
+│                                                                             │
+│ RETURNS: Array - Array of summary objects                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryQueries.searchEnterprises(query)                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Searches enterprises by name, type, or owner.                              │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   query (string) - Search term                                             │
+│                                                                             │
+│ RETURNS: Array - Array of matching enterprise objects                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryQueries.getEnterpriseStatistics()                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets statistics about all enterprises.                                     │
+│                                                                             │
+│ RETURNS: { total, byStatus, byCategory, byOwnerType, totalWealth,         │
+│           totalDebt, totalWorkers, profitable, unprofitable }              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+1.4 industry-types.js - Enterprise Type Registry
+------------------------------------------------
+
+PURPOSE: Manages the enterprise type registry.
+
+DEPENDENCIES:
+  - industry-state.js (IndustryState)
+  - ids.js (generateId)
+
+CONSTANTS:
+
+DEFAULT ENTERPRISE TYPES:
+
+┌─────────────────────┬──────────────┬────────┬─────────┬────────┬────────┐
+│ ID                  │ Name         │ Income │ Expenses│ Workers│ Max    │
+├─────────────────────┼──────────────┼────────┼─────────┼────────┼────────┤
+│ farm                │ Farm         │ 20     │ 8       │ 3      │ 10     │
+│ orchard             │ Orchard      │ 15     │ 6       │ 2      │ 8      │
+│ vineyard            │ Vineyard     │ 25     │ 10      │ 3      │ 12     │
+│ plantation          │ Plantation   │ 35     │ 15      │ 5      │ 20     │
+│ fishery             │ Fishery      │ 18     │ 8       │ 2      │ 10     │
+│ fish_pond           │ Fish Pond    │ 12     │ 5       │ 1      │ 6      │
+├─────────────────────┼──────────────┼────────┼─────────┼────────┼────────┤
+│ smithy              │ Smithy       │ 22     │ 12      │ 2      │ 8      │
+│ weaving_workshop    │ Weaving      │ 18     │ 10      │ 3      │ 12     │
+│ pottery             │ Pottery      │ 15     │ 8       │ 2      │ 8      │
+│ carpentry           │ Carpentry    │ 20     │ 10      │ 2      │ 10     │
+│ jewelry             │ Jewelry      │ 30     │ 20      │ 2      │ 6      │
+│ brewery             │ Brewery      │ 25     │ 15      │ 3      │ 10     │
+│ tannery             │ Tannery      │ 20     │ 12      │ 2      │ 8      │
+├─────────────────────┼──────────────┼────────┼─────────┼────────┼────────┤
+│ factory             │ Factory      │ 50     │ 30      │ 10     │ 50     │
+│ textile_mill        │ Textile Mill │ 45     │ 25      │ 8      │ 40     │
+│ ironworks           │ Ironworks    │ 55     │ 35      │ 10     │ 45     │
+│ steel_mill          │ Steel Mill   │ 60     │ 40      │ 12     │ 50     │
+│ coal_mine           │ Coal Mine    │ 40     │ 30      │ 8      │ 40     │
+│ foundry             │ Foundry      │ 45     │ 30      │ 8      │ 35     │
+│ sawmill             │ Sawmill      │ 28     │ 18      │ 4      │ 15     │
+│ brickyard           │ Brickyard    │ 22     │ 14      │ 4      │ 15     │
+├─────────────────────┼──────────────┼────────┼─────────┼────────┼────────┤
+│ market_stall        │ Market Stall │ 12     │ 6       │ 1      │ 4      │
+│ shop                │ Shop         │ 20     │ 12      │ 2      │ 8      │
+│ tavern              │ Tavern       │ 25     │ 15      │ 3      │ 10     │
+│ warehouse           │ Warehouse    │ 18     │ 10      │ 2      │ 8      │
+│ trading_post        │ Trading Post │ 30     │ 18      │ 3      │ 12     │
+├─────────────────────┼──────────────┼────────┼─────────┼────────┼────────┤
+│ ferry               │ Ferry        │ 15     │ 8       │ 2      │ 6      │
+│ shipping            │ Shipping Co  │ 40     │ 25      │ 5      │ 20     │
+│ carriage_service    │ Carriage     │ 20     │ 12      │ 3      │ 10     │
+├─────────────────────┼──────────────┼────────┼─────────┼────────┼────────┤
+│ mine                │ Mine         │ 35     │ 25      │ 6      │ 30     │
+│ quarry              │ Quarry       │ 25     │ 15      │ 4      │ 20     │
+└─────────────────────┴──────────────┴────────┴─────────┴────────┴────────┘
+
+CATEGORIES:
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Category       │ Description                                               │
+├────────────────┼───────────────────────────────────────────────────────────┤
+│ agricultural   │ Farming, fishing, and food production                     │
+│ craft          │ Artisanal goods and small-scale production                │
+│ industrial     │ Large-scale manufacturing and processing                  │
+│ commercial     │ Retail, trade, and commerce                               │
+│ transport      │ Moving people and goods                                   │
+│ mining         │ Resource extraction                                       │
+└────────────────┴───────────────────────────────────────────────────────────┘
+
+FUNCTIONS:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryTypes.getDefaultEnterpriseTypes()                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the default enterprise types.                                         │
+│                                                                             │
+│ RETURNS: Array - Array of default enterprise type objects                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryTypes.getEnterpriseTypes()                                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets all enterprise types (loading from state or defaults).                │
+│                                                                             │
+│ RETURNS: Array - Array of enterprise type objects                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryTypes.getEnterpriseTypeById(id)                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets an enterprise type by ID.                                             │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   id (string) - Enterprise type ID                                         │
+│                                                                             │
+│ RETURNS: Object|null - Enterprise type object or null                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryTypes.getEnterpriseTypesByCategory(category)                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets enterprise types by category.                                         │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   category (string) - Category name                                        │
+│                                                                             │
+│ RETURNS: Array - Array of enterprise type objects                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryTypes.getEnterpriseCategories()                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets all enterprise types grouped by category.                             │
+│                                                                             │
+│ RETURNS: Object - { category: [types], ... }                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryTypes.addEnterpriseType(data)                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Adds a new enterprise type.                                                │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   data.name (string) - Type name (required)                                │
+│   data.category (string) - Category (default: 'other')                     │
+│   data.baseIncome (number) - Base income (default: 10)                     │
+│   data.baseExpenses (number) - Base expenses (default: 5)                  │
+│   data.baseWages (number) - Base wages (default: 8)                        │
+│   data.baseWorkers (number) - Base workers (default: 2)                    │
+│   data.baseCost (number) - Base cost (default: 100)                        │
+│   data.maxWorkers (number) - Max workers (default: 10)                     │
+│   data.description (string) - Description (optional)                       │
+│                                                                             │
+│ RETURNS: { success: boolean, data: Object, reason: string }               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryTypes.updateEnterpriseType(id, updates)                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Updates an enterprise type.                                                │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   id (string) - Enterprise type ID                                         │
+│   updates (Object) - Updates to apply                                      │
+│                                                                             │
+│ ALLOWED FIELDS:                                                             │
+│   name, category, baseIncome, baseExpenses, baseWages,                     │
+│   baseWorkers, baseCost, maxWorkers, description                           │
+│                                                                             │
+│ RETURNS: { success: boolean, data: Object, reason: string }               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryTypes.deleteEnterpriseType(id)                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Deletes an enterprise type.                                                │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   id (string) - Enterprise type ID                                         │
+│                                                                             │
+│ RETURNS: { success: boolean, reason: string }                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+1.5 industry-processor.js - Annual Processing
+---------------------------------------------
+
+PURPOSE: Annual processing logic for enterprises.
+
+DEPENDENCIES:
+  - industry-state.js (IndustryState)
+  - industry-commands.js (IndustryCommands)
+  - industry-queries.js (IndustryQueries)
+  - time.js (getCurrentYearSafe)
+
+FUNCTIONS:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryProcessor.processAnnualEnterprise(enterpriseId)                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Processes a single enterprise's annual finances.                           │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   enterpriseId (string) - Enterprise ID                                    │
+│                                                                             │
+│ RETURNS: { success: boolean, enterpriseId, enterpriseName, year,          │
+│           yearsProcessed, annualIncome, annualExpenses, totalWages,       │
+│           netProfit, totalProfit, newWealth, debt, status, reason }       │
+│                                                                             │
+│ PROCESS:                                                                    │
+│   1. Calculate annual income                                               │
+│   2. Calculate total wages                                                 │
+│   3. Calculate annual expenses (expenses + wages)                          │
+│   4. Calculate net profit (income - expenses)                              │
+│   5. Calculate total profit (net profit * years)                           │
+│   6. Update wealth with total profit                                       │
+│   7. Apply debt interest (5% annually)                                     │
+│   8. Mark bankrupt if wealth < -100                                        │
+│   9. Update lastProcessedYear                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryProcessor.processAllEnterprises()                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Processes all enterprises' annual finances.                                │
+│                                                                             │
+│ RETURNS: { success: boolean, processed: number, results: Array }          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+1.6 industry-ui-list.js - UI List Rendering
+-------------------------------------------
+
+PURPOSE: Renders enterprise lists with various formatting options.
+
+DEPENDENCIES:
+  - industry-queries.js (IndustryQueries)
+  - formatting.js (escapeHtml)
+  - icons.js (Icons)
+
+FUNCTIONS:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryUI.renderEnterpriseList(containerId, options)                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Renders a list of enterprises.                                             │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   containerId (string) - DOM element ID or element                         │
+│   options.filteredEnterprises (Array) - Pre-filtered list                  │
+│   options.onSelect (function) - Callback when selected                     │
+│   options.emptyMessage (string) - Message when empty                       │
+│   options.showStatus (boolean) - Show status (default: true)               │
+│   options.showOwner (boolean) - Show owner (default: true)                 │
+│   options.rowClass (string) - CSS class for rows                           │
+│                                                                             │
+│ RETURNS: boolean - True if rendered                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryUI.renderEnterpriseCard(enterprise, options)                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Renders a single enterprise as a card.                                     │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   enterprise (Object|string) - Enterprise object or ID                     │
+│   options (Object) - Additional options                                    │
+│                                                                             │
+│ RETURNS: string - HTML for the card                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IndustryUI.renderEnterpriseTable(enterprises, options)                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Renders enterprises as a table.                                            │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   enterprises (Array) - Enterprise objects                                 │
+│   options.columns (Array) - Columns to show                                │
+│                                                                             │
+│ AVAILABLE COLUMNS:                                                          │
+│   name, type, owner, workers, wealth, debt, profit, status                 │
+│                                                                             │
+│ RETURNS: string - HTML for the table                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+1.7 modals-industry.js - Industry UI Modals
+-------------------------------------------
+
+PURPOSE: UI modals for enterprise management.
+
+DEPENDENCIES:
+  - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
+  - modals-char-select.js (openCharacterSelector)
+  - modals-household-selector.js (openHouseholdSelector)
+  - industry-state.js (IndustryState)
+  - industry-commands.js (IndustryCommands)
+  - industry-queries.js (IndustryQueries)
+  - industry-types.js (IndustryTypes)
+  - industry-processor.js (IndustryProcessor)
+
+FUNCTIONS:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openCreateEnterpriseModal(onSuccess, defaultData)                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to create a new enterprise.                                    │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   onSuccess (function) - Callback with created enterprise                  │
+│   defaultData (Object) - Default values for fields                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openEditEnterpriseModal(enterpriseId, onSuccess)                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to edit an enterprise.                                         │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   enterpriseId (string) - Enterprise ID                                    │
+│   onSuccess (function) - Callback on success                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openEnterpriseDetailsModal(enterpriseId, onSuccess)                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal with enterprise details and actions.                           │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   enterpriseId (string) - Enterprise ID                                    │
+│   onSuccess (function) - Callback on success                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openManageWorkersModal(enterpriseId, onSuccess)                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to manage enterprise workers.                                  │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   enterpriseId (string) - Enterprise ID                                    │
+│   onSuccess (function) - Callback on success                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openManageEnterpriseTypesModal(onSuccess)                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to manage enterprise types.                                    │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   onSuccess (function) - Callback on success                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openCreateEnterpriseTypeModal(onSuccess)                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to create an enterprise type.                                  │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   onSuccess (function) - Callback with created type                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openEditEnterpriseTypeModal(typeId, onSuccess)                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to edit an enterprise type.                                    │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   typeId (string) - Enterprise type ID                                     │
+│   onSuccess (function) - Callback on success                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openEnterpriseListModal(onSelect)                                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal listing all enterprises.                                       │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   onSelect (function) - Callback when enterprise is selected               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+================================================================================
+2. DEPENDENCY MAP
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    CORE DEPENDENCIES                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  modals-core.js ─────────────────────────────────────────────────────────┐ │
+│  ├── openModal()                                                         │ │
+│  ├── closeTopModal()                                                     │ │
+│  ├── _escapeHtml()                                                       │ │
+│  ├── _showToast()                                                        │ │
+│  ├── _getIcon()                                                          │ │
+│  ├── _getCurrentYear()                                                   │ │
+│  ├── buildLocationDropdown()                                             │ │
+│  └── _getCharacterById()                                                 │ │
+│                                                                             │
+│  modals-char-select.js ─────────────────────────────────────────────────┐ │
+│  └── openCharacterSelector()                                             │ │
+│                                                                             │
+│  modals-household-selector.js ──────────────────────────────────────────┐ │
+│  └── openHouseholdSelector()                                             │ │
+│                                                                             │
+│  accessors.js ──────────────────────────────────────────────────────────┐ │
+│  ├── getCharacterById()                                                  │ │
+│  ├── getCharacters()                                                     │ │
+│  ├── getPlaceById()                                                      │ │
+│  ├── getPlaces()                                                         │ │
+│  ├── getCurrentYear()                                                    │ │
+│  └── getHousehold()                                                      │ │
+│                                                                             │
+│  storage.js ────────────────────────────────────────────────────────────┐ │
+│  └── saveMasterData()                                                    │ │
+│                                                                             │
+│  ids.js ────────────────────────────────────────────────────────────────┐ │
+│  └── generateId()                                                        │ │
+│                                                                             │
+│  icons.js ──────────────────────────────────────────────────────────────┐ │
+│  └── Icons                                                               │ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    INDUSTRY SYSTEM DEPENDENCIES                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  industry-state.js ─────────────────────────────────────────────────────┐ │
+│  ├── storage.js                                                          │ │
+│  ├── ids.js                                                              │ │
+│  └── accessors.js                                                        │ │
+│                                                                             │
+│  industry-commands.js ──────────────────────────────────────────────────┐ │
+│  ├── industry-state.js                                                   │ │
+│  ├── accessors.js                                                        │ │
+│  └── ids.js                                                              │ │
+│                                                                             │
+│  industry-queries.js ───────────────────────────────────────────────────┐ │
+│  ├── industry-state.js                                                   │ │
+│  └── accessors.js                                                        │ │
+│                                                                             │
+│  industry-types.js ─────────────────────────────────────────────────────┐ │
+│  ├── industry-state.js                                                   │ │
+│  └── ids.js                                                              │ │
+│                                                                             │
+│  industry-processor.js ─────────────────────────────────────────────────┐ │
+│  ├── industry-state.js                                                   │ │
+│  ├── industry-commands.js                                                │ │
+│  ├── industry-queries.js                                                 │ │
+│  └── time.js                                                             │ │
+│                                                                             │
+│  industry-ui-list.js ───────────────────────────────────────────────────┐ │
+│  ├── industry-queries.js                                                 │ │
+│  ├── formatting.js                                                       │ │
+│  └── icons.js                                                            │ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    MODAL DEPENDENCIES                                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  modals-industry.js ─────────────────────────────────────────────────────┐ │
+│  ├── modals-core.js                                                      │ │
+│  ├── modals-char-select.js                                               │ │
+│  ├── modals-household-selector.js                                        │ │
+│  ├── industry-state.js                                                   │ │
+│  ├── industry-commands.js                                                │ │
+│  ├── industry-queries.js                                                 │ │
+│  ├── industry-types.js                                                   │ │
+│  └── industry-processor.js                                               │ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+================================================================================
+3. RECURSION GUARDS
+================================================================================
+
+All modules implement recursion guards to prevent infinite loops:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ GUARD NAME             │ LOCATION                    │ PURPOSE             │
+├────────────────────────┼────────────────────────────┼─────────────────────┤
+│ _processing            │ industry-commands.js       │ Prevent command     │
+│                        │                            │ re-entry            │
+├────────────────────────┼────────────────────────────┼─────────────────────┤
+│ _processing            │ industry-queries.js        │ Prevent query       │
+│                        │                            │ re-entry            │
+├────────────────────────┼────────────────────────────┼─────────────────────┤
+│ _processing            │ industry-types.js          │ Prevent type        │
+│                        │                            │ operation re-entry  │
+├────────────────────────┼────────────────────────────┼─────────────────────┤
+│ _processing            │ industry-processor.js      │ Prevent processing  │
+│                        │                            │ re-entry            │
+├────────────────────────┼────────────────────────────┼─────────────────────┤
+│ _processingState       │ industry-state.js          │ Prevent state       │
+│                        │                            │ mutation re-entry   │
+├────────────────────────┼────────────────────────────┼─────────────────────┤
+│ _openingSelector       │ modals-industry.js         │ Prevent modal       │
+│                        │                            │ re-entry            │
+└────────────────────────┴────────────────────────────┴─────────────────────┘
+
+
+================================================================================
+4. ICON POLICY
+================================================================================
+
+All icons must come from icons.js via the _getIcon() function:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RULE 1: NO emojis in code or UI                                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ RULE 2: All icons from icons.js via _getIcon()                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ RULE 3: NO icons in confirm/cancel buttons (plain text only)              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+AVAILABLE ICONS FOR INDUSTRY SYSTEM:
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ USAGE              │ ICON                                                  │
+├────────────────────┼───────────────────────────────────────────────────────┤
+│ Enterprise         │ GEAR                                                  │
+│ Wealth             │ COIN (or CIRCLE)                                      │
+│ Workers            │ PERSON                                                │
+│ Location           │ LOCATION                                              │
+│ Owner              │ PERSON                                                │
+│ Status             │ CIRCLE, CIRCLE_DOT                                    │
+│ Profit             │ ARROW_UP, ARROW_DOWN                                 │
+│ Edit               │ EDIT                                                  │
+│ Delete             │ TRASH                                                 │
+│ Process            │ REFRESH                                               │
+│ Add                │ PLUS                                                  │
+│ Close              │ X_HEAVY                                               │
+│ Warning            │ WARNING                                               │
+│ Success            │ CHECK_SIMPLE                                          │
+└────────────────────┴───────────────────────────────────────────────────────┘
+
+
+================================================================================
+5. ENTERPRISE TYPE REFERENCE
+================================================================================
+
+Full enterprise type definitions with all properties:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ PROPERTY           │ TYPE      │ DESCRIPTION                              │
+├────────────────────┼───────────┼──────────────────────────────────────────┤
+│ id                 │ string    │ Unique identifier                         │
+│ name               │ string    │ Display name                             │
+│ category           │ string    │ Category group                           │
+│ baseIncome         │ number    │ Annual income gold                       │
+│ baseExpenses       │ number    │ Annual expenses gold                     │
+│ baseWages          │ number    │ Per-worker wage gold                     │
+│ baseWorkers        │ number    │ Initial worker count                     │
+│ baseCost           │ number    │ Initial construction cost                │
+│ maxWorkers         │ number    │ Maximum workers allowed                  │
+│ description        │ string    │ Description of the type                  │
+└────────────────────┴───────────┴──────────────────────────────────────────┘
+
+CATEGORIES AND TYPES:
+
+AGRICULTURAL:
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Farm           │ Income: 20 │ Expenses: 8 │ Workers: 3 │ Max: 10          │
+│ Orchard        │ Income: 15 │ Expenses: 6 │ Workers: 2 │ Max: 8           │
+│ Vineyard       │ Income: 25 │ Expenses: 10│ Workers: 3 │ Max: 12          │
+│ Plantation     │ Income: 35 │ Expenses: 15│ Workers: 5 │ Max: 20          │
+│ Fishery        │ Income: 18 │ Expenses: 8 │ Workers: 2 │ Max: 10          │
+│ Fish Pond      │ Income: 12 │ Expenses: 5 │ Workers: 1 │ Max: 6           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+CRAFT:
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Smithy         │ Income: 22 │ Expenses: 12│ Workers: 2 │ Max: 8           │
+│ Weaving        │ Income: 18 │ Expenses: 10│ Workers: 3 │ Max: 12          │
+│ Pottery        │ Income: 15 │ Expenses: 8 │ Workers: 2 │ Max: 8           │
+│ Carpentry      │ Income: 20 │ Expenses: 10│ Workers: 2 │ Max: 10          │
+│ Jewelry        │ Income: 30 │ Expenses: 20│ Workers: 2 │ Max: 6           │
+│ Brewery        │ Income: 25 │ Expenses: 15│ Workers: 3 │ Max: 10          │
+│ Tannery        │ Income: 20 │ Expenses: 12│ Workers: 2 │ Max: 8           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+INDUSTRIAL:
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Factory        │ Income: 50 │ Expenses: 30│ Workers: 10│ Max: 50          │
+│ Textile Mill   │ Income: 45 │ Expenses: 25│ Workers: 8 │ Max: 40          │
+│ Ironworks      │ Income: 55 │ Expenses: 35│ Workers: 10│ Max: 45          │
+│ Steel Mill     │ Income: 60 │ Expenses: 40│ Workers: 12│ Max: 50          │
+│ Coal Mine      │ Income: 40 │ Expenses: 30│ Workers: 8 │ Max: 40          │
+│ Foundry        │ Income: 45 │ Expenses: 30│ Workers: 8 │ Max: 35          │
+│ Sawmill        │ Income: 28 │ Expenses: 18│ Workers: 4 │ Max: 15          │
+│ Brickyard      │ Income: 22 │ Expenses: 14│ Workers: 4 │ Max: 15          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+COMMERCIAL:
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Market Stall   │ Income: 12 │ Expenses: 6 │ Workers: 1 │ Max: 4           │
+│ Shop           │ Income: 20 │ Expenses: 12│ Workers: 2 │ Max: 8           │
+│ Tavern         │ Income: 25 │ Expenses: 15│ Workers: 3 │ Max: 10          │
+│ Warehouse      │ Income: 18 │ Expenses: 10│ Workers: 2 │ Max: 8           │
+│ Trading Post   │ Income: 30 │ Expenses: 18│ Workers: 3 │ Max: 12          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+TRANSPORT:
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Ferry          │ Income: 15 │ Expenses: 8 │ Workers: 2 │ Max: 6           │
+│ Shipping Co    │ Income: 40 │ Expenses: 25│ Workers: 5 │ Max: 20          │
+│ Carriage       │ Income: 20 │ Expenses: 12│ Workers: 3 │ Max: 10          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+MINING:
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Mine           │ Income: 35 │ Expenses: 25│ Workers: 6 │ Max: 30          │
+│ Quarry         │ Income: 25 │ Expenses: 15│ Workers: 4 │ Max: 20          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+================================================================================
+END OF DOCUMENTATION
+================================================================================

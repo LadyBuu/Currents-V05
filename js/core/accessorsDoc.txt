@@ -1,0 +1,588 @@
+================================================================================
+STILL WATERS - LOCATION GROUPING FUNCTIONS
+================================================================================
+
+FILE LOCATION:
+js/core/accessors.js
+
+VERSION: 1.0
+DATE: 2026-06-30
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+
+1. FUNCTION REFERENCE
+2. USAGE EXAMPLES
+3. INTEGRATION GUIDE
+4. STYLING
+5. TESTING
+6. TROUBLESHOOTING
+
+================================================================================
+1. FUNCTION REFERENCE
+================================================================================
+
+-------------------------------------------------------------------------------
+getCharacterLocationPath(character)
+-------------------------------------------------------------------------------
+Returns the hierarchical location path for a character from highest (Type 1) 
+to lowest level.
+
+PARAMETERS:
+  - character: Object - Character object
+
+RETURNS:
+  Array - Array of location objects with properties:
+    - id: string - Location ID
+    - name: string - Display name
+    - priority: number - Location type priority (1-5)
+    - typeId: string - Location type ID
+
+EXAMPLES:
+  var path = getCharacterLocationPath(character);
+  // Returns: [
+  //   { id: 'loc_123', name: 'Paryel', priority: 1 },
+  //   { id: 'loc_456', name: 'Rozvois', priority: 3 },
+  //   { id: 'loc_789', name: 'Valyurt', priority: 4 }
+  // ]
+
+-------------------------------------------------------------------------------
+getCharacterLocationGroup(character, withIcons)
+-------------------------------------------------------------------------------
+Returns a formatted string representing the character's location hierarchy.
+
+PARAMETERS:
+  - character: Object - Character object
+  - withIcons: boolean (optional, default: false) - Include icons in group name
+
+RETURNS:
+  string - Formatted group name (e.g., "Paryel › Rozvois › Valyurt")
+
+EXAMPLES:
+  var group = getCharacterLocationGroup(character);
+  // Returns: "Paryel › Rozvois › Valyurt"
+
+-------------------------------------------------------------------------------
+getCharacterCountry(character)
+-------------------------------------------------------------------------------
+Returns the top-level country (Type 1) location for a character.
+
+PARAMETERS:
+  - character: Object - Character object
+
+RETURNS:
+  Object|null - Country location object or null if not found
+
+EXAMPLES:
+  var country = getCharacterCountry(character);
+  if (country) {
+    console.log('Country:', country.displayName);
+  }
+
+-------------------------------------------------------------------------------
+getCharacterMostSpecificLocation(character)
+-------------------------------------------------------------------------------
+Returns the most specific (lowest level) location for a character.
+
+PARAMETERS:
+  - character: Object - Character object
+
+RETURNS:
+  Object|null - Most specific location or null
+
+EXAMPLES:
+  var location = getCharacterMostSpecificLocation(character);
+  console.log('Location:', location.displayName);
+
+-------------------------------------------------------------------------------
+getCharactersGroupedByLocation(includeDeceased)
+-------------------------------------------------------------------------------
+Returns all characters grouped by their location hierarchy.
+
+PARAMETERS:
+  - includeDeceased: boolean (optional, default: false) - Include deceased characters
+
+RETURNS:
+  Object - Groups object with location group names as keys and arrays of characters as values
+
+EXAMPLES:
+  var groups = getCharactersGroupedByLocation(false);
+  // Returns: {
+  //   "Paryel › Rozvois › Valyurt": [char1, char2],
+  //   "Paryel › Brannon › Qala-Luc": [char3],
+  //   "Ungrouped": [char4]
+  // }
+
+-------------------------------------------------------------------------------
+getCharacterGroupCounts(includeDeceased)
+-------------------------------------------------------------------------------
+Returns the count of characters in each location group.
+
+PARAMETERS:
+  - includeDeceased: boolean (optional, default: false) - Include deceased characters
+
+RETURNS:
+  Object - Group counts (group name: count)
+
+EXAMPLES:
+  var counts = getCharacterGroupCounts(false);
+  // Returns: {
+  //   "Paryel › Rozvois › Valyurt": 5,
+  //   "Paryel › Brannon › Qala-Luc": 3,
+  //   "Ungrouped": 1
+  // }
+
+-------------------------------------------------------------------------------
+generateGroupedCharacterDropdown(selectedId, includeDeceased, placeholderText)
+-------------------------------------------------------------------------------
+Generates HTML for a hierarchical grouped character dropdown with indentation.
+
+PARAMETERS:
+  - selectedId: string (optional) - ID of pre-selected character
+  - includeDeceased: boolean (optional, default: false) - Include deceased characters
+  - placeholderText: string (optional, default: '— Select a character —') - Placeholder text
+
+RETURNS:
+  string - HTML for the dropdown select element
+
+EXAMPLES:
+  var html = generateGroupedCharacterDropdown('char_123', false, 'Select a character');
+  document.getElementById('container').innerHTML = html;
+
+-------------------------------------------------------------------------------
+attachGroupedCharacterDropdownListener(containerOrId, onSelect)
+-------------------------------------------------------------------------------
+Attaches a change event listener to a grouped character dropdown.
+
+PARAMETERS:
+  - containerOrId: string|Element - Container ID or select element
+  - onSelect: Function - Callback when character is selected (receives character object)
+
+RETURNS:
+  boolean - True if successfully attached
+
+EXAMPLES:
+  var success = attachGroupedCharacterDropdownListener(
+    'characterSelectContainer',
+    function(character) {
+      console.log('Selected:', character.name);
+    }
+  );
+
+-------------------------------------------------------------------------------
+getLocationHierarchyTree(countryId)
+-------------------------------------------------------------------------------
+Returns the location hierarchy as a tree structure.
+
+PARAMETERS:
+  - countryId: string (optional) - Filter by country ID
+
+RETURNS:
+  Object - Tree structure with location IDs as keys
+
+EXAMPLES:
+  var tree = getLocationHierarchyTree();
+  // Returns: {
+  //   "loc_123": {
+  //     id: "loc_123",
+  //     name: "Paryel",
+  //     priority: 1,
+  //     children: [...]
+  //   }
+  // }
+
+-------------------------------------------------------------------------------
+getFormattedLocationHierarchy(countryId, maxDepth)
+-------------------------------------------------------------------------------
+Returns a formatted string representation of the location hierarchy.
+
+PARAMETERS:
+  - countryId: string (optional) - Filter by country ID
+  - maxDepth: number (optional, default: 5) - Maximum depth to display
+
+RETURNS:
+  string - Formatted hierarchy with indentation
+
+EXAMPLES:
+  var hierarchy = getFormattedLocationHierarchy(null, 3);
+  console.log(hierarchy);
+  // Output:
+  // Paryel
+  //   ├─ Rozvois
+  //   │  ├─ Valyurt
+  //   │  └─ Sangplou
+  //   ├─ Brannon
+  //   │  ├─ Qala-Luc
+  //   │  └─ Portciel
+
+================================================================================
+2. USAGE EXAMPLES
+================================================================================
+
+-------------------------------------------------------------------------------
+EXAMPLE 1: Basic Dropdown Implementation
+-------------------------------------------------------------------------------
+
+HTML:
+---------
+<div id="characterSelectContainer"></div>
+<div id="selectedCharacterInfo"></div>
+---------
+
+JavaScript:
+---------
+// Generate the dropdown
+var dropdownHtml = generateGroupedCharacterDropdown(
+    null,           // No pre-selected character
+    false,          // Exclude deceased
+    '— Select a character —'  // Placeholder
+);
+document.getElementById('characterSelectContainer').innerHTML = dropdownHtml;
+
+// Attach event listener
+attachGroupedCharacterDropdownListener(
+    'characterSelectContainer',
+    function(character) {
+        var info = document.getElementById('selectedCharacterInfo');
+        if (character) {
+            info.innerHTML = 'Selected: ' + character.name + ' ' + (character.surname || '') +
+                ' (' + character.gender + ', ' + calculateAge(character.birthYear, false, null) + 'y)';
+        } else {
+            info.innerHTML = '';
+        }
+    }
+);
+---------
+
+-------------------------------------------------------------------------------
+EXAMPLE 2: Display Characters by Location Group
+-------------------------------------------------------------------------------
+
+JavaScript:
+---------
+var groups = getCharactersGroupedByLocation(false);
+var output = '';
+
+for (var groupName in groups) {
+    output += '=== ' + groupName + ' (' + groups[groupName].length + ' characters) ===\n';
+    for (var i = 0; i < groups[groupName].length; i++) {
+        var char = groups[groupName][i];
+        output += '  - ' + char.name + ' ' + (char.surname || '');
+        if (char.isDeceased) output += ' †';
+        output += '\n';
+    }
+    output += '\n';
+}
+
+console.log(output);
+---------
+
+-------------------------------------------------------------------------------
+EXAMPLE 3: Get Character's Full Location Path
+-------------------------------------------------------------------------------
+
+JavaScript:
+---------
+function getCharacterFullLocation(characterId) {
+    var character = getCharacterById(characterId);
+    if (!character) return 'Unknown';
+    
+    var path = getCharacterLocationPath(character);
+    if (path.length === 0) return 'Unknown';
+    
+    return path.map(function(p) { return p.name; }).join(' › ');
+}
+
+// Usage
+var location = getCharacterFullLocation('char_123');
+console.log('Location:', location);  // "Paryel › Rozvois › Valyurt"
+---------
+
+-------------------------------------------------------------------------------
+EXAMPLE 4: Filter Characters by Country
+-------------------------------------------------------------------------------
+
+JavaScript:
+---------
+function getCharactersByCountry(countryName) {
+    var groups = getCharactersGroupedByLocation(false);
+    var result = [];
+    
+    for (var groupName in groups) {
+        if (groupName.indexOf(countryName) === 0) {
+            result = result.concat(groups[groupName]);
+        }
+    }
+    
+    return result;
+}
+
+// Usage
+var paryelCharacters = getCharactersByCountry('Paryel');
+console.log('Characters in Paryel:', paryelCharacters.length);
+---------
+
+-------------------------------------------------------------------------------
+EXAMPLE 5: Create a Location Filter Dropdown
+-------------------------------------------------------------------------------
+
+HTML:
+---------
+<div id="locationFilter"></div>
+<div id="filteredCharacters"></div>
+---------
+
+JavaScript:
+---------
+function renderLocationFilter() {
+    var groups = getCharactersGroupedByLocation(false);
+    var html = '<select id="locationFilterSelect">';
+    html += '<option value="all">All Locations</option>';
+    
+    for (var groupName in groups) {
+        html += '<option value="' + groupName + '">' + groupName + ' (' + groups[groupName].length + ')</option>';
+    }
+    
+    html += '</select>';
+    document.getElementById('locationFilter').innerHTML = html;
+    
+    document.getElementById('locationFilterSelect').addEventListener('change', function() {
+        var selected = this.value;
+        var container = document.getElementById('filteredCharacters');
+        
+        if (selected === 'all') {
+            container.innerHTML = 'Showing all characters...';
+            return;
+        }
+        
+        var groups = getCharactersGroupedByLocation(false);
+        var chars = groups[selected] || [];
+        var output = '';
+        
+        for (var i = 0; i < chars.length; i++) {
+            output += '<div>' + chars[i].name + ' ' + (chars[i].surname || '') + '</div>';
+        }
+        
+        container.innerHTML = output || 'No characters in this location';
+    });
+}
+
+renderLocationFilter();
+---------
+
+================================================================================
+3. INTEGRATION GUIDE
+================================================================================
+
+-------------------------------------------------------------------------------
+STEP 1: Ensure accessors.js is loaded
+-------------------------------------------------------------------------------
+
+In your HTML file, make sure accessors.js is loaded before any code that uses
+the location grouping functions:
+
+<script src="js/core/accessors.js"></script>
+
+-------------------------------------------------------------------------------
+STEP 2: Use the functions in your code
+-------------------------------------------------------------------------------
+
+All functions are available globally on the window object:
+
+window.getCharacterLocationPath
+window.getCharacterLocationGroup
+window.getCharacterCountry
+window.getCharactersGroupedByLocation
+window.generateGroupedCharacterDropdown
+window.attachGroupedCharacterDropdownListener
+window.getLocationHierarchyTree
+window.getFormattedLocationHierarchy
+
+-------------------------------------------------------------------------------
+STEP 3: Style the dropdown
+-------------------------------------------------------------------------------
+
+Add these styles to your CSS for consistent appearance:
+
+.grouped-character-select {
+    width: 100%;
+    padding: 10px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 0.8rem;
+    font-family: 'Courier New', monospace;
+    max-height: 500px;
+}
+
+.grouped-character-select optgroup {
+    font-weight: bold;
+    color: var(--accent);
+    background: var(--bg2);
+    padding: 4px 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.grouped-character-select option {
+    font-family: 'Courier New', monospace;
+    font-size: 0.78rem;
+    padding: 3px 0;
+    white-space: pre;
+}
+
+================================================================================
+4. STYLING
+================================================================================
+
+The dropdown uses these CSS variables (from your theme):
+
+--bg          - Background color (#0d1117)
+--bg2         - Secondary background (#161b22)
+--bg3         - Tertiary background (#1c2333)
+--border      - Border color (#30363d)
+--text        - Text color (#c9d1d9)
+--dim         - Dim text (#8b949e)
+--accent      - Accent color (#58a6ff)
+--accent-dim  - Dim accent (#1f6feb)
+
+If your theme uses different variable names, adjust accordingly.
+
+================================================================================
+5. TESTING
+================================================================================
+
+-------------------------------------------------------------------------------
+Test 1: Verify Functions Exist
+-------------------------------------------------------------------------------
+
+Open browser console and run:
+
+console.log(typeof getCharacterLocationPath);          // Should be "function"
+console.log(typeof getCharactersGroupedByLocation);   // Should be "function"
+console.log(typeof generateGroupedCharacterDropdown); // Should be "function"
+
+-------------------------------------------------------------------------------
+Test 2: Test Grouping with Real Data
+-------------------------------------------------------------------------------
+
+var groups = getCharactersGroupedByLocation(false);
+console.log('Groups found:', Object.keys(groups).length);
+for (var key in groups) {
+    console.log(key + ': ' + groups[key].length + ' characters');
+}
+
+-------------------------------------------------------------------------------
+Test 3: Test Dropdown Generation
+-------------------------------------------------------------------------------
+
+var html = generateGroupedCharacterDropdown(null, false, 'Select a character');
+console.log('Dropdown HTML generated, length:', html.length);
+// Verify it contains optgroups
+console.log('Has optgroups:', html.indexOf('<optgroup') !== -1);
+
+-------------------------------------------------------------------------------
+Test 4: Test Single Character Location Path
+-------------------------------------------------------------------------------
+
+var chars = getCharacters();
+if (chars.length > 0) {
+    var path = getCharacterLocationPath(chars[0]);
+    console.log('Path for ' + chars[0].name + ':');
+    console.log(JSON.stringify(path, null, 2));
+}
+
+================================================================================
+6. TROUBLESHOOTING
+================================================================================
+
+-------------------------------------------------------------------------------
+ISSUE: "getCharacterLocationPath is not a function"
+-------------------------------------------------------------------------------
+
+CAUSE: accessors.js is not loaded or the functions are not exported.
+
+SOLUTION:
+1. Make sure accessors.js is loaded in your HTML
+2. Check that the functions are exported at the bottom of accessors.js
+3. Verify the file path is correct
+
+-------------------------------------------------------------------------------
+ISSUE: Dropdown shows no indentation
+-------------------------------------------------------------------------------
+
+CAUSE: The CSS styles are not applied or the select is using a different font.
+
+SOLUTION:
+1. Add the CSS styles from the Styling section above
+2. Ensure the select has font-family: 'Courier New', monospace
+3. Check that options have padding-left set
+
+-------------------------------------------------------------------------------
+ISSUE: Characters are showing as "Ungrouped"
+-------------------------------------------------------------------------------
+
+CAUSE: Characters don't have a valid location ID or display name.
+
+SOLUTION:
+1. Verify characters have currentLocationId or birthplaceId set
+2. Check that currentLocation matches a place display name
+3. Run fixUnknownLocations() from world.js to resolve location issues
+
+-------------------------------------------------------------------------------
+ISSUE: Location groups are in wrong order
+-------------------------------------------------------------------------------
+
+CAUSE: The grouping sorts alphabetically by default.
+
+SOLUTION:
+The function sorts Type 1 (Country) groups first, then alphabetically.
+To customize sorting, modify the sort function in getCharactersGroupedByLocation.
+
+-------------------------------------------------------------------------------
+ISSUE: Duplicate characters in groups
+-------------------------------------------------------------------------------
+
+CAUSE: A character may appear in multiple groups if they have multiple locations.
+
+SOLUTION:
+The function uses the current location (currentLocationId) as the primary
+location. If a character has moved, they will appear in their current location.
+
+-------------------------------------------------------------------------------
+ISSUE: The dropdown is too slow with many characters
+-------------------------------------------------------------------------------
+
+CAUSE: The function processes all characters and builds the DOM.
+
+SOLUTION:
+1. Use includeDeceased: false to exclude deceased characters
+2. For very large datasets (>1000 characters), consider pagination
+3. The function uses caching to improve performance on subsequent calls
+
+-------------------------------------------------------------------------------
+ISSUE: Selected character not highlighted in dropdown
+-------------------------------------------------------------------------------
+
+CAUSE: The selectedId parameter is not being passed correctly.
+
+SOLUTION:
+1. Make sure you're passing the correct character ID
+2. The ID should be a string (e.g., 'char_123')
+3. Verify the character exists
+
+-------------------------------------------------------------------------------
+ISSUE: onSelect callback not firing
+-------------------------------------------------------------------------------
+
+CAUSE: The event listener is not properly attached.
+
+SOLUTION:
+1. Use attachGroupedCharacterDropdownListener to attach the listener
+2. Make sure the container ID matches the ID in your HTML
+3. Check for JavaScript errors in the console
+
+================================================================================
+END OF DOCUMENTATION
+================================================================================

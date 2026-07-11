@@ -6,6 +6,8 @@
  * PURPOSE: UI modals for household management (CRUD, member management,
  *          department management, head management, transfers, and more).
  * 
+ * UPDATED: Removed all vendetta-related modals - vendettas now in vendetta-system.js
+ * 
  * DEPENDS ON:
  *   - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
  *   - modals-char-select.js (openCharacterSelector)
@@ -30,6 +32,11 @@
  *   - openViewHouseholdHistoryModal()
  *   - openLeaveHouseholdModal()
  *   - openLeaveHouseholdNoTraceModal()
+ * 
+ * REMOVED (moved to vendetta-system.js):
+ *   - openDeclareVendettaModal()
+ *   - openResolveVendettaModal()
+ *   - openViewVendettasModal()
  * 
  * ICON POLICY:
  *   - All icons from icons.js via _getIcon()
@@ -2122,7 +2129,7 @@
     }
 
     // =========================================================================
-    // 19. EXPORTS
+    // 19. EXPORTS - REMOVED VENDETTA MODALS
     // =========================================================================
 
     // Household CRUD
@@ -2148,6 +2155,11 @@
 
     // Household history
     window.openViewHouseholdHistoryModal = openViewHouseholdHistoryModal;
+
+    // REMOVED: Vendetta modals - now in vendetta-system.js
+    // window.openDeclareVendettaModal = openDeclareVendettaModal;
+    // window.openResolveVendettaModal = openResolveVendettaModal;
+    // window.openViewVendettasModal = openViewVendettasModal;
 
     // ES Module exports
     if (typeof module !== 'undefined' && module.exports) {

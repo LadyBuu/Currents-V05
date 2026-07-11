@@ -7,6 +7,8 @@
  *          department management, succession). Separates business logic from
  *          UI and data access.
  * 
+ * UPDATED: Removed all vendetta functions - vendettas now in vendetta-system.js
+ * 
  * DEPENDS ON:
  *   - household-state.js (HouseholdState)
  *   - accessors.js (for getCharacterById, getCharacters, getCurrentYear)
@@ -26,16 +28,11 @@
  *   - HouseholdCommands.repairMemberships() - Fix broken member references
  *   - HouseholdCommands.fixCharacterHousehold() - Fix single character membership
  * 
- * FEATURES RETAINED:
- *   - All member management operations
- *   - Department management
- *   - Head of household management
- *   - History recording
- *   - Member transfer between households
- *   - Repair functions for data consistency
- *   - Validation and error handling
- *   - Activity logging
- *   - Event logging
+ * REMOVED (moved to vendetta-system.js):
+ *   - declareVendetta()
+ *   - resolveVendetta()
+ *   - getHouseholdVendettas()
+ *   - recordVendettaDeath()
  * 
  * =============================================================================
  */
@@ -98,7 +95,9 @@
     }
 
     function _showToast(message, type) {
-        if (typeof window.showToast === 'function') {
+        if (typeof window._showToast === 'function') {
+            window._showToast(message, type);
+        } else if (typeof window.showToast === 'function') {
             window.showToast(message, type);
         } else if (typeof window.showToastMessage === 'function') {
             window.showToastMessage(message, type);
@@ -106,8 +105,8 @@
     }
 
     function _escapeHtml(str) {
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
+        if (typeof window._escapeHtml === 'function') {
+            return window._escapeHtml(str);
         }
         if (!str) return '';
         return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -1737,7 +1736,7 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 10. EXPORTS - REMOVED VENDETTA FUNCTIONS
     // =========================================================================
 
     window.HouseholdCommands = {

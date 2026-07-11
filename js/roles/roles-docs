@@ -1,0 +1,1541 @@
+# APPRENTICESHIP & ROLE SYSTEMS - COMPLETE DOCUMENTATION
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+
+1. APPRENTICESHIP SYSTEM
+   1.1 apprenticeship-constants.js - Constants
+   1.2 apprenticeship-state.js - State Layer
+   1.3 apprenticeship-queries.js - Query Layer
+   1.4 apprenticeship-commands.js - Command Layer
+   1.5 apprenticeship-learning.js - Business Logic
+   1.6 modals-apprenticeship.js - UI Modals
+   1.7 apprenticeship-system.js - Wrapper
+
+2. ROLE SYSTEM
+   2.1 role-constants.js - Constants
+   2.2 role-state.js - State Layer
+   2.3 role-queries.js - Query Layer
+   2.4 role-commands.js - Command Layer
+   2.5 modals-roles.js - UI Modals
+   2.6 role-system.js - Wrapper
+
+3. DEPENDENCY MAP
+4. RECURSION GUARDS
+5. ICON POLICY
+
+
+================================================================================
+1. APPRENTICESHIP SYSTEM
+================================================================================
+
+1.1 apprenticeship-constants.js - Constants
+------------------------------------------
+
+PURPOSE: All apprenticeship-related constants.
+
+DEPENDENCIES: None (pure constants)
+
+EXPORTS:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ CONSTANT                  │ VALUE                                          │
+├───────────────────────────┼─────────────────────────────────────────────────┤
+│ APPRENTICESHIP_STAGES     │                                                │
+│   NOVICE                  │ { id: 'novice', name: 'Novice',               │
+│                           │   minLevel: 0, maxLevel: 25, icon: '⌇' }      │
+│   APPRENTICE              │ { id: 'apprentice', name: 'Apprentice',       │
+│                           │   minLevel: 26, maxLevel: 50, icon: '⌇' }     │
+│   JOURNEYMAN              │ { id: 'journeyman', name: 'Journeyman',       │
+│                           │   minLevel: 51, maxLevel: 75, icon: '⌇' }     │
+│   MASTER                  │ { id: 'master', name: 'Master',               │
+│                           │   minLevel: 76, maxLevel: 100, icon: '◉' }    │
+├───────────────────────────┼─────────────────────────────────────────────────┤
+│ SKILL_LEVELS              │                                                │
+│   UNTRAINED               │ { id: 'untrained', name: 'Untrained',         │
+│                           │   min: 0, max: 0, modifier: 0 }               │
+│   NOVICE                  │ { id: 'novice', name: 'Novice',               │
+│                           │   min: 1, max: 25, modifier: 0.5 }            │
+│   APPRENTICE              │ { id: 'apprentice', name: 'Apprentice',       │
+│                           │   min: 26, max: 50, modifier: 0.7 }           │
+│   JOURNEYMAN              │ { id: 'journeyman', name: 'Journeyman',       │
+│                           │   min: 51, max: 75, modifier: 0.9 }           │
+│   EXPERT                  │ { id: 'expert', name: 'Expert',               │
+│                           │   min: 76, max: 90, modifier: 1.0 }           │
+│   MASTER                  │ { id: 'master', name: 'Master',               │
+│                           │   min: 91, max: 100, modifier: 1.1 }          │
+├───────────────────────────┼─────────────────────────────────────────────────┤
+│ SKILL_TRANSFER_METHODS    │                                                │
+│   INHERITANCE             │ { id: 'inheritance', name: 'Familial          │
+│                           │   Inheritance', baseSuccess: 0.6, icon: '⌇', │
+│                           │   gain: 5 }                                   │
+│   APPRENTICESHIP          │ { id: 'apprenticeship', name: 'Formal         │
+│                           │   Apprenticeship', baseSuccess: 0.8,          │
+│                           │   icon: '⌇', gain: 8 }                       │
+│   MENTORSHIP              │ { id: 'mentorship', name: 'Mentorship',       │
+│                           │   baseSuccess: 0.7, icon: '◉', gain: 6 }     │
+│   OBSERVATION             │ { id: 'observation', name: 'Observation',     │
+│                           │   baseSuccess: 0.3, icon: '⌇', gain: 2 }     │
+│   TEACHING                │ { id: 'teaching', name: 'Direct Teaching',   │
+│                           │   baseSuccess: 0.75, icon: '⌇', gain: 5 }    │
+│   SELF_TAUGHT             │ { id: 'self_taught', name: 'Self-Taught',    │
+│                           │   baseSuccess: 0.4, icon: '⌇', gain: 3 }     │
+└───────────────────────────┴─────────────────────────────────────────────────┘
+
+
+1.2 apprenticeship-state.js - State Layer
+-----------------------------------------
+
+PURPOSE: Single source of truth for apprenticeship data.
+
+DEPENDENCIES:
+  - accessors.js (getCharacterById, getCharacters)
+  - relationship-registry.js (getAllRelationships, getRelationshipBetween)
+  - storage.js (saveMasterData)
+
+STATE STRUCTURE:
+
+_state = {
+    apprenticeships: [],           // All apprenticeship relationships
+    cache: {
+        byMaster: Map<string, Array>,    // Master ID → Apprenticeships
+        byApprentice: Map<string, Array>, // Apprentice ID → Apprenticeships
+        byRole: Map<string, Array>       // Role ID → Apprenticeships
+    },
+    uiState: {
+        selectedMasterId: string | null,
+        selectedApprenticeId: string | null,
+        filters: {
+            role: string | null,
+            status: 'ongoing' | 'all'
+        }
+    },
+    subscribers: Array<Function>,
+    lastUpdated: number | null,
+    _initialized: boolean
+};
+
+API REFERENCE:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipState.subscribe(callback)                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Subscribes to state changes.                                               │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   callback (function) - Callback receiving event object                    │
+│                                                                             │
+│ RETURNS: function - Unsubscribe function                                   │
+│                                                                             │
+│ EVENT TYPES: 'apprenticeshipAdded', 'apprenticeshipUpdated',               │
+│              'apprenticeshipDeleted', 'uiStateChanged'                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipState.getAllApprenticeships()                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets all apprenticeships.                                                  │
+│                                                                             │
+│ RETURNS: Array - Array of apprenticeship objects                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipState.getApprenticeshipById(id)                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets an apprenticeship by ID.                                              │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   id (string) - Apprenticeship ID                                          │
+│                                                                             │
+│ RETURNS: Object|null - Apprenticeship object or null                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipState.getApprenticeshipsByMaster(masterId)                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets all apprenticeships for a master.                                     │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   masterId (string) - Master character ID                                  │
+│                                                                             │
+│ RETURNS: Array - Array of apprenticeship objects                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipState.getApprenticeshipsByApprentice(apprenticeId)          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets all apprenticeships for an apprentice.                                │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   apprenticeId (string) - Apprentice character ID                          │
+│                                                                             │
+│ RETURNS: Array - Array of apprenticeship objects                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipState.getApprenticeshipBetween(masterId, apprenticeId)      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the apprenticeship between master and apprentice.                     │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   masterId (string) - Master character ID                                  │
+│   apprenticeId (string) - Apprentice character ID                          │
+│                                                                             │
+│ RETURNS: Object|null - Apprenticeship object or null                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipState.getUIState()                                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the current UI state.                                                 │
+│                                                                             │
+│ RETURNS: { selectedMasterId, selectedApprenticeId, filters }               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipState.updateUIState(updates)                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Updates multiple UI state values at once.                                  │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   updates (Object) - Updates object                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+INTERNAL METHODS (for Commands only):
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipState._addApprenticeship(apprenticeship)                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Adds an apprenticeship to the state.                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipState._updateApprenticeship(id, updates)                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Updates an apprenticeship in the state.                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipState._deleteApprenticeship(id)                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Deletes an apprenticeship from the state.                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+1.3 apprenticeship-queries.js - Query Layer
+-------------------------------------------
+
+PURPOSE: All read operations for apprenticeships. NO side effects. NO TRUST.
+
+DEPENDENCIES:
+  - apprenticeship-state.js (ApprenticeshipState)
+  - apprenticeship-constants.js (APPRENTICESHIP_STAGES, SKILL_LEVELS)
+  - accessors.js (getCharacterById, getCharacters, getRoleById)
+
+API REFERENCE:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipQueries.getMaster(characterId)                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the master of a character.                                            │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│                                                                             │
+│ RETURNS: Object|null - Master character or null                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipQueries.getApprentices(masterId, activeOnly)                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets all apprentices of a master.                                          │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   masterId (string) - Master character ID                                  │
+│   activeOnly (boolean, default: true) - Only active apprenticeships        │
+│                                                                             │
+│ RETURNS: Array - Array of { id, character, roleId, roleName, skillLevel,  │
+│           stage, startYear, specializationsTaught, status }                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipQueries.isApprentice(characterId)                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Checks if a character is an apprentice.                                    │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│                                                                             │
+│ RETURNS: boolean - True if apprentice                                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipQueries.isMaster(characterId)                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Checks if a character is a master (has apprentices).                       │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│                                                                             │
+│ RETURNS: boolean - True if master                                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipQueries.getApprenticeship(masterId, apprenticeId)           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the apprenticeship between master and apprentice.                     │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   masterId (string) - Master character ID                                  │
+│   apprenticeId (string) - Apprentice character ID                          │
+│                                                                             │
+│ RETURNS: Object|null - Apprenticeship object or null                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipQueries.getSkillLevel(characterId, roleId)                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the skill level of a character in a role.                             │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│   roleId (string) - Role ID                                                │
+│                                                                             │
+│ RETURNS: number - Skill level (0-100)                                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipQueries.getSkillLevelName(level)                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the skill level name for a skill level.                               │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   level (number) - Skill level (0-100)                                     │
+│                                                                             │
+│ RETURNS: string - Skill level name                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipQueries.getSkillModifier(characterId, roleId)               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the skill modifier for a character in a role.                         │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│   roleId (string) - Role ID                                                │
+│                                                                             │
+│ RETURNS: number - Skill modifier (0-1.1)                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipQueries.getApprenticeshipStage(characterId, roleId)         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the apprenticeship stage for a character.                             │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│   roleId (string) - Role ID (optional)                                     │
+│                                                                             │
+│ RETURNS: Object - Stage object                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipQueries.getApprenticeshipProgress(characterId, roleId)      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the apprenticeship progress percentage.                               │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│   roleId (string) - Role ID (optional)                                     │
+│                                                                             │
+│ RETURNS: number - Progress percentage (0-100)                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipQueries.getApprenticeshipRole(characterId)                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the role being learned in an apprenticeship.                          │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│                                                                             │
+│ RETURNS: Object|null - Role object or null                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipQueries.getTeachableSkills(characterId, minSkillLevel)      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets all teachable skills for a character.                                 │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│   minSkillLevel (number, default: 51) - Minimum skill level                │
+│                                                                             │
+│ RETURNS: Array - Array of { role, skillLevel, skillTier, specializations } │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipQueries.findPotentialMasters(roleId, locationId,            │
+│                                            minSkillLevel)                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Finds potential masters for a role.                                        │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   roleId (string) - Role ID                                                │
+│   locationId (string) - Location ID (optional)                             │
+│   minSkillLevel (number, default: 51) - Minimum skill level                │
+│                                                                             │
+│ RETURNS: Array - Array of { character, skillLevel, skillTier, age,        │
+│           apprenticeCount, canTeach, rank }                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipQueries.recommendMastersForCharacter(characterId, roleId)   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Recommends masters for a character.                                        │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│   roleId (string) - Role ID                                                │
+│                                                                             │
+│ RETURNS: Array - Array of { master, skillLevel, skillTier, sameLocation,  │
+│           apprenticeCount, age, score }                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipQueries.canTeach(characterId, roleId, minSkillLevel)        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Checks if a character can teach a role.                                    │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│   roleId (string) - Role ID                                                │
+│   minSkillLevel (number, default: 51) - Minimum skill level                │
+│                                                                             │
+│ RETURNS: boolean - True if can teach                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+1.4 apprenticeship-commands.js - Command Layer
+----------------------------------------------
+
+PURPOSE: All write operations for apprenticeships. NO TRUST. Full validation.
+
+DEPENDENCIES:
+  - apprenticeship-state.js (ApprenticeshipState)
+  - apprenticeship-constants.js (APPRENTICESHIP_STAGES)
+  - apprenticeship-queries.js (ApprenticeshipQueries)
+  - accessors.js (getCharacterById, getCharacters, getRoleById)
+  - relationship-registry.js (createRelationship, updateRelationship, endRelationship)
+  - ids.js (generateId)
+
+API REFERENCE:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipCommands.createApprenticeship(masterId, apprenticeId,       │
+│                                             options)                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Creates a new apprenticeship.                                              │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   masterId (string) - Master character ID                                  │
+│   apprenticeId (string) - Apprentice character ID                          │
+│   options.roleId (string) - Role ID (required)                             │
+│   options.startYear (number) - Start year (default: current)               │
+│   options.initialSkill (number) - Initial skill (default: 10)              │
+│   options.notes (string) - Notes                                           │
+│   options.specializations (Array) - Initial specializations                │
+│                                                                             │
+│ RETURNS: Object|null - Created apprenticeship or null                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipCommands.updateApprenticeship(masterId, apprenticeId,       │
+│                                             updates)                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Updates an apprenticeship.                                                 │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   masterId (string) - Master character ID                                  │
+│   apprenticeId (string) - Apprentice character ID                          │
+│   updates.roleId (string) - New role ID                                    │
+│   updates.skillLevel (number) - New skill level                            │
+│   updates.notes (string) - New notes                                       │
+│   updates.startYear (number) - New start year                              │
+│   updates.status (string) - New status                                     │
+│   updates.specializationsTaught (Array) - New specializations              │
+│                                                                             │
+│ RETURNS: boolean - True if updated                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipCommands.setSkillLevel(masterId, apprenticeId, level)       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Sets the skill level for an apprenticeship.                                │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   masterId (string) - Master character ID                                  │
+│   apprenticeId (string) - Apprentice character ID                          │
+│   level (number) - New skill level (0-100)                                 │
+│                                                                             │
+│ RETURNS: boolean - True if set                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipCommands.progressApprenticeship(masterId, apprenticeId,     │
+│                                               amount)                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Progresses an apprenticeship by a certain amount.                          │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   masterId (string) - Master character ID                                  │
+│   apprenticeId (string) - Apprentice character ID                          │
+│   amount (number, default: 5) - Amount to progress                         │
+│                                                                             │
+│ RETURNS: { success, oldLevel, newLevel, gained, oldStage, newStage,       │
+│           stageChanged, completed }                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipCommands.completeApprenticeship(masterId, apprenticeId,     │
+│                                               finalSkillLevel)             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Completes an apprenticeship.                                               │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   masterId (string) - Master character ID                                  │
+│   apprenticeId (string) - Apprentice character ID                          │
+│   finalSkillLevel (number) - Final skill level (optional)                  │
+│                                                                             │
+│ RETURNS: boolean - True if completed                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipCommands.endApprenticeship(masterId, apprenticeId, options) │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Ends an apprenticeship.                                                    │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   masterId (string) - Master character ID                                  │
+│   apprenticeId (string) - Apprentice character ID                          │
+│   options.endYear (number) - End year (default: current)                   │
+│   options.reason (string) - Reason for ending                              │
+│                                                                             │
+│ RETURNS: boolean - True if ended                                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipCommands.cancelApprenticeship(masterId, apprenticeId,       │
+│                                             reason)                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Cancels an apprenticeship (alias for end).                                 │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   masterId (string) - Master character ID                                  │
+│   apprenticeId (string) - Apprentice character ID                          │
+│   reason (string) - Reason for cancellation                                │
+│                                                                             │
+│ RETURNS: boolean - True if cancelled                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipCommands.terminateApprenticeship(masterId, apprenticeId,    │
+│                                                reason)                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Terminates an apprenticeship (alias for end).                              │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   masterId (string) - Master character ID                                  │
+│   apprenticeId (string) - Apprentice character ID                          │
+│   reason (string) - Reason for termination                                 │
+│                                                                             │
+│ RETURNS: boolean - True if terminated                                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipCommands.progressApprenticeshipStage(masterId, apprenticeId,│
+│                                                    stageId)                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Progresses an apprenticeship to a specific stage.                          │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   masterId (string) - Master character ID                                  │
+│   apprenticeId (string) - Apprentice character ID                          │
+│   stageId (string) - 'novice', 'apprentice', 'journeyman', 'master'        │
+│                                                                             │
+│ RETURNS: boolean - True if progressed                                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+1.5 apprenticeship-learning.js - Business Logic
+-----------------------------------------------
+
+PURPOSE: Core learning mechanics for apprenticeships. NO TRUST.
+
+DEPENDENCIES:
+  - apprenticeship-state.js (ApprenticeshipState)
+  - apprenticeship-commands.js (ApprenticeshipCommands)
+  - apprenticeship-queries.js (ApprenticeshipQueries)
+  - apprenticeship-constants.js (SKILL_TRANSFER_METHODS)
+  - accessors.js (getCharacterById, getCharacters)
+
+API REFERENCE:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipLearning.teachSkill(masterId, apprenticeId, method)         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Teaches a skill to an apprentice.                                          │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   masterId (string) - Master character ID                                  │
+│   apprenticeId (string) - Apprentice character ID                          │
+│   method (string) - Teaching method from SKILL_TRANSFER_METHODS            │
+│                                                                             │
+│ RETURNS: { success, method, successChance, profession, gain, newLevel,    │
+│           newStage, reason? }                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipLearning.teachSpecialization(masterId, apprenticeId,        │
+│                                            specialization)                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Teaches a specialization to an apprentice.                                 │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   masterId (string) - Master character ID                                  │
+│   apprenticeId (string) - Apprentice character ID                          │
+│   specialization (string) - Specialization name                            │
+│                                                                             │
+│ RETURNS: { success, specialization, reason? }                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipLearning.conductTeachingSession(masterId, apprenticeId,     │
+│                                               hours)                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Conducts a teaching session.                                               │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   masterId (string) - Master character ID                                  │
+│   apprenticeId (string) - Apprentice character ID                          │
+│   hours (number) - Hours spent teaching                                    │
+│                                                                             │
+│ RETURNS: { success, hoursSpent, gain, newLevel, stage, reason? }          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipLearning.advanceApprenticeshipSkills(year)                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Advances all apprenticeships by one year (annual processing).              │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   year (number) - Current year                                             │
+│                                                                             │
+│ RETURNS: Array - Array of advancement results                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipLearning.preserveKnowledgeOnDeath(dyingId, heirId)          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Preserves knowledge from a dying character to an heir.                     │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   dyingId (string) - Dying character ID                                    │
+│   heirId (string) - Heir character ID                                      │
+│                                                                             │
+│ RETURNS: Array - Transferred skills                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ApprenticeshipLearning.assessKnowledgeLoss(characterId)                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Assesses the impact of a character's death on knowledge.                   │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│                                                                             │
+│ RETURNS: { hasKnowledge, uniqueSkills, lossSeverity, isCritical }         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+1.6 modals-apprenticeship.js - UI Modals
+----------------------------------------
+
+PURPOSE: UI modals for apprenticeship management. Pure UI layer.
+
+DEPENDENCIES:
+  - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
+  - modals-char-select.js (openCharacterSelector)
+  - apprenticeship-commands.js (ApprenticeshipCommands)
+  - apprenticeship-queries.js (ApprenticeshipQueries)
+  - apprenticeship-constants.js (APPRENTICESHIP_STAGES)
+
+API REFERENCE:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openCreateApprenticeshipModal(master, candidate, onSuccess)               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to create an apprenticeship.                                   │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   master (Object) - Master character object                                │
+│   candidate (Object) - Candidate character object                          │
+│   onSuccess (function) - Callback with created apprenticeship              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openEditApprenticeshipModal(masterId, apprenticeId, onSuccess)            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to edit an apprenticeship.                                     │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   masterId (string) - Master character ID                                  │
+│   apprenticeId (string) - Apprentice character ID                          │
+│   onSuccess (function) - Callback on success                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openApprenticeshipDetailsModal(masterId, apprenticeId, onSave, onDelete)  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal with apprenticeship details and actions.                       │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   masterId (string) - Master character ID                                  │
+│   apprenticeId (string) - Apprentice character ID                          │
+│   onSave (function) - Callback when notes are saved                        │
+│   onDelete (function) - Callback when terminated                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openViewMasterTreeModal(masterId, onRefresh)                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to view a master's apprentice tree.                            │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   masterId (string) - Master character ID                                  │
+│   onRefresh (function) - Callback to refresh parent view                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openFindMasterModal(characterId, roleId, onSuccess)                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to find a master for a character.                              │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│   roleId (string) - Role ID                                                │
+│   onSuccess (function) - Callback with selected master                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+1.7 apprenticeship-system.js - Wrapper
+--------------------------------------
+
+PURPOSE: Re-exports all apprenticeship functions for backward compatibility.
+
+DEPENDENCIES:
+  - apprenticeship-constants.js
+  - apprenticeship-state.js
+  - apprenticeship-commands.js
+  - apprenticeship-queries.js
+  - apprenticeship-learning.js
+
+EXPORTS (on window):
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ CATEGORY              │ FUNCTIONS                                          │
+├───────────────────────┼─────────────────────────────────────────────────────┤
+│ Constants             │ APPRENTICESHIP_STAGES, SKILL_LEVELS,              │
+│                       │ SKILL_TRANSFER_METHODS                             │
+├───────────────────────┼─────────────────────────────────────────────────────┤
+│ State                 │ subscribeApprenticeships, getAllApprenticeships,   │
+│                       │ getApprenticeshipById                              │
+├───────────────────────┼─────────────────────────────────────────────────────┤
+│ Queries               │ getMaster, getApprentices, isApprentice,           │
+│                       │ isMaster, getApprenticeship, getSkillLevel,        │
+│                       │ getSkillLevelName, getSkillModifier,               │
+│                       │ getApprenticeshipStage, getApprenticeshipProgress, │
+│                       │ getApprenticeshipRole, getTeachableSkills,         │
+│                       │ findPotentialMasters, recommendMastersForCharacter,│
+│                       │ canTeach                                           │
+├───────────────────────┼─────────────────────────────────────────────────────┤
+│ Commands              │ createApprenticeship, updateApprenticeship,        │
+│                       │ setSkillLevel, progressApprenticeship,             │
+│                       │ completeApprenticeship, endApprenticeship,         │
+│                       │ cancelApprenticeship, terminateApprenticeship,     │
+│                       │ progressApprenticeshipStage                        │
+├───────────────────────┼─────────────────────────────────────────────────────┤
+│ Learning              │ teachSkill, teachSpecialization,                   │
+│                       │ conductTeachingSession, advanceApprenticeshipSkills,│
+│                       │ preserveKnowledgeOnDeath, assessKnowledgeLoss      │
+└───────────────────────┴─────────────────────────────────────────────────────┘
+
+
+================================================================================
+2. ROLE SYSTEM
+================================================================================
+
+2.1 role-constants.js - Constants
+---------------------------------
+
+PURPOSE: All role-related constants.
+
+DEPENDENCIES: None (pure constants)
+
+EXPORTS:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ CONSTANT                  │ VALUE                                          │
+├───────────────────────────┼─────────────────────────────────────────────────┤
+│ UNCATEGORIZED_ID          │ 'uncategorized'                                │
+│ UNCATEGORIZED_NAME        │ 'Uncategorized'                                │
+│ UNCATEGORIZED_ICON        │ '⌇'                                            │
+├───────────────────────────┼─────────────────────────────────────────────────┤
+│ TEACHING_THRESHOLDS       │                                                │
+│   NOVICE                  │ 0                                              │
+│   APPRENTICE              │ 26                                             │
+│   JOURNEYMAN              │ 51                                             │
+│   EXPERT                  │ 76                                             │
+│   MASTER                  │ 91                                             │
+├───────────────────────────┼─────────────────────────────────────────────────┤
+│ DEFAULT_ROLE_CATEGORIES   │                                                │
+│   combat                  │ { id: 'combat', name: 'Combat & Military',    │
+│                           │   icon: '⚔' }                                 │
+│   craft                   │ { id: 'craft', name: 'Craftsmanship',         │
+│                           │   icon: '⌇' }                                 │
+│   trade                   │ { id: 'trade', name: 'Trade & Commerce',      │
+│                           │   icon: '⌇' }                                 │
+│   agriculture             │ { id: 'agriculture', name: 'Agriculture &     │
+│                           │   Fishing', icon: '⌇' }                       │
+│   academic                │ { id: 'academic', name: 'Academic & Scholar', │
+│                           │   icon: '⌇' }                                 │
+│   medical                 │ { id: 'medical', name: 'Medical & Healing',  │
+│                           │   icon: '⌇' }                                 │
+│   religious               │ { id: 'religious', name: 'Religious',         │
+│                           │   icon: '⌆' }                                 │
+│   admin                   │ { id: 'admin', name: 'Administration',        │
+│                           │   icon: '⌇' }                                 │
+│   service                 │ { id: 'service', name: 'Service',             │
+│                           │   icon: '⌇' }                                 │
+│   art                     │ { id: 'art', name: 'Artistic',                │
+│                           │   icon: '⌇' }                                 │
+└───────────────────────────┴─────────────────────────────────────────────────┘
+
+
+2.2 role-state.js - State Layer
+--------------------------------
+
+PURPOSE: Single source of truth for role data.
+
+DEPENDENCIES:
+  - accessors.js (getCharacters, getRoles)
+  - storage.js (saveMasterData)
+
+STATE STRUCTURE:
+
+_state = {
+    roles: [],                     // All roles
+    categories: Object,            // Category definitions
+    cache: {
+        byId: Map<string, Object>,      // Role ID → Role
+        byName: Map<string, Object>,    // Name → Role
+        byCategory: Map<string, Array>  // Category ID → Roles
+    },
+    uiState: {
+        selectedRoleId: string | null,
+        searchTerm: string,
+        filterCategory: string,
+        filterGender: string,
+        viewMode: 'list' | 'grid',
+        expandedRoleId: string | null,
+        filterMasterOnly: boolean
+    },
+    subscribers: Array<Function>,
+    lastUpdated: number | null,
+    _initialized: boolean
+};
+
+API REFERENCE:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleState.subscribe(callback)                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Subscribes to state changes.                                               │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   callback (function) - Callback receiving event object                    │
+│                                                                             │
+│ RETURNS: function - Unsubscribe function                                   │
+│                                                                             │
+│ EVENT TYPES: 'roleAdded', 'roleUpdated', 'roleDeleted', 'rolesSet',       │
+│              'uiStateChanged'                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleState.getAllRoles()                                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets all roles.                                                            │
+│                                                                             │
+│ RETURNS: Array - Array of role objects                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleState.getRole(id)                                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets a role by ID.                                                         │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   id (string) - Role ID                                                    │
+│                                                                             │
+│ RETURNS: Object|null - Role object or null                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleState.getRoleByName(name)                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets a role by name.                                                       │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   name (string) - Role name                                                │
+│                                                                             │
+│ RETURNS: Object|null - Role object or null                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleState.getRolesByCategory(categoryId)                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets roles by category.                                                    │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   categoryId (string) - Category ID                                        │
+│                                                                             │
+│ RETURNS: Array - Array of role objects                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleState.getCategories()                                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets all role categories.                                                  │
+│                                                                             │
+│ RETURNS: Object - Category definitions                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleState.getUIState()                                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the current UI state.                                                 │
+│                                                                             │
+│ RETURNS: { selectedRoleId, searchTerm, filterCategory, filterGender,      │
+│           viewMode, expandedRoleId, filterMasterOnly }                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleState.updateUIState(updates)                                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Updates multiple UI state values at once.                                  │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   updates (Object) - Updates object                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+2.3 role-queries.js - Query Layer
+---------------------------------
+
+PURPOSE: All read operations for roles. NO side effects.
+
+DEPENDENCIES:
+  - role-state.js (RoleState)
+  - role-constants.js (TEACHING_THRESHOLDS)
+  - accessors.js (getCharacterById, getCharacters, getRoleById)
+
+API REFERENCE:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleQueries.getRoles(filters)                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets all roles with optional filtering.                                    │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   filters.category (string) - Category filter                              │
+│   filters.gender (string) - 'male', 'female', 'both'                       │
+│   filters.search (string) - Search term                                    │
+│                                                                             │
+│ RETURNS: Array - Array of role objects                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleQueries.getCharactersWithRoleDetails(roleId, mastersOnly)             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets characters with a specific role, including skill details.             │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   roleId (string) - Role ID                                                │
+│   mastersOnly (boolean) - Only characters with skill 76+                   │
+│                                                                             │
+│ RETURNS: Array - Array of { character, profession, skillLevel, skillTier, │
+│           specializations, isPrimary, isMaster, isExpert, isJourneyman,   │
+│           canTeach }                                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleQueries.getCharactersWithRole(roleId, mastersOnly)                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets characters with a specific role (just the character objects).         │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   roleId (string) - Role ID                                                │
+│   mastersOnly (boolean) - Only characters with skill 76+                   │
+│                                                                             │
+│ RETURNS: Array - Array of character objects                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleQueries.getRoleStatistics(roleId)                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets comprehensive statistics for a role.                                  │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   roleId (string) - Role ID                                                │
+│                                                                             │
+│ RETURNS: { totalCharacters, averageSkill, masterCount, expertCount,       │
+│           journeymanCount, apprenticeCount, noviceCount, canTeachCount,   │
+│           specializations, totalSpecializations }                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleQueries.getRoleCategories()                                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets role categories.                                                      │
+│                                                                             │
+│ RETURNS: Object - Category definitions                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleQueries.getRoleCategoryList()                                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets role categories as an array.                                          │
+│                                                                             │
+│ RETURNS: Array - Array of category objects                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleQueries.searchRoles(searchTerm, options)                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Searches roles by name.                                                    │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   searchTerm (string) - Search term                                        │
+│   options.category (string) - Category filter                              │
+│   options.gender (string) - Gender filter                                  │
+│   options.limit (number) - Max results                                     │
+│                                                                             │
+│ RETURNS: Array - Array of matching roles                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleQueries.getRoleCategoriesWithCounts()                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets all categories with role counts.                                      │
+│                                                                             │
+│ RETURNS: Array - Array of { id, name, icon, count }                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleQueries.getTeachingThresholdName(level)                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Gets the teaching threshold level name.                                    │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   level (number) - Skill level                                             │
+│                                                                             │
+│ RETURNS: string - 'Novice', 'Apprentice', 'Journeyman', 'Expert', 'Master' │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+2.4 role-commands.js - Command Layer
+------------------------------------
+
+PURPOSE: All write operations for roles.
+
+DEPENDENCIES:
+  - role-state.js (RoleState)
+  - role-constants.js (UNCATEGORIZED_ID)
+  - accessors.js (getCharacterById, getCharacters, getRoleById)
+  - ids.js (generateId)
+
+API REFERENCE:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleCommands.createRole(data)                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Creates a new role.                                                        │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   data.name (string) - Role name (required)                                │
+│   data.category (string) - Category ID                                     │
+│   data.icon (string) - Icon (monochrome)                                   │
+│   data.specializations (Array) - Specializations                           │
+│   data.notes (string) - Notes                                              │
+│   data.genderRestriction (string) - 'both', 'male', 'female'               │
+│                                                                             │
+│ RETURNS: Object|null - Created role or null                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleCommands.updateRole(roleId, updates)                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Updates an existing role.                                                  │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   roleId (string) - Role ID                                                │
+│   updates (Object) - Updates to apply                                      │
+│                                                                             │
+│ RETURNS: Object|null - Updated role or null                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleCommands.deleteRole(roleId, removeFromCharacters)                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Deletes a role.                                                            │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   roleId (string) - Role ID                                                │
+│   removeFromCharacters (boolean, default: true) - Remove from characters   │
+│                                                                             │
+│ RETURNS: boolean - True if deleted                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleCommands.setRoles(roles)                                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Sets all roles (replaces the entire roles array).                          │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   roles (Array) - New roles array                                          │
+│                                                                             │
+│ RETURNS: boolean - True if set                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleCommands.addCategory(id, name, icon)                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Adds a new category.                                                       │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   id (string) - Category ID                                                │
+│   name (string) - Category name                                            │
+│   icon (string) - Category icon (monochrome)                               │
+│                                                                             │
+│ RETURNS: boolean - True if added                                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleCommands.updateCategory(id, updates)                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Updates an existing category.                                              │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   id (string) - Category ID                                                │
+│   updates.name (string) - New name                                         │
+│   updates.icon (string) - New icon                                         │
+│                                                                             │
+│ RETURNS: boolean - True if updated                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleCommands.deleteCategory(id, reassignTo)                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Deletes a category.                                                        │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   id (string) - Category ID                                                │
+│   reassignTo (string, default: 'uncategorized') - Reassign roles to        │
+│                                                                             │
+│ RETURNS: boolean - True if deleted                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleCommands.assignRoleToCharacter(characterId, roleId, options)          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Assigns a role to a character.                                             │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│   roleId (string) - Role ID                                                │
+│   options.skillLevel (number) - Skill level (default: 10)                  │
+│   options.startYear (number) - Start year (default: current)               │
+│   options.notes (string) - Notes                                           │
+│   options.primary (boolean) - Primary profession                           │
+│                                                                             │
+│ RETURNS: { success, character, role, reason? }                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleCommands.removeRoleFromCharacter(characterId, roleId)                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Removes a role from a character.                                           │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│   roleId (string) - Role ID                                                │
+│                                                                             │
+│ RETURNS: { success, character, role, reason? }                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleCommands.updateCharacterSkill(characterId, roleId, skillLevel)        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Updates a character's skill level in a role.                               │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterId (string) - Character ID                                      │
+│   roleId (string) - Role ID                                                │
+│   skillLevel (number) - New skill level (0-100)                            │
+│                                                                             │
+│ RETURNS: { success, character, role, newLevel, reason? }                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RoleCommands.bulkAssignRole(characterIds, roleId, options)                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Bulk assigns a role to multiple characters.                                │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   characterIds (Array) - Character IDs                                     │
+│   roleId (string) - Role ID                                                │
+│   options (Object) - Same as assignRoleToCharacter                         │
+│                                                                             │
+│ RETURNS: { success, failed, errors }                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+2.5 modals-roles.js - UI Modals
+-------------------------------
+
+PURPOSE: UI modals for role management. Pure UI layer.
+
+DEPENDENCIES:
+  - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
+  - modals-char-select.js (openCharacterSelector)
+  - role-commands.js (RoleCommands)
+  - role-queries.js (RoleQueries)
+  - role-constants.js (TEACHING_THRESHOLDS)
+
+API REFERENCE:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openCreateRoleModal(onSuccess)                                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to create a new role.                                          │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   onSuccess (function) - Callback with new role ID                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openEditRoleModal(roleId, onSuccess)                                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to edit a role.                                                │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   roleId (string) - Role ID                                                │
+│   onSuccess (function) - Callback on success                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openDeleteRoleModal(roleId, onSuccess)                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to delete a role.                                              │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   roleId (string) - Role ID                                                │
+│   onSuccess (function) - Callback on success                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openAssignRoleModal(roleId, onSuccess)                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to assign a role to a character.                               │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   roleId (string) - Role ID                                                │
+│   onSuccess (function) - Callback on success                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openBulkAssignRoleModal(roleId, onSuccess)                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to bulk assign a role to multiple characters.                  │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   roleId (string) - Role ID                                                │
+│   onSuccess (function) - Callback on success                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openViewCharactersWithRoleModal(roleId, onRefresh)                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to view characters with a role.                                │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   roleId (string) - Role ID                                                │
+│   onRefresh (function) - Callback to refresh parent view                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openEditRoleSkillModal(roleId, characterId, onSuccess)                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to edit a character's skill level in a role.                   │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   roleId (string) - Role ID                                                │
+│   characterId (string) - Character ID                                      │
+│   onSuccess (function) - Callback on success                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openListRolesModal(onSelectRole)                                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to browse and select a role.                                   │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   onSelectRole (function) - Callback with selected role ID                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ openCategoryManagerModal(onComplete)                                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Opens modal to manage role categories.                                     │
+│                                                                             │
+│ PARAMETERS:                                                                 │
+│   onComplete (function) - Callback when complete                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+2.6 role-system.js - Wrapper
+----------------------------
+
+PURPOSE: Re-exports all role functions for backward compatibility.
+
+DEPENDENCIES:
+  - role-constants.js
+  - role-state.js
+  - role-commands.js
+  - role-queries.js
+
+EXPORTS (on window):
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ CATEGORY              │ FUNCTIONS                                          │
+├───────────────────────┼─────────────────────────────────────────────────────┤
+│ Constants             │ UNCATEGORIZED_ID, UNCATEGORIZED_NAME,             │
+│                       │ UNCATEGORIZED_ICON, TEACHING_THRESHOLDS,          │
+│                       │ DEFAULT_ROLE_CATEGORIES                            │
+├───────────────────────┼─────────────────────────────────────────────────────┤
+│ State                 │ subscribeRoles, getAllRoles, getRole,             │
+│                       │ getRoleByName, getRolesByCategory,                │
+│                       │ getRoleCategories                                  │
+├───────────────────────┼─────────────────────────────────────────────────────┤
+│ Queries               │ getRoles, getCharactersWithRoleDetails,           │
+│                       │ getCharactersWithRole, getRoleStatistics,         │
+│                       │ getRoleCategoryList, searchRoles,                 │
+│                       │ getRoleCategoriesWithCounts, getTeachingThresholdName│
+├───────────────────────┼─────────────────────────────────────────────────────┤
+│ Commands              │ createRole, updateRole, deleteRole, setRoles,     │
+│                       │ addCategory, updateCategory, deleteCategory,      │
+│                       │ assignRoleToCharacter, removeRoleFromCharacter,   │
+│                       │ updateCharacterSkill, bulkAssignRole              │
+└───────────────────────┴─────────────────────────────────────────────────────┘
+
+
+================================================================================
+3. DEPENDENCY MAP
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    APPRENTICESHIP DEPENDENCIES                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  apprenticeship-constants.js ────────────────────────────────────────────┐ │
+│  └── None (pure constants)                                               │ │
+│                                                                             │
+│  apprenticeship-state.js ───────────────────────────────────────────────┐ │
+│  ├── accessors.js                                                        │ │
+│  ├── relationship-registry.js                                            │ │
+│  └── storage.js                                                          │ │
+│                                                                             │
+│  apprenticeship-queries.js ─────────────────────────────────────────────┐ │
+│  ├── apprenticeship-state.js                                             │ │
+│  ├── apprenticeship-constants.js                                         │ │
+│  └── accessors.js                                                        │ │
+│                                                                             │
+│  apprenticeship-commands.js ────────────────────────────────────────────┐ │
+│  ├── apprenticeship-state.js                                             │ │
+│  ├── apprenticeship-constants.js                                         │ │
+│  ├── apprenticeship-queries.js                                           │ │
+│  ├── accessors.js                                                        │ │
+│  ├── relationship-registry.js                                            │ │
+│  └── ids.js                                                              │ │
+│                                                                             │
+│  apprenticeship-learning.js ────────────────────────────────────────────┐ │
+│  ├── apprenticeship-state.js                                             │ │
+│  ├── apprenticeship-commands.js                                          │ │
+│  ├── apprenticeship-queries.js                                           │ │
+│  ├── apprenticeship-constants.js                                         │ │
+│  └── accessors.js                                                        │ │
+│                                                                             │
+│  modals-apprenticeship.js ──────────────────────────────────────────────┐ │
+│  ├── modals-core.js                                                      │ │
+│  ├── modals-char-select.js                                               │ │
+│  ├── apprenticeship-commands.js                                          │ │
+│  ├── apprenticeship-queries.js                                           │ │
+│  └── apprenticeship-constants.js                                         │ │
+│                                                                             │
+│  apprenticeship-system.js ──────────────────────────────────────────────┐ │
+│  ├── apprenticeship-constants.js                                         │ │
+│  ├── apprenticeship-state.js                                             │ │
+│  ├── apprenticeship-commands.js                                          │ │
+│  ├── apprenticeship-queries.js                                           │ │
+│  └── apprenticeship-learning.js                                          │ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    ROLE DEPENDENCIES                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  role-constants.js ─────────────────────────────────────────────────────┐ │
+│  └── None (pure constants)                                               │ │
+│                                                                             │
+│  role-state.js ─────────────────────────────────────────────────────────┐ │
+│  ├── accessors.js                                                        │ │
+│  └── storage.js                                                          │ │
+│                                                                             │
+│  role-queries.js ───────────────────────────────────────────────────────┐ │
+│  ├── role-state.js                                                       │ │
+│  ├── role-constants.js                                                   │ │
+│  └── accessors.js                                                        │ │
+│                                                                             │
+│  role-commands.js ──────────────────────────────────────────────────────┐ │
+│  ├── role-state.js                                                       │ │
+│  ├── role-constants.js                                                   │ │
+│  ├── accessors.js                                                        │ │
+│  └── ids.js                                                              │ │
+│                                                                             │
+│  modals-roles.js ───────────────────────────────────────────────────────┐ │
+│  ├── modals-core.js                                                      │ │
+│  ├── modals-char-select.js                                               │ │
+│  ├── role-commands.js                                                    │ │
+│  ├── role-queries.js                                                     │ │
+│  └── role-constants.js                                                   │ │
+│                                                                             │
+│  role-system.js ────────────────────────────────────────────────────────┐ │
+│  ├── role-constants.js                                                   │ │
+│  ├── role-state.js                                                       │ │
+│  ├── role-commands.js                                                    │ │
+│  └── role-queries.js                                                     │ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+================================================================================
+4. RECURSION GUARDS
+================================================================================
+
+All modules implement recursion guards to prevent infinite loops:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ GUARD NAME              │ LOCATION                     │ PURPOSE          │
+├─────────────────────────┼─────────────────────────────┼───────────────────┤
+│ _processingStateUpdate  │ apprenticeship-state.js     │ Prevent state    │
+│                         │ role-state.js               │ notification     │
+│                         │                             │ re-entry         │
+├─────────────────────────┼─────────────────────────────┼───────────────────┤
+│ _processingCommand      │ apprenticeship-commands.js  │ Prevent command  │
+│                         │ role-commands.js            │ re-entry         │
+├─────────────────────────┼─────────────────────────────┼───────────────────┤
+│ _processingQuery        │ apprenticeship-queries.js   │ Prevent query    │
+│                         │ role-queries.js             │ re-entry         │
+├─────────────────────────┼─────────────────────────────┼───────────────────┤
+│ _processingLearning     │ apprenticeship-learning.js  │ Prevent learning │
+│                         │                             │ re-entry         │
+├─────────────────────────┼─────────────────────────────┼───────────────────┤
+│ _processingModal        │ modals-apprenticeship.js    │ Prevent modal    │
+│                         │ modals-roles.js             │ re-entry         │
+└─────────────────────────┴─────────────────────────────┴───────────────────┘
+
+Example usage pattern:
+
+```javascript
+var _processingCommand = false;
+
+function someCommand() {
+    if (_processingCommand) {
+        return null;
+    }
+    _processingCommand = true;
+
+    try {
+        // ... command logic ...
+        return result;
+    } finally {
+        _processingCommand = false;
+    }
+}
+```
+
+
+================================================================================
+5. ICON POLICY
+================================================================================
+
+All icons must come from icons.js via the _getIcon() function:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RULE 1: NO emojis in code or UI                                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ RULE 2: All icons from icons.js via _getIcon()                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ RULE 3: NO icons in confirm/cancel buttons (plain text only)              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+ICONS USED IN APPRENTICESHIP & ROLE SYSTEMS:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ICON NAME            │ USAGE                                              │
+├──────────────────────┼─────────────────────────────────────────────────────┤
+│ PERSON               │ Characters (masters, apprentices)                  │
+├──────────────────────┼─────────────────────────────────────────────────────┤
+│ CROWN                │ Master                                             │
+├──────────────────────┼─────────────────────────────────────────────────────┤
+│ LOCATION             │ Location display                                   │
+├──────────────────────┼─────────────────────────────────────────────────────┤
+│ CIRCLE_DOT           │ Information, skill level                           │
+├──────────────────────┼─────────────────────────────────────────────────────┤
+│ CHECK_SIMPLE         │ Success, completed                                 │
+├──────────────────────┼─────────────────────────────────────────────────────┤
+│ X_HEAVY              │ Delete, terminate, ended                           │
+├──────────────────────┼─────────────────────────────────────────────────────┤
+│ EDIT                 │ Edit                                               │
+├──────────────────────┼─────────────────────────────────────────────────────┤
+│ SEARCH               │ Search                                             │
+├──────────────────────┼─────────────────────────────────────────────────────┤
+│ PLUS                 │ Add/create                                         │
+├──────────────────────┼─────────────────────────────────────────────────────┤
+│ WARNING              │ Warning/confirmation                               │
+├──────────────────────┼─────────────────────────────────────────────────────┤
+│ STATUS_ACTIVE        │ Active status                                      │
+├──────────────────────┼─────────────────────────────────────────────────────┤
+│ STATUS_ENDED         │ Ended/terminated status                            │
+├──────────────────────┼─────────────────────────────────────────────────────┤
+│ UNDO                 │ Undo action (not used)                             │
+├──────────────────────┼─────────────────────────────────────────────────────┤
+│ HOUSEHOLD            │ Household (for transfers)                          │
+└──────────────────────┴─────────────────────────────────────────────────────┘
+
+
+================================================================================
+END OF DOCUMENTATION
+================================================================================

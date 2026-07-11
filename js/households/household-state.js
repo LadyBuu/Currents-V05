@@ -6,7 +6,9 @@
  * PURPOSE: Single source of truth for all household data and UI state.
  *          Manages data access, caching, and state change notifications.
  * 
- * DEPENDS ON:
+ * UPDATED: Removed vendetta data - vendettas now in vendetta-system.js
+ * 
+ * DEPENDENCIES:
  *   - accessors.js (for getCharacters, getPlaceById, getCurrentYear)
  *   - storage.js (for saveMasterData)
  * 
@@ -25,15 +27,6 @@
  *   - HouseholdState.setUIState()        - Update UI state
  *   - HouseholdState.invalidateCache()   - Invalidate all caches
  *   - HouseholdState.refresh()           - Force refresh from masterData
- * 
- * FEATURES RETAINED:
- *   - All household CRUD operations
- *   - Character household lookups
- *   - UI state management (filters, selection)
- *   - Change notifications via subscribers
- *   - Cache management with invalidation
- *   - Recursion guards
- *   - Error handling
  * 
  * =============================================================================
  */
@@ -362,7 +355,7 @@
     }
 
     // =========================================================================
-    // 6. INITIALIZATION
+    // 6. INITIALIZATION - UPDATED: Removed vendettas
     // =========================================================================
 
     /**
@@ -400,6 +393,7 @@
 
     /**
      * Ensures a household object has all required fields
+     * UPDATED: Removed vendettas and alliances
      * @private
      */
     function _ensureHouseholdInitialized(household) {
@@ -409,8 +403,7 @@
         if (!household.departments) household.departments = [];
         if (!household.nameHistory) household.nameHistory = [];
         if (!household.activityLog) household.activityLog = [];
-        if (!household.vendettas) household.vendettas = [];
-        if (!household.alliances) household.alliances = [];
+        // REMOVED: vendettas and alliances - now in vendetta-system.js
         
         if (household.reputation === undefined) household.reputation = 50;
         if (household.wealth === undefined) household.wealth = 0;
@@ -822,6 +815,7 @@
 
     /**
      * Creates a new household
+     * UPDATED: Removed vendettas and alliances from initialization
      * @param {string} name - Household name
      * @param {string} locationId - Location ID (optional)
      * @param {Object} options - Options
@@ -864,8 +858,7 @@
             wealth: options.wealth !== undefined ? options.wealth : 0,
             powerScore: 0,
             foundedYear: options.foundedYear !== undefined ? options.foundedYear : currentYear,
-            vendettas: [],
-            alliances: [],
+            // REMOVED: vendettas and alliances
             status: 'active',
             nameHistory: [],
             currentNameSince: options.foundedYear !== undefined ? options.foundedYear : currentYear,

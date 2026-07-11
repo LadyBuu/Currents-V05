@@ -65,20 +65,6 @@
         }
     }
 
-    function _confirmDialog(message, title, onConfirm, onCancel) {
-        if (typeof window.confirmDialog === 'function') {
-            return window.confirmDialog(message, title, onConfirm, onCancel);
-        }
-        if (typeof window._confirmDialog === 'function') {
-            return window._confirmDialog(message, title, onConfirm, onCancel);
-        }
-        if (confirm(message)) {
-            if (onConfirm) onConfirm();
-        } else {
-            if (onCancel) onCancel();
-        }
-    }
-
     function _escapeHtml(str) {
         if (typeof window._escapeHtml === 'function') {
             return window._escapeHtml(str);
@@ -309,7 +295,6 @@
             var wealth = _getHouseholdWealth(householdId);
             var debt = _getHouseholdDebt(householdId);
             var tier = _getHouseholdEconomicTier(householdId);
-            var currentYear = _getCurrentYear();
 
             var modalContent =
                 '<div style="margin-bottom: 16px;">' +
@@ -623,7 +608,6 @@
             var annualIncome = _calculateAnnualIncome(householdId);
             var incomeSources = _getIncomeSources();
 
-            // Calculate income breakdown
             var breakdown = [];
             var total = 0;
 
