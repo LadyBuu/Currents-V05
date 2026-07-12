@@ -1,723 +1,1057 @@
-# CHARACTER SYSTEM - COMPLETE DOCUMENTATION
+# STILL WATERS - CHARACTER SYSTEM COMPLETE DOCUMENTATION
 
-================================================================================
-TABLE OF CONTENTS
-=================
-1. SYSTEM OVERVIEW
-2. FILE STRUCTURE
-3. CHARACTER-STATE.JS - Single Source of Truth
-4. CHARACTER-COMMANDS.JS - Write Operations
-5. CHARACTER-QUERIES.JS - Read Operations
-6. CHARACTER-LIFECYCLE.JS - Lifecycle Business Logic
-7. CHARACTER-UI-LIST.JS - UI List Rendering
-8. MODALS-CHARACTER.JS - UI Modals
-9. DEPENDENCY MAP
-10. RECURSION GUARDS
-11. ICON POLICY
-12. LEGACY ALIASES
-13. CHARACTER DATA SCHEMA
+## Version 2.0 | Generated: 2026-07-11
 
-================================================================================
-1. SYSTEM OVERVIEW
-================================================================================
+---
 
-The Character System is the foundation of the Still Waters simulation. 
-It manages all character data, lifecycle events, and provides a clean 
-API for other systems to interact with characters.
+# TABLE OF CONTENTS
 
-PURPOSE:
-- Centralize all character data management
-- Provide consistent read/write operations
-- Handle lifecycle events (birth, aging, death, inheritance)
-- Enable UI rendering with clean separation
+1. [SYSTEM OVERVIEW](#1-system-overview)
+2. [FILE STRUCTURE](#2-file-structure)
+3. [CHARACTER-STATE.JS](#3-character-statejs)
+4. [CHARACTER-COMMANDS.JS](#4-character-commandsjs)
+5. [CHARACTER-QUERIES.JS](#5-character-queriesjs)
+6. [CHARACTER-LIFECYCLE.JS](#6-character-lifecyclejs)
+7. [CHARACTER-UI-LIST.JS](#7-character-ui-listjs)
+8. [MODALS-CHARACTER.JS](#8-modals-characterjs)
+9. [DEPENDENCY MAP](#9-dependency-map)
+10. [RECURSION GUARDS](#10-recursion-guards)
+11. [ICON POLICY](#11-icon-policy)
+12. [LEGACY ALIASES](#12-legacy-aliases)
+13. [CHARACTER DATA SCHEMA](#13-character-data-schema)
+14. [COMPLETE FUNCTION LIST](#14-complete-function-list)
+15. [MIGRATION NOTES](#15-migration-notes)
 
-KEY PRINCIPLES:
-- Single Source of Truth (character-state.js)
-- Command-Query Separation (commands vs queries)
-- Separation of Concerns (state, commands, queries, lifecycle, UI)
-- Recursion Guards on all public functions
-- Change Notifications via subscriptions
-- No direct masterData access outside state
+---
 
-================================================================================
-2. FILE STRUCTURE
-================================================================================
+# 1. SYSTEM OVERVIEW
 
+## Purpose
+
+The Character System is the foundation of the Still Waters simulation. It manages all character data, lifecycle events, and provides a clean API for other systems to interact with characters.
+
+## Key Principles
+
+| Principle | Description |
+|-----------|-------------|
+| **Single Source of Truth** | `character-state.js` holds all character data |
+| **Command-Query Separation** | Commands (writes) vs Queries (reads) separated |
+| **Separation of Concerns** | State, commands, queries, lifecycle, UI all separate |
+| **Recursion Guards** | All public functions protected from infinite loops |
+| **Change Notifications** | Subscriptions for reactive updates |
+| **No Direct masterData Access** | All access through the state layer |
+
+## Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         CHARACTER SYSTEM                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────────────┐ │
+│  │  CHARACTER-     │    │  CHARACTER-     │    │  CHARACTER-             │ │
+│  │  STATE.JS       │◄───│  COMMANDS.JS    │    │  QUERIES.JS             │ │
+│  │  (Data Layer)   │    │  (Write Layer)  │    │  (Read Layer)           │ │
+│  └─────────────────┘    └─────────────────┘    └─────────────────────────┘ │
+│           │                      │                         │                │
+│           ▼                      ▼                         ▼                │
+│  ┌─────────────────────────────────────────────────────────────────────────┐│
+│  │                    masterData.characters                               ││
+│  └─────────────────────────────────────────────────────────────────────────┘│
+│                                                                             │
+│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────────────┐ │
+│  │  CHARACTER-     │    │  CHARACTER-     │    │  MODALS-                │ │
+│  │  LIFECYCLE.JS   │    │  UI-LIST.JS     │    │  CHARACTER.JS           │ │
+│  │  (Business      │    │  (UI Rendering) │    │  (UI Dialogs)           │ │
+│  │   Logic)        │    │                 │    │                         │ │
+│  └─────────────────┘    └─────────────────┘    └─────────────────────────┘ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+# 2. FILE STRUCTURE
+
+```
 js/core/character/
 ├── character-state.js          # Single source of truth + cache + notifications
-├── character-commands.js       # All write operations (create, update, delete)
+├── character-commands.js       # All write operations (create, update, delete, soft delete, bulk)
 ├── character-queries.js        # All read operations (search, filter, stats)
-├── character-lifecycle.js      # Lifecycle business logic (birth, aging, death)
+├── character-lifecycle.js      # Lifecycle business logic (birth, aging, death, inheritance)
 ├── character-ui-list.js        # UI list rendering
 └── modals-character.js         # UI modals (updated to use new system)
+```
 
-================================================================================
-3. CHARACTER-STATE.JS - Single Source of Truth
-================================================================================
-
-PURPOSE: Manages the central state for all character data.
-
-DEPENDENCIES:
-  - storage.js (masterData)
-  - ids.js (generateId)
-
-FUNCTIONS:
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterState.getCharacter(id)                                           │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets a single character by ID.                                             │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   id (string) - Character ID                                               │
-│                                                                             │
-│ RETURNS: Object|null - Character object or null                            │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterState.getAllCharacters()                                         │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets all characters.                                                       │
-│                                                                             │
-│ RETURNS: Array - Array of character objects                                │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterState.getCharactersByLocation(locationId)                        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets characters by location.                                               │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: Array - Array of character objects                                │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterState.getCharactersByHousehold(householdId)                      │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets characters by household.                                              │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   householdId (string) - Household ID                                      │
-│                                                                             │
-│ RETURNS: Array - Array of character objects                                │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterState.getCharactersByStatus(status)                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets characters by status.                                                 │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   status (string) - 'living' or 'deceased'                                 │
-│                                                                             │
-│ RETURNS: Array - Array of character objects                                │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterState.getLivingCharacters()                                      │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets all living characters.                                                │
-│                                                                             │
-│ RETURNS: Array - Array of character objects                                │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterState.getDeceasedCharacters()                                    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets all deceased characters.                                              │
-│                                                                             │
-│ RETURNS: Array - Array of character objects                                │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterState.searchByName(query)                                        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Searches characters by name.                                               │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   query (string) - Search term                                             │
-│                                                                             │
-│ RETURNS: Array - Array of matching character objects                       │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterState.invalidateCache()                                          │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Invalidates all caches.                                                    │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterState.subscribe(callback)                                        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Subscribes to state changes.                                               │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   callback (function) - Callback function receiving event object           │
-│                                                                             │
-│ RETURNS: function - Unsubscribe function                                   │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterState._setCharacters(characters)                                 │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ INTERNAL: Sets the characters array and triggers updates.                  │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   characters (Array) - New characters array                                │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterState.isProcessing()                                             │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Checks if the state is currently processing.                               │
-│                                                                             │
-│ RETURNS: boolean - True if processing                                      │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-================================================================================
-4. CHARACTER-COMMANDS.JS - Write Operations
-================================================================================
-
-PURPOSE: All write operations for character management.
-
-DEPENDENCIES:
-  - character-state.js (CharacterState)
-  - character-lifecycle.js (CharacterLifecycle)
-  - accessors.js (getCharacterById, getCharacters)
-  - ids.js (generateId)
-
-FUNCTIONS:
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterCommands.createCharacter(data)                                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Creates a new character.                                                   │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   data.name (string) - Character name (required)                           │
-│   data.surname (string) - Character surname (optional)                     │
-│   data.gender (string) - 'male', 'female', 'unknown'                       │
-│   data.birthYear (number) - Birth year                                    │
-│   data.birthplaceId (string) - Birthplace ID                              │
-│   data.notes (string) - Notes                                             │
-│   data.attraction (string) - 'both', 'men', 'women', 'neither'            │
-│   data.motherId (string) - Mother ID                                      │
-│   data.fatherId (string) - Father ID                                      │
-│   data.household (string) - Household ID                                  │
-│   data.professions (Array) - Array of profession objects                  │
-│   data.rankAssignments (Array) - Array of rank assignments                │
-│   data.relationships (Array) - Array of relationship objects              │
-│   data.friends (Array) - Array of friend IDs                              │
-│   data.moves (Array) - Array of move objects                              │
-│   data.appearance (Object) - Appearance data                              │
-│   data.epithet (string) - Epithet/nickname                                │
-│                                                                             │
-│ RETURNS: { success: boolean, data: Object, reason: string }               │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterCommands.updateCharacter(id, updates)                            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Updates an existing character.                                             │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   id (string) - Character ID                                               │
-│   updates (Object) - Updates to apply                                      │
-│                                                                             │
-│ ALLOWED FIELDS:                                                             │
-│   name, surname, gender, attraction, birthYear, isDeceased,               │
-│   deathYear, deathCause, birthplaceId, currentLocationId, moves,          │
-│   household, rankAssignments, activeRankId, activeRankNumber,             │
-│   professions, motherId, fatherId, children, adoptedParents,              │
-│   apprentices, masterId, isMaster, masterProfessionId,                   │
-│   apprenticeshipDetails, friendshipDetails, epithet, notes,              │
-│   appearance, householdHistory, surnameHistory, surnameSource,           │
-│   surnameRules                                                            │
-│                                                                             │
-│ RETURNS: { success: boolean, data: Object, reason: string }               │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterCommands.deleteCharacter(id)                                    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Deletes a character.                                                       │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   id (string) - Character ID                                               │
-│                                                                             │
-│ RETURNS: { success: boolean, reason: string }                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterCommands.addProfession(characterId, roleId, options)             │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Adds a profession to a character.                                          │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   characterId (string) - Character ID                                      │
-│   roleId (string) - Role/profession ID                                     │
-│   options.startYear (number) - Year started (default: current)             │
-│   options.skillLevel (number) - Skill level (0-100, default: 10)           │
-│   options.isPrimary (boolean) - Primary profession                         │
-│   options.specializations (Array) - Specializations                        │
-│   options.notes (string) - Notes                                           │
-│                                                                             │
-│ RETURNS: { success: boolean, profession: Object, reason: string }         │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterCommands.removeProfession(characterId, roleId)                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Removes a profession from a character.                                     │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   characterId (string) - Character ID                                      │
-│   roleId (string) - Role/profession ID                                     │
-│                                                                             │
-│ RETURNS: { success: boolean, reason: string }                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterCommands.updateProfessionSkill(characterId, roleId,              │
-│                                         newSkillLevel)                     │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Updates a character's skill level in a profession.                         │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   characterId (string) - Character ID                                      │
-│   roleId (string) - Role/profession ID                                     │
-│   newSkillLevel (number) - New skill level (0-100)                         │
-│                                                                             │
-│ RETURNS: { success: boolean, profession: Object, oldLevel: number,        │
-│           newLevel: number }                                               │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterCommands.setPrimaryProfession(characterId, roleId)               │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Sets a profession as primary for a character.                              │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   characterId (string) - Character ID                                      │
-│   roleId (string) - Role/profession ID                                     │
-│                                                                             │
-│ RETURNS: { success: boolean, reason: string }                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterCommands.killCharacter(character, deathYear, deathCause, options)│
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Kills a character (marks as deceased, updates relationships).              │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   character (Object) - Character object                                    │
-│   deathYear (number) - Year of death                                       │
-│   deathCause (string) - Cause of death                                     │
-│   options.notes (string) - Notes                                           │
-│   options.skipInheritance (boolean) - Skip inheritance processing          │
-│                                                                             │
-│ RETURNS: { success: boolean, character: Object, deathYear: number,        │
-│           deathCause: string }                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-================================================================================
-5. CHARACTER-QUERIES.JS - Read Operations
-================================================================================
-
-PURPOSE: All read-only queries for character data.
-
-DEPENDENCIES:
-  - character-state.js (CharacterState)
-  - accessors.js (getCharacterById, getCharacters)
-
-FUNCTIONS:
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterQueries.getCharacter(id)                                         │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets a single character by ID.                                             │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   id (string) - Character ID                                               │
-│                                                                             │
-│ RETURNS: Object|null - Character object or null                            │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterQueries.getAllCharacters()                                       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets all characters.                                                       │
-│                                                                             │
-│ RETURNS: Array - Array of character objects                                │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterQueries.getLivingCharacters()                                    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets all living characters.                                                │
-│                                                                             │
-│ RETURNS: Array - Array of character objects                                │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterQueries.getDeceasedCharacters()                                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets all deceased characters.                                              │
-│                                                                             │
-│ RETURNS: Array - Array of character objects                                │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterQueries.getCharactersByGender(gender)                            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets characters by gender.                                                 │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   gender (string) - 'male', 'female', or 'unknown'                         │
-│                                                                             │
-│ RETURNS: Array - Array of character objects                                │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterQueries.getCharactersByLocation(locationId)                      │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets characters by location.                                               │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: Array - Array of character objects                                │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterQueries.getCharactersByHousehold(householdId)                    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets characters by household.                                              │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   householdId (string) - Household ID                                      │
-│                                                                             │
-│ RETURNS: Array - Array of character objects                                │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterQueries.getCharactersByAgeRange(minAge, maxAge, asOfYear)        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets characters by age range.                                              │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   minAge (number) - Minimum age                                            │
-│   maxAge (number) - Maximum age                                            │
-│   asOfYear (number) - Year to calculate age (default: current)             │
-│                                                                             │
-│ RETURNS: Array - Array of character objects                                │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterQueries.getCharactersByProfession(roleId)                        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets characters by profession.                                             │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   roleId (string) - Role/profession ID                                     │
-│                                                                             │
-│ RETURNS: Array - Array of character objects                                │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterQueries.searchCharacters(query)                                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Searches characters by name.                                               │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   query (string) - Search term                                             │
-│                                                                             │
-│ RETURNS: Array - Array of matching character objects                       │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterQueries.getCharacterSummary(id)                                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets a summary of a character.                                             │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   id (string) - Character ID                                               │
-│                                                                             │
-│ RETURNS: { id, name, surname, fullName, gender, age, location, rank,      │
-│           isDeceased, birthYear, deathYear, deathCause, household,         │
-│           professionCount, primaryProfession, notes }                      │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterQueries.getCharacterProfessions(id)                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets a character's professions.                                            │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   id (string) - Character ID                                               │
-│                                                                             │
-│ RETURNS: Array - Array of profession objects                               │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterQueries.getPrimaryProfession(id)                                 │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets a character's primary profession.                                     │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   id (string) - Character ID                                               │
-│                                                                             │
-│ RETURNS: Object|null - Profession object or null                           │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterQueries.getCharacterSurnameHistory(id)                           │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets a character's surname history.                                        │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   id (string) - Character ID                                               │
-│                                                                             │
-│ RETURNS: { birthSurname, entries, lastUpdated }                            │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterQueries.getCharacterStatistics()                                 │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets statistics about all characters.                                      │
-│                                                                             │
-│ RETURNS: { total, living, deceased, male, female, unknown,                │
-│           byAgeGroup, byHousehold, averageAge, totalAge }                 │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-================================================================================
-6. CHARACTER-LIFECYCLE.JS - Lifecycle Business Logic
-================================================================================
-
-PURPOSE: Business logic for character lifecycle (birth, aging, death, inheritance).
-
-DEPENDENCIES:
-  - character-state.js (CharacterState)
-  - character-commands.js (CharacterCommands)
-  - character-queries.js (CharacterQueries)
-  - time.js (calculateAge, getCurrentYearSafe)
-  - constants.js (AGE_GROUPS, LIFE_STAGES, DEATH_CAUSES)
-
-CONSTANTS:
-
-DEATH_CAUSES (from constants.js):
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ Text                    │ Weight │ Min Age │ Max Age │                     │
-├────────────────────────┼────────┼─────────┼─────────┤                     │
-│ Old age                │ 25     │ 60      │ -       │                     │
-│ Old age, natural causes│ 15     │ 60      │ -       │                     │
-│ Fever                  │ 12     │ -       │ -       │                     │
-│ Consumption            │ 10     │ -       │ -       │                     │
-│ Pneumonia              │ 8      │ -       │ -       │                     │
-│ Infection              │ 6      │ -       │ -       │                     │
-│ Plague                 │ 8      │ -       │ -       │                     │
-│ Dysentery              │ 5      │ -       │ -       │                     │
-│ Drowning               │ 5      │ -       │ -       │                     │
-│ Fell from height       │ 4      │ -       │ -       │                     │
-│ Hunting accident       │ 3      │ -       │ -       │                     │
-│ Fire                   │ 3      │ -       │ -       │                     │
-│ Animal attack          │ 3      │ -       │ -       │                     │
-│ Accident               │ 5      │ -       │ -       │                     │
-│ Childbed fever         │ 4      │ 14      │ 45      │                     │
-└────────────────────────┴────────┴─────────┴─────────┘
-
-FUNCTIONS:
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterLifecycle.getRandomDeathCause(age, gender)                       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets a random death cause based on age and gender.                         │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   age (number) - Character age                                             │
-│   gender (string) - Character gender                                       │
-│                                                                             │
-│ RETURNS: string - Death cause text                                         │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterLifecycle.killCharacter(character, deathYear, deathCause,        │
-│                                   options)                                 │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Kills a character (marks as deceased, updates relationships).              │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   character (Object) - Character object                                    │
-│   deathYear (number) - Year of death                                       │
-│   deathCause (string) - Cause of death                                     │
-│   options.notes (string) - Notes                                           │
-│   options.skipInheritance (boolean) - Skip inheritance processing          │
-│                                                                             │
-│ RETURNS: { success: boolean, character: Object, deathYear: number,        │
-│           deathCause: string }                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterLifecycle.killCharacterRandomCause(character, deathYear)         │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Kills a character with a random appropriate cause.                         │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   character (Object) - Character object                                    │
-│   deathYear (number) - Year of death                                       │
-│                                                                             │
-│ RETURNS: { success: boolean, character: Object, deathYear: number,        │
-│           deathCause: string }                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterLifecycle.applyAging(character, yearsAdvanced)                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Applies aging and checks for mortality.                                    │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   character (Object) - Character object                                    │
-│   yearsAdvanced (number) - Number of years advanced                        │
-│                                                                             │
-│ RETURNS: { success: boolean, character: Object, reason: string }          │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterLifecycle.predictLifespan(character)                             │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Predicts the lifespan of a character.                                      │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   character (Object) - Character object                                    │
-│                                                                             │
-│ RETURNS: number - Predicted age at death                                   │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterLifecycle.getExpectedRemainingYears(character)                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets the expected remaining years for a character.                         │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   character (Object) - Character object                                    │
-│                                                                             │
-│ RETURNS: number - Expected remaining years                                 │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterLifecycle.processHouseholdInheritance(characterId)               │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Processes household inheritance when a character dies.                     │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   characterId (string) - Character ID                                      │
-│                                                                             │
-│ RETURNS: Array - Results for each household affected                       │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-================================================================================
-7. CHARACTER-UI-LIST.JS - UI List Rendering
-================================================================================
-
-PURPOSE: Renders character lists with formatting and selection.
-
-DEPENDENCIES:
-  - character-queries.js (CharacterQueries)
-  - formatting.js (escapeHtml)
-  - icons.js (Icons)
-
-FUNCTIONS:
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterUI.renderCharacterList(containerId, options)                     │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Renders a list of characters.                                              │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   containerId (string) - DOM element ID or element                         │
-│   options.filteredCharacters (Array) - Pre-filtered list                   │
-│   options.onSelect (function) - Callback when selected                     │
-│   options.emptyMessage (string) - Message when empty                       │
-│   options.showStatus (boolean) - Show status (default: true)               │
-│   options.showLocation (boolean) - Show location (default: true)           │
-│   options.showAge (boolean) - Show age (default: true)                     │
-│   options.rowClass (string) - CSS class for rows                           │
-│                                                                             │
-│ RETURNS: boolean - True if rendered                                        │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ CharacterUI.renderCharacterCard(character)                                │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Renders a single character as a card.                                      │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   character (Object) - Character object                                    │
-│                                                                             │
-│ RETURNS: string - HTML for the card                                        │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-================================================================================
-8. MODALS-CHARACTER.JS - UI Modals
-================================================================================
-
-PURPOSE: UI modals for character management (CRUD, details, deletion).
-
-DEPENDENCIES:
-  - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast)
-  - modals-char-select.js (openCharacterSelector)
-  - character-state.js (CharacterState)
-  - character-commands.js (CharacterCommands)
-  - character-queries.js (CharacterQueries)
-  - character-lifecycle.js (CharacterLifecycle)
-
-FUNCTIONS:
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ openCreateCharacterModal(onSuccess)                                       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Opens modal to create a new character.                                     │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   onSuccess (function) - Callback with created character                   │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ openEditCharacterModal(characterId, onSuccess)                            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Opens modal to edit a character.                                           │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   characterId (string) - Character ID                                      │
-│   onSuccess (function) - Callback on success                               │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ openDeleteCharacterModal(characterId, onSuccess)                          │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Opens modal to delete a character.                                         │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   characterId (string) - Character ID                                      │
-│   onSuccess (function) - Callback on success                               │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ openCharacterDetailsModal(characterId, onSuccess)                         │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Opens modal with character details and actions.                            │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   characterId (string) - Character ID                                      │
-│   onSuccess (function) - Callback to refresh parent view                   │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-================================================================================
-9. DEPENDENCY MAP
-================================================================================
+---
 
+# 3. CHARACTER-STATE.JS
+
+## Purpose
+
+Single source of truth for all character data. Manages caching, subscriptions, and data loading.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `storage.js` | `masterData`, `saveMasterData` |
+| `ids.js` | `generateId` |
+
+## Functions
+
+### Data Access
+
+#### `CharacterState.getCharacter(id)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets a single character by ID |
+| **Parameters** | `id` (string) - Character ID |
+| **Returns** | `Object|null` - Character object or null |
+
+#### `CharacterState.getAllCharacters()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all characters |
+| **Returns** | `Array` - Array of character objects |
+
+#### `CharacterState.getCharactersByLocation(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets characters by location |
+| **Parameters** | `locationId` (string) - Location ID |
+| **Returns** | `Array` - Array of character objects |
+
+#### `CharacterState.getCharactersByHousehold(householdId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets characters by household |
+| **Parameters** | `householdId` (string) - Household ID |
+| **Returns** | `Array` - Array of character objects |
+
+#### `CharacterState.getCharactersByStatus(status)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets characters by status |
+| **Parameters** | `status` (string) - 'living' or 'deceased' |
+| **Returns** | `Array` - Array of character objects |
+
+#### `CharacterState.getLivingCharacters()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all living characters |
+| **Returns** | `Array` - Array of character objects |
+
+#### `CharacterState.getDeceasedCharacters()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all deceased characters |
+| **Returns** | `Array` - Array of character objects |
+
+#### `CharacterState.searchByName(query)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Searches characters by name |
+| **Parameters** | `query` (string) - Search term |
+| **Returns** | `Array` - Array of matching character objects |
+
+#### `CharacterState.getTotalCharacterCount()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets total character count |
+| **Returns** | `number` - Total count |
+
+### Cache Management
+
+#### `CharacterState.invalidateCache()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Invalidates all caches and rebuilds them |
+
+### Subscriptions
+
+#### `CharacterState.subscribe(callback)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Subscribes to state changes |
+| **Parameters** | `callback` (function) - Receives event object |
+| **Returns** | `function` - Unsubscribe function |
+
+### Internal Methods
+
+#### `CharacterState._setCharacters(characters)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | INTERNAL: Sets the characters array and triggers updates |
+| **Parameters** | `characters` (Array) - New characters array |
+
+#### `CharacterState._loadData()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | INTERNAL: Loads data from masterData |
+
+#### `CharacterState.isProcessing()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Checks if the state is currently processing |
+| **Returns** | `boolean` - True if processing |
+
+---
+
+# 4. CHARACTER-COMMANDS.JS
+
+## Purpose
+
+All write operations for character management including create, update, delete, soft delete, bulk operations, random generation, and profession management.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `character-state.js` | `CharacterState` |
+| `character-lifecycle.js` | `CharacterLifecycle` |
+| `accessors.js` | `getCharacterById`, `getCharacters`, `getPlaces`, `getPlaceById`, `getRoles`, `getRoleById`, `getNameLists` |
+| `ids.js` | `generateId` |
+| `time.js` | `getCurrentYearSafe` |
+| `names.js` | `getRandomNameFromCountry`, `getRandomSurnameFromCountry` |
+| `world.js` | `getLocationTypePriority`, `getLocationTypeById` |
+
+## Functions
+
+### Creation
+
+#### `CharacterCommands.createCharacter(data)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Creates a new character with complete schema |
+| **Parameters** | `data` (Object) - Character data |
+| **Returns** | `{ success: boolean, data: Object, reason: string }` |
+
+**Data Parameters:**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `name` | string | Yes | 'New Character' | Character name |
+| `surname` | string | No | '' | Character surname |
+| `surnameSource` | string | No | 'country' | Surname source |
+| `surnameRules` | object | No | null | Surname rules |
+| `gender` | string | No | 'unknown' | 'male', 'female', 'unknown' |
+| `attraction` | string | No | 'both' | 'both', 'men', 'women', 'neither' |
+| `birthYear` | number | No | current-25 | Year of birth |
+| `isDeceased` | boolean | No | false | Deceased flag |
+| `deathYear` | number | No | null | Year of death |
+| `deathCause` | string | No | '' | Cause of death |
+| `birthplaceId` | string | No | null | Birthplace location ID |
+| `currentLocationId` | string | No | null | Current location ID |
+| `household` | string | No | null | Household ID |
+| `motherId` | string | No | null | Mother character ID |
+| `fatherId` | string | No | null | Father character ID |
+| `notes` | string | No | '' | Additional notes |
+| `professions` | array | No | [] | Array of profession objects |
+| `rankAssignments` | array | No | [] | Array of rank assignments |
+| `relationships` | array | No | [] | Array of relationship objects |
+| `friends` | array | No | [] | Array of friend IDs |
+| `moves` | array | No | [] | Array of move objects |
+| `appearance` | object | No | {} | Appearance data |
+| `epithet` | string | No | '' | Epithet/nickname |
+
+#### `CharacterCommands.createRandomCharacter(options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Generates a completely random character with cultural name support. FULLY AUTOMATIC - NO USER INPUT REQUIRED. |
+| **Parameters** | `options` (Object) - Optional configuration |
+| **Returns** | `{ success: boolean, data: Object, reason: string }` |
+
+**Options Parameters:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `gender` | string | random | 'male', 'female', or null for random |
+| `age` | number | random | Specific age, or null for random |
+| `countryId` | string | random | Specific country, or null for random |
+| `assignProfession` | boolean | true | Whether to assign a profession |
+
+**Surname Priority (NO FALLBACK):**
+1. Country rules (Type 1 location)
+2. Cultural surname from country
+3. NO SURNAME (empty string)
+
+#### `CharacterCommands.bulkCreateCharacters(dataArray)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Creates multiple characters at once |
+| **Parameters** | `dataArray` (Array) - Array of character data objects |
+| **Returns** | `{ success: boolean, count: number, data: Array, errors: Array }` |
+
+### Update
+
+#### `CharacterCommands.updateCharacter(id, updates)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Updates an existing character with deep merge |
+| **Parameters** | `id` (string) - Character ID, `updates` (Object) - Updates to apply |
+| **Returns** | `{ success: boolean, data: Object, reason: string }` |
+
+**Allowed Update Fields:**
+`name`, `surname`, `surnameSource`, `surnameRules`, `gender`, `attraction`, `birthYear`, `isDeceased`, `deathYear`, `deathCause`, `birthplaceId`, `currentLocationId`, `moves`, `household`, `rankAssignments`, `activeRankId`, `activeRankNumber`, `professions`, `motherId`, `fatherId`, `children`, `adoptedParents`, `apprentices`, `masterId`, `isMaster`, `masterProfessionId`, `apprenticeshipDetails`, `friendshipDetails`, `epithet`, `notes`, `appearance`, `householdHistory`, `surnameHistory`, `relationships`, `friends`
+
+#### `CharacterCommands.bulkUpdateCharacters(updates)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Updates multiple characters at once |
+| **Parameters** | `updates` (Object) - Object mapping character IDs to updates |
+| **Returns** | `{ success: boolean, count: number, data: Array, errors: Array }` |
+
+### Delete
+
+#### `CharacterCommands.deleteCharacter(id)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Permanently deletes a character with full reference cleanup |
+| **Parameters** | `id` (string) - Character ID |
+| **Returns** | `{ success: boolean, reason: string }` |
+
+#### `CharacterCommands.softDeleteCharacter(id)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Soft deletes a character (marks as deleted without removing) |
+| **Parameters** | `id` (string) - Character ID |
+| **Returns** | `{ success: boolean, data: Object, reason: string }` |
+
+#### `CharacterCommands.restoreSoftDeletedCharacter(id)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Restores a soft-deleted character |
+| **Parameters** | `id` (string) - Character ID |
+| **Returns** | `{ success: boolean, data: Object, reason: string }` |
+
+#### `CharacterCommands.getSoftDeletedCharacters()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all soft-deleted characters |
+| **Returns** | `Array` - Array of soft-deleted character objects |
+
+#### `CharacterCommands.purgeSoftDeletedCharacters()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Permanently removes all soft-deleted characters |
+| **Returns** | `{ success: boolean, count: number, reason: string }` |
+
+#### `CharacterCommands.bulkDeleteCharacters(ids, softDelete)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Deletes multiple characters at once |
+| **Parameters** | `ids` (Array) - Array of character IDs, `softDelete` (boolean) - Whether to soft delete |
+| **Returns** | `{ success: boolean, count: number, errors: Array }` |
+
+### Profession Management
+
+#### `CharacterCommands.addProfession(characterId, roleId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Adds a profession to a character |
+| **Parameters** | `characterId` (string), `roleId` (string), `options` (Object) |
+| **Returns** | `{ success: boolean, profession: Object, reason: string }` |
+
+**Options:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `startYear` | number | current | Year started |
+| `skillLevel` | number | 10 | Skill level (0-100) |
+| `isPrimary` | boolean | first | Is primary profession |
+| `specializations` | array | [] | Specializations |
+| `notes` | string | '' | Notes |
+
+#### `CharacterCommands.removeProfession(characterId, roleId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Removes a profession from a character |
+| **Parameters** | `characterId` (string), `roleId` (string) |
+| **Returns** | `{ success: boolean, reason: string }` |
+
+#### `CharacterCommands.updateProfessionSkill(characterId, roleId, newSkillLevel)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Updates a character's skill level in a profession |
+| **Parameters** | `characterId` (string), `roleId` (string), `newSkillLevel` (number 0-100) |
+| **Returns** | `{ success: boolean, profession: Object, oldLevel: number, newLevel: number, increased: number }` |
+
+#### `CharacterCommands.setPrimaryProfession(characterId, roleId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Sets a profession as primary for a character |
+| **Parameters** | `characterId` (string), `roleId` (string) |
+| **Returns** | `{ success: boolean, reason: string }` |
+
+#### `CharacterCommands.addProfessionSpecialization(characterId, roleId, specialization)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Adds a specialization to a character's profession |
+| **Parameters** | `characterId` (string), `roleId` (string), `specialization` (string) |
+| **Returns** | `{ success: boolean, specialization: string, reason: string }` |
+
+#### `CharacterCommands.removeProfessionSpecialization(characterId, roleId, specialization)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Removes a specialization from a character's profession |
+| **Parameters** | `characterId` (string), `roleId` (string), `specialization` (string) |
+| **Returns** | `{ success: boolean, reason: string }` |
+
+### Surname History
+
+#### `CharacterCommands.getCharacterSurnameHistory(id)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets a character's surname history |
+| **Parameters** | `id` (string) - Character ID |
+| **Returns** | `{ birthSurname: string, entries: Array, lastUpdated: number }` |
+
+#### `CharacterCommands.getCharacterBirthSurname(id)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets a character's birth surname |
+| **Parameters** | `id` (string) - Character ID |
+| **Returns** | `string` - Birth surname |
+
+#### `CharacterCommands.getCharacterSurnameChanges(id)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all surname changes for a character |
+| **Parameters** | `id` (string) - Character ID |
+| **Returns** | `Array` - Array of surname change entries |
+
+#### `CharacterCommands.recordCharacterSurnameChange(id, newSurname, year, reason, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Records a surname change for a character |
+| **Parameters** | `id` (string), `newSurname` (string), `year` (number), `reason` (string), `options` (Object) |
+| **Returns** | `{ success: boolean, change: Object, reason: string }` |
+
+**Options:**
+- `spouseId` (string) - Spouse ID (for marriage changes)
+- `notes` (string) - Additional notes
+- `surnameSource` (string) - Surname source
+- `surnameRules` (object) - Surname rules
+
+#### `CharacterCommands.revertCharacterSurnameChange(id)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Reverts the last surname change for a character |
+| **Parameters** | `id` (string) - Character ID |
+| **Returns** | `{ success: boolean, reverted: Object, reason: string }` |
+
+---
+
+# 5. CHARACTER-QUERIES.JS
+
+## Purpose
+
+All read-only queries for character data. No side effects, no mutations.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `character-state.js` | `CharacterState` |
+| `accessors.js` | `getCharacterById`, `getCharacters`, `getPlaceById`, `getPlaces` |
+| `time.js` | `calculateAge`, `getCurrentYearSafe` |
+| `world.js` | `getCurrentLocation`, `getActiveRankDisplay` |
+
+## Functions
+
+### Core Queries
+
+#### `CharacterQueries.getCharacter(id)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets a single character by ID |
+| **Parameters** | `id` (string) - Character ID |
+| **Returns** | `Object|null` - Character object or null |
+
+#### `CharacterQueries.getAllCharacters()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all characters |
+| **Returns** | `Array` - Array of character objects |
+
+#### `CharacterQueries.getLivingCharacters()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all living characters |
+| **Returns** | `Array` - Array of character objects |
+
+#### `CharacterQueries.getDeceasedCharacters()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all deceased characters |
+| **Returns** | `Array` - Array of character objects |
+
+### Filter Queries
+
+#### `CharacterQueries.getCharactersByGender(gender)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets characters by gender |
+| **Parameters** | `gender` (string) - 'male', 'female', or 'unknown' |
+| **Returns** | `Array` - Array of character objects |
+
+#### `CharacterQueries.getCharactersByLocation(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets characters by location |
+| **Parameters** | `locationId` (string) - Location ID |
+| **Returns** | `Array` - Array of character objects |
+
+#### `CharacterQueries.getCharactersByHousehold(householdId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets characters by household |
+| **Parameters** | `householdId` (string) - Household ID |
+| **Returns** | `Array` - Array of character objects |
+
+#### `CharacterQueries.getCharactersByAgeRange(minAge, maxAge, asOfYear)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets characters by age range |
+| **Parameters** | `minAge` (number), `maxAge` (number), `asOfYear` (number, optional) |
+| **Returns** | `Array` - Array of character objects |
+
+#### `CharacterQueries.getCharactersByProfession(roleId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets characters by profession |
+| **Parameters** | `roleId` (string) - Role/profession ID |
+| **Returns** | `Array` - Array of character objects |
+
+#### `CharacterQueries.getCharactersByProfessionSkill(roleId, minSkill)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets characters with a profession at or above a skill level |
+| **Parameters** | `roleId` (string), `minSkill` (number) |
+| **Returns** | `Array` - Array of character objects |
+
+#### `CharacterQueries.getCharactersByRank(rankId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets characters by rank |
+| **Parameters** | `rankId` (string) - Rank ID |
+| **Returns** | `Array` - Array of character objects |
+
+#### `CharacterQueries.getMasterCharacters(roleId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all master characters (skill level >= 76) in a profession |
+| **Parameters** | `roleId` (string, optional) - Filter by role |
+| **Returns** | `Array` - Array of character objects |
+
+### Search Queries
+
+#### `CharacterQueries.searchCharacters(query)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Searches characters by name (full name matching) |
+| **Parameters** | `query` (string) - Search term |
+| **Returns** | `Array` - Array of matching character objects |
+
+### Summary Queries
+
+#### `CharacterQueries.getCharacterSummary(id)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets a formatted summary of a character |
+| **Parameters** | `id` (string) - Character ID |
+| **Returns** | `Object` - Character summary |
+
+**Returns:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Character ID |
+| `name` | string | First name |
+| `surname` | string | Last name |
+| `fullName` | string | Full name |
+| `gender` | string | Gender |
+| `age` | number | Current age |
+| `location` | string | Current location |
+| `rank` | string | Rank display |
+| `isDeceased` | boolean | Deceased flag |
+| `birthYear` | number | Birth year |
+| `deathYear` | number | Death year |
+| `deathCause` | string | Cause of death |
+| `household` | string | Household ID |
+| `professionCount` | number | Number of professions |
+| `primaryProfession` | object | Primary profession |
+| `notes` | string | Notes |
+| `epithet` | string | Epithet |
+
+#### `CharacterQueries.getCharacterProfessions(id)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all professions for a character |
+| **Parameters** | `id` (string) - Character ID |
+| **Returns** | `Array` - Array of profession objects |
+
+#### `CharacterQueries.getPrimaryProfession(id)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets the primary profession for a character |
+| **Parameters** | `id` (string) - Character ID |
+| **Returns** | `Object|null` - Profession object or null |
+
+#### `CharacterQueries.getCharacterSurnameHistory(id)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets a character's surname history |
+| **Parameters** | `id` (string) - Character ID |
+| **Returns** | `Object` - Surname history |
+
+#### `CharacterQueries.getCharacterStatistics()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets comprehensive character statistics |
+| **Returns** | `Object` - Statistics object |
+
+**Returns:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total` | number | Total characters |
+| `living` | number | Living characters |
+| `deceased` | number | Deceased characters |
+| `male` | number | Male characters |
+| `female` | number | Female characters |
+| `unknown` | number | Unknown gender |
+| `byAgeGroup` | object | Count by age group |
+| `byHousehold` | object | Count by household |
+| `byProfession` | object | Count by profession |
+| `byRank` | object | Count by rank |
+| `averageAge` | number | Average age |
+| `totalAge` | number | Total age sum |
+| `livingByAgeGroup` | object | Living count by age group |
+| `literateCount` | number | Literate characters |
+| `illiterateCount` | number | Illiterate characters |
+| `literacyRate` | number | Literacy rate (%) |
+| `byEducationLevel` | object | Count by education level |
+
+### Education Queries
+
+#### `CharacterQueries.getCharactersByEducationStatus(status, institutionId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets characters by education status |
+| **Parameters** | `status` (string) - 'enrolled', 'graduated', 'withdrawn', 'never_attended' |
+| **Returns** | `Array` - Array of character objects |
+
+#### `CharacterQueries.getCharactersNotInEducation(minAge, maxAge)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets school-age characters not enrolled |
+| **Parameters** | `minAge` (number, default 7), `maxAge` (number, default 16) |
+| **Returns** | `Array` - Array of character objects |
+
+---
+
+# 6. CHARACTER-LIFECYCLE.JS
+
+## Purpose
+
+Business logic for character lifecycle (birth, aging, death, inheritance).
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `character-state.js` | `CharacterState` |
+| `character-commands.js` | `CharacterCommands` |
+| `character-queries.js` | `CharacterQueries` |
+| `time.js` | `calculateAge`, `getCurrentYearSafe` |
+| `constants.js` | `AGE_GROUPS`, `LIFE_STAGES`, `DEATH_CAUSES` |
+| `randomness.js` | `chance`, `pickRandom`, `random` |
+
+## Constants
+
+### AGE_GROUPS (from constants.js)
+
+```
+['0-10', '11-20', '21-30', '31-40', '41-50', '51-60', '61-70', '71-80', '81-90', '91+']
+```
+
+### LIFE_STAGES (from constants.js)
+
+| Stage | Min Age | Max Age | Name |
+|-------|---------|---------|------|
+| INFANT | 0 | 10 | Child |
+| YOUTH | 11 | 20 | Youth |
+| YOUNG_ADULT | 21 | 30 | Young Adult |
+| ADULT | 31 | 40 | Adult |
+| MIDDLE_ADULT | 41 | 50 | Middle Adult |
+| MATURE | 51 | 60 | Mature |
+| SENIOR | 61 | 70 | Senior |
+| ELDER | 71 | 80 | Elder |
+| AGED | 81 | 90 | Aged |
+| ANCIENT | 91 | 150 | Ancient |
+
+### DEATH_CAUSES (from constants.js)
+
+| Cause | Weight | Min Age | Max Age |
+|-------|--------|---------|---------|
+| Old age | 25 | 60 | - |
+| Old age, natural causes | 15 | 60 | - |
+| Fever | 12 | - | - |
+| Consumption (tuberculosis) | 10 | - | - |
+| Pneumonia | 8 | - | - |
+| Infection | 6 | - | - |
+| Plague | 8 | - | - |
+| Dysentery | 5 | - | - |
+| Drowning | 5 | - | - |
+| Fell from a height | 4 | - | - |
+| Hunting accident | 3 | - | - |
+| Fire | 3 | - | - |
+| Animal attack | 3 | - | - |
+| Accident | 5 | - | - |
+| Childbed fever | 4 | 14 | 45 |
+
+## Functions
+
+### Life Stages
+
+#### `CharacterLifecycle.getLifeStage(charOrAge)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets the life stage for a character or age |
+| **Parameters** | `charOrAge` (Object|number) - Character or age |
+| **Returns** | `{ key, min, max, name, group }` - Life stage |
+
+#### `CharacterLifecycle.getLifeStageName(charOrAge)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets the life stage name |
+| **Parameters** | `charOrAge` (Object|number) - Character or age |
+| **Returns** | `string` - Life stage name |
+
+#### `CharacterLifecycle.isElderly(charOrAge)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Checks if a character is elderly (age 60+) |
+| **Parameters** | `charOrAge` (Object|number) - Character or age |
+| **Returns** | `boolean` - True if elderly |
+
+#### `CharacterLifecycle.getAgeGroup(charOrAge)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets the age group for a character or age |
+| **Parameters** | `charOrAge` (Object|number) - Character or age |
+| **Returns** | `string` - Age group key |
+
+#### `CharacterLifecycle.getAgeGroupIcon(group)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets the age group icon (SVG) |
+| **Parameters** | `group` (string) - Age group key |
+| **Returns** | `string` - SVG icon HTML |
+
+#### `CharacterLifecycle.getAllAgeGroups()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all age groups |
+| **Returns** | `Array` - Age group keys |
+
+#### `CharacterLifecycle.groupCharactersByAgeGroup(characters, excludeDeceased)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Groups characters by age group |
+| **Parameters** | `characters` (Array), `excludeDeceased` (boolean, default true) |
+| **Returns** | `Object` - Groups object |
+
+### Death Causes
+
+#### `CharacterLifecycle.getRandomDeathCause(age, gender)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets a random death cause based on age and gender |
+| **Parameters** | `age` (number), `gender` (string) |
+| **Returns** | `string` - Death cause text |
+
+### Death Execution
+
+#### `CharacterLifecycle.killCharacter(character, deathYear, deathCause, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Kills a character (marks as deceased, updates relationships, handles inheritance) |
+| **Parameters** | `character` (Object), `deathYear` (number), `deathCause` (string), `options` (Object) |
+| **Returns** | `{ success: boolean, character: Object, deathYear: number, deathCause: string, inheritance: Array }` |
+
+**Options:**
+- `notes` (string) - Additional notes
+- `skipInheritance` (boolean) - Skip inheritance processing
+
+#### `CharacterLifecycle.killCharacterRandomCause(character, deathYear)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Kills a character with a random appropriate cause |
+| **Parameters** | `character` (Object), `deathYear` (number) |
+| **Returns** | `{ success: boolean, character: Object, deathYear: number, deathCause: string }` |
+
+#### `CharacterLifecycle.applyAgingMortality(character, yearsAdvanced)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Applies aging mortality risk - checks if character dies from age-related causes |
+| **Parameters** | `character` (Object), `yearsAdvanced` (number) |
+| **Returns** | `{ success: boolean, reason: string }` |
+
+**Mortality Risk Table:**
+
+| Age Range | Risk per Year |
+|-----------|---------------|
+| 0-1 | 2% |
+| 1-5 | 1% |
+| 5-18 | 0.5% |
+| 18-45 | 1% |
+| 45-60 | 2% |
+| 60-75 | 5% |
+| 75+ | 10% |
+
+### Lifespan
+
+#### `CharacterLifecycle.predictLifespan(character)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Predicts the lifespan of a character |
+| **Parameters** | `character` (Object) |
+| **Returns** | `number` - Predicted age at death |
+
+**Base Life Expectancy:**
+- Female: 45 years
+- Male: 40 years
+- Rank priority 1-2: +10 years
+- Rank priority 3: +5 years
+
+#### `CharacterLifecycle.getExpectedRemainingYears(character)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets the expected remaining years for a character |
+| **Parameters** | `character` (Object) |
+| **Returns** | `number` - Expected remaining years |
+
+### Death Event Wrappers
+
+#### `CharacterLifecycle.triggerNaturalDeath(character, deathYear, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Triggers a natural death for a character |
+| **Parameters** | `character` (Object), `deathYear` (number, optional), `options` (Object) |
+| **Returns** | `{ success: boolean, character: Object }` |
+
+#### `CharacterLifecycle.triggerAccidentalDeath(character, deathYear, accidentType, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Triggers an accidental death for a character |
+| **Parameters** | `character` (Object), `deathYear` (number, optional), `accidentType` (string, optional), `options` (Object) |
+| **Returns** | `{ success: boolean, character: Object }` |
+
+**Accident Types:**
+Fell from a height, Drowning, Fire, Hunting accident, Crushed by falling object, Animal attack, Cart accident, Building collapse, Tools accident, Poisoning accident
+
+### Inheritance
+
+#### `CharacterLifecycle.processHouseholdInheritance(characterId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Processes household inheritance when a character dies |
+| **Parameters** | `characterId` (string) - Character ID |
+| **Returns** | `Array` - Results for each household affected |
+
+#### `CharacterLifecycle.processAllPendingInheritance(showNotifications)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Processes all pending inheritance for deceased heads |
+| **Parameters** | `showNotifications` (boolean, default true) |
+| **Returns** | `Array` - Results for each household |
+
+#### `CharacterLifecycle.hasPendingInheritance(characterId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Checks if a character has any pending inheritance to process |
+| **Parameters** | `characterId` (string) - Character ID |
+| **Returns** | `boolean` - True if pending inheritance |
+
+---
+
+# 7. CHARACTER-UI-LIST.JS
+
+## Purpose
+
+UI rendering for character lists and cards.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `character-queries.js` | `CharacterQueries` |
+| `formatting.js` | `escapeHtml` |
+| `icons.js` | `Icons` |
+
+## Functions
+
+#### `CharacterUI.renderCharacterList(containerId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Renders a list of characters |
+| **Parameters** | `containerId` (string|Element), `options` (Object) |
+| **Returns** | `boolean` - True if rendered |
+
+**Options:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `filteredCharacters` | array | null | Pre-filtered list |
+| `onSelect` | function | null | Callback when selected |
+| `emptyMessage` | string | 'No characters found' | Empty state message |
+| `showStatus` | boolean | true | Show status |
+| `showLocation` | boolean | true | Show location |
+| `showAge` | boolean | true | Show age |
+| `rowClass` | string | 'character-row' | CSS class for rows |
+
+#### `CharacterUI.renderCharacterCard(character)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Renders a single character as a card |
+| **Parameters** | `character` (Object) - Character object |
+| **Returns** | `string` - HTML for the card |
+
+---
+
+# 8. MODALS-CHARACTER.JS
+
+## Purpose
+
+UI modals for character management (CRUD, details, deletion).
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `modals-core.js` | `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon` |
+| `modals-char-select.js` | `openCharacterSelector` |
+| `character-state.js` | `CharacterState` |
+| `character-commands.js` | `CharacterCommands` |
+| `character-queries.js` | `CharacterQueries` |
+| `character-lifecycle.js` | `CharacterLifecycle` |
+
+## Functions
+
+#### `openCreateCharacterModal(onSuccess)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to create a new character |
+| **Parameters** | `onSuccess` (function) - Callback with created character |
+
+#### `openEditCharacterModal(characterId, onSuccess)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to edit a character |
+| **Parameters** | `characterId` (string), `onSuccess` (function) |
+
+#### `openDeleteCharacterModal(characterId, onSuccess)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to delete a character |
+| **Parameters** | `characterId` (string), `onSuccess` (function) |
+
+#### `openCharacterDetailsModal(characterId, onSuccess)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal with character details and actions (Edit, Kill, Delete) |
+| **Parameters** | `characterId` (string), `onSuccess` (function) |
+
+---
+
+# 9. DEPENDENCY MAP
+
+## Core Dependencies
+
+```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    CORE DEPENDENCIES                                       │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -741,6 +1075,10 @@ FUNCTIONS:
 │  ├── getPlaces()                                                         │ │
 │  ├── getCurrentYear()                                                    │ │
 │  ├── getLocationTypeById()                                               │ │
+│  ├── getRoles()                                                          │ │
+│  ├── getRoleById()                                                       │ │
+│  ├── getNameLists()                                                      │ │
+│  ├── getActiveRankDisplay()                                              │ │
 │  └── getHousehold()                                                      │ │
 │                                                                             │
 │  storage.js ────────────────────────────────────────────────────────────┐ │
@@ -761,8 +1099,23 @@ FUNCTIONS:
 │  icons.js ──────────────────────────────────────────────────────────────┐ │
 │  └── Icons                                                               │ │
 │                                                                             │
+│  formatting.js ─────────────────────────────────────────────────────────┐ │
+│  └── escapeHtml()                                                        │ │
+│                                                                             │
+│  names.js ──────────────────────────────────────────────────────────────┐ │
+│  ├── getRandomNameFromCountry()                                          │ │
+│  └── getRandomSurnameFromCountry()                                       │ │
+│                                                                             │
+│  world.js ──────────────────────────────────────────────────────────────┐ │
+│  ├── getLocationTypePriority()                                           │ │
+│  └── getLocationTypeById()                                               │ │
+│                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
+```
 
+## Character System Dependencies
+
+```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    CHARACTER SYSTEM DEPENDENCIES                           │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -774,18 +1127,23 @@ FUNCTIONS:
 │  character-commands.js ─────────────────────────────────────────────────┐ │
 │  ├── character-state.js                                                  │ │
 │  ├── accessors.js                                                        │ │
-│  └── ids.js                                                              │ │
+│  ├── ids.js                                                              │ │
+│  ├── time.js                                                             │ │
+│  ├── names.js                                                            │ │
+│  └── world.js                                                            │ │
 │                                                                             │
 │  character-queries.js ──────────────────────────────────────────────────┐ │
 │  ├── character-state.js                                                  │ │
-│  └── accessors.js                                                        │ │
+│  ├── accessors.js                                                        │ │
+│  └── time.js                                                             │ │
 │                                                                             │
 │  character-lifecycle.js ────────────────────────────────────────────────┐ │
 │  ├── character-state.js                                                  │ │
 │  ├── character-commands.js                                               │ │
 │  ├── character-queries.js                                                │ │
 │  ├── time.js                                                             │ │
-│  └── constants.js                                                        │ │
+│  ├── constants.js                                                        │ │
+│  └── randomness.js                                                       │ │
 │                                                                             │
 │  character-ui-list.js ──────────────────────────────────────────────────┐ │
 │  ├── character-queries.js                                                │ │
@@ -801,192 +1159,321 @@ FUNCTIONS:
 │  └── character-lifecycle.js                                              │ │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
+```
 
-================================================================================
-10. RECURSION GUARDS
-================================================================================
+---
+
+# 10. RECURSION GUARDS
 
 All modules implement recursion guards to prevent infinite loops:
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ GUARD NAME            │ LOCATION                    │ PURPOSE              │
-├───────────────────────┼────────────────────────────┼──────────────────────┤
-│ _processing           │ character-commands.js      │ Prevent command      │
-│                       │                            │ re-entry             │
-├───────────────────────┼────────────────────────────┼──────────────────────┤
-│ _processing           │ character-queries.js       │ Prevent query        │
-│                       │                            │ re-entry             │
-├───────────────────────┼────────────────────────────┼──────────────────────┤
-│ _processing           │ character-lifecycle.js     │ Prevent lifecycle    │
-│                       │                            │ operation re-entry   │
-├───────────────────────┼────────────────────────────┼──────────────────────┤
-│ _processingInheritance│ character-lifecycle.js     │ Prevent inheritance  │
-│                       │                            │ re-entry             │
-├───────────────────────┼────────────────────────────┼──────────────────────┤
-│ _processingState      │ character-state.js         │ Prevent state        │
-│                       │                            │ mutation re-entry    │
-├───────────────────────┼────────────────────────────┼──────────────────────┤
-│ _openingSelector      │ modals-character.js        │ Prevent modal        │
-│                       │                            │ re-entry             │
-└───────────────────────┴────────────────────────────┴──────────────────────┘
+| Guard Name | Location | Purpose |
+|------------|----------|---------|
+| `_processing` | character-commands.js | Prevent command re-entry |
+| `_processing` | character-queries.js | Prevent query re-entry |
+| `_processing` | character-lifecycle.js | Prevent lifecycle operation re-entry |
+| `_processingInheritance` | character-lifecycle.js | Prevent inheritance re-entry |
+| `_processingState` | character-state.js | Prevent state mutation re-entry |
+| `_openingSelector` | modals-character.js | Prevent modal re-entry |
 
-================================================================================
-11. ICON POLICY
-================================================================================
+---
 
-All icons must come from icons.js via the _getIcon() function:
+# 11. ICON POLICY
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ RULE 1: NO emojis in code or UI                                            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ RULE 2: All icons from icons.js via _getIcon()                            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ RULE 3: NO icons in confirm/cancel buttons (plain text only)              │
-└─────────────────────────────────────────────────────────────────────────────┘
+All icons must come from `icons.js` via the `_getIcon()` function.
 
-AVAILABLE ICONS FOR CHARACTER SYSTEM:
-┌────────────────────┬───────────────────────────────────────────────────────┐
-│ USAGE              │ ICON                                                 │
-├────────────────────┼───────────────────────────────────────────────────────┤
-│ Character          │ PERSON                                               │
-│ Death              │ X_HEAVY, CROSS                                       │
-│ Life/Status        │ CIRCLE, CIRCLE_DOT                                   │
-│ Location           │ LOCATION                                             │
-│ Household          │ HOUSEHOLD                                            │
-│ Rank               │ CROWN                                                │
-│ Edit               │ EDIT                                                 │
-│ Delete             │ TRASH                                                │
-│ Warning            │ WARNING                                              │
-│ Success            │ CHECK_SIMPLE                                         │
-│ Gender Male        │ MALE                                                 │
-│ Gender Female      │ FEMALE                                               │
-│ Gender Unknown     │ GENDER_NEUTRAL                                       │
-│ Age                │ CIRCLE_DOT                                           │
-└────────────────────┴───────────────────────────────────────────────────────┘
+## Rules
 
-================================================================================
-12. LEGACY ALIASES
-================================================================================
+| Rule | Description |
+|------|-------------|
+| **Rule 1** | NO emojis in code or UI |
+| **Rule 2** | All icons from icons.js via `_getIcon()` |
+| **Rule 3** | NO icons in confirm/cancel buttons (plain text only) |
+
+## Available Icons for Character System
+
+| Usage | Icon |
+|-------|------|
+| Character | PERSON |
+| Death | X_HEAVY, CROSS |
+| Life/Status | CIRCLE, CIRCLE_DOT |
+| Location | LOCATION |
+| Household | HOUSEHOLD |
+| Rank | CROWN |
+| Edit | EDIT |
+| Delete | TRASH |
+| Warning | WARNING |
+| Success | CHECK_SIMPLE |
+| Gender Male | MALE |
+| Gender Female | FEMALE |
+| Gender Unknown | GENDER_NEUTRAL |
+| Age | CIRCLE_DOT |
+
+---
+
+# 12. LEGACY ALIASES
 
 For backward compatibility, legacy aliases are provided:
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ LEGACY FUNCTION         │ NEW FUNCTION                                    │
-├─────────────────────────┼─────────────────────────────────────────────────┤
-│ createCharacter(data)   │ CharacterCommands.createCharacter(data)        │
-│ updateCharacter(id,upd) │ CharacterCommands.updateCharacter(id, updates) │
-│ deleteCharacter(id)     │ CharacterCommands.deleteCharacter(id)          │
-│ getCharacters()         │ CharacterQueries.getAllCharacters()            │
-│ getCharacterById(id)    │ CharacterQueries.getCharacter(id)              │
-│ killCharacter(ch,yr,dc) │ CharacterLifecycle.killCharacter(...)          │
-│ getLivingCharacters()   │ CharacterQueries.getLivingCharacters()         │
-│ getDeceasedCharacters() │ CharacterQueries.getDeceasedCharacters()       │
-│ addProfession(ch,role)  │ CharacterCommands.addProfession(...)           │
-│ removeProfession(ch,role)│ CharacterCommands.removeProfession(...)       │
-│ updateProfessionSkill() │ CharacterCommands.updateProfessionSkill(...)   │
-└─────────────────────────┴─────────────────────────────────────────────────┘
+| Legacy Function | New Function |
+|-----------------|--------------|
+| `createCharacter(data)` | `CharacterCommands.createCharacter(data)` |
+| `updateCharacter(id, updates)` | `CharacterCommands.updateCharacter(id, updates)` |
+| `deleteCharacter(id)` | `CharacterCommands.deleteCharacter(id)` |
+| `getCharacters()` | `CharacterQueries.getAllCharacters()` |
+| `getCharacterById(id)` | `CharacterQueries.getCharacter(id)` |
+| `killCharacter(ch, yr, dc)` | `CharacterLifecycle.killCharacter(...)` |
+| `getLivingCharacters()` | `CharacterQueries.getLivingCharacters()` |
+| `getDeceasedCharacters()` | `CharacterQueries.getDeceasedCharacters()` |
+| `addProfession(ch, role)` | `CharacterCommands.addProfession(...)` |
+| `removeProfession(ch, role)` | `CharacterCommands.removeProfession(...)` |
+| `updateProfessionSkill()` | `CharacterCommands.updateProfessionSkill(...)` |
 
-================================================================================
-13. CHARACTER DATA SCHEMA
-================================================================================
+---
 
-COMPLETE CHARACTER OBJECT SCHEMA:
+# 13. CHARACTER DATA SCHEMA
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ FIELD                    │ TYPE      │ DESCRIPTION                       │
-├──────────────────────────┼───────────┼───────────────────────────────────┤
-│ id                       │ string    │ Unique identifier                  │
-│ name                     │ string    │ First name                         │
-│ surname                  │ string    │ Last name                          │
-│ surnameSource            │ string    │ 'country' or 'rank'               │
-│ surnameRules             │ object    │ Surname generation rules           │
-│ gender                   │ string    │ 'male', 'female', 'unknown'       │
-│ attraction               │ string    │ 'both', 'men', 'women', 'neither' │
-│ birthYear                │ number    │ Year of birth                      │
-│ isDeceased               │ boolean   │ Deceased flag                      │
-│ deathYear                │ number    │ Year of death (if deceased)        │
-│ deathCause               │ string    │ Cause of death (if deceased)       │
-│ relationships            │ array     │ Array of relationship objects      │
-│ friends                  │ array     │ Array of friend character IDs      │
-│ birthplaceId             │ string    │ Birthplace location ID             │
-│ currentLocationId        │ string    │ Current location ID                │
-│ moves                    │ array     │ Array of move objects              │
-│ household                │ string    │ Household ID (or null)             │
-│ rankAssignments          │ array     │ Array of rank assignment objects   │
-│ activeRankId             │ string    │ Currently active rank ID           │
-│ activeRankNumber         │ number    │ Active rank number (regnal)        │
-│ professions              │ array     │ Array of profession objects        │
-│ motherId                 │ string    │ Mother character ID (or null)      │
-│ fatherId                 │ string    │ Father character ID (or null)      │
-│ children                 │ array     │ Array of child character IDs       │
-│ adoptedParents           │ array     │ Array of adoption records          │
-│ apprentices              │ array     │ Array of apprentice IDs            │
-│ masterId                 │ string    │ Master character ID (or null)      │
-│ isMaster                 │ boolean   │ Master flag                        │
-│ masterProfessionId       │ string    │ Master profession ID               │
-│ apprenticeshipDetails    │ object    │ Apprenticeship details             │
-│ friendshipDetails        │ object    │ Friendship details                 │
-│ epithet                  │ string    │ Epithet/nickname                   │
-│ notes                    │ string    │ Notes                              │
-│ appearance               │ object    │ Appearance data                    │
-│ householdHistory         │ array     │ Household membership history       │
-│ surnameHistory           │ object    │ Surname change history             │
-│ createdAt                │ number    │ Creation timestamp                 │
-│ updatedAt                │ number    │ Last update timestamp              │
-└──────────────────────────┴───────────┴───────────────────────────────────┘
+## Complete Character Object Schema
 
-PROFESSION OBJECT SCHEMA:
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique identifier |
+| `name` | string | First name |
+| `surname` | string | Last name |
+| `surnameSource` | string | 'country' or 'rank' |
+| `surnameRules` | object | Surname generation rules |
+| `gender` | string | 'male', 'female', 'unknown' |
+| `attraction` | string | 'both', 'men', 'women', 'neither' |
+| `birthYear` | number | Year of birth |
+| `isDeceased` | boolean | Deceased flag |
+| `deathYear` | number | Year of death (if deceased) |
+| `deathCause` | string | Cause of death (if deceased) |
+| `relationships` | array | Array of relationship objects |
+| `friends` | array | Array of friend character IDs |
+| `birthplaceId` | string | Birthplace location ID |
+| `currentLocationId` | string | Current location ID |
+| `moves` | array | Array of move objects |
+| `household` | string | Household ID (or null) |
+| `rankAssignments` | array | Array of rank assignment objects |
+| `activeRankId` | string | Currently active rank ID |
+| `activeRankNumber` | number | Active rank number (regnal) |
+| `professions` | array | Array of profession objects |
+| `motherId` | string | Mother character ID (or null) |
+| `fatherId` | string | Father character ID (or null) |
+| `children` | array | Array of child character IDs |
+| `adoptedParents` | array | Array of adoption records |
+| `apprentices` | array | Array of apprentice IDs |
+| `masterId` | string | Master character ID (or null) |
+| `isMaster` | boolean | Master flag |
+| `masterProfessionId` | string | Master profession ID |
+| `apprenticeshipDetails` | object | Apprenticeship details |
+| `friendshipDetails` | object | Friendship details |
+| `epithet` | string | Epithet/nickname |
+| `notes` | string | Notes |
+| `appearance` | object | Appearance data |
+| `householdHistory` | array | Household membership history |
+| `surnameHistory` | object | Surname change history |
+| `isDeleted` | boolean | Soft delete flag |
+| `deletedAt` | number | Soft delete timestamp |
+| `createdAt` | number | Creation timestamp |
+| `updatedAt` | number | Last update timestamp |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ FIELD          │ TYPE      │ DESCRIPTION                                 │
-├────────────────┼───────────┼─────────────────────────────────────────────┤
-│ id             │ string    │ Role/profession ID                          │
-│ name           │ string    │ Role/profession name                        │
-│ primary        │ boolean   │ Is this the primary profession              │
-│ skillLevel     │ number    │ Skill level (0-100)                         │
-│ startYear      │ number    │ Year started                                │
-│ specs          │ array     │ Specializations                             │
-│ notes          │ string    │ Notes                                       │
-└────────────────┴───────────┴─────────────────────────────────────────────┘
+## Profession Object Schema
 
-MOVE OBJECT SCHEMA:
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Role/profession ID |
+| `name` | string | Role/profession name |
+| `primary` | boolean | Is this the primary profession |
+| `skillLevel` | number | Skill level (0-100) |
+| `startYear` | number | Year started |
+| `specs` | array | Specializations |
+| `notes` | string | Notes |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ FIELD          │ TYPE      │ DESCRIPTION                                 │
-├────────────────┼───────────┼─────────────────────────────────────────────┤
-│ year           │ number    │ Year of move                                │
-│ locationId     │ string    │ Destination location ID                     │
-│ locationName   │ string    │ Destination location name                   │
-│ note           │ string    │ Note/reason for move                        │
-│ fromLocationId │ string    │ Origin location ID                         │
-│ fromLocationName│ string   │ Origin location name                       │
-│ isBirthMove    │ boolean   │ Is this the birth move                      │
-│ timestamp      │ number    │ Creation timestamp                         │
-└────────────────┴───────────┴─────────────────────────────────────────────┘
+## Move Object Schema
 
-SURNAME HISTORY SCHEMA:
+| Field | Type | Description |
+|-------|------|-------------|
+| `year` | number | Year of move |
+| `locationId` | string | Destination location ID |
+| `locationName` | string | Destination location name |
+| `note` | string | Note/reason for move |
+| `fromLocationId` | string | Origin location ID |
+| `fromLocationName` | string | Origin location name |
+| `isBirthMove` | boolean | Is this the birth move |
+| `timestamp` | number | Creation timestamp |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ FIELD          │ TYPE      │ DESCRIPTION                                 │
-├────────────────┼───────────┼─────────────────────────────────────────────┤
-│ birthSurname   │ string    │ Surname at birth                            │
-│ entries        │ array     │ Array of surname change events              │
-│ lastUpdated    │ number    │ Year of last update                         │
-└────────────────┴───────────┴─────────────────────────────────────────────┘
+## Surname History Schema
 
-SURNAME CHANGE EVENT SCHEMA:
+| Field | Type | Description |
+|-------|------|-------------|
+| `birthSurname` | string | Surname at birth |
+| `entries` | array | Array of surname change events |
+| `lastUpdated` | number | Year of last update |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ FIELD          │ TYPE      │ DESCRIPTION                                 │
-├────────────────┼───────────┼─────────────────────────────────────────────┤
-│ surname        │ string    │ New surname                                 │
-│ year           │ number    │ Year of change                              │
-│ reason         │ string    │ Reason for change                           │
-│ previousSurname│ string    │ Previous surname                            │
-│ spouseId       │ string    │ Spouse ID (if marriage change)              │
-│ notes          │ string    │ Additional notes                            │
-└────────────────┴───────────┴─────────────────────────────────────────────┘
+## Surname Change Event Schema
 
-================================================================================
-END OF DOCUMENTATION
-================================================================================
+| Field | Type | Description |
+|-------|------|-------------|
+| `surname` | string | New surname |
+| `year` | number | Year of change |
+| `reason` | string | Reason for change |
+| `previousSurname` | string | Previous surname |
+| `spouseId` | string | Spouse ID (if marriage change) |
+| `notes` | string | Additional notes |
+
+---
+
+# 14. COMPLETE FUNCTION LIST
+
+## character-state.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `getCharacter(id)` | Query | Get character by ID |
+| `getAllCharacters()` | Query | Get all characters |
+| `getCharactersByLocation(locationId)` | Query | Filter by location |
+| `getCharactersByHousehold(householdId)` | Query | Filter by household |
+| `getCharactersByStatus(status)` | Query | Filter by status |
+| `getLivingCharacters()` | Query | Get living only |
+| `getDeceasedCharacters()` | Query | Get deceased only |
+| `searchByName(query)` | Query | Search by name |
+| `invalidateCache()` | Command | Clear all caches |
+| `subscribe(callback)` | Command | Subscribe to changes |
+| `getTotalCharacterCount()` | Query | Get total count |
+
+## character-commands.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `createCharacter(data)` | Command | Create character |
+| `createRandomCharacter(options)` | Command | Generate random character |
+| `bulkCreateCharacters(dataArray)` | Command | Create multiple |
+| `updateCharacter(id, updates)` | Command | Update character |
+| `bulkUpdateCharacters(updates)` | Command | Update multiple |
+| `deleteCharacter(id)` | Command | Hard delete |
+| `softDeleteCharacter(id)` | Command | Soft delete |
+| `restoreSoftDeletedCharacter(id)` | Command | Restore soft-deleted |
+| `getSoftDeletedCharacters()` | Query | Get soft-deleted |
+| `purgeSoftDeletedCharacters()` | Command | Permanently remove |
+| `bulkDeleteCharacters(ids, softDelete)` | Command | Delete multiple |
+| `addProfession(ch, role, opts)` | Command | Add profession |
+| `removeProfession(ch, role)` | Command | Remove profession |
+| `updateProfessionSkill(ch, role, level)` | Command | Update skill |
+| `setPrimaryProfession(ch, role)` | Command | Set primary |
+| `addProfessionSpecialization(ch, role, spec)` | Command | Add specialization |
+| `removeProfessionSpecialization(ch, role, spec)` | Command | Remove specialization |
+| `getCharacterSurnameHistory(id)` | Query | Get surname history |
+| `getCharacterBirthSurname(id)` | Query | Get birth surname |
+| `getCharacterSurnameChanges(id)` | Query | Get surname changes |
+| `recordCharacterSurnameChange(id, surname, year, reason, opts)` | Command | Record surname change |
+| `revertCharacterSurnameChange(id)` | Command | Revert surname change |
+
+## character-queries.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `getCharacter(id)` | Query | Get character by ID |
+| `getAllCharacters()` | Query | Get all characters |
+| `getLivingCharacters()` | Query | Get living only |
+| `getDeceasedCharacters()` | Query | Get deceased only |
+| `getCharactersByGender(gender)` | Query | Filter by gender |
+| `getCharactersByLocation(locationId)` | Query | Filter by location |
+| `getCharactersByHousehold(householdId)` | Query | Filter by household |
+| `getCharactersByAgeRange(min, max, year)` | Query | Filter by age |
+| `getCharactersByProfession(roleId)` | Query | Filter by profession |
+| `getCharactersByProfessionSkill(roleId, minSkill)` | Query | Filter by skill |
+| `getCharactersByRank(rankId)` | Query | Filter by rank |
+| `getMasterCharacters(roleId)` | Query | Get masters |
+| `searchCharacters(query)` | Query | Search by name |
+| `getCharacterSummary(id)` | Query | Get summary |
+| `getCharacterProfessions(id)` | Query | Get professions |
+| `getPrimaryProfession(id)` | Query | Get primary profession |
+| `getCharacterSurnameHistory(id)` | Query | Get surname history |
+| `getCharacterStatistics()` | Query | Get statistics |
+| `getCharactersByEducationStatus(status, instId)` | Query | Filter by education |
+| `getCharactersNotInEducation(min, max)` | Query | Get not enrolled |
+
+## character-lifecycle.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `getLifeStage(charOrAge)` | Query | Get life stage |
+| `getLifeStageName(charOrAge)` | Query | Get life stage name |
+| `isElderly(charOrAge)` | Query | Check if elderly |
+| `getAgeGroup(charOrAge)` | Query | Get age group |
+| `getAgeGroupIcon(group)` | Query | Get age group icon |
+| `getAllAgeGroups()` | Query | Get all age groups |
+| `groupCharactersByAgeGroup(chars, excludeDeceased)` | Query | Group by age |
+| `getRandomDeathCause(age, gender)` | Query | Get random death cause |
+| `killCharacter(character, year, cause, opts)` | Command | Kill character |
+| `killCharacterRandomCause(character, year)` | Command | Kill with random cause |
+| `applyAgingMortality(character, years)` | Command | Apply aging risk |
+| `predictLifespan(character)` | Query | Predict lifespan |
+| `getExpectedRemainingYears(character)` | Query | Get remaining years |
+| `triggerNaturalDeath(character, year, opts)` | Command | Natural death |
+| `triggerAccidentalDeath(character, year, type, opts)` | Command | Accidental death |
+| `processHouseholdInheritance(characterId)` | Command | Process inheritance |
+| `processAllPendingInheritance(showNotifications)` | Command | Process all pending |
+| `hasPendingInheritance(characterId)` | Query | Check pending |
+
+## character-ui-list.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `renderCharacterList(containerId, options)` | UI | Render character list |
+| `renderCharacterCard(character)` | UI | Render character card |
+
+## modals-character.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `openCreateCharacterModal(onSuccess)` | UI | Create character modal |
+| `openEditCharacterModal(characterId, onSuccess)` | UI | Edit character modal |
+| `openDeleteCharacterModal(characterId, onSuccess)` | UI | Delete character modal |
+| `openCharacterDetailsModal(characterId, onSuccess)` | UI | Character details modal |
+
+---
+
+# 15. MIGRATION NOTES
+
+## What Was Preserved
+
+| Category | Count | Status |
+|----------|-------|--------|
+| Character CRUD | 15 | ✅ Preserved |
+| Character Creation | 14 | ✅ Preserved (with new random generator) |
+| Character Lifecycle | 19 | ✅ Preserved |
+| Profession Management | 10 | ✅ Preserved |
+| Surname History | 5 | ✅ Preserved |
+
+## What Was Added (NEW)
+
+| Function | Priority | Description |
+|----------|----------|-------------|
+| `createRandomCharacter()` | 🔴 HIGH | Fully automatic random character generation |
+| `softDeleteCharacter()` | 🟡 MEDIUM | Non-destructive deletion |
+| `restoreSoftDeletedCharacter()` | 🟡 MEDIUM | Restore soft-deleted character |
+| `getSoftDeletedCharacters()` | 🟡 MEDIUM | Get all soft-deleted characters |
+| `purgeSoftDeletedCharacters()` | 🟡 MEDIUM | Permanently remove soft-deleted |
+| `bulkCreateCharacters()` | 🟡 MEDIUM | Create multiple at once |
+| `bulkUpdateCharacters()` | 🟡 MEDIUM | Update multiple at once |
+| `bulkDeleteCharacters()` | 🟡 MEDIUM | Delete multiple at once |
+
+## What Was Improved
+
+| Area | Improvement |
+|------|-------------|
+| **Cache Management** | Full cache invalidation with recursion guards |
+| **Error Handling** | Consistent result objects with success/reason |
+| **Event Emission** | Character changes broadcast via events |
+| **Documentation** | Complete JSDoc comments on all functions |
+| **Architecture** | Clean separation of state, commands, queries |
+
+---
+
+# END OF DOCUMENTATION
+
+**Generated:** 2026-07-11
+**Version:** 2.0
+**File Count:** 6 core modules + 2 supporting files

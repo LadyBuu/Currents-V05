@@ -4,7 +4,7 @@
  * =============================================================================
  * 
  * PURPOSE: Renders household list with filters, search, and selection.
- *          Uses HouseholdState for data and subscribes to changes.
+ *          Enhanced with position and staff display.
  * 
  * DEPENDS ON:
  *   - household-state.js (HouseholdState)
@@ -13,6 +13,8 @@
  * 
  * EXPORTS:
  *   - renderHouseholdList() - Render household list with filters
+ *   - renderHouseholdPositionList() - Render positions for a household
+ *   - renderHouseholdStaffList() - Render staff for a household
  *   - selectHousehold() - Select a household by ID
  *   - getSelectedHouseholdId() - Get selected household ID
  *   - refreshHouseholdList() - Refresh the list
@@ -44,12 +46,8 @@
     // =========================================================================
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
-        }
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
+        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
+        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
         if (!str) return '';
         return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
@@ -108,6 +106,13 @@
         return window.masterData?.data?.places || [];
     }
 
+    function _getRoleById(id) {
+        if (typeof window.getRoleById === 'function') {
+            return window.getRoleById(id);
+        }
+        return null;
+    }
+
     // =========================================================================
     // 2. STATE REFERENCE
     // =========================================================================
@@ -134,7 +139,7 @@
     // 4. STATE
     // =========================================================================
 
-    var HOUSEHOLD_STORAGE_KEY = 'household_list_state_v3';
+    var HOUSEHOLD_STORAGE_KEY = 'household_list_state_v4';
 
     var listState = {
         containerId: null,
@@ -144,6 +149,7 @@
         statusFilter: 'all',
         locationFilter: 'all',
         filtersCollapsed: true,
+        showPositions: false,
         _initialized: false
     };
 
@@ -171,6 +177,7 @@
                 listState.statusFilter = data.statusFilter || 'all';
                 listState.locationFilter = data.locationFilter || 'all';
                 listState.filtersCollapsed = data.filtersCollapsed !== undefined ? data.filtersCollapsed : true;
+                listState.showPositions = data.showPositions || false;
             }
         } catch (e) {
             // Silent fail
@@ -183,7 +190,8 @@
                 searchTerm: listState.searchTerm,
                 statusFilter: listState.statusFilter,
                 locationFilter: listState.locationFilter,
-                filtersCollapsed: listState.filtersCollapsed
+                filtersCollapsed: listState.filtersCollapsed,
+                showPositions: listState.showPositions
             }));
         } catch (e) {
             // Silent fail
@@ -194,9 +202,6 @@
     // 6. HELPER FUNCTIONS
     // =========================================================================
 
-    /**
-     * Gets detailed household status info
-     */
     function _getHouseholdStatusInfo(household) {
         if (!household) {
             return {
@@ -251,7 +256,6 @@
             statusColor = '#c87040';
         }
 
-        // Override with stored status
         if (household.status && household.status !== 'active') {
             status = household.status;
             if (status === 'abandoned') {
@@ -282,9 +286,6 @@
         };
     }
 
-    /**
-     * Gets location name from ID
-     */
     function _getLocationName(locationId) {
         if (!locationId) return 'Unknown';
         if (locationId === 'all') return 'All Locations';
@@ -293,15 +294,11 @@
         return place ? place.displayName : 'Unknown';
     }
 
-    /**
-     * Gets all locations with hierarchical display names
-     */
     function _getAllLocations() {
         var places = _getPlaces();
         var result = [];
         var locationMap = {};
 
-        // Build map
         for (var i = 0; i < places.length; i++) {
             var place = places[i];
             if (place.variableKey !== undefined && place.variableKey !== '') {
@@ -317,7 +314,6 @@
             }
         }
 
-        // Build hierarchy
         var roots = [];
         for (var id in locationMap) {
             var node = locationMap[id];
@@ -328,7 +324,6 @@
             }
         }
 
-        // Sort
         roots.sort(function(a, b) { return a.name.localeCompare(b.name); });
         for (var id in locationMap) {
             if (locationMap[id].children.length > 0) {
@@ -336,7 +331,6 @@
             }
         }
 
-        // Flatten with indentation
         function flattenNodes(nodes, depth) {
             depth = depth || 0;
             var flat = [];
@@ -364,9 +358,6 @@
         return flattenNodes(roots);
     }
 
-    /**
-     * Debounce helper
-     */
     function _debounce(fn, delay) {
         var timeoutId;
         return function() {
@@ -384,7 +375,6 @@
     function _applyFilters(households) {
         var filtered = households.slice();
 
-        // Search filter - plain text search on name only
         if (listState.searchTerm) {
             var searchLower = listState.searchTerm.toLowerCase();
             filtered = filtered.filter(function(h) {
@@ -392,14 +382,12 @@
             });
         }
 
-        // Location filter
         if (listState.locationFilter !== 'all') {
             filtered = filtered.filter(function(h) {
                 return h.locationId === listState.locationFilter;
             });
         }
 
-        // Status filter
         if (listState.statusFilter !== 'all') {
             filtered = filtered.filter(function(h) {
                 var statusInfo = _getHouseholdStatusInfo(h);
@@ -407,7 +395,6 @@
             });
         }
 
-        // Sort by name
         filtered.sort(function(a, b) {
             return (a.name || '').localeCompare(b.name || '');
         });
@@ -416,7 +403,7 @@
     }
 
     // =========================================================================
-    // 8. RENDER FUNCTION
+    // 8. RENDER HOUSEHOLD LIST
     // =========================================================================
 
     function renderHouseholdList(containerId, onSelect, preserveSelection) {
@@ -431,7 +418,6 @@
                 return;
             }
 
-            // Initialize state
             if (!listState._initialized) {
                 _loadState();
                 listState._initialized = true;
@@ -440,18 +426,14 @@
             listState.containerId = containerId;
             listState.onSelectCallback = onSelect;
 
-            // Get data
             var households = _state ? _state.getAllHouseholds() : [];
             if (!households || !Array.isArray(households)) {
                 households = [];
             }
 
             var allLocations = _getAllLocations();
-
-            // Apply filters
             var filtered = _applyFilters(households);
 
-            // Count totals
             var totalHouseholds = households.length;
             var activeCount = 0;
             var vacantCount = 0;
@@ -464,7 +446,6 @@
                 else if (info.status === 'empty') emptyCount++;
             }
 
-            // Build location options
             var locationOptionsHtml = '<option value="all">All Locations</option>';
             for (var i = 0; i < allLocations.length; i++) {
                 var loc = allLocations[i];
@@ -478,7 +459,6 @@
                     '</option>';
             }
 
-            // Build filter bar - NO ICONS in search field, plain text only
             var filterBarHtml = '';
             filterBarHtml += '<div class="household-filters" style="padding:4px 6px;background:var(--bg2);border-bottom:1px solid var(--border);font-size:0.65rem;">';
             filterBarHtml += '<div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;">';
@@ -498,12 +478,14 @@
             filterBarHtml += locationOptionsHtml;
             filterBarHtml += '</select>';
             filterBarHtml += '</div>';
-            filterBarHtml += '<div style="display:flex;gap:4px;">';
+            filterBarHtml += '<div style="display:flex;gap:4px;flex-wrap:wrap;">';
             filterBarHtml += '<button id="clearHouseholdFiltersBtn" class="btn tiny" style="padding:1px 6px;font-size:0.5rem;background:var(--bg3);border:1px solid var(--border);border-radius:3px;cursor:pointer;color:var(--text);">Clear</button>';
+            filterBarHtml += '<label style="display:flex;align-items:center;gap:4px;font-size:0.5rem;cursor:pointer;color:var(--dim);">';
+            filterBarHtml += '<input type="checkbox" id="showPositionsToggle" ' + (listState.showPositions ? 'checked' : '') + ' style="cursor:pointer;">';
+            filterBarHtml += 'Show Positions</label>';
             filterBarHtml += '</div>';
             filterBarHtml += '</div></div>';
 
-            // Build households list
             var householdsHtml = '';
             if (filtered.length === 0) {
                 var emptyMessage = 'No households found';
@@ -513,6 +495,7 @@
                 var locationIcon = _getIconSafe('LOCATION');
                 var personIcon = _getIconSafe('PERSON');
                 var warningIcon = _getIconSafe('WARNING');
+                var positionIcon = _getIconSafe('CIRCLE_DOT');
 
                 householdsHtml = '<div style="padding:4px;">';
                 for (var i = 0; i < filtered.length; i++) {
@@ -521,6 +504,22 @@
                     var statusInfo = _getHouseholdStatusInfo(h);
                     var locationName = _getLocationName(h.locationId);
                     var locationDisplay = (locationName && locationName !== 'Unknown') ? locationName : 'None';
+
+                    // Get position count if showing
+                    var positionCount = 0;
+                    var assignmentCount = 0;
+                    if (listState.showPositions) {
+                        var posData = _queries ? _queries.getHouseholdPositions({ householdId: h.id }) : [];
+                        positionCount = posData.length;
+                        var assignData = _state ? _state.getAssignmentsForHousehold(h.id, true) : [];
+                        assignmentCount = assignData.length;
+                    }
+
+                    var positionInfo = '';
+                    if (listState.showPositions) {
+                        positionInfo = '<span title="Positions">' + _iconSpan(positionIcon) + ' ' + positionCount + '</span>' +
+                            '<span title="Staff">' + _iconSpan(personIcon) + ' ' + assignmentCount + '</span>';
+                    }
 
                     householdsHtml += '<div class="household-item" data-id="' + _escapeHtml(h.id) + '" style="';
                     householdsHtml += 'cursor:pointer;';
@@ -539,6 +538,9 @@
                     householdsHtml += '</div>';
                     householdsHtml += '<div style="display:flex;gap:6px;font-size:0.5rem;color:var(--dim);flex-shrink:0;">';
                     householdsHtml += '<span title="Members">' + _iconSpan(personIcon) + ' ' + statusInfo.totalMembers + '</span>';
+                    if (positionInfo) {
+                        householdsHtml += positionInfo;
+                    }
                     if (locationName && locationName !== 'Unknown') {
                         householdsHtml += '<span title="Location">' + _iconSpan(locationIcon) + ' ' + _escapeHtml(locationName) + '</span>';
                     } else {
@@ -556,7 +558,6 @@
             // EVENT HANDLERS
             // =========================================================================
 
-            // Filter toggle
             var filterToggle = container.querySelector('.filter-toggle');
             var filterContent = container.querySelector('.filter-content');
             if (filterToggle && filterContent) {
@@ -569,17 +570,19 @@
                 };
             }
 
-            // Search input
             var searchInput = document.getElementById('householdSearchInput');
             var statusFilter = document.getElementById('householdStatusFilter');
             var locationFilter = document.getElementById('householdLocationFilter');
             var clearBtn = document.getElementById('clearHouseholdFiltersBtn');
+            var showPositionsToggle = document.getElementById('showPositionsToggle');
 
-            // Apply filters with debounce
             var applyFilters = function() {
                 listState.searchTerm = searchInput ? searchInput.value : '';
                 listState.statusFilter = statusFilter ? statusFilter.value : 'all';
                 listState.locationFilter = locationFilter ? locationFilter.value : 'all';
+                if (showPositionsToggle) {
+                    listState.showPositions = showPositionsToggle.checked;
+                }
                 _saveState();
                 renderHouseholdList(listState.containerId, listState.onSelectCallback, true);
             };
@@ -599,20 +602,25 @@
                 locationFilter.onchange = applyFilters;
             }
 
+            if (showPositionsToggle) {
+                showPositionsToggle.onchange = applyFilters;
+            }
+
             if (clearBtn) {
                 clearBtn.onclick = function() {
                     if (searchInput) searchInput.value = '';
                     if (statusFilter) statusFilter.value = 'all';
                     if (locationFilter) locationFilter.value = 'all';
+                    if (showPositionsToggle) showPositionsToggle.checked = false;
                     listState.searchTerm = '';
                     listState.statusFilter = 'all';
                     listState.locationFilter = 'all';
+                    listState.showPositions = false;
                     _saveState();
                     renderHouseholdList(listState.containerId, listState.onSelectCallback, true);
                 };
             }
 
-            // Click handlers for household items
             var items = container.querySelectorAll('.household-item');
             for (var i = 0; i < items.length; i++) {
                 var item = items[i];
@@ -649,12 +657,10 @@
                 })(newItem);
             }
 
-            // Subscribe to state changes
             if (_state && typeof _state.subscribe === 'function' && !listState._subscribed) {
                 listState._subscribed = true;
                 _state.subscribe(function(event) {
                     if (event.type === 'change' || event.type === 'refresh') {
-                        // Only refresh if the container is still in the DOM
                         var containerCheck = document.getElementById(listState.containerId);
                         if (containerCheck) {
                             renderHouseholdList(listState.containerId, listState.onSelectCallback, true);
@@ -669,7 +675,327 @@
     }
 
     // =========================================================================
-    // 9. UTILITY FUNCTIONS
+    // 9. RENDER HOUSEHOLD POSITION LIST
+    // =========================================================================
+
+    function renderHouseholdPositionList(containerId, householdId, options) {
+        if (_rendering) {
+            return;
+        }
+        _rendering = true;
+
+        try {
+            options = options || {};
+            var container = document.getElementById(containerId);
+            if (!container) return;
+
+            var onSelect = options.onSelect || null;
+            var selectedId = options.selectedId || null;
+            var showActions = options.showActions !== undefined ? options.showActions : true;
+            var showRoleInfo = options.showRoleInfo !== undefined ? options.showRoleInfo : true;
+
+            var positions = _state ? _state.getHouseholdPositions({ householdId: householdId }) : [];
+            var assignments = _state ? _state.getAssignmentsForHousehold(householdId, true) : [];
+            var assignmentMap = {};
+            for (var i = 0; i < assignments.length; i++) {
+                var a = assignments[i];
+                if (!assignmentMap[a.positionId]) {
+                    assignmentMap[a.positionId] = [];
+                }
+                assignmentMap[a.positionId].push(a);
+            }
+
+            var personIcon = _getIconSafe('PERSON');
+            var checkIcon = _getIconSafe('CHECK_SIMPLE');
+            var editIcon = _getIconSafe('EDIT');
+            var deleteIcon = _getIconSafe('X_HEAVY');
+
+            var html = '<div class="household-position-list">';
+
+            if (positions.length === 0) {
+                html += '<div style="text-align: center; padding: 20px; color: var(--dim); font-size: 0.6rem;">No positions created</div>';
+            } else {
+                positions.sort(function(a, b) {
+                    return (a.priority || 10) - (b.priority || 10);
+                });
+
+                for (var i = 0; i < positions.length; i++) {
+                    var p = positions[i];
+                    var posAssignments = assignmentMap[p.id] || [];
+                    var activeAssignments = posAssignments.filter(function(a) { return !a.endYear; });
+                    var isSelected = (selectedId === p.id);
+                    var roleName = p.requiredRoleId ? (_getRoleById(p.requiredRoleId)?.name || 'Unknown') : 'None';
+                    var hasRoleReq = !!p.requiredRoleId;
+
+                    var assignedChars = activeAssignments.map(function(a) {
+                        var c = _getCharacterById(a.characterId);
+                        return c ? c.name : 'Unknown';
+                    }).join(', ');
+
+                    var roleInfoHtml = '';
+                    if (showRoleInfo && hasRoleReq) {
+                        roleInfoHtml = '<span style="font-size:0.5rem;color:var(--accent);margin-left:6px;">Role: ' + _escapeHtml(roleName) +
+                            (p.minSkillLevel > 0 ? ' (Min: ' + p.minSkillLevel + ')' : '') + '</span>';
+                    }
+
+                    var actionsHtml = '';
+                    if (showActions) {
+                        actionsHtml =
+                            '<div style="display:flex;gap:4px;">' +
+                            '<button class="hpos-edit-btn" data-pos-id="' + p.id + '" style="background:none;border:none;cursor:pointer;color:var(--accent);padding:2px 4px;font-size:0.5rem;">' + editIcon + '</button>' +
+                            '<button class="hpos-delete-btn" data-pos-id="' + p.id + '" style="background:none;border:none;cursor:pointer;color:var(--dim);padding:2px 4px;font-size:0.5rem;">' + deleteIcon + '</button>' +
+                            '</div>';
+                    }
+
+                    html +=
+                        '<div class="position-item" data-pos-id="' + p.id + '" style="' +
+                        'background: ' + (isSelected ? 'rgba(var(--accent-rgb),0.12)' : 'var(--bg3)') + ';' +
+                        'border: 1px solid ' + (isSelected ? 'var(--accent)' : 'var(--border)') + ';' +
+                        'border-left: 3px solid ' + (hasRoleReq ? 'var(--accent)' : 'var(--border)') + ';' +
+                        'border-radius: 4px;' +
+                        'padding: 8px 12px;' +
+                        'margin-bottom: 4px;' +
+                        'cursor: pointer;' +
+                        'transition: all 0.1s;' +
+                        '">' +
+                        '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 4px;">' +
+                        '<div>' +
+                        '<span style="font-size: 0.7rem;">' + personIcon + ' ' + _escapeHtml(p.name) + '</span>' +
+                        roleInfoHtml +
+                        '</div>' +
+                        '<div style="font-size: 0.55rem; color: var(--dim); display: flex; gap: 8px; align-items: center;">' +
+                        '<span>Priority: ' + (p.priority || 10) + '</span>' +
+                        '<span>' + activeAssignments.length + ' assigned</span>' +
+                        (isSelected ? '<span style="color: var(--success);">' + checkIcon + ' Selected</span>' : '') +
+                        actionsHtml +
+                        '</div>' +
+                        '</div>' +
+                        (assignedChars ? '<div style="font-size: 0.5rem; color: var(--dim); margin-top: 4px;">' + _escapeHtml(assignedChars) + '</div>' : '') +
+                        (p.description ? '<div style="font-size: 0.5rem; color: var(--dim); margin-top: 2px;">' + _escapeHtml(p.description) + '</div>' : '') +
+                        '</div>';
+                }
+            }
+
+            html += '</div>';
+            container.innerHTML = html;
+
+            if (onSelect) {
+                var items = container.querySelectorAll('.position-item');
+                for (var i = 0; i < items.length; i++) {
+                    (function(item) {
+                        item.addEventListener('click', function(e) {
+                            if (e.target.closest('button')) return;
+                            var posId = this.dataset.posId;
+                            var position = _state ? _state.getHouseholdPosition(posId) : null;
+                            if (position) {
+                                onSelect(position);
+                            }
+                        });
+                        item.addEventListener('mouseenter', function() {
+                            this.style.background = 'var(--bg2)';
+                        });
+                        item.addEventListener('mouseleave', function() {
+                            this.style.background = 'var(--bg3)';
+                        });
+                    })(items[i]);
+                }
+            }
+
+            // Edit handlers
+            var editBtns = container.querySelectorAll('.hpos-edit-btn');
+            for (var i = 0; i < editBtns.length; i++) {
+                (function(btn) {
+                    btn.addEventListener('click', function(e) {
+                        e.stopPropagation();
+                        var posId = this.dataset.posId;
+                        if (typeof window.openEditHouseholdPositionModal === 'function') {
+                            window.openEditHouseholdPositionModal(householdId, posId);
+                        } else {
+                            _showToast('Edit modal not available', 'error');
+                        }
+                    });
+                })(editBtns[i]);
+            }
+
+            // Delete handlers
+            var deleteBtns = container.querySelectorAll('.hpos-delete-btn');
+            for (var i = 0; i < deleteBtns.length; i++) {
+                (function(btn) {
+                    btn.addEventListener('click', function(e) {
+                        e.stopPropagation();
+                        var posId = this.dataset.posId;
+                        if (typeof window.openDeleteHouseholdPositionModal === 'function') {
+                            window.openDeleteHouseholdPositionModal(householdId, posId);
+                        } else {
+                            _showToast('Delete modal not available', 'error');
+                        }
+                    });
+                })(deleteBtns[i]);
+            }
+
+        } finally {
+            _rendering = false;
+        }
+    }
+
+    // =========================================================================
+    // 10. RENDER HOUSEHOLD STAFF LIST
+    // =========================================================================
+
+    function renderHouseholdStaffList(containerId, householdId, options) {
+        if (_rendering) {
+            return;
+        }
+        _rendering = true;
+
+        try {
+            options = options || {};
+            var container = document.getElementById(containerId);
+            if (!container) return;
+
+            var onSelect = options.onSelect || null;
+            var selectedId = options.selectedId || null;
+            var showActions = options.showActions !== undefined ? options.showActions : true;
+            var showRoleInfo = options.showRoleInfo !== undefined ? options.showRoleInfo : true;
+
+            var staff = _queries ? _queries.getHouseholdStaff(householdId, { activeOnly: true }) : [];
+            var personIcon = _getIconSafe('PERSON');
+            var checkIcon = _getIconSafe('CHECK_SIMPLE');
+
+            var html = '<div class="household-staff-list">';
+
+            if (staff.length === 0) {
+                html += '<div style="text-align: center; padding: 20px; color: var(--dim); font-size: 0.6rem;">No staff members</div>';
+            } else {
+                // Group by position if available
+                var grouped = {};
+                var unassigned = [];
+                for (var i = 0; i < staff.length; i++) {
+                    var s = staff[i];
+                    if (s.assignment && s.assignment.positionId) {
+                        var key = s.assignment.positionId;
+                        if (!grouped[key]) {
+                            grouped[key] = [];
+                        }
+                        grouped[key].push(s);
+                    } else {
+                        unassigned.push(s);
+                    }
+                }
+
+                // Render grouped by position
+                var positionNames = {};
+                var positions = _state ? _state.getHouseholdPositions({ householdId: householdId }) : [];
+                for (var i = 0; i < positions.length; i++) {
+                    positionNames[positions[i].id] = positions[i].name;
+                }
+
+                for (var posId in grouped) {
+                    var posName = positionNames[posId] || 'Unknown Position';
+                    var members = grouped[posId];
+                    html +=
+                        '<div style="margin-top:6px;">' +
+                        '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">' + _escapeHtml(posName) + ' (' + members.length + ')</div>';
+
+                    for (var i = 0; i < members.length; i++) {
+                        var m = members[i];
+                        var isSelected = (selectedId === m.characterId);
+                        var roleName = m.assignment?.roleNameAtAssignment || 'None';
+                        var skillLevel = m.assignment?.skillLevelAtAssignment || 0;
+
+                        html +=
+                            '<div class="staff-item" data-char-id="' + m.characterId + '" style="' +
+                            'background: ' + (isSelected ? 'rgba(var(--accent-rgb),0.12)' : 'var(--bg2)') + ';' +
+                            'border: 1px solid ' + (isSelected ? 'var(--accent)' : 'var(--border)') + ';' +
+                            'border-radius: 4px;' +
+                            'padding: 6px 10px;' +
+                            'margin-bottom: 2px;' +
+                            'cursor: pointer;' +
+                            'transition: all 0.1s;' +
+                            '">' +
+                            '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;">' +
+                            '<div>' +
+                            '<span style="font-size:0.65rem;">' + personIcon + ' ' + _escapeHtml(m.characterName) + '</span>' +
+                            (m.role && m.role !== 'Staff' ? ' <span style="font-size:0.5rem;color:var(--dim);">(' + _escapeHtml(m.role) + ')</span>' : '') +
+                            (showRoleInfo && roleName !== 'None' ? ' <span style="font-size:0.45rem;color:var(--accent);">(Role: ' + _escapeHtml(roleName) + (skillLevel > 0 ? ' - ' + skillLevel : '') + ')</span>' : '') +
+                            '</div>' +
+                            '<div style="font-size:0.5rem;color:var(--dim);">' +
+                            (m.assignment?.isActive ? 'Active' : 'Inactive') +
+                            (m.assignment?.startYear ? ' · Since ' + m.assignment.startYear : '') +
+                            (isSelected ? ' <span style="color:var(--success);">' + checkIcon + ' Selected</span>' : '') +
+                            '</div>' +
+                            '</div>' +
+                            '</div>';
+                    }
+                    html += '</div>';
+                }
+
+                // Render unassigned staff
+                if (unassigned.length > 0) {
+                    html +=
+                        '<div style="margin-top:6px;">' +
+                        '<div style="font-size:0.6rem;color:var(--warn);margin-bottom:4px;">Unassigned (' + unassigned.length + ')</div>';
+
+                    for (var i = 0; i < unassigned.length; i++) {
+                        var m = unassigned[i];
+                        var isSelected = (selectedId === m.characterId);
+
+                        html +=
+                            '<div class="staff-item" data-char-id="' + m.characterId + '" style="' +
+                            'background: ' + (isSelected ? 'rgba(var(--accent-rgb),0.12)' : 'var(--bg2)') + ';' +
+                            'border: 1px solid ' + (isSelected ? 'var(--accent)' : 'var(--border)') + ';' +
+                            'border-radius: 4px;' +
+                            'padding: 6px 10px;' +
+                            'margin-bottom: 2px;' +
+                            'cursor: pointer;' +
+                            'transition: all 0.1s;' +
+                            '">' +
+                            '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;">' +
+                            '<div>' +
+                            '<span style="font-size:0.65rem;">' + personIcon + ' ' + _escapeHtml(m.characterName) + '</span>' +
+                            (m.role && m.role !== 'Staff' ? ' <span style="font-size:0.5rem;color:var(--dim);">(' + _escapeHtml(m.role) + ')</span>' : '') +
+                            '</div>' +
+                            '<div style="font-size:0.5rem;color:var(--warn);">' +
+                            'Unassigned' +
+                            (isSelected ? ' <span style="color:var(--success);">' + checkIcon + ' Selected</span>' : '') +
+                            '</div>' +
+                            '</div>' +
+                            '</div>';
+                    }
+                    html += '</div>';
+                }
+            }
+
+            html += '</div>';
+            container.innerHTML = html;
+
+            if (onSelect) {
+                var items = container.querySelectorAll('.staff-item');
+                for (var i = 0; i < items.length; i++) {
+                    (function(item) {
+                        item.addEventListener('click', function(e) {
+                            var charId = this.dataset.charId;
+                            if (onSelect) {
+                                onSelect(charId);
+                            }
+                        });
+                        item.addEventListener('mouseenter', function() {
+                            this.style.background = 'var(--bg3)';
+                        });
+                        item.addEventListener('mouseleave', function() {
+                            this.style.background = 'var(--bg2)';
+                        });
+                    })(items[i]);
+                }
+            }
+
+        } finally {
+            _rendering = false;
+        }
+    }
+
+    // =========================================================================
+    // 11. UTILITY FUNCTIONS
     // =========================================================================
 
     function selectHousehold(id) {
@@ -733,15 +1059,18 @@
         listState.searchTerm = '';
         listState.statusFilter = 'all';
         listState.locationFilter = 'all';
+        listState.showPositions = false;
         _saveState();
         refreshHouseholdList();
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 12. EXPORTS
     // =========================================================================
 
     window.renderHouseholdList = renderHouseholdList;
+    window.renderHouseholdPositionList = renderHouseholdPositionList;
+    window.renderHouseholdStaffList = renderHouseholdStaffList;
     window.selectHousehold = selectHousehold;
     window.getSelectedHouseholdId = getSelectedHouseholdId;
     window.refreshHouseholdList = refreshHouseholdList;
@@ -755,6 +1084,8 @@
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
             renderHouseholdList: renderHouseholdList,
+            renderHouseholdPositionList: renderHouseholdPositionList,
+            renderHouseholdStaffList: renderHouseholdStaffList,
             selectHousehold: selectHousehold,
             getSelectedHouseholdId: getSelectedHouseholdId,
             refreshHouseholdList: refreshHouseholdList,

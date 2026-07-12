@@ -1,0 +1,1593 @@
+# STILL WATERS - COMPLETE FILE DOCUMENTATION
+
+## DOCUMENTATION GENERATED: 2026-07-11
+
+---
+
+# CORE MODULES (js/core/)
+
+---
+
+## 1. constants.js
+
+**PURPOSE:** Global constants used across the application. Load FIRST before any other modules.
+
+**DEPENDENCIES:** None (pure constants)
+
+### LOCATION / TREE CONSTANTS
+
+| Constant | Type | Description |
+|----------|------|-------------|
+| `LOCATION_LEVELS` | Object | Location priority levels (1-5) with name, icon, display |
+
+### CRIME SYSTEM CONSTANTS
+
+| Constant | Type | Description |
+|----------|------|-------------|
+| `CRIME_TYPES` | Object | Crime type IDs (MURDER, EXECUTION, THEFT, etc.) |
+| `CRIME_SEVERITY` | Object | Severity scores (1-10) for each crime type |
+| `CRIME_PUNISHMENTS` | Object | Possible punishments by crime type |
+| `MURDER_REASONS` | Object | Categorized murder reasons (political, personal, criminal, accidental, affair, conflict, other) |
+| `EXECUTION_REASONS` | Object | Categorized execution reasons |
+| `EXECUTION_METHODS` | Object | Execution methods with icon and description |
+| `VENDETTA_STATUS` | Object | ACTIVE, DORMANT, ESCALATED, RESOLVED |
+
+### CHARACTER / UI CONSTANTS
+
+| Constant | Type | Description |
+|----------|------|-------------|
+| `AGE_GROUPS` | Array | ['0-10', '11-20', '21-30', '31-40', '41-50', '51-60', '61-70', '71-80', '81-90', '91+'] |
+| `AGE_GROUPS_MAP` | Object | Age groups with label and emoji |
+| `LIFE_STAGES` | Object | INFANT, YOUTH, YOUNG_ADULT, ADULT, MIDDLE_ADULT, MATURE, SENIOR, ELDER, AGED, ANCIENT |
+| `RELATIONSHIP_STATUS` | Object | ONGOING, ENDED, WIDOWED, SINGLE, PARTNERED |
+| `GENDER_OPTIONS` | Array | { value, label, icon } for male, female, unknown |
+| `ATTRACTION_OPTIONS` | Array | { value, label, icon } for both, men, women, neither |
+| `FILTER_AGE_GROUPS` | Object | 0-19, 20-35, 36-50, 50+ with min/max/label/icon |
+| `DEATH_CAUSES` | Array | Natural death causes with weight and age restrictions |
+
+### STORAGE KEYS
+
+| Constant | Type | Description |
+|----------|------|-------------|
+| `STORAGE_KEYS` | Object | Centralized localStorage key names for trees, filters, UI states |
+
+### HELPER FUNCTIONS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getAgeGroupEmoji` | `group` (string) | string | Gets emoji for an age group |
+| `getAgeGroupLabel` | `group` (string) | string | Gets label for an age group |
+| `getGenderIcon` | `gender` (string) | string | Gets icon for gender (♂, ♀, ⚥) |
+
+---
+
+## 2. randomness.js
+
+**PURPOSE:** SINGLE SOURCE OF TRUTH for ALL random number generation. Seeded, deterministic RNG.
+
+**DEPENDENCIES:** None (pure RNG)
+
+### CONSTANTS
+
+| Constant | Type | Description |
+|----------|------|-------------|
+| `RNG_CONSTANTS` | Object | MIN_YEAR: -10000, MAX_YEAR: 9999, DEFAULT_MAX_AGE: 120, MIN_FERTILITY_MODIFIER: 0.5, MAX_FERTILITY_MODIFIER: 1.5, DEFAULT_FERTILITY_MEAN: 1.0, DEFAULT_FERTILITY_STD_DEV: 0.2, SEED_STORAGE_KEY: 'stillwaters_rng_seed' |
+
+### CORE RNG (Seedable)
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `setRandomSeed` | `seed` (number), `persist` (boolean) | void | Sets RNG seed for deterministic simulations |
+| `getRandomSeed` | None | number | Gets current RNG seed |
+| `loadPersistedSeed` | None | boolean | Loads persisted seed from localStorage |
+| `random` | None | float [0,1) | Core PRNG (mulberry32 algorithm) |
+| `randomInt` | `min` (number), `max` (number) | number | Random integer between min and max (inclusive) |
+| `randomFloat` | `min` (number), `max` (number) | number | Random float between min and max |
+| `chance` | `probability` (number, 0-1) | boolean | Returns true with given probability |
+
+### DICE ROLLING
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `rollDice` | `diceString` (string) | { total, rolls, modifier, error } | Rolls dice notation (e.g., "2d6", "d20", "2d6+4") |
+| `roll` | `sides` (number) | number | Simple dice roll (roll(20) = d20) |
+| `rollHighest` | `count` (number), `sides` (number) | number | Rolls pool, returns highest result |
+| `rollLowest` | `count` (number), `sides` (number) | number | Rolls pool, returns lowest result |
+| `rollWithDropLowest` | `count` (number), `sides` (number), `dropLowest` (number) | number | Rolls dice, drops lowest N |
+
+### ARRAY RANDOMIZATION
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `pickRandom` | `arr` (Array) | * | Picks random element from array |
+| `pickRandomMultiple` | `arr` (Array), `count` (number) | Array | Picks multiple distinct random elements |
+| `pickWeighted` | `items` (Array), `weightGetter` (Function) | * | Weighted random selection |
+| `pickWeightedKey` | `weightedMap` (Object) | string\|null | Picks random key from object by weight values |
+
+### ARRAY SHUFFLING
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `shuffleArrayInPlace` | `arr` (Array) | Array | Shuffles array in-place (Fisher-Yates) |
+| `shuffleArray` | `arr` (Array) | Array | Returns shuffled copy (original unchanged) |
+| `shuffleString` | `str` (string) | string | Shuffles characters in string |
+
+### PROBABILITY HELPERS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `percentile` | None | number | Rolls d100, returns 1-100 |
+| `checkPercentile` | `target` (number, 1-100) | boolean | Returns true if percentile roll <= target |
+| `randomBoolean` | `trueChance` (number, default 0.5) | boolean | Returns boolean with given bias |
+| `randomSign` | None | number | Returns -1 or 1 |
+| `randomVariation` | `base` (number), `percentVariation` (number) | number | Adds random ±% variation to base |
+| `randomNormal` | `mean` (number, default 0), `stdDev` (number, default 1) | number | Normal distribution (Box-Muller) |
+| `randomGaussian` | `mean` (number, default 0), `stdDev` (number, default 1) | number | Alias for randomNormal |
+
+### RANDOM DATA GENERATION
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `randomExponential` | `min` (number), `max` (number), `exponent` (number, default 0.5) | number | Exponential distribution (exponent<1 = more low numbers) |
+| `randomUUID` | None | string | Generates random UUID v4 |
+| `randomString` | `length` (number, default 8) | string | Generates random alphanumeric string |
+| `randomNameFromLists` | `firstNames` (Array), `surnames` (Array) | { firstName, surname } | Generates random name from lists |
+
+### SIMULATION-SPECIFIC RANDOMNESS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `randomRealisticAge` | `maxAge` (number, default 120), `includeInfants` (boolean, default true) | number | Realistic age distribution |
+| `randomYear` | `currentYear` (number), `maxFutureYears` (number, default 10), `maxPastYears` (number, default 120) | number | Random year within range (supports BC) |
+| `randomFertilityModifier` | `mean` (number, default 1.0), `stdDev` (number, default 0.2) | number | Random fertility modifier (0.5-1.5) |
+| `randomLifespan` | `currentAge` (number, default 0), `baseLifeExpectancy` (number, default 70) | number | Random age at death based on mortality |
+
+### WEIGHTED CHANCE TABLES
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `weightedTable` | `table` (Array of { chance, result }) | * | Weighted chance table lookup |
+| `createWeightedTable` | `items` (Array), `weightKey` (string, default 'weight') | Function | Creates function for weighted selection |
+
+---
+
+## 3. ids.js
+
+**PURPOSE:** ID generation for all entities (characters, places, ranks, roles, households, relationships, events).
+
+**DEPENDENCIES:** randomness.js (optional - seeded RNG)
+
+### CONSTANTS
+
+| Constant | Type | Description |
+|----------|------|-------------|
+| `ID_PREFIXES` | Object | CHARACTER: 'char', PLACE: 'place', RANK: 'rank', ROLE: 'role', HOUSEHOLD: 'house', RELATIONSHIP: 'rel', EVENT: 'event', etc. |
+| `ID_CONFIG` | Object | DEFAULT_RANDOM_LENGTH: 8, SHORT_RANDOM_LENGTH: 4, LONG_RANDOM_LENGTH: 12, MAX_ID_LENGTH: 100, MIN_RANDOM_LENGTH: 4, SEPARATOR: '_' |
+
+### CORE ID GENERATION
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `generateId` | `prefix` (string, optional), `randomLength` (number, default 8) | string | Generates timestamp_random ID |
+| `generateShortId` | `prefix` (string, optional), `length` (number, default 4) | string | Generates short random ID (higher collision probability) |
+| `generateLongId` | `prefix` (string, optional) | string | Generates long ID with extra entropy |
+
+### ENTITY-SPECIFIC ID GENERATORS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `generateCharacterId` | None | string | Generates character ID (char_ prefix) |
+| `generatePlaceId` | None | string | Generates place ID (place_ prefix) |
+| `generateRankId` | None | string | Generates rank ID (rank_ prefix) |
+| `generateRoleId` | None | string | Generates role ID (role_ prefix) |
+| `generateHouseholdId` | None | string | Generates household ID (house_ prefix) |
+| `generateRelationshipId` | None | string | Generates relationship ID (rel_ prefix) |
+| `generateEventId` | None | string | Generates event ID (event_ prefix) |
+
+### BATCH ID GENERATION
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `generateBatchIds` | `count` (number), `prefix` (string, optional), `generatorFn` (Function) | Array | Generates multiple IDs at once |
+| `generateBatchCharacterIds` | `count` (number) | Array | Generates multiple character IDs |
+
+### ID VALIDATION (Strict Format - for NEW IDs)
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `isValidId` | `id` (string), `expectedPrefix` (string, optional) | boolean | Validates strict format (prefix_timestamp_random) |
+| `isCharacterId` | `id` (string) | boolean | Checks if ID is a valid character ID |
+| `isPlaceId` | `id` (string) | boolean | Checks if ID is a valid place ID |
+| `isRankId` | `id` (string) | boolean | Checks if ID is a valid rank ID |
+
+### ID PARSING
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `parseId` | `id` (string) | { prefix, timestamp, random } \| null | Parses ID into components |
+| `getIdTimestamp` | `id` (string) | number \| null | Extracts timestamp from ID |
+| `getIdPrefix` | `id` (string) | string \| null | Extracts prefix from ID |
+
+### CACHE MANAGEMENT
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `clearGeneratedIds` | None | void | Clears the generated IDs cache |
+| `removeGeneratedId` | `id` (string) | void | Removes a specific ID from cache |
+
+---
+
+## 4. collections.js
+
+**PURPOSE:** Generic helper functions for deep cloning, debouncing, arrays, and objects.
+
+**DEPENDENCIES:** None (pure JavaScript utilities)
+
+### DEEP CLONING
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `deepClone` | `obj` (*) | * | Recursively clones objects, arrays, Dates, RegExps, Maps, Sets |
+| `safeDeepClone` | `obj` (*), `fallback` (*, default null) | * | Uses structuredClone with JSON fallback |
+| `quickClone` | `obj` (*) | * | JSON-based deep clone (faster but less robust) |
+
+### FUNCTION UTILITIES
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `debounce` | `func` (Function), `wait` (number) | Function | Delays execution until after wait time |
+| `debounceLeading` | `func` (Function), `wait` (number) | Function | Leading edge debounce (executes immediately) |
+| `throttle` | `func` (Function), `limit` (number) | Function | Limits execution to once per interval |
+
+### ARRAY HELPERS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `unique` | `arr` (Array), `keyFn` (Function, optional) | Array | Removes duplicates |
+| `groupBy` | `arr` (Array), `keyFn` (Function) | Map | Groups by key function, returns Map |
+| `groupByObject` | `arr` (Array), `keyFn` (Function) | Object | Groups by string key, returns plain object |
+| `sortBy` | `arr` (Array), `keyFn` (Function), `ascending` (boolean, default true) | Array | Sorts by key function (non-mutating) |
+| `sortByMultiple` | `arr` (Array), `sortConfigs` (Array of { keyFn, ascending }) | Array | Sorts by multiple key functions |
+| `chunk` | `arr` (Array), `size` (number) | Array | Splits array into chunks |
+| `flatten` | `arr` (Array) | Array | Flattens array by one level |
+| `flattenDeep` | `arr` (Array) | Array | Flattens array completely |
+| `intersection` | `...arrays` | Array | Returns common elements across all arrays |
+| `arrayToMap` | `arr` (Array), `keyProp` (string) | Map | Converts array of objects to Map keyed by property |
+| `arrayToObject` | `arr` (Array), `keyProp` (string) | Object | Converts array of objects to plain object |
+
+### OBJECT HELPERS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `pick` | `obj` (Object), `keys` (Array) | Object | Returns new object with only specified keys |
+| `omit` | `obj` (Object), `keys` (Array) | Object | Returns new object without specified keys |
+| `shallowMerge` | `...objects` | Object | Shallow merges multiple objects (last wins) |
+| `deepMerge` | `...objects` | Object | Deep merges multiple objects recursively |
+| `isEmptyObject` | `obj` (Object) | boolean | Checks if object has no enumerable own properties |
+
+### STRING HELPERS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `capitalize` | `str` (string) | string | Capitalizes first letter only |
+| `titleCase` | `str` (string) | string | Title case (each word capitalized, rest lowercased) |
+| `toKebabCase` | `str` (string) | string | Converts to kebab-case, preserves Unicode letters |
+| `toSnakeCase` | `str` (string) | string | Converts to snake_case, preserves Unicode letters |
+
+---
+
+## 5. validation.js
+
+**PURPOSE:** SINGLE SOURCE OF TRUTH for ALL validation functions.
+
+**DEPENDENCIES:** None (pure validation)
+
+### CONSTANTS
+
+| Constant | Type | Description |
+|----------|------|-------------|
+| `VALIDATION_CONSTANTS` | Object | MIN_YEAR: -10000, MAX_YEAR: 9999, DEFAULT_MAX_AGE: 120, MAX_NAME_LENGTH: 100, MAX_SURNAME_LENGTH: 100, MAX_DISPLAY_NAME_LENGTH: 200, MAX_NOTE_LENGTH: 5000, MAX_SYMBOL_LENGTH: 3, ID_REGEX: /^[a-zA-Z0-9_-]+$/, NAME_REGEX: /^[\p{L}\s\-'\.]+$/u, VARIABLE_KEY_REGEX: /^[a-z0-9_]+$/ |
+
+### YEAR VALIDATION
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `isValidYear` | `year` (number), `minYear` (number, default -10000), `maxYear` (number, default 9999) | boolean | Validates year is within range |
+| `validateYearsConsistency` | `birthYear` (number), `deathYear` (number), `isDeceased` (boolean) | { isValid, message } | Validates birth/death year consistency |
+
+### ID VALIDATION
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `isValidCharacterId` | `id` (string) | boolean | Validates character ID format |
+| `isValidPlaceId` | `id` (string) | boolean | Validates place ID format |
+
+### CHARACTER VALIDATION
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `validateCharacter` | `char` (Object), `context` (Object, optional) | { isValid, errors } | Validates character object |
+| `validateCharacterAge` | `char` (Object), `currentYear` (number), `maxAge` (number, default 120) | { isValid, age, message } | Validates character's age range |
+
+### PLACE VALIDATION
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `validatePlace` | `place` (Object), `context` (Object, optional) | { isValid, errors } | Validates place object |
+
+### RANK VALIDATION
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `validateRank` | `rank` (Object), `context` (Object, optional) | { isValid, errors } | Validates rank object |
+
+### ROLE VALIDATION
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `validateRole` | `role` (Object), `context` (Object, optional) | { isValid, errors } | Validates role object |
+
+### RELATIONSHIP VALIDATION
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `validateRelationship` | `relationship` (Object), `charId` (string), `partnerId` (string), `context` (Object, optional) | { isValid, errors, warnings } | Validates relationship |
+| `validateBidirectionalRelationship` | `rel1` (Object), `rel2` (Object) | { isConsistent, issues } | Validates mutual relationships |
+
+### IMPORT VALIDATION
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `validateImportData` | `imported` (Object) | { isValid, errors, warnings } | Validates imported JSON structure |
+
+### SCHEMA VALIDATION
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `validateEntitySchema` | `entity` (Object), `type` (string) | { isValid, errors } | Validates entity against schema |
+
+### UTILITY FUNCTIONS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `sanitizeString` | `str` (string), `maxLength` (number, default 100) | string | Sanitizes string for safe display |
+| `normalizeNameForStorage` | `name` (string) | string | Normalizes name for storage |
+
+---
+
+## 6. formatting.js
+
+**PURPOSE:** SINGLE SOURCE OF TRUTH for ALL formatting functions.
+
+**DEPENDENCIES:** None (pure formatting)
+
+### HTML ESCAPING
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `escapeHtml` | `str` (*) | string | Escapes HTML special characters to prevent XSS |
+| `escapeHtmlWithBreaks` | `str` (string) | string | Escapes HTML and converts \n to <br> |
+| `containsSvg` | `str` (string) | boolean | Checks if string contains SVG markup |
+| `escapeHtmlPreserveSvg` | `str` (string) | string | Escapes HTML except for SVG content |
+
+### YEAR FORMATTING
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `formatYear` | `year` (number), `useAsteriskForZero` (boolean, default false) | string | Formats year (e.g., "125", "50 BC", "*" for 0) |
+| `formatYearRange` | `startYear` (number), `endYear` (number), `separator` (string, default '–') | string | Formats year range |
+
+### NAME FORMATTING
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `formatCharacterName` | `char` (Object\|string), `getCharacterById` (Function, optional) | string | Formats full name (e.g., "John Smith") |
+| `formatCharacterNameWithRank` | `char` (Object), `getActiveRankDisplay` (Function, optional) | string | Formats name with rank prefix |
+| `formatCharacterNameWithGender` | `char` (Object) | string | Formats name with gender symbol (♂ ♀ ⚥) |
+| `formatCharacterNameWithAge` | `char` (Object), `age` (number) | string | Formats name with age in parentheses |
+
+### TITLE FORMATTING
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `formatTitle` | `rank` (Object), `number` (number\|string, optional) | string | Formats title (e.g., "♔ King III") |
+| `formatCharacterTitles` | `char` (Object), `rankAssignments` (Array), `getRankById` (Function) | string | Formats comma-separated titles |
+
+### DYNASTY / LINEAGE LABELS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `formatDynasty` | `houseName` (string), `prefix` (string, default 'House of ') | string | Formats dynasty name |
+| `formatSuccessionNumber` | `number` (number) | string | Converts number to Roman numeral (I, II, III...) |
+
+### RELATIONSHIP FORMATTING
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `formatRelationshipStatus` | `status` (string) | string | Formats status with emoji (❤️ Ongoing, 💔 Ended, † Widowed) |
+| `formatRelationshipType` | `type` (string) | string | Formats type with emoji |
+| `formatFriendship` | `details` (Object), `currentYear` (number) | string | Formats friendship description with duration |
+
+### LOCATION HIERARCHY FORMATTING
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `formatLocationHierarchy` | `place` (Object), `getPlaceById` (Function), `getLocationTypeById` (Function) | string | Formats breadcrumb (e.g., "Kingdom → Duchy → County") |
+| `formatLocationType` | `type` (Object) | string | Formats location type with priority level |
+| `formatPopulation` | `population` (number) | string | Formats population (e.g., "1,234", "1.2k", "1.5M") |
+
+### AGE FORMATTING
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `formatAge` | `age` (number) | string | Formats age (e.g., "25 years", "6 months", "2 days") |
+| `formatCharacterAge` | `char` (Object), `currentYear` (number) | string | Formats age with birth/death context |
+| `formatAgeRange` | `minAge` (number), `maxAge` (number) | string | Formats age range (e.g., "18–35 years") |
+
+### DATE RANGE FORMATTING
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `formatDateRange` | `startYear` (number), `endYear` (number), `isCurrent` (boolean, default false) | string | Formats reign/tenure range |
+
+### LIST FORMATTING
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `formatList` | `items` (Array), `conjunction` (string, default 'and') | string | Formats array as human-readable list |
+| `formatCount` | `count` (number), `singular` (string), `plural` (string) | string | Formats count with singular/plural |
+
+### GENDER FORMATTING
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getGenderSymbol` | `gender` (string) | string | Returns symbol (♂ for male, ♀ for female, ⚥ for other) |
+| `getGenderLabel` | `gender` (string) | string | Returns label ("Male", "Female", "Unknown") |
+
+### STRING UTILITIES
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `truncateString` | `str` (string), `maxLength` (number), `ellipsis` (string, default '…') | string | Unicode-safe truncation with ellipsis |
+| `truncateLocation` | `locationName` (string), `maxLength` (number, default 25) | string | Truncates location name |
+
+### ADDITIONAL UTILITIES
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `formatPercentage` | `value` (number), `isDecimal` (boolean, default true), `decimals` (number, default 1) | string | Formats percentage (e.g., "75.5%") |
+| `formatDuration` | `years` (number) | string | Formats duration (e.g., "1 year", "2.5 decades") |
+
+---
+
+## 7. time.js
+
+**PURPOSE:** SINGLE SOURCE OF TRUTH for ALL time-related calculations.
+
+**DEPENDENCIES:** None (pure time calculations)
+
+### CONSTANTS
+
+| Constant | Type | Description |
+|----------|------|-------------|
+| `TIME_CONSTANTS` | Object | DEFAULT_YEAR: 1250, MIN_YEAR: -10000, MAX_YEAR: 9999, DEFAULT_AGE_OF_MAJORITY: 18, DEFAULT_MIN_FERTILE_AGE: 14, DEFAULT_MAX_FERTILE_AGE: 47, DEFAULT_MIN_PARENT_AGE: 12, DEFAULT_MAX_PARENT_AGE: 70, PREGNANCY_MONTHS: 9, MONTHS_PER_YEAR: 12 |
+
+### SAFE CURRENT YEAR GETTER
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCurrentYearSafe` | `getCurrentYearFn` (Function, optional) | number | Gets current world year with fallback (NO circular dependency) |
+
+### CORE AGE CALCULATIONS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `calculateAge` | `birthYear` (number), `isDeceased` (boolean, default false), `deathYear` (number, optional), `currentYear` (number, optional), `getCurrentYearFn` (Function, optional) | number \| null | Calculates age (handles deceased characters) |
+| `getYearDifference` | `startYear` (number), `endYear` (number) | number \| null | Absolute year difference |
+| `getAgeAtEvent` | `char` (Object), `eventYear` (number), `useDeathCap` (boolean, default true) | number \| null | Age at specific historical event |
+
+### AGE VALIDATION
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `isMinor` | `age` (number), `ageOfMajority` (number, default 18) | boolean | Checks if under age of majority |
+| `isAdult` | `age` (number), `ageOfMajority` (number, default 18) | boolean | Checks if age of majority or older |
+| `isFertileAge` | `age` (number), `minFertileAge` (number, default 14), `maxFertileAge` (number, default 47) | boolean | Checks childbearing age |
+
+### TIME RANGE UTILITIES
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `isYearInRange` | `year` (number), `startYear` (number), `endYear` (number) | boolean | Checks if year falls within range (inclusive) |
+| `getTimeRangeOverlap` | `range1` ({ start, end }), `range2` ({ start, end }) | { start, end } \| null | Returns overlap between two ranges |
+| `doTimeRangesOverlap` | `range1` ({ start, end }), `range2` ({ start, end }) | boolean | Returns true if ranges overlap |
+
+### GENERATION & SUCCESSION TIMING
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getGenerationGap` | `parentBirthYear` (number), `childBirthYear` (number) | number \| null | Parent-child age difference |
+| `isPlausibleParentAge` | `parentAgeAtChildBirth` (number), `minParentAge` (number, default 12), `maxParentAge` (number, default 70) | boolean | Checks plausible parent age |
+
+### PREGNANCY & BIRTH CALCULATIONS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `calculatePregnancyDuration` | `conceptionYear` (number), `conceptionMonth` (number, default 6) | { birthYear, gestationMonths, conceptionMonth, birthMonth } | Calculates pregnancy duration and birth year |
+| `getConceptionYear` | `birthYear` (number) | number \| null | Approximate conception year (birthYear - 1) |
+
+### SUCCESSION & REIGN CALCULATIONS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getAgeAtSuccession` | `birthYear` (number), `predecessorDeathYear` (number) | number \| null | Age when character inherited |
+| `getReignLength` | `startYear` (number), `endYear` (number, optional), `currentYear` (number, optional), `getCurrentYearFn` (Function, optional) | number | Length of reign/tenure in years |
+
+### LIFESPAN FORMATTING
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `formatLifespan` | `char` (Object), `format` (string, default 'full') | string | Formats lifespan ('full', 'short', 'birth-only') |
+
+---
+
+## 8. storage.js
+
+**PURPOSE:** Data persistence to localStorage. Handles all data saving/loading.
+
+**DEPENDENCIES:** accessors.js (invalidateAccessorCaches, refreshCaches), ui.js (showToast)
+
+### CONSTANTS
+
+| Constant | Type | Description |
+|----------|------|-------------|
+| `CONFIG` | Object | STORAGE_KEY: 'stillwaters_master', DEFAULT_YEAR: 1250, MAX_HIERARCHY_DEPTH: 20, TOAST_DURATION: 2500, MAX_ITERATIONS: 20, MAX_TOASTS: 20 |
+
+### GLOBAL OBJECT
+
+| Object | Type | Description |
+|--------|------|-------------|
+| `window.masterData` | Object | Main data store with version, lastUpdated, and data object |
+
+### CORE OPERATIONS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `loadMasterData` | None | boolean | Loads data from localStorage and initializes masterData |
+| `saveMasterData` | `immediate` (boolean, default false) | boolean | Saves current masterData to localStorage (debounced) |
+| `exportData` | None | void | Exports complete master data as downloadable JSON file |
+| `importData` | None | void | Imports data from JSON file (handles multiple export formats) |
+| `resetMasterData` | None | void | Resets ALL data (destructive, with confirmation dialog) |
+| `forceReloadData` | None | void | Forces complete reload and invalidates all caches |
+
+### EDUCATION STATISTICS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getEducationStatistics` | None | Object | Quick stats: institutionCount, totalStudents, totalTeachers, totalGraduates, totalCapacity, averageReputation, studentTeacherRatio, capacityUtilization |
+
+---
+
+## 9. accessors.js
+
+**PURPOSE:** SINGLE SOURCE OF TRUTH for ALL data access AND cache management.
+
+**DEPENDENCIES:** storage.js (masterData), time.js (calculateAge)
+
+### CACHE MANAGEMENT
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `invalidateAccessorCaches` | None | void | Invalidates ALL accessor caches (primary invalidation function) |
+| `refreshCaches` | None | void | Refreshes all caches by rebuilding maps from source data |
+| `registerCacheListener` | `listener` (Function) | Function (unregister) | Registers a listener to be called when caches are invalidated |
+| `getLastInvalidationTime` | None | number | Gets timestamp of last cache invalidation |
+
+### CORE DATA ACCESSORS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCharacters` | None | Array | Gets all characters |
+| `getPlaces` | None | Array | Gets all places/locations |
+| `getRanks` | None | Array | Gets all ranks |
+| `getRoles` | None | Array | Gets all roles/professions |
+| `getLocationTypes` | None | Array | Gets all location types |
+| `getGovernmentTypes` | None | Array | Gets all government types |
+| `getHouseholds` | None | Array | Gets all households |
+| `getInheritanceRules` | None | Object | Gets rank inheritance rules |
+| `getNameLists` | None | Object | Gets name lists by country |
+| `getCityNameParts` | None | Object | Gets city name parts by country |
+| `getDisasters` | None | Array | Gets all disasters |
+| `getEventLog` | None | Array | Gets all event log entries |
+| `getCurrentYear` | None | number | Gets current world year |
+| `getTotalCharacterCount` | None | number | Gets total character count |
+
+### ROLE/PROFESSION MANAGEMENT (CRUD)
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `addRole` | `role` (Object) | Object | Adds a new role |
+| `updateRole` | `roleId` (string), `updates` (Object) | Object \| null | Updates an existing role |
+| `deleteRole` | `roleId` (string) | boolean | Deletes a role |
+| `setRoles` | `roles` (Array) | boolean | Replaces entire roles array |
+
+### ID-BASED ACCESSORS (O(1) with caching)
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCharacterById` | `id` (string) | Object \| null | Gets character by ID |
+| `getPlaceById` | `id` (string) | Object \| null | Gets place by ID |
+| `getRankById` | `id` (string) | Object \| null | Gets rank by ID |
+| `getRoleById` | `id` (string) | Object \| null | Gets role by ID |
+| `getLocationTypeById` | `id` (string) | Object \| null | Gets location type by ID |
+| `getGovernmentTypeById` | `id` (string) | Object \| null | Gets government type by ID |
+| `getHouseholdById` | `id` (string) | Object \| null | Gets household by ID |
+
+### NAME-BASED ACCESSORS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getPlaceByDisplayName` | `displayName` (string) | Object \| null | Gets place by display name |
+| `getCharacterByName` | `name` (string), `surname` (string, optional) | Object \| null | Gets character by name |
+| `getCharacterByFullName` | `fullName` (string) | Object \| null | Gets character by full name |
+| `getRankByName` | `name` (string) | Object \| null | Gets rank by name |
+| `getRoleByName` | `name` (string) | Object \| null | Gets role by name |
+| `getRolesByCategory` | `categoryId` (string) | Array | Gets roles by category |
+
+### RANK DISPLAY HELPERS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getActiveRank` | `character` (Object) | Object \| null | Gets active rank (highest priority non-deprecated) |
+| `getActiveRankDisplay` | `character` (Object) | { id, name, display, priority, symbol } \| null | Gets formatted rank display |
+| `getCharacterRanks` | `character` (Object) | Array | Gets all non-deprecated ranks for a character |
+
+### FILTERED ACCESSORS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getAvailableRanksForCharacter` | `character` (Object) | Array | Gets unassigned ranks (filtered by gender restriction) |
+| `getLivingCharacters` | None | Array | Gets living characters |
+| `getDeceasedCharacters` | None | Array | Gets deceased characters |
+| `getCharactersByGender` | `gender` (string) | Array | Gets characters by gender |
+| `getCharactersByRole` | `roleId` (string) | Array | Gets characters by role |
+| `getCharactersByLocation` | `locationId` (string) | Array | Gets characters at location |
+| `getCharactersByAgeRange` | `minAge` (number), `maxAge` (number), `asOfYear` (number, optional) | Array | Gets characters by age range |
+| `getCharactersByProfession` | `roleId` (string), `minSkill` (number, default 0) | Array | Gets characters by profession with skill filter |
+| `getCharactersByBirthDecade` | `decade` (number) | Array | Gets characters by birth decade |
+| `getCharactersBornInYearRange` | `startYear` (number), `endYear` (number) | Array | Gets characters by birth year range |
+
+### EDUCATION ACCESSORS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCharactersByLiteracy` | `isLiterate` (boolean) | Array | Gets characters by literacy status |
+| `getCharactersWithLiteracy` | `minLevel` (number, default 0) | Array | Gets characters with minimum literacy level |
+| `getCharactersByEducationLevel` | `levelId` (string) | Array | Gets characters by education level |
+| `getCharactersByEducationStatus` | `status` (string), `institutionId` (string, optional) | Array | Gets characters by enrollment status |
+| `getCharactersNotInEducation` | `minAge` (number, default 7), `maxAge` (number, default 16) | Array | Gets school-age children not enrolled |
+| `getCharacterEducationInfo` | `characterId` (string) | { isLiterate, literacyLevel, educationLevel, proficiencies, educationHistory, currentInstitutions } \| null | Gets comprehensive education data |
+| `getCharactersWithProfessionCount` | `roleId` (string) | number | Gets count of characters with a profession |
+
+### HOUSEHOLD ACCESSORS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCharacterHousehold` | `characterId` (string) | Object \| null | Gets character's household |
+| `getHouseholdMembers` | `householdId` (string) | Array | Gets all household members |
+
+### LOCATION ANALYTICS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getLocationPopulationBreakdown` | `locationId` (string) | { total, schoolAge, adult, elderly, literate, literacyRate } | Gets population stats |
+| `getSchoolAgePopulation` | `locationId` (string) | number | Gets school-age children count |
+
+### VALIDATION HELPERS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `isValidCharacterId` | `id` (string) | boolean | Checks if character ID exists |
+| `isValidPlaceId` | `id` (string) | boolean | Checks if place ID exists |
+| `isValidRoleId` | `id` (string) | boolean | Checks if role ID exists |
+
+### UTILITY ACCESSORS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getLocationTypeName` | `typeId` (string) | string | Gets location type name or 'Unknown' |
+| `getLocationTypePriority` | `typeId` (string) | number | Gets location type priority or 999 |
+| `getGovernmentTypeName` | `typeId` (string) | string | Gets government type name or 'Unknown' |
+| `getPlaceName` | `placeId` (string) | string | Gets place name or 'Unknown' |
+| `getCharacterFullNameById` | `charId` (string) | string | Gets full name or 'Unknown' |
+| `getCharacterAbbreviatedNameById` | `charId` (string) | string | Gets abbreviated name (e.g., "John S.") |
+
+### RESIDENCE ACCESSORS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getResidences` | None | Array | Gets all residences |
+| `getResidenceById` | `id` (string) | Object \| null | Gets residence by ID |
+| `getResidencesByLocation` | `locationId` (string) | Array | Gets residences by location ID |
+| `getResidencesByHousehold` | `householdId` (string) | Array | Gets residences by household ID |
+
+### RESIDENCE UNIT ACCESSORS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getResidenceUnits` | `residenceId` (string) | Array | Gets all units for a residence |
+| `getResidenceUnit` | `residenceId` (string), `unitNumber` (number) | Object \| null | Gets unit by unit number |
+| `getResidenceUnitById` | `residenceId` (string), `unitId` (string) | Object \| null | Gets unit by ID |
+| `isMultiUnitResidence` | `residenceId` (string) | boolean | Checks if residence supports multiple units |
+| `getResidenceMaxUnits` | `residenceId` (string) | number | Gets maximum number of units |
+| `getAvailableUnits` | `residenceId` (string) | Array | Gets all vacant units |
+| `getOccupiedUnitsForResidence` | `residenceId` (string) | Array | Gets all occupied units |
+| `getUnitHouseholdId` | `unit` (Object) | string \| null | Gets household ID for a unit |
+| `getUnitHouseholdName` | `unit` (Object) | string \| null | Gets household name for a unit |
+| `getHouseholdUnits` | `householdId` (string) | Array | Gets all units occupied by a household |
+| `getHouseholdUnitCount` | `householdId` (string) | number | Counts units a household occupies |
+| `getUnitsByHousehold` | `householdId` (string) | Array | Gets unit objects for a household |
+| `getResidencesWithUnits` | `householdId` (string) | Array | Gets residences with household units |
+| `getVacantUnitsGlobal` | `locationId` (string, optional) | Array | Gets all vacant units globally |
+| `getUnitStatsForResidence` | `residenceId` (string) | { total, occupied, vacant, demolished, occupancyRate } | Gets unit statistics |
+| `getLocationUnitStats` | `locationId` (string) | Object | Gets unit statistics for a location |
+| `getResidencesByUnitHousehold` | `householdId` (string) | Array | Alias for getResidencesWithUnits |
+
+---
+
+## 10. world.js
+
+**PURPOSE:** PURE read-only queries for world/location data. All writes moved to location-commands.js.
+
+**DEPENDENCIES:** location-state.js (LocationState), accessors.js (getCharacters, getPlaces, getRanks)
+
+### LOCATION HIERARCHY QUERIES
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getChildPlaces` | `parentId` (string), `recursive` (boolean, default false) | Array | Gets child places |
+| `getPlacesByPriority` | `priority` (number) | Array | Gets places by priority |
+| `getTopLevelPlaces` | None | Array | Gets top-level places (no parent) |
+| `getAllSubLocationIds` | `locationId` (string) | Array | Gets all sub-location IDs (including self) |
+| `getLocationHierarchy` | `placeId` (string) | Array | Gets location hierarchy from root to target |
+| `getLocationHierarchyDisplay` | `place` (Object) | string | Gets formatted hierarchy breadcrumb |
+| `getLocationTypePriority` | `typeId` (string) | number | Gets location type priority |
+| `getPlacePriority` | `place` (Object) | number | Gets place priority |
+| `getCountryId` | `place` (Object) | string \| null | Gets country ID for a place |
+| `getLocationCountry` | `place` (Object) | string | Gets country name for a place |
+| `getLocationDistrict` | `place` (Object) | string \| null | Gets district for a place |
+| `getParentChain` | `place` (Object) | Array | Gets parent chain for a place |
+| `getLocationAtPriority` | `place` (Object), `targetPriority` (number) | Object \| null | Gets location at specific priority level |
+| `isAncestorOf` | `possibleAncestor` (Object), `place` (Object) | boolean | Checks if one place is ancestor of another |
+| `areInSameCountry` | `place1` (Object), `place2` (Object) | boolean | Checks if two places are in same country |
+| `findLowestCommonAncestor` | `place1` (Object), `place2` (Object) | Object \| null | Finds lowest common ancestor of two places |
+
+### LOCATION GROUPING QUERIES
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCharacterLocationPath` | `character` (Object) | Array | Gets hierarchical location path (highest to lowest) |
+| `getCharacterLocationGroup` | `character` (Object), `withIcons` (boolean, default false) | string | Gets formatted location group name |
+| `getCharacterCountry` | `character` (Object) | Object \| null | Gets country location for a character |
+| `getCharacterMostSpecificLocation` | `character` (Object) | Object \| null | Gets most specific location |
+| `getCharactersGroupedByLocation` | `includeDeceased` (boolean, default false) | Object | Gets characters grouped by location hierarchy |
+| `getCharacterGroupCounts` | `includeDeceased` (boolean, default false) | Object | Gets character counts by location group |
+| `getLocationHierarchyTree` | `countryId` (string, optional) | Object | Gets location hierarchy as tree structure |
+| `getFormattedLocationHierarchy` | `countryId` (string, optional), `maxDepth` (number, default 5) | string | Gets formatted location hierarchy |
+
+### CHARACTER DROPDOWN GENERATION
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `generateGroupedCharacterDropdown` | `selectedId` (string, optional), `includeDeceased` (boolean, default false), `placeholderText` (string, default '— Select a character —') | string | Generates HTML for grouped character dropdown |
+| `attachGroupedCharacterDropdownListener` | `containerId` (string\|Element), `onSelect` (Function) | boolean | Attaches change listener to grouped dropdown |
+
+### POPULATION QUERIES
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getLocationOwnPopulation` | `locationId` (string) | number | Gets population directly in location (not including sub-locations) |
+| `getLocationPopulationCount` | `locationId` (string) | number | Gets total population including sub-locations |
+| `getLocationPopulationWithBreakdown` | `locationId` (string) | { total, byAgeGroup, byGender } | Gets population with breakdown |
+
+### MOVE QUERIES (Read-only)
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCharacterLocationHistory` | `characterId` (string) | Array | Gets character's location history |
+| `getCurrentLocation` | `character` (Object) | string | Gets current location name |
+| `getCurrentLocationId` | `character` (Object) | string \| null | Gets current location ID |
+| `getLocationAtYear` | `character` (Object), `year` (number) | Object \| null | Gets location at specific year |
+| `getCharacterMoves` | `character` (Object) | Array | Gets character's move records |
+
+### LEADER QUERIES (Read-only)
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCurrentLeader` | `placeId` (string) | { characterId, character, startYear, title, notes } \| null | Gets current leader |
+| `getLeaderHistory` | `placeId` (string) | Array | Gets leader history |
+
+### SETTLEMENT QUERIES
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getSettlementData` | `locationId` (string) | Object \| null | Gets settlement data |
+
+---
+
+## 11. names.js
+
+**PURPOSE:** Naming system for characters, dynasties, cities, and titles.
+
+**DEPENDENCIES:** randomness.js (pickRandom, random, randomBoolean), accessors.js (getCharacters, getCharacterById, getActiveRankDisplay, getRoles)
+
+### CHARACTER NAMES
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getRandomNameFromCountry` | `countryId` (string), `gender` (string, default 'any') | string \| null | Gets random given name from country |
+| `getRandomSurnameFromCountry` | `countryId` (string) | string | Gets random surname from country (empty if none) |
+| `generateRandomFullName` | `countryId` (string), `gender` (string) | { name, surname } \| null | Generates full name |
+
+### CHARACTER SURNAME RULES & EPITHETS (MOVED FROM accessors.js)
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCharacterSurnameRules` | `characterId` (string) | Object \| null | Gets character's surname generation rules |
+| `getCharacterEpithet` | `characterId` (string) | string | Gets character's epithet/nickname |
+| `getCharacterSurnameSource` | `characterId` (string) | string | Gets surname source ('country' or 'rank') |
+
+### ROLE CATEGORIES (MOVED FROM accessors.js)
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getRoleCategories` | `roles` (Array, optional) | Object | Gets all role categories with monochrome icons |
+
+### DYNASTY / HOUSE NAMES
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `generateDynastyName` | `type` (string, default 'default'), `options` (Object) | string | Generates dynasty/house name |
+| `formatDynastyName` | `dynastyName` (string), `includeHousePrefix` (boolean, default true) | string | Formats dynasty name with "House of" prefix |
+
+### CITY / LOCATION NAMES
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `generateCityName` | `countryId` (string, optional) | string | Generates city name |
+| `generateRegionName` | `countryId` (string, optional) | string | Generates region name |
+| `generateLandmarkName` | `type` (string, default 'mountain') | string | Generates landmark name |
+
+### TITLE NAMING
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `formatTitleName` | `rank` (Object), `number` (number, optional), `useRoman` (boolean, default true) | string | Formats title (e.g., "♔ King III") |
+| `generateEpithet` | `char` (Object), `type` (string, default 'random') | string | Generates epithet (positive, negative, neutral) |
+| `formatFullTitle` | `char` (Object), `includeEpithet` (boolean, default true) | string | Formats full title with rank and epithet |
+
+### NAME VALIDATION & FORMATTING
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `validateName` | `name` (string) | { isValid, message } | Validates name (letters, spaces, hyphens, apostrophes, dots) |
+| `capitalizeFirstLetter` | `str` (string) | string | Capitalizes first letter |
+| `normalizeName` | `name` (string) | string | Normalizes name (trims, capitalizes each word) |
+
+### DYNASTIC SUCCESSION NAMING
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `formatRegnalName` | `baseName` (string), `number` (number), `useRoman` (boolean, default true) | string | Formats regnal name with number |
+| `getNextRegnalNumber` | `name` (string), `previousRulers` (Array) | number | Gets next regnal number from history |
+
+---
+
+## 12. integrity.js
+
+**PURPOSE:** Data integrity and repair functions (ANTI-CORRUPTION LAYER).
+
+**DEPENDENCIES:** accessors.js (getCharacters, getPlaces, getRanks, getRoles, getHouseholds, getCharacterById, getPlaceById), storage.js (saveMasterData), family.js (clearFamilyCache)
+
+### CORE INTEGRITY
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `ensureDataIntegrity` | None | void | Ensures all data structures have required fields (called on load) |
+
+### ORPHAN CLEANUP
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `findOrphanedCharacters` | None | Array | Finds characters with missing parent references |
+| `repairOrphanedCharacters` | None | number | Repairs orphaned character references (removes missing parent IDs) |
+| `findOrphanedPlaces` | None | Array | Finds places with missing parent references |
+| `repairOrphanedPlaces` | None | number | Repairs orphaned place references (sets parent to null) |
+
+### RELATIONSHIP CLEANUP
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `findBrokenRelationships` | None | Array | Finds relationships with missing partner references |
+| `repairBrokenRelationships` | None | number | Repairs broken relationships (removes invalid partner references) |
+| `findBrokenFriendships` | None | Array | Finds friendships with missing friend references |
+| `repairBrokenFriendships` | None | number | Repairs broken friendships (removes invalid friend references) |
+
+### HOUSEHOLD REPAIR
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `findBrokenHouseholdMembers` | None | Array | Finds households with invalid member references |
+| `repairBrokenHouseholdMembers` | None | number | Repairs broken household members (removes invalid member references) |
+
+### RANK & ROLE REPAIR
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `findBrokenRankAssignments` | None | Array | Finds characters with missing rank references |
+| `repairBrokenRankAssignments` | None | number | Repairs broken rank assignments (removes invalid rank references) |
+| `findBrokenRoleAssignments` | None | Array | Finds characters with missing role/profession references |
+| `repairBrokenRoleAssignments` | None | number | Repairs broken role assignments (removes invalid role references) |
+
+### APPRENTICESHIP REPAIR
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `findBrokenApprenticeships` | None | Array | Finds broken apprenticeship references |
+| `repairBrokenApprenticeships` | None | number | Repairs broken apprenticeships (removes invalid references) |
+
+### COMPREHENSIVE AUDIT & REPAIR
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `auditDataIntegrity` | None | Object | Runs full audit, returns report with counts of each issue type |
+| `repairAllData` | `showNotification` (boolean, default true) | { repairs, totalRepairs, before, after } | Runs full repair of all integrity issues |
+
+### AUTO-MAINTENANCE
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `autoAudit` | None | Object \| null | Performs auto-audit if enough time has passed (once per day) |
+| `getTimeSinceLastAudit` | None | string | Gets time since last audit in human-readable format |
+
+---
+
+## 13. state.js
+
+**PURPOSE:** Runtime state management (UI state, selections, filters, modals).
+
+**DEPENDENCIES:** None (pure runtime state)
+
+### MAIN STATE OBJECT
+
+| Object | Type | Description |
+|--------|------|-------------|
+| `StillWatersState` | Object | Main state object with all getters/setters |
+
+### CHARACTER MANAGER STATE
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `selectedCharId` | string \| null | Currently selected character ID |
+| `ageGroupCollapsedState` | Object | Collapsed state of age groups in UI |
+| `relationshipCache` | Object | Cached relationship data |
+| `selectedChildId` | string \| null | Selected child ID (auto-clears adoption cache) |
+| `selectedGuardianId` | string \| null | Selected guardian ID |
+| `selectedGuardianType` | string \| null | Type of guardian selected |
+| `selectedPartnerId` | string \| null | Selected partner ID |
+
+### LOCATION MANAGER STATE
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `currentPlaceId` | string \| null | Currently selected place ID |
+| `collapsedNodes` | Object | Collapsed nodes in location tree |
+
+### RANK MANAGER STATE
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `rankCollapsedGroups` | Object | Collapsed groups in rank manager UI |
+
+### ROLE MANAGER STATE
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `selectedRoleId` | string \| null | Currently selected role ID |
+| `roleSearchTerm` | string | Role search/filter term |
+
+### SOCIAL SYSTEMS STATE
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `selectedRomanceCharacters` | Map (read-only) | Map of selected romance characters |
+| `selectedFriendshipCharacters` | Map (read-only) | Map of selected friendship characters |
+| `selectedPolygynyManId` | string \| null | Selected polygyny man ID |
+| `selectedPolygynyWomanId` | string \| null | Selected polygyny woman ID |
+| `heartbreakCollapsedCouples` | Map (read-only) | Map of collapsed couples in heartbreak UI |
+| `isSurpriseModalOpen` | boolean | Whether surprise romance modal is open |
+| `isSurpriseApprenticeModalOpen` | boolean | Whether surprise apprentice modal is open |
+
+### FAMILY TREE STATE
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `treeCurrentCharacterId` | string \| null | Character currently centered in family tree |
+
+### TIMELINE STATE
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `timelineEvents` | Array | Array of timeline events |
+
+### CENSUS & ANALYTICS STATE
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `censusCurrentView` | string | Current view mode ('list', 'grid', etc.) |
+| `censusSelectedLocationId` | string \| null | Selected location for census filter |
+| `censusFilters` | Object | { search, gender, lifeStage, rank, role, relationship, status, minAge, maxAge } |
+| `censusPresets` | Object | Saved census presets |
+
+### OTHER STATE
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `diagnosticCurrentData` | * | Current diagnostic data being viewed |
+| `bulkImportedData` | Array | Array of imported data |
+| `bulkImportedHeaders` | Array | Headers from imported file |
+| `namesCountries` | Array | Available countries for names |
+| `selectedNameCountryId` | string \| null | Currently selected country ID |
+| `namesCurrentTab` | string | Current tab in names manager |
+| `selectedHouseholdId` | string \| null | Currently selected household ID |
+| `householdCurrentYear` | number | Current year displayed in household view |
+| `loadingOverlay` | Element \| null | Loading overlay DOM element reference |
+
+### MAP HELPER METHODS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `clearRomanceCharacters` | None | void | Clears selected romance characters map |
+| `addRomanceCharacter` | `id` (string), `char` (Object) | void | Adds character to romance selection |
+| `removeRomanceCharacter` | `id` (string) | void | Removes character from romance selection |
+| `clearFriendshipCharacters` | None | void | Clears selected friendship characters map |
+| `addFriendshipCharacter` | `id` (string), `char` (Object) | void | Adds character to friendship selection |
+| `removeFriendshipCharacter` | `id` (string) | void | Removes character from friendship selection |
+| `clearHeartbreakCouples` | None | void | Clears heartbreak collapsed couples map |
+| `setHeartbreakCoupleCollapsed` | `coupleId` (string), `isCollapsed` (boolean) | void | Sets collapsed state for a couple |
+
+### CORE FUNCTIONS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `clearAllRuntimeState` | None | void | Resets ALL runtime state (selections, caches, filters) |
+| `clearAdoptionCache` | None | void | Clears adoption agency cache specifically |
+| `setSelectedCharacter` | `id` (string) | void | Sets selected character ID |
+| `setSelectedPlace` | `id` (string) | void | Sets selected place ID |
+| `setSelectedHousehold` | `id` (string) | void | Sets selected household ID |
+| `hasSelectedCharacter` | None | boolean | Returns true if a character is selected |
+| `hasSelectedPlace` | None | boolean | Returns true if a place is selected |
+| `hasSelectedHousehold` | None | boolean | Returns true if a household is selected |
+
+---
+
+## 14. exportUtils.js
+
+**PURPOSE:** Data export functions for CSV and JSON.
+
+**DEPENDENCIES:** ui.js (showToast - optional), time.js (calculateAge - optional), accessors.js (getActiveRankDisplay - optional), world.js (getCurrentLocation - optional)
+
+### CSV EXPORT
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `exportToCSV` | `data` (Array), `filename` (string, default 'export'), `headers` (Array, optional) | void | Exports array of objects as CSV file |
+
+### JSON EXPORT
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `exportToJSON` | `data` (Object\|Array), `filename` (string, default 'export') | void | Exports object/array as JSON file |
+
+### CHARACTER-SPECIFIC EXPORTS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `exportCharactersToCSV` | `characters` (Array), `filename` (string, default 'characters') | void | Exports character array to CSV |
+| `exportMasterData` | None | void | Exports complete masterData to JSON |
+
+---
+
+## 15. icons.js
+
+**PURPOSE:** Custom SVG icons rendered as inline SVGs. All icons are custom SVG paths.
+
+**DEPENDENCIES:** None
+
+### ICON OBJECT
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `Icons` | Object | Object containing all SVG icon definitions |
+
+### AVAILABLE ICONS
+
+| Category | Icons |
+|----------|-------|
+| Basic Shapes | CIRCLE, CIRCLE_OUTLINE, CIRCLE_HALF_LEFT, CIRCLE_HALF_RIGHT, CIRCLE_QUARTER, CIRCLE_THREE_QUARTER, CIRCLE_DOT |
+| Square Variants | SQUARE, SQUARE_OUTLINE, DIAMOND, DIAMOND_OUTLINE |
+| Cross/X Variants | X, X_HEAVY, CROSS |
+| Check/Tick Variants | CHECK, CHECK_SIMPLE |
+| Arrow Variants | ARROW_UP, ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT, ARROW_DOUBLE_H |
+| Heart Variants | HEART, HEART_OUTLINE |
+| Gender Symbols | MALE, FEMALE, GENDER_NEUTRAL |
+| Special Icons | LOCATION, PERSON, CROWN, SWORD, BOOK, GEAR, WARNING, STAR_4, STAR_4_OUTLINE, STAR, STAR_OUTLINE, TRIANGLE_UP, TRIANGLE_DOWN |
+| UI Icons | PLUS, MINUS, SEARCH, EDIT, TRASH, REFRESH, UNDO, REDO, LOCK, UNLOCK, KEY, SHIELD, FLAG, HOME |
+| Relationship Icons | MARRIAGE, ENGAGEMENT, FRIENDSHIP |
+| Status Icons | STATUS_ACTIVE, STATUS_PENDING, STATUS_PROPOSED, STATUS_DECLINED, STATUS_ENDED, STATUS_WIDOWED |
+| Location Type Icons | LOCATION_COUNTRY, LOCATION_REGION, LOCATION_COUNTY, LOCATION_TOWN, LOCATION_LOCALITY |
+| Adoption Icons | ADOPTION_LEGAL, GUARDIANSHIP, FOSTER |
+| Dashboard Tool Icons | CHARACTER, CENSUS, HOUSEHOLD, RANK, ROLES, MATCHMAKER, WORLD, EVENTS, NAMES, STORK, DEATHSTARS, FAMILY_TREE, TIMELINE, BULK_IMPORT, DIAGNOSTICS |
+| Rank System Icons | SOVEREIGN, HIGH_NOBLE, NOBLE, GENTRY, COMMONER, RANK_SYMBOL, INHERITANCE, NUMBERED_RANK, GENDER_RESTRICTION, SPOUSE_INHERITANCE, SURNAME_RULE, RANK_HIERARCHY, RANK_ANALYTICS, HOLDER_STATS, DEPRECATED, ACTIVE_RANK, RANK_ASSIGNMENT, FIX_NUMBERING, SYMBOL_PICKER, LEVEL_BADGE |
+
+### HELPER FUNCTIONS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getIcon` | `name` (string), `fallback` (string, optional) | string | Gets icon by name with fallback |
+| `getLocationTypeIcon` | `priority` (number) | string | Gets icon for location type priority |
+| `getRelationshipStatusIcon` | `status` (string) | string | Gets icon for relationship status |
+| `getGenderIcon` | `gender` (string) | string | Gets icon for gender |
+| `getAdoptionTypeIcon` | `type` (string) | string | Gets icon for adoption type |
+| `getRankLevelIcon` | `priority` (number) | string | Gets icon for rank level |
+| `getRankActionIcon` | `action` (string) | string | Gets icon for rank action |
+| `getDashboardToolIcon` | `tool` (string) | string | Gets icon for dashboard tool |
+
+---
+
+# MODALS (js/core/modals/)
+
+---
+
+## 16. modals-core.js
+
+**PURPOSE:** Core modal system - modal manager, simple dialogs, undo/redo.
+
+**DEPENDENCIES:** formatting.js (escapeHtml, escapeHtmlPreserveSvg, containsSvg), ui.js (showToast), accessors.js (getCharacterById, getCharacters, getPlaces, getPlaceById), time.js (getCurrentYearSafe, calculateAge), icons.js (Icons)
+
+### MODAL MANAGER
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `openModal` | `options` (Object) | Element | Opens a modal dialog |
+| `closeTopModal` | None | void | Closes the top-most modal |
+| `closeAllModals` | None | void | Closes all modals |
+
+**Options for openModal:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `title` | string | 'Modal' | Modal title |
+| `content` | string | '' | HTML content |
+| `onConfirm` | Function | null | Called when confirm button is clicked |
+| `onCancel` | Function | null | Called when cancel button is clicked |
+| `onOpen` | Function | null | Called when modal opens |
+| `confirmText` | string | 'Confirm' | Confirm button text |
+| `cancelText` | string | 'Cancel' | Cancel button text |
+| `closeOnOverlay` | boolean | true | Whether clicking overlay closes modal |
+| `showCloseButton` | boolean | true | Whether to show close button |
+| `size` | string | 'medium' | 'small', 'medium', 'large' |
+
+### SIMPLE DIALOGS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `alertDialog` | `message` (string), `title` (string, default 'Notice') | void | Shows an alert dialog |
+| `confirmDialog` | `message` (string), `title` (string, default 'Confirm'), `onConfirm` (Function) | void | Shows a confirmation dialog |
+| `successDialog` | `message` (string), `title` (string, default 'Success') | void | Shows a success dialog |
+| `errorDialog` | `message` (string), `title` (string, default 'Error') | void | Shows an error dialog |
+
+### UNDO/REDO MANAGER
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `undo` | None | boolean | Undoes the last action |
+| `redo` | None | boolean | Redoes the last undone action |
+| `showUndoPrompt` | `actionDescription` (string), `undoFunction` (Function), `redoFunction` (Function, optional), `timeoutMs` (number, default 5000) | void | Shows an undo prompt with timeout |
+
+### PREVIEW MODAL
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `openPreviewModal` | `options` (Object) | void | Opens a confirmation modal with consequences list |
+
+### UNIFIED SELECTOR FORWARDING
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `openUnifiedCharacterSelector` | `options` (Object) | boolean | Forwards to modals-char-select.js |
+| `buildLocationDropdown` | `selectedId` (string), `placeholderText` (string), `includeAll` (boolean), `includeUnknown` (boolean) | string | Forwards to locationDropdown.js |
+| `getLocationName` | `locationId` (string) | string | Gets location name |
+| `getLocationIdByName` | `name` (string) | string \| null | Gets location ID by name |
+
+---
+
+## 17. modals-char-select.js
+
+**PURPOSE:** SINGLE SOURCE OF TRUTH for character selection modals.
+
+**DEPENDENCIES:** modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon), accessors.js (getCharacterById, getCharacters, getPlaceById, getPlaces), time.js (getCurrentYearSafe, calculateAge), family.js (getChildren, getSpouses, getParents, getConsanguinityDegree)
+
+### MAIN FUNCTIONS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `openCharacterSelector` | `options` (Object) | Element \| null | Opens character selector modal |
+
+**Options for openCharacterSelector:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `title` | string | 'Select Character' | Modal title |
+| `targetId` | string | null | Target character ID for filtering |
+| `onSelect` | Function | function() {} | Called when character is selected |
+| `onCancel` | Function | function() {} | Called when cancelled |
+| `preset` | string | null | Filter preset ('partner', 'father', 'mother', 'child', 'master', 'apprentice', 'elder', 'available', 'all') |
+| `excludeIds` | Array | [] | Character IDs to exclude |
+| `filters` | Object | {} | Filter options |
+
+### FILTER OPTIONS
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `search` | string | '' | Search term |
+| `gender` | string | 'all' | 'all', 'male', 'female' |
+| `status` | string | 'all' | 'all', 'single', 'partnered', 'widowed' |
+| `ageGroup` | string | 'all' | Age group (e.g., '21-30') |
+| `location` | string | 'all' | Location ID |
+| `role` | string | 'all' | Role ID |
+| `showDeceased` | boolean | false | Include deceased characters |
+| `peers` | boolean | false | Only peers (±10 years) |
+| `sameLocation` | boolean | false | Only same location |
+| `hasChildren` | boolean | false | Only characters with children |
+| `noChildren` | boolean | false | Only characters without children |
+| `isHead` | boolean | false | Only household heads |
+| `isNotHead` | boolean | false | Only non-household heads |
+| `hasParents` | boolean | false | Only characters with parents |
+| `orphan` | boolean | false | Only orphans |
+| `sortBy` | string | 'age_desc' | 'age_desc', 'age_asc', 'name', 'birth_year' |
+
+### OTHER FUNCTIONS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `closeCharacterSelector` | None | void | Closes the character selector |
+
+---
+
+## 18. modals-household-selector.js
+
+**PURPOSE:** SINGLE SOURCE OF TRUTH for household selection modals.
+
+**DEPENDENCIES:** modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon), accessors.js (getCharacterById, getCharacters, getPlaceById, getPlaces), household-state.js (HouseholdState)
+
+### MAIN FUNCTIONS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `openHouseholdSelector` | `options` (Object) | Element \| null | Opens household selector modal |
+
+**Options for openHouseholdSelector:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `title` | string | 'Select Household' | Modal title |
+| `targetCharacterId` | string | null | Target character ID for filtering |
+| `onSelect` | Function | function() {} | Called when household is selected |
+| `onCancel` | Function | function() {} | Called when cancelled |
+| `preselectedId` | string | null | Pre-selected household ID |
+| `filterConfig` | Object | {} | Filter configuration |
+
+### FILTER CONFIGURATION
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `showActive` | boolean | true | Show active households (living members) |
+| `showVacant` | boolean | false | Show vacant households (deceased only) |
+| `showEmpty` | boolean | false | Show empty households (no members) |
+| `locationFilter` | string | 'all' | Filter by location ID |
+| `searchTerm` | string | '' | Search term |
+
+### OTHER FUNCTIONS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `closeHouseholdSelector` | None | void | Closes the household selector |
+
+---
+
+# UI MODULES (js/core/ui/)
+
+---
+
+## 19. ui.js
+
+**PURPOSE:** SINGLE SOURCE OF TRUTH for toast notifications, loading overlays, progress indicators, skeleton loaders, and button loading states.
+
+**DEPENDENCIES:** formatting.js (escapeHtml, escapeHtmlPreserveSvg), icons.js (Icons)
+
+### TOAST NOTIFICATIONS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `showToast` | `message` (string), `type` (string, default 'info'), `duration` (number, default 3000) | Element | Shows a toast notification |
+| `showSuccessToast` | `message` (string), `duration` (number, default 3000) | Element | Shows a success toast |
+| `showErrorToast` | `message` (string), `duration` (number, default 4000) | Element | Shows an error toast |
+| `showWarningToast` | `message` (string), `duration` (number, default 3500) | Element | Shows a warning toast |
+| `showInfoToast` | `message` (string), `duration` (number, default 3000) | Element | Shows an info toast |
+| `showToastSequence` | `messages` (Array), `delayBetween` (number, default 500) | void | Shows multiple toasts in sequence |
+| `showPersistentToast` | `message` (string), `type` (string, default 'info') | Element | Shows a persistent toast (stays until closed) |
+| `clearAllToasts` | None | void | Clears all toast notifications |
+
+### LOADING OVERLAY
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `showLoading` | `message` (string, default 'Loading...') | Element | Shows a loading overlay |
+| `hideLoading` | None | void | Hides the loading overlay |
+| `forceHideLoading` | None | void | Force hides the loading overlay |
+
+### INLINE LOADING
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `showInlineLoading` | `containerId` (string), `message` (string, default 'Loading...') | Element \| null | Shows inline loading indicator |
+| `hideInlineLoading` | `containerId` (string), `restoreContent` (boolean, default true) | void | Hides inline loading indicator |
+
+### BUTTON LOADING
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `showButtonLoading` | `buttonId` (string), `text` (string, optional) | string \| null | Shows loading state on button |
+| `hideButtonLoading` | `buttonId` (string) | void | Hides loading state on button |
+
+### PROGRESS INDICATORS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `showProgressBar` | `containerId` (string), `current` (number), `total` (number), `label` (string, optional) | Element \| null | Shows a progress bar |
+| `hideProgressBar` | `containerId` (string) | void | Hides the progress bar |
+| `updateProgressBar` | `containerId` (string), `current` (number), `total` (number, optional) | void | Updates the progress bar |
+
+### SKELETON LOADERS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `showSkeletonLoader` | `containerId` (string), `type` (string, default 'card'), `count` (number, default 3) | void | Shows a skeleton loader |
+| `hideSkeletonLoader` | `containerId` (string) | void | Hides the skeleton loader |
+
+---
+
+## 20. collapsible.js
+
+**PURPOSE:** SINGLE SOURCE OF TRUTH for all collapsible UI components.
+
+**DEPENDENCIES:** formatting.js (escapeHtml)
+
+### COLLAPSIBLE SIDEBAR
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `initCollapsibleSidebar` | `sidebarId` (string), `toggleBtnId` (string), `storageKey` (string), `mobileBreakpoint` (number, default 768) | { openSidebar, closeSidebar, toggleSidebar } | Initializes a collapsible sidebar |
+
+### COLLAPSIBLE FILTER SECTION
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `initCollapsibleFilter` | `headerId` (string), `contentId` (string), `storageKey` (string), `iconId` (string, optional) | void | Initializes a collapsible filter section |
+| `expandContent` | `content` (Element), `icon` (Element, optional) | void | Expands a collapsible content element |
+| `collapseContent` | `content` (Element), `icon` (Element, optional) | void | Collapses a collapsible content element |
+
+### COLLAPSIBLE AGE GROUPS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `initCollapsibleAgeGroups` | `containerId` (string), `collapsedState` (Object), `storageKey` (string) | void | Initializes collapsible age group sections |
+
+### COLLAPSIBLE TREE NODES
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `initCollapsibleTreeNodes` | `containerId` (string), `collapsedState` (Object), `storageKey` (string) | void | Initializes collapsible tree nodes |
+| `refreshCollapsibleTreeNodes` | `containerId` (string), `collapsedState` (Object), `storageKey` (string) | void | Refreshes collapsible tree nodes |
+
+### SIMPLE COLLAPSIBLE
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `createSimpleCollapsible` | `headerId` (string), `contentId` (string), `startCollapsed` (boolean, default false) | { toggle, expand, collapse, isCollapsed } | Creates a simple collapsible section |
+
+---
+
+## 21. responsive.js
+
+**PURPOSE:** Responsive/mobile utility functions including viewport detection, responsive body class management, responsive grid, mobile menu, and touch-friendly adjustments.
+
+**DEPENDENCIES:** collections.js (debounce - optional)
+
+### CONSTANTS
+
+| Constant | Type | Description |
+|----------|------|-------------|
+| `RESPONSIVE_BREAKPOINTS` | Object | MOBILE: 768, TABLET: 1024, DESKTOP: 1200 |
+
+### VIEWPORT DETECTION
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `isMobileViewport` | `breakpoint` (number, default 768) | boolean | Checks if viewport is mobile |
+| `isTableViewport` | `mobileBreakpoint` (number, default 768), `tabletBreakpoint` (number, default 1024) | boolean | Checks if viewport is tablet |
+| `isDesktopViewport` | `tabletBreakpoint` (number, default 1024) | boolean | Checks if viewport is desktop |
+| `getViewportCategory` | None | string | Returns 'mobile', 'tablet', or 'desktop' |
+
+### BODY CLASS MANAGEMENT
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `initResponsiveBody` | `breakpoint` (number, default 768), `tabletBreakpoint` (number, default 1024) | void | Adds responsive classes to body |
+
+### RESPONSIVE GRID
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `initResponsiveGrid` | `containerId` (string), `desktopCols` (number, default 3), `tabletCols` (number, default 2), `mobileCols` (number, default 1), `options` (Object) | { refresh } | Creates a responsive grid |
+
+**Options for initResponsiveGrid:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `gap` | string | '16px' | Grid gap |
+| `minItemWidth` | number | null | Minimum item width |
+| `maxWidth` | string | null | Maximum grid width |
+
+### MOBILE MENU
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `initMobileMenu` | `menuBtnId` (string), `menuContainerId` (string), `storageKey` (string, optional), `breakpoint` (number, default 768) | { open, close, toggle, isOpen } | Initializes a mobile menu |
+
+### TOUCH-FRIENDLY ADJUSTMENTS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `initTouchFriendly` | None | void | Adds 'touch-friendly' class to body on mobile |
+| `initSwipeable` | `elementId` (string), `callbacks` (Object) | void | Makes element swipeable |
+
+### UTILITY
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `refreshResponsiveComponents` | None | void | Manually refreshes all responsive components |
+
+---
+
+## 22. locationDropdown.js
+
+**PURPOSE:** SINGLE SOURCE OF TRUTH for location dropdown components.
+
+**DEPENDENCIES:** formatting.js (escapeHtml), accessors.js (getPlaces, getPlaceById, getLocationTypes, getLocationTypePriority), world.js (getLocationHierarchyDisplay, getLocationCountry, getLocationDistrict, getChildPlaces, getPlacesByPriority, getPlacePriority)
+
+### CORE BUILDERS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `buildHierarchicalLocationOptions` | `locations` (Array) | Array | Builds hierarchical location options |
+| `renderHierarchicalLocationOptionsHtml` | `options` (Array), `selectedId` (string) | string | Renders hierarchical location options as HTML |
+| `getFilteredLocationOptions` | `selectedId` (string, optional) | string | Gets filtered location options HTML |
+
+### SIMPLE RENDERERS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `renderSimpleLocationOptions` | `places` (Array), `selectedId` (string) | string | Renders simple location options |
+| `renderLocationOptionsByPriority` | `priority` (number), `selectedId` (string) | string | Renders location options by priority |
+| `renderLocationOptionsByParent` | `parentId` (string), `selectedId` (string) | string | Renders location options by parent ID |
+
+### COMPONENT CREATORS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `createLocationSelector` | `containerId` (string), `options` (Object) | { getValue, setValue, refresh, destroy } | Creates a location selector component |
+| `createFilterAwareLocationSelector` | `containerId` (string), `options` (Object) | { getValue, setValue, refresh, destroy } | Creates a filter-aware location selector |
+| `refreshAllFilterAwareSelectors` | None | void | Refreshes all filter-aware selectors |
+
+### FILTER FUNCTIONS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `registerLocationFilterListener` | None | void | Registers location filter change listener |
+| `notifyLocationFiltersChanged` | None | void | Notifies listeners that location filters changed |
+| `setLocationFilterFn` | `fn` (Function) | void | Sets the location filter function |
+
+---
+
+# ADDITIONAL MODULES
+
+---
+
+## 23. annualProcessing.js
+
+**PURPOSE:** Main annual processing - complete year update.
+
+**DEPENDENCIES:** None (uses external functions via window)
+
+### MAIN FUNCTION
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `processFullAnnualUpdate` | `year` (number) | { year, timestamp, residence, characters, households } | Processes full annual update for all systems |
+
+---
+
+## 24. exportUtils.js
+
+**PURPOSE:** Data export utilities for CSV and JSON.
+
+**DEPENDENCIES:** ui.js (showToast - optional), time.js (calculateAge - optional), accessors.js (getActiveRankDisplay - optional), world.js (getCurrentLocation - optional)
+
+### CSV EXPORT
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `exportToCSV` | `data` (Array), `filename` (string, default 'export'), `headers` (Array, optional) | void | Exports array of objects as CSV file |
+
+### JSON EXPORT
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `exportToJSON` | `data` (Object\|Array), `filename` (string, default 'export') | void | Exports object/array as JSON file |
+
+### CHARACTER EXPORTS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `exportCharactersToCSV` | `characters` (Array), `filename` (string, default 'characters') | void | Exports character array to CSV |
+| `exportMasterData` | None | void | Exports complete masterData to JSON |
+
+---
+
+# DEPENDENCY LOAD ORDER
+
+```
+1. constants.js       (MUST BE FIRST - no dependencies)
+2. randomness.js       (pure RNG, no dependencies)
+3. ids.js              (depends on randomness.js)
+4. collections.js      (pure utilities)
+5. validation.js       (pure validation)
+6. formatting.js       (pure formatting)
+7. time.js             (pure time calculations)
+8. storage.js          (depends on none, creates masterData)
+9. accessors.js        (depends on storage.js for masterData)
+10. world.js           (depends on accessors.js, time.js)
+11. names.js           (depends on randomness.js, accessors.js)
+12. integrity.js       (depends on accessors.js, storage.js, family.js)
+13. state.js           (no dependencies - pure runtime state)
+14. exportUtils.js     (depends on ui.js optional)
+15. icons.js           (no dependencies)
+16. ui.js              (depends on formatting.js, icons.js)
+17. collapsible.js     (depends on formatting.js)
+18. responsive.js      (depends on collections.js optional)
+19. locationDropdown.js (depends on formatting.js, accessors.js, world.js)
+20. modals-core.js     (depends on formatting.js, ui.js, accessors.js, time.js, icons.js)
+21. modals-char-select.js (depends on modals-core.js, accessors.js, time.js, family.js)
+22. modals-household-selector.js (depends on modals-core.js, accessors.js)
+23. annualProcessing.js (uses external functions)
+```
+
+---
+
+# END OF DOCUMENTATION
+
+**Generated:** 2026-07-11
+**Version:** 2.0
+**File Count:** 24 core modules documented

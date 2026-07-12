@@ -14,11 +14,18 @@
  *   - Household history tracking
  *   - Event emission
  *   - Recursion guard
+ *   - SOFT DELETE - Non-destructive deletion with restore capability
+ *   - PURGE - Permanently remove soft-deleted characters
+ *   - BULK OPERATIONS - Create, update, delete multiple characters at once
+ *   - RANDOM CHARACTER GENERATION - Fully automatic with cultural name support
  * 
  * DEPENDENCIES:
  *   - character-state.js (CharacterState)
  *   - accessors.js (getCharacterById, getCharacters, getPlaceById)
  *   - ids.js (generateId)
+ *   - names.js (name generation functions)
+ *   - world.js (location functions)
+ *   - time.js (getCurrentYearSafe)
  * 
  * =============================================================================
  */
@@ -53,6 +60,13 @@
             return window.getPlaceById(id);
         }
         return null;
+    }
+
+    function _getPlaces() {
+        if (typeof window.getPlaces === 'function') {
+            return window.getPlaces();
+        }
+        return [];
     }
 
     function _getCurrentYear() {
@@ -109,6 +123,55 @@
             return window.getRoleById(roleId);
         }
         return null;
+    }
+
+    function _getLocationTypeById(id) {
+        if (typeof window.getLocationTypeById === 'function') {
+            return window.getLocationTypeById(id);
+        }
+        return null;
+    }
+
+    function _getLocationTypePriority(typeId) {
+        if (typeof window.getLocationTypePriority === 'function') {
+            return window.getLocationTypePriority(typeId);
+        }
+        var types = typeof window.getLocationTypes === 'function' ? window.getLocationTypes() : [];
+        for (var i = 0; i < types.length; i++) {
+            if (types[i].id === typeId) {
+                return types[i].priority || 5;
+            }
+        }
+        return 5;
+    }
+
+    function _getRandomNameFromCountry(countryId, gender) {
+        if (typeof window.getRandomNameFromCountry === 'function') {
+            return window.getRandomNameFromCountry(countryId, gender);
+        }
+        return null;
+    }
+
+    function _getRandomSurnameFromCountry(countryId) {
+        if (typeof window.getRandomSurnameFromCountry === 'function') {
+            return window.getRandomSurnameFromCountry(countryId);
+        }
+        return '';
+    }
+
+    function _getNameLists() {
+        if (typeof window.getNameLists === 'function') {
+            return window.getNameLists();
+        }
+        return {};
+    }
+
+    function _pickRandom(arr) {
+        if (typeof window.pickRandom === 'function') {
+            return window.pickRandom(arr);
+        }
+        if (!arr || arr.length === 0) return null;
+        return arr[Math.floor(Math.random() * arr.length)];
     }
 
     // =========================================================================
@@ -198,6 +261,12 @@
                     lastUpdated: data.birthYear || currentYear
                 },
 
+                // ================================================================
+                // SOFT DELETE FLAG
+                // ================================================================
+                isDeleted: false,
+                deletedAt: null,
+
                 // Metadata
                 createdAt: Date.now(),
                 updatedAt: Date.now()
@@ -243,6 +312,11 @@
 
             if (!character) {
                 return { success: false, reason: 'Character not found' };
+            }
+
+            // Check if character is soft-deleted
+            if (character.isDeleted === true) {
+                return { success: false, reason: 'Character is soft-deleted. Restore first to update.' };
             }
 
             // Store old state for event emission
@@ -513,7 +587,724 @@
     }
 
     // =========================================================================
-    // 6. PROFESSION MANAGEMENT - FULL
+    // 6. SOFT DELETE - NEW
+    // =========================================================================
+
+    /**
+     * Soft deletes a character (marks as deleted without removing)
+     * @param {string} id - Character ID
+     * @returns {Object} Result object
+     */
+    function softDeleteCharacter(id) {
+        if (_processing) {
+            return { success: false, reason: 'Already processing' };
+        }
+        _processing = true;
+
+        try {
+            var state = _getState();
+            var character = state ? state.getCharacter(id) : _getCharacterById(id);
+
+            if (!character) {
+                return { success: false, reason: 'Character not found' };
+            }
+
+            if (character.isDeleted === true) {
+                return { success: false, reason: 'Character is already soft-deleted' };
+            }
+
+            // Mark as deleted
+            character.isDeleted = true;
+            character.isDeceased = true;
+            character.deletedAt = Date.now();
+            character.updatedAt = Date.now();
+
+            if (!character.deathYear) {
+                character.deathYear = _getCurrentYear();
+            }
+
+            if (!character.deathCause) {
+                character.deathCause = 'Soft deleted';
+            }
+
+            _saveCharacter(character, state);
+            _invalidateCaches();
+            _logEvent('character', 'Soft Deleted', 'Soft deleted: ' + character.name, [character]);
+
+            _showToast(character.name + ' soft-deleted. Use restore to recover.', 'info');
+
+            return { success: true, data: character };
+
+        } catch (e) {
+            return { success: false, reason: e.message || 'Failed to soft delete character' };
+        } finally {
+            _processing = false;
+        }
+    }
+
+    /**
+     * Restores a soft-deleted character
+     * @param {string} id - Character ID
+     * @returns {Object} Result object
+     */
+    function restoreSoftDeletedCharacter(id) {
+        if (_processing) {
+            return { success: false, reason: 'Already processing' };
+        }
+        _processing = true;
+
+        try {
+            var state = _getState();
+            var character = state ? state.getCharacter(id) : _getCharacterById(id);
+
+            if (!character) {
+                return { success: false, reason: 'Character not found' };
+            }
+
+            if (character.isDeleted !== true) {
+                return { success: false, reason: 'Character is not soft-deleted' };
+            }
+
+            // Restore
+            character.isDeleted = false;
+            character.isDeceased = false;
+            character.deletedAt = null;
+            character.deathYear = null;
+            character.deathCause = '';
+            character.updatedAt = Date.now();
+
+            _saveCharacter(character, state);
+            _invalidateCaches();
+            _logEvent('character', 'Restored', 'Restored soft-deleted: ' + character.name, [character]);
+
+            _showToast(character.name + ' restored successfully.', 'success');
+
+            return { success: true, data: character };
+
+        } catch (e) {
+            return { success: false, reason: e.message || 'Failed to restore character' };
+        } finally {
+            _processing = false;
+        }
+    }
+
+    /**
+     * Gets all soft-deleted characters
+     * @returns {Array} Array of soft-deleted characters
+     */
+    function getSoftDeletedCharacters() {
+        var allChars = _getCharacters();
+        var result = [];
+        for (var i = 0; i < allChars.length; i++) {
+            if (allChars[i].isDeleted === true) {
+                result.push(allChars[i]);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Permanently removes all soft-deleted characters
+     * @returns {Object} Result with count
+     */
+    function purgeSoftDeletedCharacters() {
+        if (_processing) {
+            return { success: false, reason: 'Already processing', count: 0 };
+        }
+        _processing = true;
+
+        try {
+            var toDelete = getSoftDeletedCharacters();
+            var deletedCount = 0;
+
+            for (var i = 0; i < toDelete.length; i++) {
+                var result = deleteCharacter(toDelete[i].id);
+                if (result && result.success) {
+                    deletedCount++;
+                }
+            }
+
+            if (deletedCount > 0) {
+                _showToast('Purged ' + deletedCount + ' soft-deleted characters', 'info');
+            } else {
+                _showToast('No soft-deleted characters to purge', 'info');
+            }
+
+            return { success: true, count: deletedCount };
+
+        } catch (e) {
+            return { success: false, reason: e.message || 'Failed to purge', count: 0 };
+        } finally {
+            _processing = false;
+        }
+    }
+
+    // =========================================================================
+    // 7. BULK OPERATIONS - NEW
+    // =========================================================================
+
+    /**
+     * Bulk creates multiple characters
+     * @param {Array} dataArray - Array of character data objects
+     * @returns {Object} Result with created characters
+     */
+    function bulkCreateCharacters(dataArray) {
+        if (_processing) {
+            return { success: false, reason: 'Already processing', count: 0 };
+        }
+        _processing = true;
+
+        try {
+            if (!Array.isArray(dataArray)) {
+                return { success: false, reason: 'Expected array', count: 0 };
+            }
+
+            var results = [];
+            var errors = [];
+
+            for (var i = 0; i < dataArray.length; i++) {
+                var result = createCharacter(dataArray[i]);
+                if (result && result.success) {
+                    results.push(result.data);
+                } else {
+                    errors.push({
+                        index: i,
+                        data: dataArray[i],
+                        error: result ? result.reason : 'Unknown error'
+                    });
+                }
+            }
+
+            var message = 'Bulk created ' + results.length + ' characters';
+            if (errors.length > 0) {
+                message += ' (' + errors.length + ' failed)';
+                _showToast(message, 'warning');
+            } else {
+                _showToast(message, 'success');
+            }
+
+            return {
+                success: true,
+                count: results.length,
+                data: results,
+                errors: errors
+            };
+
+        } catch (e) {
+            return { success: false, reason: e.message || 'Failed to bulk create', count: 0 };
+        } finally {
+            _processing = false;
+        }
+    }
+
+    /**
+     * Bulk updates multiple characters
+     * @param {Object} updates - Object mapping character IDs to updates
+     * @returns {Object} Result with updated characters
+     */
+    function bulkUpdateCharacters(updates) {
+        if (_processing) {
+            return { success: false, reason: 'Already processing', count: 0 };
+        }
+        _processing = true;
+
+        try {
+            if (!updates || typeof updates !== 'object') {
+                return { success: false, reason: 'Expected object', count: 0 };
+            }
+
+            var results = [];
+            var errors = [];
+
+            for (var id in updates) {
+                if (updates.hasOwnProperty(id)) {
+                    var result = updateCharacter(id, updates[id]);
+                    if (result && result.success) {
+                        results.push(result.data);
+                    } else {
+                        errors.push({
+                            id: id,
+                            error: result ? result.reason : 'Unknown error'
+                        });
+                    }
+                }
+            }
+
+            var message = 'Bulk updated ' + results.length + ' characters';
+            if (errors.length > 0) {
+                message += ' (' + errors.length + ' failed)';
+                _showToast(message, 'warning');
+            } else {
+                _showToast(message, 'success');
+            }
+
+            return {
+                success: true,
+                count: results.length,
+                data: results,
+                errors: errors
+            };
+
+        } catch (e) {
+            return { success: false, reason: e.message || 'Failed to bulk update', count: 0 };
+        } finally {
+            _processing = false;
+        }
+    }
+
+    /**
+     * Bulk deletes multiple characters
+     * @param {Array} ids - Array of character IDs to delete
+     * @param {boolean} softDelete - Whether to soft delete instead of hard delete
+     * @returns {Object} Result with count
+     */
+    function bulkDeleteCharacters(ids, softDelete) {
+        softDelete = softDelete || false;
+        
+        if (_processing) {
+            return { success: false, reason: 'Already processing', count: 0 };
+        }
+        _processing = true;
+
+        try {
+            if (!Array.isArray(ids)) {
+                return { success: false, reason: 'Expected array', count: 0 };
+            }
+
+            var deletedCount = 0;
+            var errors = [];
+
+            for (var i = 0; i < ids.length; i++) {
+                var result;
+                if (softDelete) {
+                    result = softDeleteCharacter(ids[i]);
+                } else {
+                    result = deleteCharacter(ids[i]);
+                }
+                if (result && result.success) {
+                    deletedCount++;
+                } else {
+                    errors.push({
+                        id: ids[i],
+                        error: result ? result.reason : 'Unknown error'
+                    });
+                }
+            }
+
+            var method = softDelete ? 'soft-deleted' : 'deleted';
+            var message = 'Bulk ' + method + ' ' + deletedCount + ' characters';
+            if (errors.length > 0) {
+                message += ' (' + errors.length + ' failed)';
+                _showToast(message, 'warning');
+            } else {
+                _showToast(message, 'success');
+            }
+
+            return {
+                success: true,
+                count: deletedCount,
+                errors: errors
+            };
+
+        } catch (e) {
+            return { success: false, reason: e.message || 'Failed to bulk delete', count: 0 };
+        } finally {
+            _processing = false;
+        }
+    }
+
+    // =========================================================================
+    // 8. RANDOM CHARACTER GENERATION - NEW
+    // =========================================================================
+
+    /**
+     * Helper: Gets country from location
+     */
+    function _getCountryFromLocation(locationId) {
+        if (!locationId) return null;
+        
+        var place = _getPlaceById(locationId);
+        if (!place) return null;
+        
+        // Check if this place itself is a country (priority 1)
+        var priority = _getLocationTypePriority(place.typeId);
+        if (priority === 1) {
+            return place;
+        }
+        
+        // Walk up the hierarchy to find a country
+        var current = place;
+        var visited = new Set();
+        
+        while (current && !visited.has(current.id)) {
+            visited.add(current.id);
+            var currentPriority = _getLocationTypePriority(current.typeId);
+            if (currentPriority === 1) {
+                return current;
+            }
+            if (!current.parentId) break;
+            current = _getPlaceById(current.parentId);
+        }
+        
+        return null;
+    }
+
+    /**
+     * Helper: Gets a random location with variable key
+     */
+    function _getRandomLocationWithVariableKey() {
+        var places = _getPlaces();
+        
+        // Filter places that have a variable key
+        var placesWithKey = places.filter(function(p) { 
+            return p.variableKey && p.variableKey !== ''; 
+        });
+        
+        if (placesWithKey.length === 0) {
+            var placesWithName = places.filter(function(p) { 
+                return p.displayName && p.displayName !== ''; 
+            });
+            if (placesWithName.length === 0) {
+                return null;
+            }
+            return placesWithName[Math.floor(Math.random() * placesWithName.length)];
+        }
+        
+        // Prioritize places that have name lists (cultural data)
+        var nameLists = _getNameLists();
+        var placesWithNameLists = placesWithKey.filter(function(p) {
+            return nameLists[p.id] && (nameLists[p.id].male || nameLists[p.id].female);
+        });
+        
+        if (placesWithNameLists.length > 0) {
+            return placesWithNameLists[Math.floor(Math.random() * placesWithNameLists.length)];
+        }
+        
+        return placesWithKey[Math.floor(Math.random() * placesWithKey.length)];
+    }
+
+    /**
+     * Helper: Gets a random country with name data
+     */
+    function _getRandomCountryWithNameData() {
+        var nameLists = _getNameLists();
+        var countryIds = Object.keys(nameLists).filter(function(id) {
+            var list = nameLists[id];
+            return list && (list.male || list.female);
+        });
+        
+        if (countryIds.length > 0) {
+            var countryId = countryIds[Math.floor(Math.random() * countryIds.length)];
+            return _getPlaceById(countryId);
+        }
+        
+        var places = _getPlaces();
+        var countries = places.filter(function(p) {
+            var priority = _getLocationTypePriority(p.typeId);
+            return priority === 1;
+        });
+        
+        if (countries.length > 0) {
+            return countries[Math.floor(Math.random() * countries.length)];
+        }
+        
+        return null;
+    }
+
+    /**
+     * Generates a completely random character with cultural name support
+     * FULLY AUTOMATIC - NO USER INPUT REQUIRED
+     * 
+     * SURNAME PRIORITY (NO FALLBACK):
+     * 1. Country rules (Type 1 location) - applied via surname rules
+     * 2. Cultural surname from country (if exists)
+     * 3. NO SURNAME (empty string) - if no cultural surname exists
+     * 
+     * @param {Object} options - Optional configuration
+     * @param {string} options.gender - 'male', 'female', or null for random
+     * @param {number} options.age - Specific age, or null for random
+     * @param {string} options.countryId - Specific country, or null for random
+     * @param {boolean} options.assignProfession - Whether to assign a profession (default true)
+     * @returns {Object} The created character
+     */
+    function createRandomCharacter(options) {
+        if (_processing) {
+            return { success: false, reason: 'Already processing' };
+        }
+        _processing = true;
+
+        try {
+            options = options || {};
+            var currentYear = _getCurrentYear();
+            
+            // =========================================================================
+            // STEP 1: Select a random location with variable key for birthplace
+            // =========================================================================
+            
+            var birthplace = null;
+            var birthplaceId = null;
+            var birthplaceName = 'Unknown';
+            
+            if (options.countryId) {
+                var place = _getPlaceById(options.countryId);
+                if (place) {
+                    birthplace = place;
+                    birthplaceId = place.id;
+                    birthplaceName = place.displayName;
+                }
+            }
+            
+            if (!birthplace) {
+                birthplace = _getRandomLocationWithVariableKey();
+                if (birthplace) {
+                    birthplaceId = birthplace.id;
+                    birthplaceName = birthplace.displayName;
+                }
+            }
+            
+            // =========================================================================
+            // STEP 2: Determine the country for cultural names
+            // =========================================================================
+            
+            var country = null;
+            var countryId = null;
+            
+            if (birthplaceId) {
+                country = _getCountryFromLocation(birthplaceId);
+                if (country) countryId = country.id;
+            }
+            
+            // If no country found from birthplace, try to find any country with name data
+            if (!countryId) {
+                var randomCountry = _getRandomCountryWithNameData();
+                if (randomCountry) {
+                    country = randomCountry;
+                    countryId = randomCountry.id;
+                }
+            }
+            
+            // =========================================================================
+            // STEP 3: Generate gender
+            // =========================================================================
+            
+            var gender = options.gender || (Math.random() < 0.5 ? 'male' : 'female');
+            
+            // =========================================================================
+            // STEP 4: Generate age with weighted distribution
+            // =========================================================================
+            
+            var age;
+            if (options.age !== null && options.age !== undefined) {
+                age = options.age;
+            } else {
+                var ageRoll = Math.random();
+                if (ageRoll < 0.10) age = Math.floor(Math.random() * 6);           // 0-5: 10%
+                else if (ageRoll < 0.25) age = 6 + Math.floor(Math.random() * 12);  // 6-17: 15%
+                else if (ageRoll < 0.55) age = 18 + Math.floor(Math.random() * 18); // 18-35: 30%
+                else if (ageRoll < 0.80) age = 36 + Math.floor(Math.random() * 20); // 36-55: 25%
+                else if (ageRoll < 0.95) age = 56 + Math.floor(Math.random() * 20); // 56-75: 15%
+                else age = 76 + Math.floor(Math.random() * 15);                     // 76-90: 5%
+            }
+            
+            var birthYear = currentYear - age;
+            
+            // =========================================================================
+            // STEP 5: Generate name from culture
+            // =========================================================================
+            
+            var name = _getRandomNameFromCountry(countryId, gender);
+            if (!name) {
+                var fallbackNames = gender === 'male' ? 
+                    ['William', 'John', 'James', 'Robert', 'Thomas', 'Richard', 'Henry', 'Edward', 'George', 'Charles'] :
+                    ['Mary', 'Elizabeth', 'Margaret', 'Anne', 'Catherine', 'Jane', 'Alice', 'Eleanor', 'Lucy', 'Rose'];
+                name = fallbackNames[Math.floor(Math.random() * fallbackNames.length)];
+            }
+            
+            // =========================================================================
+            // STEP 6: Generate surname from culture - NO FALLBACK
+            // =========================================================================
+            
+            var surname = '';
+            
+            // Try to generate surname from country rules first
+            if (countryId) {
+                var generatedSurname = _generateSurnameFromRules(null, null, countryId, gender);
+                if (generatedSurname) {
+                    surname = generatedSurname;
+                }
+            }
+            
+            // If no rules generated a surname, try cultural surname
+            if (!surname && countryId) {
+                var culturalSurname = _getRandomSurnameFromCountry(countryId);
+                if (culturalSurname && culturalSurname !== '' && 
+                    culturalSurname !== 'Unknown' && culturalSurname !== 'Unnamed') {
+                    surname = culturalSurname;
+                }
+            }
+            
+            // If still no surname, leave EMPTY (no fallback)
+            
+            // =========================================================================
+            // STEP 7: Build the character object
+            // =========================================================================
+            
+            var character = {
+                id: _generateId('char'),
+                name: name,
+                surname: surname,
+                surnameSource: surname ? (countryId ? 'cultural' : 'fallback') : 'none',
+                surnameRules: null,
+                gender: gender,
+                attraction: 'both',
+                birthYear: birthYear,
+                isDeceased: false,
+                deathYear: null,
+                deathCause: null,
+                birthplaceId: birthplaceId,
+                currentLocationId: birthplaceId,
+                moves: [],
+                notes: 'Randomly generated character',
+                isLegitimate: true,
+                surnameHistory: {
+                    birthSurname: surname,
+                    entries: [],
+                    lastUpdated: birthYear
+                },
+                relationships: [],
+                friends: [],
+                household: null,
+                rankAssignments: [],
+                activeRankId: null,
+                activeRankNumber: null,
+                professions: [],
+                adoptedParents: [],
+                apprentices: [],
+                masterId: null,
+                isMaster: false,
+                masterProfessionId: null,
+                apprenticeshipDetails: {},
+                friendshipDetails: {},
+                epithet: '',
+                appearance: {
+                    hairColor: _pickRandom(['Blonde', 'Brown', 'Black', 'Red', 'Gray']),
+                    eyeColor: _pickRandom(['Blue', 'Green', 'Brown', 'Gray', 'Hazel']),
+                    height: _pickRandom(['Short', 'Average', 'Tall'])
+                },
+                children: [],
+                householdHistory: [],
+                isDeleted: false,
+                deletedAt: null,
+                createdAt: Date.now(),
+                updatedAt: Date.now()
+            };
+            
+            // =========================================================================
+            // STEP 8: Assign a random profession (if roles exist and enabled)
+            // =========================================================================
+            
+            if (options.assignProfession !== false && age >= 14) {
+                var allRoles = [];
+                if (typeof window.getRoles === 'function') {
+                    allRoles = window.getRoles();
+                } else if (window.masterData && window.masterData.data && window.masterData.data.roles) {
+                    allRoles = window.masterData.data.roles;
+                }
+                
+                if (allRoles && allRoles.length > 0) {
+                    var eligibleRoles = allRoles.filter(function(role) {
+                        if (!role.genderRestriction || role.genderRestriction === 'both') return true;
+                        return role.genderRestriction === gender;
+                    });
+                    
+                    if (eligibleRoles.length > 0) {
+                        var randomRole = eligibleRoles[Math.floor(Math.random() * eligibleRoles.length)];
+                        var skillLevel = 20 + Math.floor(Math.random() * 60);
+                        if (skillLevel > 90) skillLevel = 90;
+                        
+                        character.professions = [{
+                            id: randomRole.id,
+                            name: randomRole.name,
+                            skillLevel: skillLevel,
+                            primary: true
+                        }];
+                    }
+                }
+            }
+            
+            // =========================================================================
+            // STEP 9: Add to data and save
+            // =========================================================================
+            
+            var state = _getState();
+            if (state) {
+                var characters = state.getAllCharacters();
+                characters.push(character);
+                state._setCharacters(characters);
+                state._emitCharacterChange('create', character);
+            } else {
+                var allChars = _getCharacters();
+                allChars.push(character);
+                if (typeof window.saveMasterData === 'function') {
+                    window.saveMasterData();
+                }
+            }
+            
+            _invalidateCaches();
+            _logEvent('character', 'Random Character Created', 'Randomly generated: ' + character.name, [character]);
+            
+            return { success: true, data: character };
+
+        } catch (e) {
+            return { success: false, reason: e.message || 'Failed to generate random character' };
+        } finally {
+            _processing = false;
+        }
+    }
+
+    /**
+     * Helper: Generate surname from rules
+     */
+    function _generateSurnameFromRules(mother, father, countryId, childGender) {
+        // Try to use the name system if available
+        if (typeof window.NameQueries !== 'undefined' && 
+            typeof window.NameQueries.generateSurnameFromRules === 'function') {
+            var rules = window.NameQueries.getCountrySurnameRules(countryId);
+            if (rules && rules.type) {
+                return window.NameQueries.generateSurnameFromRules(mother, father, childGender, rules);
+            }
+        }
+        return null;
+    }
+
+    // =========================================================================
+    // 9. HELPER - SAVE CHARACTER
+    // =========================================================================
+
+    function _saveCharacter(character, state) {
+        if (state) {
+            var characters = state.getAllCharacters();
+            var index = -1;
+            for (var j = 0; j < characters.length; j++) {
+                if (characters[j].id === character.id) {
+                    index = j;
+                    break;
+                }
+            }
+            if (index !== -1) {
+                characters[index] = character;
+                state._setCharacters(characters);
+                state._emitCharacterChange('update', character);
+            }
+        } else {
+            if (typeof window.saveMasterData === 'function') {
+                window.saveMasterData();
+            }
+        }
+    }
+
+    // =========================================================================
+    // 10. PROFESSION MANAGEMENT - FULL
     // =========================================================================
 
     function addProfession(characterId, roleId, options) {
@@ -529,6 +1320,10 @@
 
             if (!character) {
                 return { success: false, reason: 'Character not found' };
+            }
+
+            if (character.isDeleted === true) {
+                return { success: false, reason: 'Character is soft-deleted' };
             }
 
             var role = _safeGetRoleById(roleId);
@@ -598,6 +1393,10 @@
                 return { success: false, reason: 'Character or professions not found' };
             }
 
+            if (character.isDeleted === true) {
+                return { success: false, reason: 'Character is soft-deleted' };
+            }
+
             var index = -1;
             var removedProfession = null;
             for (var i = 0; i < character.professions.length; i++) {
@@ -643,6 +1442,10 @@
 
             if (!character || !character.professions) {
                 return { success: false, reason: 'Character or professions not found' };
+            }
+
+            if (character.isDeleted === true) {
+                return { success: false, reason: 'Character is soft-deleted' };
             }
 
             var profession = null;
@@ -692,6 +1495,10 @@
                 return { success: false, reason: 'Character or professions not found' };
             }
 
+            if (character.isDeleted === true) {
+                return { success: false, reason: 'Character is soft-deleted' };
+            }
+
             var found = false;
             for (var i = 0; i < character.professions.length; i++) {
                 if (character.professions[i].id === roleId) {
@@ -731,6 +1538,10 @@
 
             if (!character || !character.professions) {
                 return { success: false, reason: 'Character or professions not found' };
+            }
+
+            if (character.isDeleted === true) {
+                return { success: false, reason: 'Character is soft-deleted' };
             }
 
             var profession = null;
@@ -780,6 +1591,10 @@
                 return { success: false, reason: 'Character or professions not found' };
             }
 
+            if (character.isDeleted === true) {
+                return { success: false, reason: 'Character is soft-deleted' };
+            }
+
             var profession = null;
             for (var i = 0; i < character.professions.length; i++) {
                 if (character.professions[i].id === roleId) {
@@ -811,7 +1626,7 @@
     }
 
     // =========================================================================
-    // 7. SURNAME HISTORY - FULL
+    // 11. SURNAME HISTORY - FULL
     // =========================================================================
 
     function getCharacterSurnameHistory(id) {
@@ -853,6 +1668,10 @@
 
             if (!character) {
                 return { success: false, reason: 'Character not found' };
+            }
+
+            if (character.isDeleted === true) {
+                return { success: false, reason: 'Character is soft-deleted' };
             }
 
             var history = getCharacterSurnameHistory(id);
@@ -899,6 +1718,10 @@
                 return { success: false, reason: 'Character not found' };
             }
 
+            if (character.isDeleted === true) {
+                return { success: false, reason: 'Character is soft-deleted' };
+            }
+
             var history = getCharacterSurnameHistory(id);
             if (history.entries.length === 0) {
                 return { success: false, reason: 'No surname changes to revert' };
@@ -924,7 +1747,7 @@
     }
 
     // =========================================================================
-    // 8. UPDATE CHARACTER NAME
+    // 12. UPDATE CHARACTER NAME
     // =========================================================================
 
     function updateCharacterName(id, name, surname) {
@@ -933,6 +1756,11 @@
         var character = state ? state.getCharacter(id) : _getCharacterById(id);
 
         if (!character) return null;
+
+        if (character.isDeleted === true) {
+            _showToast('Cannot update soft-deleted character', 'error');
+            return null;
+        }
 
         character.name = name;
         if (surname !== null) character.surname = surname;
@@ -951,6 +1779,11 @@
 
         if (!character) return null;
 
+        if (character.isDeleted === true) {
+            _showToast('Cannot update soft-deleted character', 'error');
+            return null;
+        }
+
         character.birthYear = birthYear;
         if (birthplaceId !== null) character.birthplaceId = birthplaceId;
         character.updatedAt = Date.now();
@@ -968,6 +1801,11 @@
         var character = state ? state.getCharacter(id) : _getCharacterById(id);
 
         if (!character) return null;
+
+        if (character.isDeleted === true) {
+            _showToast('Cannot update soft-deleted character', 'error');
+            return null;
+        }
 
         character.isDeceased = isDeceased;
         character.updatedAt = Date.now();
@@ -992,6 +1830,11 @@
 
         if (!character) return null;
 
+        if (character.isDeleted === true) {
+            _showToast('Cannot update soft-deleted character', 'error');
+            return null;
+        }
+
         character.epithet = epithet;
         character.updatedAt = Date.now();
 
@@ -1002,38 +1845,15 @@
     }
 
     // =========================================================================
-    // 9. HELPER - SAVE CHARACTER
-    // =========================================================================
-
-    function _saveCharacter(character, state) {
-        if (state) {
-            var characters = state.getAllCharacters();
-            var index = -1;
-            for (var j = 0; j < characters.length; j++) {
-                if (characters[j].id === character.id) {
-                    index = j;
-                    break;
-                }
-            }
-            if (index !== -1) {
-                characters[index] = character;
-                state._setCharacters(characters);
-                state._emitCharacterChange('update', character);
-            }
-        } else {
-            if (typeof window.saveMasterData === 'function') {
-                window.saveMasterData();
-            }
-        }
-    }
-
-    // =========================================================================
-    // 10. EXPORTS
+    // 13. EXPORTS
     // =========================================================================
 
     window.CharacterCommands = {
         // Creation
         createCharacter: createCharacter,
+
+        // Random Character Generation - NEW
+        createRandomCharacter: createRandomCharacter,
 
         // Update
         updateCharacter: updateCharacter,
@@ -1044,6 +1864,17 @@
 
         // Delete
         deleteCharacter: deleteCharacter,
+
+        // Soft Delete - NEW
+        softDeleteCharacter: softDeleteCharacter,
+        restoreSoftDeletedCharacter: restoreSoftDeletedCharacter,
+        getSoftDeletedCharacters: getSoftDeletedCharacters,
+        purgeSoftDeletedCharacters: purgeSoftDeletedCharacters,
+
+        // Bulk Operations - NEW
+        bulkCreateCharacters: bulkCreateCharacters,
+        bulkUpdateCharacters: bulkUpdateCharacters,
+        bulkDeleteCharacters: bulkDeleteCharacters,
 
         // Profession Management
         addProfession: addProfession,

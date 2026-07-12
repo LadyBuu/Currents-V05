@@ -8,27 +8,12 @@
  * 
  * DEPENDS ON:
  *   - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
- *   - modals-char-select.js (openCharacterSelector)
- *   - modals-household-selector.js (openHouseholdSelector)
  *   - household-state.js (HouseholdState)
- *   - household-commands.js (HouseholdCommands)
- *   - household-queries.js (HouseholdQueries)
  *   - household-economy.js (HouseholdEconomy)
- * 
- * EXPORTS:
- *   - openHouseholdWealthModal()
- *   - openHouseholdResourcesModal()
- *   - openHouseholdIncomeModal()
- *   - openHouseholdExpensesModal()
- *   - openHouseholdEconomicEventsModal()
- *   - openHouseholdTradeModal()
- *   - openHouseholdAnnualProcessingModal()
- *   - openHouseholdEconomicSummaryModal()
  * 
  * ICON POLICY:
  *   - All icons from icons.js via _getIcon()
  *   - NO emojis
- *   - NO icons in confirm/cancel buttons (plain text only)
  * 
  * =============================================================================
  */
@@ -109,65 +94,18 @@
         return '';
     }
 
-    function _openCharacterSelector(options) {
-        if (typeof window.openCharacterSelector === 'function') {
-            return window.openCharacterSelector(options);
-        }
-        if (typeof window.openUnifiedCharacterSelector === 'function') {
-            return window.openUnifiedCharacterSelector(options);
-        }
-        if (typeof window._openCharacterSelector === 'function') {
-            return window._openCharacterSelector(options);
-        }
-        _showToast('Character selector not available', 'error');
-        return null;
-    }
-
-    function _openHouseholdSelector(options) {
-        if (typeof window.openHouseholdSelector === 'function') {
-            return window.openHouseholdSelector(options);
-        }
-        if (typeof window._openHouseholdSelector === 'function') {
-            return window._openHouseholdSelector(options);
-        }
-        _showToast('Household selector not available', 'error');
-        return null;
-    }
-
-    // =========================================================================
-    // 2. STATE AND ECONOMY REFERENCE
-    // =========================================================================
-
-    var _state = window.HouseholdState;
-    var _commands = window.HouseholdCommands;
-    var _queries = window.HouseholdQueries;
-    var _economy = window.HouseholdEconomy;
-
-    // =========================================================================
-    // 3. ICON HELPERS
-    // =========================================================================
-
-    function _getIconSafe(name) {
-        var icon = _getIcon(name);
-        return icon || '';
-    }
-
-    function _iconSpan(icon, title) {
-        if (!icon) return '';
-        var titleAttr = title ? ' title="' + _escapeHtml(title) + '"' : '';
-        return '<span style="display:inline-flex;align-items:center;vertical-align:middle;' + (title ? 'cursor:help;' : '') + '"' + titleAttr + '>' + icon + '</span>';
-    }
-
-    // =========================================================================
-    // 4. BUSINESS LOGIC WRAPPERS
-    // =========================================================================
-
     function _getHousehold(householdId) {
-        return _state ? _state.getHousehold(householdId) : null;
+        if (typeof window.HouseholdState !== 'undefined' && window.HouseholdState.getHousehold) {
+            return window.HouseholdState.getHousehold(householdId);
+        }
+        return null;
     }
 
     function _getAllHouseholds() {
-        return _state ? _state.getAllHouseholds() : [];
+        if (typeof window.HouseholdState !== 'undefined' && window.HouseholdState.getAllHouseholds) {
+            return window.HouseholdState.getAllHouseholds();
+        }
+        return [];
     }
 
     function _getCharacterById(characterId) {
@@ -184,61 +122,106 @@
         return null;
     }
 
-    // Economy wrappers
+    // Economy wrappers - use window.HouseholdEconomy if available, else fallback
     function _getHouseholdWealth(householdId) {
-        return _economy ? _economy.getHouseholdWealth(householdId) : 0;
+        if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.getHouseholdWealth) {
+            return window.HouseholdEconomy.getHouseholdWealth(householdId);
+        }
+        var household = _getHousehold(householdId);
+        return household ? household.wealth || 0 : 0;
     }
 
     function _getHouseholdDebt(householdId) {
-        return _economy ? _economy.getHouseholdDebt(householdId) : 0;
+        if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.getHouseholdDebt) {
+            return window.HouseholdEconomy.getHouseholdDebt(householdId);
+        }
+        var household = _getHousehold(householdId);
+        return household ? (household.economy ? household.economy.debt || 0 : 0) : 0;
     }
 
     function _getHouseholdResources(householdId) {
-        return _economy ? _economy.getHouseholdResources(householdId) : { food: 0, livestock: 0, goods: 0 };
+        if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.getHouseholdResources) {
+            return window.HouseholdEconomy.getHouseholdResources(householdId);
+        }
+        var household = _getHousehold(householdId);
+        return household ? (household.economy ? household.economy.resources || { food: 0, livestock: 0, goods: 0 } : { food: 0, livestock: 0, goods: 0 }) : { food: 0, livestock: 0, goods: 0 };
     }
 
     function _getHouseholdEconomicTier(householdId) {
-        return _economy ? _economy.getHouseholdEconomicTier(householdId) : { id: 'moderate', name: 'Moderate', icon: '⌂' };
+        if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.getHouseholdEconomicTier) {
+            return window.HouseholdEconomy.getHouseholdEconomicTier(householdId);
+        }
+        return { id: 'moderate', name: 'Moderate', icon: '⌂' };
     }
 
     function _updateHouseholdWealth(householdId, delta, reason) {
-        return _economy ? _economy.updateHouseholdWealth(householdId, delta, reason) : 0;
+        if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.updateHouseholdWealth) {
+            return window.HouseholdEconomy.updateHouseholdWealth(householdId, delta, reason);
+        }
+        return 0;
     }
 
     function _modifyHouseholdDebt(householdId, delta) {
-        return _economy ? _economy.modifyHouseholdDebt(householdId, delta) : 0;
+        if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.modifyHouseholdDebt) {
+            return window.HouseholdEconomy.modifyHouseholdDebt(householdId, delta);
+        }
+        return 0;
     }
 
     function _updateHouseholdResources(householdId, resourceType, delta) {
-        return _economy ? _economy.updateHouseholdResources(householdId, resourceType, delta) : 0;
+        if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.updateHouseholdResources) {
+            return window.HouseholdEconomy.updateHouseholdResources(householdId, resourceType, delta);
+        }
+        return 0;
     }
 
     function _calculateAnnualIncome(householdId) {
-        return _economy ? _economy.calculateAnnualIncome(householdId) : 0;
+        if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.calculateAnnualIncome) {
+            return window.HouseholdEconomy.calculateAnnualIncome(householdId);
+        }
+        return 0;
     }
 
     function _calculateAnnualExpenses(householdId) {
-        return _economy ? _economy.calculateAnnualExpenses(householdId) : 0;
+        if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.calculateAnnualExpenses) {
+            return window.HouseholdEconomy.calculateAnnualExpenses(householdId);
+        }
+        return 0;
     }
 
     function _computeNetAnnualChange(householdId) {
-        return _economy ? _economy.computeNetAnnualChange(householdId) : 0;
+        if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.computeNetAnnualChange) {
+            return window.HouseholdEconomy.computeNetAnnualChange(householdId);
+        }
+        return 0;
     }
 
     function _processAnnualEconomy(householdId) {
-        return _economy ? _economy.processAnnualEconomy(householdId) : { success: false };
+        if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.processAnnualEconomy) {
+            return window.HouseholdEconomy.processAnnualEconomy(householdId);
+        }
+        return { success: false };
     }
 
     function _triggerEconomicEvent(householdId, eventTypeId) {
-        return _economy ? _economy.triggerEconomicEvent(householdId, eventTypeId) : null;
+        if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.triggerEconomicEvent) {
+            return window.HouseholdEconomy.triggerEconomicEvent(householdId, eventTypeId);
+        }
+        return null;
     }
 
     function _getTradePartners(householdId) {
-        return _economy ? _economy.getTradePartners(householdId) : [];
+        if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.getTradePartners) {
+            return window.HouseholdEconomy.getTradePartners(householdId);
+        }
+        return [];
     }
 
     function _executeTrade(sourceId, targetId, trade) {
-        return _economy ? _economy.executeTrade(sourceId, targetId, trade) : false;
+        if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.executeTrade) {
+            return window.HouseholdEconomy.executeTrade(sourceId, targetId, trade);
+        }
+        return false;
     }
 
     function _getEconomicEventTypes() {
@@ -255,22 +238,11 @@
         return {};
     }
 
-    function _getIncomeSources() {
-        if (window.INCOME_SOURCES) {
-            return window.INCOME_SOURCES;
-        }
-        return {};
-    }
-
-    function _getExpenseCategories() {
-        if (window.EXPENSE_CATEGORIES) {
-            return window.EXPENSE_CATEGORIES;
-        }
-        return {};
-    }
-
     function _isUrbanLocation(locationId) {
-        return _economy ? _economy.isUrbanLocation(locationId) : false;
+        if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.isUrbanLocation) {
+            return window.HouseholdEconomy.isUrbanLocation(locationId);
+        }
+        return false;
     }
 
     // =========================================================================
@@ -606,15 +578,15 @@
             }
 
             var annualIncome = _calculateAnnualIncome(householdId);
-            var incomeSources = _getIncomeSources();
+            var incomeSources = window.INCOME_SOURCES || {};
 
             var breakdown = [];
             var total = 0;
+            var memberCount = household.members ? household.members.length : 1;
 
             for (var key in incomeSources) {
                 var source = incomeSources[key];
                 var amount = source.baseIncome || 0;
-                var memberCount = household.members ? household.members.length : 0;
                 if (source.id === 'taxes' || source.id === 'tribute') {
                     amount = Math.floor(amount * (1 + (memberCount - 1) * 0.05));
                 }
@@ -700,7 +672,7 @@
             }
 
             var annualExpenses = _calculateAnnualExpenses(householdId);
-            var expenseCategories = _getExpenseCategories();
+            var expenseCategories = window.EXPENSE_CATEGORIES || {};
             var wealth = _getHouseholdWealth(householdId);
 
             var breakdown = [];

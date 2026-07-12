@@ -1,24 +1,17 @@
 /**
  * =============================================================================
- * STAFF ASSIGNMENT MODALS (modals-assign-staff.js)
+ * HOUSEHOLD ASSIGNMENT MODALS (modals-household-assignments.js)
  * =============================================================================
  * 
- * PURPOSE: UI modals for staff management (assigning to departments,
- *          removing assignments, viewing staff by department).
+ * PURPOSE: UI modals for household assignment management (staff position assignments).
  * 
  * DEPENDS ON:
  *   - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
- *   - modals-char-select.js (openCharacterSelector)
  *   - household-state.js (HouseholdState)
  *   - household-commands.js (HouseholdCommands)
  *   - household-queries.js (HouseholdQueries)
- * 
- * EXPORTS:
- *   - openAssignStaffModal()
- *   - openRemoveStaffAssignmentModal()
- *   - openViewStaffByDepartmentModal()
- *   - openStaffDetailsModal()
- *   - openViewAllStaffModal()
+ *   - modals-char-select.js (openCharacterSelector)
+ *   - role-state.js (RoleState) - for role queries
  * 
  * ICON POLICY:
  *   - All icons from icons.js via _getIcon()
@@ -35,7 +28,7 @@
     // 0. RECURSION GUARD
     // =========================================================================
 
-    var _processingStaffModal = false;
+    var _processingModal = false;
 
     // =========================================================================
     // 1. DEPENDENCY WRAPPERS
@@ -139,6 +132,7 @@
     var _state = window.HouseholdState;
     var _commands = window.HouseholdCommands;
     var _queries = window.HouseholdQueries;
+    var _roleState = window.RoleState;
 
     // =========================================================================
     // 3. ICON HELPERS
@@ -163,6 +157,22 @@
         return _state ? _state.getHousehold(householdId) : null;
     }
 
+    function _getHouseholdPosition(positionId) {
+        return _state ? _state.getHouseholdPosition(positionId) : null;
+    }
+
+    function _getHouseholdPositions(householdId) {
+        return _state ? _state.getHouseholdPositions({ householdId: householdId }) : [];
+    }
+
+    function _getAssignmentsForPosition(positionId, activeOnly) {
+        return _state ? _state.getAssignmentsForPosition(positionId, activeOnly) : [];
+    }
+
+    function _getAssignmentById(assignmentId) {
+        return _state ? _state.getHouseholdAssignment(assignmentId) : null;
+    }
+
     function _getCharacterById(characterId) {
         if (typeof window.getCharacterById === 'function') {
             return window.getCharacterById(characterId);
@@ -177,168 +187,287 @@
         return [];
     }
 
-    function _getDepartments(householdId) {
-        var household = _getHousehold(householdId);
-        return household ? (household.departments || []) : [];
-    }
-
-    function _getDepartment(householdId, departmentId) {
-        var departments = _getDepartments(householdId);
-        for (var i = 0; i < departments.length; i++) {
-            if (departments[i].id === departmentId) {
-                return departments[i];
-            }
+    function _getRoleById(id) {
+        if (typeof window.getRoleById === 'function') {
+            return window.getRoleById(id);
         }
         return null;
     }
 
-    function _getHouseholdMembers(householdId) {
-        var household = _getHousehold(householdId);
-        return household ? (household.members || []) : [];
+    function _getAllRoles() {
+        if (typeof window.RoleState !== 'undefined' && window.RoleState.getAllRoles) {
+            return window.RoleState.getAllRoles();
+        }
+        if (typeof window.getRoles === 'function') {
+            return window.getRoles();
+        }
+        return [];
     }
 
     function _getHouseholdStaff(householdId) {
-        var members = _getHouseholdMembers(householdId);
-        var staff = [];
-        var characters = _getCharacters();
-        var charMap = {};
-        for (var i = 0; i < characters.length; i++) {
-            charMap[characters[i].id] = characters[i];
-        }
-
-        for (var i = 0; i < members.length; i++) {
-            if (members[i].type === 'staff') {
-                var char = charMap[members[i].characterId];
-                if (char) {
-                    staff.push({
-                        character: char,
-                        member: members[i]
-                    });
-                }
-            }
-        }
-        return staff;
+        return _queries ? _queries.getHouseholdStaff(householdId, { activeOnly: true }) : [];
     }
 
-    function _getUnassignedStaff(householdId) {
-        var staff = _getHouseholdStaff(householdId);
-        var unassigned = [];
-        for (var i = 0; i < staff.length; i++) {
-            if (!staff[i].member.departmentId) {
-                unassigned.push(staff[i]);
-            }
-        }
-        return unassigned;
-    }
-
-    function _getStaffByDepartment(householdId, departmentId) {
-        var staff = _getHouseholdStaff(householdId);
-        var result = [];
-        for (var i = 0; i < staff.length; i++) {
-            if (staff[i].member.departmentId === departmentId) {
-                result.push(staff[i]);
-            }
-        }
-        return result;
-    }
-
-    function _calculateAge(birthYear, isDeceased, deathYear) {
-        if (typeof window.calculateAge === 'function') {
-            return window.calculateAge(birthYear, isDeceased, deathYear);
-        }
-        var currentYear = _getCurrentYear();
-        if (!birthYear) return 0;
-        if (isDeceased && deathYear) return Math.max(0, deathYear - birthYear);
-        return Math.max(0, currentYear - birthYear);
+    function _getUnassignedHouseholdStaff(householdId) {
+        return _queries ? _queries.getUnassignedHouseholdStaff(householdId) : [];
     }
 
     // =========================================================================
-    // 5. ASSIGN STAFF MODAL
+    // 5. ASSIGN STAFF TO HOUSEHOLD POSITION MODAL
     // =========================================================================
 
-    function openAssignStaffModal(householdId, departmentId, onSuccess) {
-        if (_processingStaffModal) {
+    function openAssignStaffToHouseholdPositionModal(householdId, positionId, onSuccess) {
+        if (_processingModal) {
             _showToast('Already processing a modal action', 'warning');
             return;
         }
-        _processingStaffModal = true;
+        _processingModal = true;
 
         try {
             var household = _getHousehold(householdId);
             if (!household) {
                 _showToast('Household not found', 'error');
-                _processingStaffModal = false;
+                _processingModal = false;
                 return;
             }
 
-            var department = _getDepartment(householdId, departmentId);
-            if (!department) {
-                _showToast('Department not found', 'error');
-                _processingStaffModal = false;
+            var position = _getHouseholdPosition(positionId);
+            if (!position) {
+                _showToast('Position not found', 'error');
+                _processingModal = false;
                 return;
             }
 
-            var unassignedStaff = _getUnassignedStaff(householdId);
+            var currentAssignments = _getAssignmentsForPosition(positionId, true);
+            var currentYear = _getCurrentYear();
 
-            if (unassignedStaff.length === 0) {
-                _showToast('No unassigned staff members available', 'info');
-                _processingStaffModal = false;
-                if (onSuccess) {
-                    onSuccess();
+            // Get staff members (both assigned and unassigned)
+            var staff = _getHouseholdStaff(householdId);
+            var assignedIds = {};
+            for (var i = 0; i < currentAssignments.length; i++) {
+                assignedIds[currentAssignments[i].characterId] = true;
+            }
+
+            // Filter: exclude already assigned to this position
+            var availableStaff = staff.filter(function(s) {
+                return !assignedIds[s.characterId];
+            });
+
+            // Also get unassigned staff (not yet assigned to any position)
+            var unassigned = _getUnassignedHouseholdStaff(householdId);
+            for (var i = 0; i < unassigned.length; i++) {
+                if (!assignedIds[unassigned[i].characterId]) {
+                    // Check if already in availableStaff
+                    var exists = availableStaff.some(function(s) { return s.characterId === unassigned[i].characterId; });
+                    if (!exists) {
+                        availableStaff.push(unassigned[i]);
+                    }
                 }
-                return;
             }
 
-            var staffListHtml = unassignedStaff.map(function(s) {
-                var char = s.character;
-                var age = _calculateAge(char.birthYear, char.isDeceased, char.deathYear);
-                var role = s.member.role || 'Staff';
-                var genderSymbol = char.gender === 'male' ? '♂' : (char.gender === 'female' ? '♀' : '?');
+            // Build character list
+            var charsHtml = '';
+            var selectedCharacterId = null;
 
-                return '<div class="staff-select-item" data-char-id="' + char.id + '" style="' +
-                    'padding: 10px 12px;' +
-                    'margin: 4px 0;' +
-                    'background: var(--bg);' +
-                    'border: 1px solid var(--border2);' +
-                    'border-radius: 8px;' +
-                    'cursor: pointer;' +
-                    'transition: all 0.2s;' +
-                    '">' +
-                    '<div style="display: flex; justify-content: space-between; align-items: center;">' +
-                    '<div>' +
-                    '<strong>' + _escapeHtml(char.name) + ' ' + _escapeHtml(char.surname || '') + '</strong>' +
-                    ' <span style="font-size: 0.5rem; color: var(--dim);">' + genderSymbol + ' ' + age + 'y</span>' +
-                    '<div style="font-size: 0.55rem; color: var(--dim);">Role: ' + _escapeHtml(role) + '</div>' +
-                    '</div>' +
-                    '<span style="font-size: 0.6rem; color: var(--accent);">Assign</span>' +
-                    '</div></div>';
-            }).join('');
+            if (availableStaff.length === 0) {
+                charsHtml = '<div style="color: var(--dim); text-align: center; padding: 20px; font-size: 0.6rem;">No available staff members</div>';
+            } else {
+                charsHtml = '<div style="max-height: 250px; overflow-y: auto;">';
+                for (var i = 0; i < availableStaff.length; i++) {
+                    var s = availableStaff[i];
+                    var char = s.character;
+                    var age = _getCurrentYear() - (char.birthYear || 0);
+                    var genderSymbol = char.gender === 'male' ? '♂' : (char.gender === 'female' ? '♀' : '⚥');
+
+                    var hasRole = false;
+                    var skillLevel = 0;
+                    if (position.requiredRoleId && char.professions) {
+                        for (var j = 0; j < char.professions.length; j++) {
+                            if (char.professions[j].id === position.requiredRoleId) {
+                                hasRole = true;
+                                skillLevel = char.professions[j].skillLevel || 0;
+                                break;
+                            }
+                        }
+                    }
+
+                    var roleStatus = '';
+                    if (position.requiredRoleId) {
+                        if (hasRole) {
+                            roleStatus = '<span style="font-size:0.45rem; color:var(--success);">✓ Has role</span>';
+                        } else {
+                            roleStatus = '<span style="font-size:0.45rem; color:var(--warn);">⚠️ Missing role</span>';
+                        }
+                    }
+
+                    var currentPos = s.assignment ? s.assignment.positionName : 'None';
+                    var currentPosDisplay = s.assignment ? ' (Currently: ' + _escapeHtml(currentPos) + ')' : '';
+
+                    charsHtml +=
+                        '<div class="assign-staff-item" data-char-id="' + char.id + '" style="' +
+                        'padding: 8px 10px; ' +
+                        'margin-bottom: 4px; ' +
+                        'background: var(--bg2); ' +
+                        'border: 1px solid var(--border); ' +
+                        'border-left: 3px solid ' + (hasRole || !position.requiredRoleId ? 'var(--success)' : 'var(--warn)') + '; ' +
+                        'border-radius: 4px; ' +
+                        'cursor: pointer; ' +
+                        'transition: all 0.1s; ' +
+                        '">' +
+                        '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 4px;">' +
+                        '<div>' +
+                        '<strong>' + _escapeHtml(char.name) + ' ' + _escapeHtml(char.surname || '') + '</strong>' +
+                        '<span style="font-size: 0.5rem; color: var(--dim); margin-left: 6px;">' + genderSymbol + ' ' + age + 'y</span>' +
+                        (position.requiredRoleId ? '<span style="margin-left: 6px;">' + roleStatus + '</span>' : '') +
+                        (skillLevel > 0 ? '<span style="font-size:0.45rem; color:var(--accent); margin-left:4px;">(Skill: ' + skillLevel + ')</span>' : '') +
+                        '<span style="font-size:0.45rem; color:var(--dim); margin-left:4px;">' + currentPosDisplay + '</span>' +
+                        '</div>' +
+                        '<div style="font-size: 0.45rem; color: var(--dim);">' +
+                        (s.role || 'Staff') +
+                        '</div>' +
+                        '</div>' +
+                        (!hasRole && position.requiredRoleId ? '<div style="font-size:0.4rem; color:var(--warn);">Requires role: ' + _escapeHtml(_getRoleById(position.requiredRoleId)?.name || position.requiredRoleId) + '</div>' : '') +
+                        '</div>';
+                }
+                charsHtml += '</div>';
+            }
+
+            var roleDisplay = position.requiredRoleId ?
+                '<span style="color: var(--accent);">' + _escapeHtml(_getRoleById(position.requiredRoleId)?.name || 'Unknown') + '</span>' :
+                '<span style="color: var(--dim);">None</span>';
+
+            // Build position history
+            var history = _state.getAssignmentsForPosition(positionId, false);
+            var historyHtml = '';
+            if (history && history.length > 0) {
+                var sortedHistory = history.slice().sort(function(a, b) { return (b.startYear || 0) - (a.startYear || 0); });
+                var recentHistory = sortedHistory.slice(0, 5);
+
+                historyHtml =
+                    '<div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);">' +
+                    '<div style="font-size: 0.65rem; color: var(--accent); margin-bottom: 8px;">Recent History</div>' +
+                    '<div style="max-height: 120px; overflow-y: auto; background: var(--bg3); border-radius: 6px; padding: 8px;">';
+
+                for (var i = 0; i < recentHistory.length; i++) {
+                    var h = recentHistory[i];
+                    var isActive = !h.endYear;
+                    var endDisplay = h.endYear || 'Present';
+                    var color = isActive ? 'var(--success)' : 'var(--dim)';
+                    var char = _getCharacterById(h.characterId);
+                    var charName = h.characterName || (char ? char.name : 'Unknown');
+                    var roleName = h.roleIdAtAssignment ? (_getRoleById(h.roleIdAtAssignment)?.name || 'Unknown') : null;
+
+                    historyHtml +=
+                        '<div style="display:flex; justify-content:space-between; padding: 4px 0; border-bottom: 1px solid var(--border-light); font-size: 0.6rem;">' +
+                        '<span>' + _escapeHtml(charName) +
+                        (h.title && h.title !== position.name ? ' (' + _escapeHtml(h.title) + ')' : '') +
+                        (roleName ? ' <span style="color:var(--accent);">(Role: ' + _escapeHtml(roleName) + ')</span>' : '') +
+                        '</span>' +
+                        '<span style="color:' + color + ';">' + h.startYear + ' - ' + endDisplay + '</span>' +
+                        '</div>';
+                }
+
+                historyHtml += '</div></div>';
+            }
 
             var modalContent =
-                '<div style="margin-bottom: 16px; padding: 12px; background: var(--bg2); border-radius: 8px;">' +
-                '<strong>Department:</strong> ' + _escapeHtml(department.name) + '<br>' +
-                '<strong>Household:</strong> ' + _escapeHtml(household.name) +
+                '<div style="margin-bottom: 12px; padding: 8px; background: var(--bg2); border-radius: 6px;">' +
+                '<strong>Household:</strong> ' + _escapeHtml(household.name) + '<br>' +
+                '<strong>Position:</strong> ' + _escapeHtml(position.name) +
+                '<br><strong>Required Role:</strong> ' + roleDisplay +
+                (position.minSkillLevel > 0 ? ' · <strong>Min Skill:</strong> ' + position.minSkillLevel : '') +
                 '</div>' +
                 '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="font-size: 0.7rem; color: var(--accent);">Select Staff Member to Assign</label>' +
-                '<div class="staff-list" style="max-height: 300px; overflow-y: auto;">' +
-                staffListHtml +
-                '</div></div>';
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Select Staff Member</label>' +
+                charsHtml +
+                '</div>' +
+                '<div style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;">' +
+                '<button id="selectOtherStaffBtn" class="btn small" style="padding: 3px 10px; font-size: 0.55rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer;">Select Other Character</button>' +
+                '<label style="display: flex; align-items: center; gap: 6px; font-size: 0.55rem; cursor: pointer;">' +
+                '<input type="checkbox" id="assignAddRoleIfMissing" checked>' +
+                '<span>Add role if missing</span>' +
+                '</label>' +
+                '</div>' +
+                '<div class="form-group" style="margin-bottom: 12px;">' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Custom Title</label>' +
+                '<input type="text" id="assignTitle" value="' + _escapeHtml(position.name) + '" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
+                '</div>' +
+                '<div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">' +
+                '<div class="form-group">' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Start Year</label>' +
+                '<input type="number" id="assignStartYear" value="' + currentYear + '" min="1" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
+                '</div>' +
+                '<div class="form-group">' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">End Year</label>' +
+                '<input type="number" id="assignEndYear" placeholder="Leave empty for ongoing" min="1" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
+                '<small style="font-size:0.5rem; color:var(--dim);">If set, this assignment will be marked as historical</small>' +
+                '</div>' +
+                '</div>' +
+                '<div class="form-group" style="margin-bottom: 12px;">' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes</label>' +
+                '<textarea id="assignNotes" rows="2" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);"></textarea>' +
+                '</div>' +
+                historyHtml +
+                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; margin-top: 12px;">' +
+                'Assignments track who holds this position over time. Setting an end year records it as historical.' +
+                '</div>';
 
             _openModal({
-                title: 'Assign Staff to ' + department.name,
+                title: 'Assign Staff to ' + position.name,
                 content: modalContent,
-                confirmText: 'Close',
-                cancelText: '',
+                confirmText: 'Assign Staff',
+                cancelText: 'Cancel',
                 onConfirm: function() {
-                    _closeTopModal();
-                    _processingStaffModal = false;
+                    var characterId = selectedCharacterId || document.querySelector('.assign-staff-item.selected')?.dataset.charId;
+                    if (!characterId) {
+                        _showToast('Please select a staff member', 'error');
+                        return false;
+                    }
+
+                    var startYear = parseInt(document.getElementById('assignStartYear').value) || currentYear;
+                    var endYear = document.getElementById('assignEndYear').value;
+                    var endYearValue = endYear ? parseInt(endYear) : null;
+                    var notes = document.getElementById('assignNotes').value || '';
+                    var title = document.getElementById('assignTitle').value || position.name;
+                    var addRoleIfMissing = document.getElementById('assignAddRoleIfMissing')?.checked !== false;
+
+                    if (endYearValue && endYearValue <= startYear) {
+                        _showToast('End year must be after start year', 'error');
+                        return false;
+                    }
+
+                    var result = _commands.assignCharacterToHouseholdPosition(positionId, characterId, {
+                        startYear: startYear,
+                        endYear: endYearValue,
+                        title: title,
+                        notes: notes,
+                        addRoleIfMissing: addRoleIfMissing,
+                        defaultSkillLevel: 10
+                    });
+
+                    if (result && result.success) {
+                        var char = _getCharacterById(characterId);
+                        var endMsg = endYearValue ? ' until ' + endYearValue : '';
+                        _showToast((char ? char.name : 'Staff member') + ' assigned as ' + title + endMsg, 'success');
+                        _closeTopModal();
+                        _processingModal = false;
+                        if (onSuccess) {
+                            onSuccess(result.assignment);
+                        }
+                        return true;
+                    } else {
+                        _showToast(result ? result.reason : 'Failed to assign staff', 'error');
+                        return false;
+                    }
+                },
+                onCancel: function() {
+                    _processingModal = false;
                 }
             });
 
-            // Attach click handlers
+            // Click handlers for staff selection
             setTimeout(function() {
-                var items = document.querySelectorAll('.staff-select-item');
+                var items = document.querySelectorAll('.assign-staff-item');
                 items.forEach(function(item) {
                     var newItem = item.cloneNode(true);
                     if (item.parentNode) {
@@ -346,189 +475,619 @@
                     }
 
                     newItem.onclick = function() {
-                        var charId = this.dataset.charId;
-                        var character = _getCharacterById(charId);
-
-                        var result = _commands.updateMember(householdId, charId, {
-                            departmentId: departmentId
+                        document.querySelectorAll('.assign-staff-item').forEach(function(el) {
+                            el.classList.remove('selected');
+                            el.style.background = 'var(--bg2)';
+                            el.style.borderColor = 'var(--border)';
                         });
-
-                        if (result && result.success) {
-                            _showToast(character.name + ' assigned to ' + department.name, 'success');
-                            _closeTopModal();
-                            _processingStaffModal = false;
-                            if (onSuccess) {
-                                onSuccess();
-                            }
-                        } else {
-                            _showToast(result ? result.reason : 'Failed to assign staff', 'error');
-                        }
+                        this.classList.add('selected');
+                        this.style.background = 'rgba(var(--accent-rgb), 0.15)';
+                        this.style.borderColor = 'var(--accent)';
+                        selectedCharacterId = this.dataset.charId;
                     };
 
                     newItem.onmouseenter = function() {
-                        this.style.background = 'var(--accent-dim)';
-                        this.style.borderColor = 'var(--accent)';
+                        if (!this.classList.contains('selected')) {
+                            this.style.background = 'var(--bg3)';
+                        }
                     };
                     newItem.onmouseleave = function() {
-                        this.style.background = 'var(--bg)';
-                        this.style.borderColor = 'var(--border2)';
+                        if (!this.classList.contains('selected')) {
+                            this.style.background = 'var(--bg2)';
+                        }
                     };
                 });
+
+                // Select other character button
+                var selectOtherBtn = document.getElementById('selectOtherStaffBtn');
+                if (selectOtherBtn) {
+                    selectOtherBtn.onclick = function() {
+                        var existingIds = {};
+                        var items = document.querySelectorAll('.assign-staff-item');
+                        items.forEach(function(item) {
+                            existingIds[item.dataset.charId] = true;
+                        });
+
+                        _openCharacterSelector({
+                            title: 'Select Character for ' + position.name,
+                            excludeIds: Object.keys(existingIds),
+                            filters: {
+                                showDeceased: false,
+                                gender: 'all'
+                            },
+                            onSelect: function(character) {
+                                if (character) {
+                                    _closeTopModal();
+                                    _processingModal = false;
+                                    // Reopen with the selected character pre-selected
+                                    openAssignStaffToHouseholdPositionModal(householdId, positionId, onSuccess);
+                                }
+                            }
+                        });
+                    };
+                }
             }, 100);
 
         } catch (e) {
-            _processingStaffModal = false;
+            _processingModal = false;
             _showToast('Error opening assign staff modal', 'error');
         }
     }
 
     // =========================================================================
-    // 6. REMOVE STAFF ASSIGNMENT MODAL
+    // 6. REMOVE/END HOUSEHOLD ASSIGNMENT MODAL
     // =========================================================================
 
-    function openRemoveStaffAssignmentModal(householdId, characterId, onSuccess) {
-        if (_processingStaffModal) {
+    function openRemoveHouseholdAssignmentModal(householdId, assignmentId, onSuccess) {
+        if (_processingModal) {
             _showToast('Already processing a modal action', 'warning');
             return;
         }
-        _processingStaffModal = true;
+        _processingModal = true;
 
         try {
             var household = _getHousehold(householdId);
             if (!household) {
                 _showToast('Household not found', 'error');
-                _processingStaffModal = false;
+                _processingModal = false;
                 return;
             }
 
-            var character = _getCharacterById(characterId);
-            if (!character) {
-                _showToast('Character not found', 'error');
-                _processingStaffModal = false;
+            var assignment = _getAssignmentById(assignmentId);
+            if (!assignment) {
+                _showToast('Assignment not found', 'error');
+                _processingModal = false;
                 return;
             }
 
-            var member = null;
-            for (var i = 0; i < household.members.length; i++) {
-                if (household.members[i].characterId === characterId) {
-                    member = household.members[i];
-                    break;
+            var character = _getCharacterById(assignment.characterId);
+            var charName = assignment.characterName || (character ? character.name : 'Unknown');
+            var position = _getHouseholdPosition(assignment.positionId);
+            var infoIcon = _getIcon('CIRCLE_DOT');
+
+            var isAlreadyEnded = !!assignment.endYear;
+            var roleName = assignment.roleIdAtAssignment ? (_getRoleById(assignment.roleIdAtAssignment)?.name || 'Unknown') : 'None';
+
+            var modalContent =
+                '<div style="margin-bottom: 12px; padding: 8px; background: var(--bg2); border-radius: 6px;">' +
+                '<strong>Character:</strong> ' + _escapeHtml(charName) + '<br>' +
+                '<strong>Position:</strong> ' + _escapeHtml(assignment.title || assignment.positionId) +
+                (position ? ' (' + _escapeHtml(position.name) + ')' : '') +
+                (assignment.roleIdAtAssignment ? '<br><strong>Role at Assignment:</strong> ' + _escapeHtml(roleName) + (assignment.skillLevelAtAssignment ? ' (Skill: ' + assignment.skillLevelAtAssignment + ')' : '') : '') +
+                (assignment.startYear ? '<br><strong>Started:</strong> ' + assignment.startYear : '') +
+                (assignment.endYear ? '<br><strong>Ended:</strong> ' + assignment.endYear : '') +
+                (assignment.endReason ? '<br><strong>End Reason:</strong> ' + _escapeHtml(assignment.endReason) : '') +
+                '</div>';
+
+            if (isAlreadyEnded) {
+                modalContent +=
+                    '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; margin-bottom: 12px;">' +
+                    'This assignment has already ended. You can delete it permanently, or leave it as historical.' +
+                    '</div>' +
+                    '<div style="display: flex; gap: 8px; flex-wrap: wrap;">' +
+                    '<button id="deleteHouseholdAssignmentBtn" class="btn small danger" style="padding: 4px 12px; font-size: 0.55rem; background: #8a3020; border: none; color: white; border-radius: 4px; cursor: pointer;">Delete Permanently</button>' +
+                    '</div>';
+            } else {
+                modalContent +=
+                    '<div class="form-group" style="margin-bottom: 12px;">' +
+                    '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">End Year</label>' +
+                    '<input type="number" id="removeEndYear" value="' + (assignment.endYear || _getCurrentYear()) + '" min="' + (assignment.startYear || 1) + '" style="width:100px; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
+                    '<small style="font-size:0.55rem; color:var(--dim);">This will mark the assignment as ended. Leave as current year.</small>' +
+                    '</div>' +
+                    '<div class="form-group" style="margin-bottom: 12px;">' +
+                    '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Reason</label>' +
+                    '<input type="text" id="removeReason" placeholder="e.g., Resignation, Term ended, Dismissed..." style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
+                    '</div>' +
+                    '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
+                    infoIcon + ' This will mark the assignment as ended and keep it in the position history.' +
+                    '</div>';
+            }
+
+            _openModal({
+                title: isAlreadyEnded ? 'Delete Assignment' : 'End Assignment',
+                content: modalContent,
+                confirmText: isAlreadyEnded ? 'Delete' : 'End Assignment',
+                cancelText: 'Cancel',
+                confirmStyle: isAlreadyEnded ? 'danger' : '',
+                onConfirm: function() {
+                    if (isAlreadyEnded) {
+                        var result = _commands.deleteHouseholdAssignment(assignmentId);
+                        if (result) {
+                            _showToast('Assignment deleted', 'info');
+                            _closeTopModal();
+                            _processingModal = false;
+                            if (onSuccess) {
+                                onSuccess();
+                            }
+                            return true;
+                        } else {
+                            _showToast('Failed to delete assignment', 'error');
+                            return false;
+                        }
+                    } else {
+                        var endYear = parseInt(document.getElementById('removeEndYear').value);
+                        var reason = document.getElementById('removeReason').value || 'Term ended';
+
+                        if (isNaN(endYear) || endYear < (assignment.startYear || 1)) {
+                            _showToast('End year must be after start year', 'error');
+                            return false;
+                        }
+
+                        var result = _commands.endHouseholdAssignment(assignmentId, endYear, reason);
+                        if (result) {
+                            _showToast('Assignment ended in ' + endYear + ' (' + reason + ')', 'success');
+                            _closeTopModal();
+                            _processingModal = false;
+                            if (onSuccess) {
+                                onSuccess();
+                            }
+                            return true;
+                        } else {
+                            _showToast('Failed to end assignment', 'error');
+                            return false;
+                        }
+                    }
+                },
+                onCancel: function() {
+                    _processingModal = false;
+                }
+            });
+
+            setTimeout(function() {
+                var deleteBtn = document.getElementById('deleteHouseholdAssignmentBtn');
+                if (deleteBtn) {
+                    deleteBtn.onclick = function() {
+                        _closeTopModal();
+                        _processingModal = false;
+                        // Reopen with delete mode
+                        openRemoveHouseholdAssignmentModal(householdId, assignmentId, onSuccess);
+                    };
+                }
+            }, 100);
+
+        } catch (e) {
+            _processingModal = false;
+            _showToast('Error opening remove assignment modal', 'error');
+        }
+    }
+
+    // =========================================================================
+    // 7. VIEW HOUSEHOLD ASSIGNMENT HISTORY MODAL
+    // =========================================================================
+
+    function openHouseholdAssignmentHistoryModal(householdId, positionId, characterId) {
+        if (_processingModal) {
+            _showToast('Already processing a modal action', 'warning');
+            return;
+        }
+        _processingModal = true;
+
+        try {
+            var history = [];
+
+            if (positionId) {
+                history = _state.getAssignmentsForPosition(positionId, false);
+            } else if (householdId) {
+                history = _state.getAssignmentsForHousehold(householdId, false);
+            } else if (characterId) {
+                history = _state.getAssignmentsForCharacter(characterId, false);
+            } else {
+                _showToast('No filter provided', 'error');
+                _processingModal = false;
+                return;
+            }
+
+            var infoIcon = _getIcon('CIRCLE_DOT');
+            var personIcon = _getIcon('PERSON');
+
+            if (!history || history.length === 0) {
+                _showToast('No assignment history found', 'info');
+                _processingModal = false;
+                return;
+            }
+
+            var title = 'Household Assignment History';
+            if (householdId) {
+                var household = _getHousehold(householdId);
+                if (household) title += ': ' + household.name;
+            }
+            if (positionId) {
+                var pos = _getHouseholdPosition(positionId);
+                if (pos) title += ' - ' + pos.name;
+            }
+            if (characterId) {
+                var char = _getCharacterById(characterId);
+                if (char) title += ' - ' + char.name;
+            }
+
+            var sortedHistory = history.slice().sort(function(a, b) {
+                return (b.startYear || 0) - (a.startYear || 0);
+            });
+
+            var historyHtml = '';
+            for (var i = 0; i < sortedHistory.length; i++) {
+                var h = sortedHistory[i];
+                var isActive = !h.endYear;
+                var endDisplay = h.endYear || 'Present';
+                var char = _getCharacterById(h.characterId);
+                var charName = h.characterName || (char ? char.name : 'Unknown');
+                var pos = _getHouseholdPosition(h.positionId);
+                var posName = pos ? pos.name : 'Unknown';
+                var roleName = h.roleIdAtAssignment ? (_getRoleById(h.roleIdAtAssignment)?.name || 'Unknown') : null;
+
+                historyHtml +=
+                    '<div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-light);">' +
+                    '<div>' +
+                    '<span style="font-size: 0.7rem;">' + personIcon + ' ' + _escapeHtml(charName) + '</span>' +
+                    (posName ? ' <span style="font-size: 0.55rem; color: var(--dim);">→ ' + _escapeHtml(posName) + '</span>' : '') +
+                    (h.title && h.title !== posName ? ' <span style="font-size: 0.5rem; color: var(--dim);">(' + _escapeHtml(h.title) + ')</span>' : '') +
+                    (roleName ? ' <span style="font-size: 0.45rem; color: var(--accent);">(Role: ' + _escapeHtml(roleName) + ')</span>' : '') +
+                    (h.skillLevelAtAssignment ? ' <span style="font-size: 0.45rem; color: var(--accent);">(Skill: ' + h.skillLevelAtAssignment + ')</span>' : '') +
+                    '</div>' +
+                    '<div style="font-size: 0.55rem; color: ' + (isActive ? 'var(--success)' : 'var(--dim)') + ';">' +
+                    h.startYear + ' - ' + endDisplay +
+                    (h.endReason ? ' - ' + _escapeHtml(h.endReason) : '') +
+                    '</div>' +
+                    '</div>';
+            }
+
+            // Build summary stats
+            var totalAssignments = sortedHistory.length;
+            var activeCount = sortedHistory.filter(function(h) { return !h.endYear; }).length;
+            var withRoles = sortedHistory.filter(function(h) { return h.roleIdAtAssignment; }).length;
+
+            var modalContent =
+                '<div style="margin-bottom: 16px; padding: 12px; background: var(--bg2); border-radius: 8px;">' +
+                '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; font-size: 0.55rem;">' +
+                '<div><span style="color: var(--dim);">Total</span><br><span style="font-size: 0.9rem; font-weight: bold;">' + totalAssignments + '</span></div>' +
+                '<div><span style="color: var(--dim);">Active</span><br><span style="font-size: 0.9rem; font-weight: bold; color: var(--success);">' + activeCount + '</span></div>' +
+                '<div><span style="color: var(--dim);">With Roles</span><br><span style="font-size: 0.9rem; font-weight: bold; color: var(--accent);">' + withRoles + '</span></div>' +
+                '</div>' +
+                '</div>' +
+                '<div style="max-height: 350px; overflow-y: auto;">' +
+                '<div style="font-size: 0.65rem; color: var(--dim); margin-bottom: 8px;">' + sortedHistory.length + ' assignment(s) found</div>' +
+                historyHtml +
+                '</div>' +
+                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; margin-top: 12px;">' +
+                infoIcon + ' Shows all assignments in chronological order (most recent first).' +
+                '</div>';
+
+            _openModal({
+                title: title,
+                content: modalContent,
+                confirmText: 'Close',
+                cancelText: '',
+                onConfirm: function() {
+                    _closeTopModal();
+                    _processingModal = false;
+                }
+            });
+
+        } catch (e) {
+            _processingModal = false;
+            _showToast('Error opening assignment history', 'error');
+        }
+    }
+
+    // =========================================================================
+    // 8. BULK STAFF ASSIGN MODAL
+    // =========================================================================
+
+    function openBulkHouseholdAssignModal(householdId, positionId, onSuccess) {
+        if (_processingModal) {
+            _showToast('Already processing a modal action', 'warning');
+            return;
+        }
+        _processingModal = true;
+
+        try {
+            var household = _getHousehold(householdId);
+            if (!household) {
+                _showToast('Household not found', 'error');
+                _processingModal = false;
+                return;
+            }
+
+            var position = _getHouseholdPosition(positionId);
+            if (!position) {
+                _showToast('Position not found', 'error');
+                _processingModal = false;
+                return;
+            }
+
+            var currentYear = _getCurrentYear();
+
+            // Get all staff members
+            var staff = _getHouseholdStaff(householdId);
+            var currentAssignments = _getAssignmentsForPosition(positionId, true);
+            var assignedIds = {};
+            for (var i = 0; i < currentAssignments.length; i++) {
+                assignedIds[currentAssignments[i].characterId] = true;
+            }
+
+            // Also get unassigned staff
+            var unassigned = _getUnassignedHouseholdStaff(householdId);
+            var availableStaff = [];
+            var staffMap = {};
+
+            for (var i = 0; i < staff.length; i++) {
+                if (!assignedIds[staff[i].characterId]) {
+                    availableStaff.push(staff[i]);
+                    staffMap[staff[i].characterId] = staff[i];
                 }
             }
 
-            if (!member || member.type !== 'staff') {
-                _showToast('Staff member not found', 'error');
-                _processingStaffModal = false;
-                return;
+            for (var i = 0; i < unassigned.length; i++) {
+                if (!assignedIds[unassigned[i].characterId] && !staffMap[unassigned[i].characterId]) {
+                    availableStaff.push(unassigned[i]);
+                }
             }
 
-            var department = null;
-            if (member.departmentId) {
-                department = _getDepartment(householdId, member.departmentId);
-            }
-
-            if (!department) {
-                _showToast(character.name + ' has no department assignment', 'info');
-                _processingStaffModal = false;
+            if (availableStaff.length === 0) {
+                _showToast('No available staff members to assign', 'info');
+                _processingModal = false;
                 if (onSuccess) {
                     onSuccess();
                 }
                 return;
             }
 
+            var selectedCharIds = [];
+
+            var charsHtml = '';
+            for (var i = 0; i < availableStaff.length; i++) {
+                var s = availableStaff[i];
+                var char = s.character;
+                var age = _getCurrentYear() - (char.birthYear || 0);
+                var genderSymbol = char.gender === 'male' ? '♂' : (char.gender === 'female' ? '♀' : '⚥');
+
+                var hasRole = false;
+                var skillLevel = 0;
+                if (position.requiredRoleId && char.professions) {
+                    for (var j = 0; j < char.professions.length; j++) {
+                        if (char.professions[j].id === position.requiredRoleId) {
+                            hasRole = true;
+                            skillLevel = char.professions[j].skillLevel || 0;
+                            break;
+                        }
+                    }
+                }
+                var roleStatus = position.requiredRoleId ? (hasRole ? '✓' : '⚠️') : '';
+                var currentPos = s.assignment ? s.assignment.positionName : 'None';
+
+                charsHtml +=
+                    '<div class="bulk-staff-item" data-char-id="' + char.id + '" style="' +
+                    'background: var(--bg2); ' +
+                    'border: 1px solid var(--border); ' +
+                    'border-radius: 4px; ' +
+                    'padding: 6px 8px; ' +
+                    'margin-bottom: 4px; ' +
+                    'cursor: pointer; ' +
+                    'transition: all 0.1s;' +
+                    '">' +
+                    '<div style="display: flex; align-items: center; gap: 8px;">' +
+                    '<input type="checkbox" class="bulk-staff-checkbox" data-char-id="' + char.id + '" style="cursor: pointer;">' +
+                    '<span style="font-size: 0.65rem;">' + genderSymbol + ' ' + _escapeHtml(char.name) + ' ' + _escapeHtml(char.surname || '') + ' (' + age + 'y)</span>' +
+                    (position.requiredRoleId ? '<span style="font-size:0.45rem; color:' + (hasRole ? 'var(--success)' : 'var(--warn)') + ';">' + roleStatus + '</span>' : '') +
+                    (skillLevel > 0 ? '<span style="font-size:0.45rem; color:var(--accent);">Skill: ' + skillLevel + '</span>' : '') +
+                    '<span style="font-size:0.4rem; color:var(--dim);">(Current: ' + _escapeHtml(currentPos) + ')</span>' +
+                    '</div>' +
+                    '</div>';
+            }
+
             var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">' +
-                '<div style="font-size: 0.7rem;"><strong>' + _escapeHtml(character.name) + ' ' + _escapeHtml(character.surname || '') + '</strong></div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">Current Department: ' + _escapeHtml(department.name) + '</div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 2px;">Household: ' + _escapeHtml(household.name) + '</div>' +
+                '<div style="margin-bottom: 12px; padding: 8px; background: var(--bg2); border-radius: 6px;">' +
+                '<strong>Household:</strong> ' + _escapeHtml(household.name) + '<br>' +
+                '<strong>Position:</strong> ' + _escapeHtml(position.name) +
+                (position.requiredRoleId ? '<br><strong>Required Role:</strong> ' + _escapeHtml(_getRoleById(position.requiredRoleId)?.name || 'Unknown') : '') +
                 '</div>' +
-                '<div style="font-size: 0.6rem; color: var(--warn);">This will remove the staff member from this department.</div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 8px;">The staff member will remain in the household but unassigned.</div>' +
+                '<div style="margin-bottom: 12px;">' +
+                '<div style="font-size: 0.65rem; color: var(--accent); margin-bottom: 8px;">Select Staff Members (' + availableStaff.length + ' available)</div>' +
+                '<div style="max-height: 250px; overflow-y: auto;">' +
+                charsHtml +
+                '</div>' +
+                '</div>' +
+                '<div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;">' +
+                '<button id="bulkStaffSelectAllBtn" class="btn small" style="padding: 3px 10px; font-size: 0.55rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer;">Select All</button>' +
+                '<button id="bulkStaffSelectNoneBtn" class="btn small" style="padding: 3px 10px; font-size: 0.55rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Select None</button>' +
+                '<span style="font-size:0.55rem; color:var(--dim); margin-left:auto;"><span id="bulkStaffSelectedCount">0</span> selected</span>' +
+                '</div>' +
+                '<div class="form-group" style="margin-bottom: 12px;">' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Start Year</label>' +
+                '<input type="number" id="bulkStaffStartYear" value="' + currentYear + '" min="1" style="width:100px; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
+                '</div>' +
+                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
+                'Select multiple staff members to assign them to this position. All assignments will use the same start year.' +
                 '</div>';
 
             _openModal({
-                title: 'Remove Staff Assignment',
+                title: 'Bulk Assign Staff: ' + position.name,
                 content: modalContent,
-                confirmText: 'Remove Assignment',
+                confirmText: 'Assign Selected',
                 cancelText: 'Cancel',
                 onConfirm: function() {
-                    var result = _commands.updateMember(householdId, characterId, {
-                        departmentId: null
+                    if (selectedCharIds.length === 0) {
+                        _showToast('No staff members selected', 'warning');
+                        return false;
+                    }
+
+                    var startYear = parseInt(document.getElementById('bulkStaffStartYear').value) || currentYear;
+
+                    var assignments = selectedCharIds.map(function(charId) {
+                        return {
+                            positionId: positionId,
+                            characterId: charId,
+                            startYear: startYear,
+                            title: position.name,
+                            addRoleIfMissing: true
+                        };
                     });
 
-                    if (result && result.success) {
-                        _showToast(character.name + ' removed from ' + department.name, 'info');
+                    var results = _commands.bulkAssignHouseholdPositions(assignments, {
+                        startYear: startYear,
+                        addRoleIfMissing: true,
+                        defaultSkillLevel: 10
+                    });
+
+                    if (results.success > 0) {
+                        _showToast('Assigned ' + results.success + ' staff members to ' + position.name, 'success');
                         _closeTopModal();
-                        _processingStaffModal = false;
+                        _processingModal = false;
                         if (onSuccess) {
-                            onSuccess();
+                            onSuccess(results);
                         }
+                        return true;
                     } else {
-                        _showToast(result ? result.reason : 'Failed to remove assignment', 'error');
+                        _showToast('Failed to assign staff members', 'error');
+                        return false;
                     }
-                    return true;
                 },
                 onCancel: function() {
-                    _processingStaffModal = false;
+                    _processingModal = false;
                 }
             });
 
+            // Event handlers
+            setTimeout(function() {
+                var items = document.querySelectorAll('.bulk-staff-item');
+                items.forEach(function(item) {
+                    var newItem = item.cloneNode(true);
+                    if (item.parentNode) {
+                        item.parentNode.replaceChild(newItem, item);
+                    }
+
+                    var checkbox = newItem.querySelector('.bulk-staff-checkbox');
+                    var charId = newItem.dataset.charId;
+
+                    newItem.onclick = function(e) {
+                        if (e.target.type !== 'checkbox') {
+                            checkbox.checked = !checkbox.checked;
+                            var event = new Event('change');
+                            checkbox.dispatchEvent(event);
+                        }
+                    };
+
+                    if (checkbox) {
+                        checkbox.onchange = function(e) {
+                            e.stopPropagation();
+                            var charId = this.dataset.charId;
+                            var idx = selectedCharIds.indexOf(charId);
+                            if (this.checked) {
+                                if (idx === -1) selectedCharIds.push(charId);
+                                newItem.style.background = 'rgba(var(--accent-rgb), 0.15)';
+                                newItem.style.borderColor = 'var(--accent)';
+                            } else {
+                                if (idx !== -1) selectedCharIds.splice(idx, 1);
+                                newItem.style.background = 'var(--bg2)';
+                                newItem.style.borderColor = 'var(--border)';
+                            }
+                            var countEl = document.getElementById('bulkStaffSelectedCount');
+                            if (countEl) countEl.textContent = selectedCharIds.length;
+                        };
+                    }
+                });
+
+                var selectAllBtn = document.getElementById('bulkStaffSelectAllBtn');
+                if (selectAllBtn) {
+                    selectAllBtn.onclick = function() {
+                        var checkboxes = document.querySelectorAll('.bulk-staff-checkbox');
+                        checkboxes.forEach(function(cb) {
+                            cb.checked = true;
+                            var event = new Event('change');
+                            cb.dispatchEvent(event);
+                        });
+                    };
+                }
+
+                var selectNoneBtn = document.getElementById('bulkStaffSelectNoneBtn');
+                if (selectNoneBtn) {
+                    selectNoneBtn.onclick = function() {
+                        var checkboxes = document.querySelectorAll('.bulk-staff-checkbox');
+                        checkboxes.forEach(function(cb) {
+                            cb.checked = false;
+                            var event = new Event('change');
+                            cb.dispatchEvent(event);
+                        });
+                    };
+                }
+            }, 100);
+
         } catch (e) {
-            _processingStaffModal = false;
-            _showToast('Error opening remove assignment modal', 'error');
+            _processingModal = false;
+            _showToast('Error opening bulk staff assign modal', 'error');
         }
     }
 
     // =========================================================================
-    // 7. VIEW STAFF BY DEPARTMENT MODAL
+    // 9. VIEW HOUSEHOLD STAFF ASSIGNMENTS MODAL
     // =========================================================================
 
-    function openViewStaffByDepartmentModal(householdId, departmentId) {
-        if (_processingStaffModal) {
+    function openViewHouseholdStaffAssignmentsModal(householdId) {
+        if (_processingModal) {
             _showToast('Already processing a modal action', 'warning');
             return;
         }
-        _processingStaffModal = true;
+        _processingModal = true;
 
         try {
             var household = _getHousehold(householdId);
             if (!household) {
                 _showToast('Household not found', 'error');
-                _processingStaffModal = false;
+                _processingModal = false;
                 return;
             }
 
-            var department = _getDepartment(householdId, departmentId);
-            if (!department) {
-                _showToast('Department not found', 'error');
-                _processingStaffModal = false;
-                return;
-            }
-
-            var staff = _getStaffByDepartment(householdId, departmentId);
+            var staff = _queries ? _queries.getHouseholdStaff(householdId, { activeOnly: true }) : [];
+            var personIcon = _getIconSafe('PERSON');
 
             var staffHtml = '';
             if (staff.length === 0) {
-                staffHtml = '<div style="color: var(--dim); text-align: center; padding: 20px; font-size: 0.6rem;">No staff assigned to this department</div>';
+                staffHtml = '<div style="color: var(--dim); text-align: center; padding: 40px; font-size: 0.6rem;">No staff members</div>';
             } else {
-                staffHtml = '<div style="display: flex; flex-direction: column; gap: 6px;">';
+                staffHtml = '<div style="display: flex; flex-direction: column; gap: 4px;">';
                 for (var i = 0; i < staff.length; i++) {
-                    var char = staff[i].character;
-                    var member = staff[i].member;
-                    var age = _calculateAge(char.birthYear, char.isDeceased, char.deathYear);
-                    var genderSymbol = char.gender === 'male' ? '♂' : (char.gender === 'female' ? '♀' : '?');
+                    var s = staff[i];
+                    var char = s.character;
+                    var age = _getCurrentYear() - (char.birthYear || 0);
+                    var genderSymbol = char.gender === 'male' ? '♂' : (char.gender === 'female' ? '♀' : '⚥');
+                    var posName = s.assignment ? s.assignment.positionName : 'Unassigned';
+                    var title = s.assignment ? s.assignment.title : 'None';
+                    var roleName = s.assignment?.roleNameAtAssignment || 'None';
+                    var skillLevel = s.assignment?.skillLevelAtAssignment || 0;
+                    var isActive = s.assignment ? s.assignment.isActive : false;
 
                     staffHtml +=
-                        '<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: var(--bg2); border-radius: 6px; border-left: 3px solid var(--accent);">' +
+                        '<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: var(--bg2); border-radius: 4px; border-left: 3px solid ' + (isActive ? 'var(--accent)' : 'var(--border)') + ';">' +
                         '<div>' +
                         '<strong>' + _escapeHtml(char.name) + ' ' + _escapeHtml(char.surname || '') + '</strong>' +
-                        ' <span style="font-size: 0.5rem; color: var(--dim);">' + genderSymbol + ' ' + age + 'y</span>' +
-                        '<div style="font-size: 0.5rem; color: var(--dim);">Role: ' + _escapeHtml(member.role || 'Staff') + '</div>' +
+                        '<span style="font-size: 0.55rem; color: var(--dim); margin-left: 6px;">' + genderSymbol + ' ' + age + 'y</span>' +
+                        '<span style="font-size: 0.55rem; color: var(--accent); margin-left: 6px;">' + _escapeHtml(posName) + '</span>' +
+                        (title && title !== posName ? ' <span style="font-size:0.5rem; color:var(--dim);">(' + _escapeHtml(title) + ')</span>' : '') +
+                        (roleName !== 'None' ? ' <span style="font-size:0.45rem; color:var(--accent);">(Role: ' + _escapeHtml(roleName) + (skillLevel > 0 ? ' - ' + skillLevel : '') + ')</span>' : '') +
                         '</div>' +
-                        '<div style="display: flex; gap: 4px;">' +
-                        '<button class="remove-staff-btn btn small" data-char-id="' + char.id + '" style="padding: 2px 8px; font-size: 0.45rem; background: #8a3020; border: none; color: white; border-radius: 3px; cursor: pointer;">Remove</button>' +
-                        '<button class="view-staff-btn btn small" data-char-id="' + char.id + '" style="padding: 2px 8px; font-size: 0.45rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 3px; cursor: pointer;">View</button>' +
+                        '<div style="display: flex; gap: 8px; align-items: center; font-size: 0.5rem; color: var(--dim);">' +
+                        (s.assignment && s.assignment.startYear ? 'Since ' + s.assignment.startYear : '') +
+                        (isActive ? ' <span style="color:var(--success);">Active</span>' : ' <span style="color:var(--dim);">Inactive</span>') +
                         '</div>' +
                         '</div>';
                 }
@@ -537,357 +1096,28 @@
 
             var modalContent =
                 '<div style="margin-bottom: 16px; padding: 12px; background: var(--bg2); border-radius: 8px;">' +
-                '<strong>Department:</strong> ' + _escapeHtml(department.name) + '<br>' +
                 '<strong>Household:</strong> ' + _escapeHtml(household.name) +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">Total Staff: ' + staff.length + '</div>' +
+                '<div style="font-size: 0.6rem; color: var(--dim); margin-top: 4px;">' + staff.length + ' staff members</div>' +
                 '</div>' +
-                '<div style="max-height: 350px; overflow-y: auto;">' +
                 staffHtml +
+                '<div style="margin-top: 12px; padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
+                'Shows all staff members and their current positions.' +
                 '</div>';
 
             _openModal({
-                title: 'Staff of ' + department.name,
+                title: 'Staff Assignments: ' + household.name,
                 content: modalContent,
                 confirmText: 'Close',
                 cancelText: '',
                 onConfirm: function() {
                     _closeTopModal();
-                    _processingStaffModal = false;
-                }
-            });
-
-            // Attach event handlers
-            setTimeout(function() {
-                // Remove staff buttons
-                var removeBtns = document.querySelectorAll('.remove-staff-btn');
-                removeBtns.forEach(function(btn) {
-                    var newBtn = btn.cloneNode(true);
-                    if (btn.parentNode) {
-                        btn.parentNode.replaceChild(newBtn, btn);
-                    }
-
-                    newBtn.onclick = function(e) {
-                        e.stopPropagation();
-                        var charId = this.dataset.charId;
-                        var char = _getCharacterById(charId);
-                        if (char) {
-                            _closeTopModal();
-                            openRemoveStaffAssignmentModal(householdId, charId, function() {
-                                setTimeout(function() {
-                                    openViewStaffByDepartmentModal(householdId, departmentId);
-                                }, 100);
-                            });
-                        }
-                    };
-                });
-
-                // View staff buttons
-                var viewBtns = document.querySelectorAll('.view-staff-btn');
-                viewBtns.forEach(function(btn) {
-                    var newBtn = btn.cloneNode(true);
-                    if (btn.parentNode) {
-                        btn.parentNode.replaceChild(newBtn, btn);
-                    }
-
-                    newBtn.onclick = function(e) {
-                        e.stopPropagation();
-                        var charId = this.dataset.charId;
-                        var char = _getCharacterById(charId);
-                        if (char && typeof window.openCharacterModal === 'function') {
-                            _closeTopModal();
-                            window.openCharacterModal(charId);
-                        } else {
-                            _showToast('Character details not available', 'info');
-                        }
-                    };
-                });
-
-            }, 100);
-
-        } catch (e) {
-            _processingStaffModal = false;
-            _showToast('Error opening staff view', 'error');
-        }
-    }
-
-    // =========================================================================
-    // 8. STAFF DETAILS MODAL
-    // =========================================================================
-
-    function openStaffDetailsModal(householdId, characterId) {
-        if (_processingStaffModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingStaffModal = true;
-
-        try {
-            var household = _getHousehold(householdId);
-            if (!household) {
-                _showToast('Household not found', 'error');
-                _processingStaffModal = false;
-                return;
-            }
-
-            var character = _getCharacterById(characterId);
-            if (!character) {
-                _showToast('Character not found', 'error');
-                _processingStaffModal = false;
-                return;
-            }
-
-            var member = null;
-            for (var i = 0; i < household.members.length; i++) {
-                if (household.members[i].characterId === characterId) {
-                    member = household.members[i];
-                    break;
-                }
-            }
-
-            if (!member) {
-                _showToast('Member not found', 'error');
-                _processingStaffModal = false;
-                return;
-            }
-
-            var age = _calculateAge(character.birthYear, character.isDeceased, character.deathYear);
-            var department = member.departmentId ? _getDepartment(householdId, member.departmentId) : null;
-
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">' +
-                '<div style="font-size: 0.8rem;"><strong>' + _escapeHtml(character.name) + ' ' + _escapeHtml(character.surname || '') + '</strong></div>' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; margin-top: 8px; font-size: 0.6rem;">' +
-                '<div><span style="color: var(--dim);">Age:</span> ' + age + ' years</div>' +
-                '<div><span style="color: var(--dim);">Gender:</span> ' + (character.gender || 'Unknown') + '</div>' +
-                '<div><span style="color: var(--dim);">Role:</span> ' + _escapeHtml(member.role || 'Staff') + '</div>' +
-                '<div><span style="color: var(--dim);">Status:</span> ' + (character.isDeceased ? 'Deceased' : 'Living') + '</div>' +
-                '<div><span style="color: var(--dim);">Department:</span> ' + (department ? _escapeHtml(department.name) : 'None') + '</div>' +
-                '<div><span style="color: var(--dim);">Joined:</span> ' + (member.joinedYear || 'Unknown') + '</div>' +
-                '</div>' +
-                (member.notes ? '<div style="margin-top: 8px; font-size: 0.55rem; color: var(--dim);">Notes: ' + _escapeHtml(member.notes) + '</div>' : '') +
-                '</div>' +
-                (member.departmentId ?
-                    '<div style="display: flex; gap: 8px; margin-top: 8px;">' +
-                    '<button id="staffDetailsRemoveBtn" class="btn small" style="padding: 4px 12px; font-size: 0.6rem; background: #8a3020; border: none; color: white; border-radius: 4px; cursor: pointer;">Remove from Department</button>' +
-                    '</div>' :
-                    '<div style="display: flex; gap: 8px; margin-top: 8px;">' +
-                    '<button id="staffDetailsAssignBtn" class="btn small" style="padding: 4px 12px; font-size: 0.6rem; background: var(--accent); border: none; color: white; border-radius: 4px; cursor: pointer;">Assign to Department</button>' +
-                    '</div>'
-                ) +
-                '</div>';
-
-            _openModal({
-                title: 'Staff Details: ' + character.name,
-                content: modalContent,
-                confirmText: 'Close',
-                cancelText: '',
-                onConfirm: function() {
-                    _closeTopModal();
-                    _processingStaffModal = false;
-                }
-            });
-
-            setTimeout(function() {
-                var removeBtn = document.getElementById('staffDetailsRemoveBtn');
-                if (removeBtn) {
-                    removeBtn.onclick = function() {
-                        _closeTopModal();
-                        openRemoveStaffAssignmentModal(householdId, characterId, function() {
-                            _processingStaffModal = false;
-                        });
-                    };
-                }
-
-                var assignBtn = document.getElementById('staffDetailsAssignBtn');
-                if (assignBtn) {
-                    assignBtn.onclick = function() {
-                        _closeTopModal();
-                        var departments = _getDepartments(householdId);
-                        if (departments.length === 0) {
-                            _showToast('No departments available. Create one first.', 'warning');
-                            _processingStaffModal = false;
-                            return;
-                        }
-
-                        var deptOptions = departments.map(function(d) {
-                            return '<option value="' + d.id + '">' + _escapeHtml(d.name) + '</option>';
-                        }).join('');
-
-                        var deptModalContent =
-                            '<div style="margin-bottom: 16px;">' +
-                            '<div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">' +
-                            '<div style="font-size: 0.7rem;"><strong>' + _escapeHtml(character.name) + ' ' + _escapeHtml(character.surname || '') + '</strong></div>' +
-                            '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">Household: ' + _escapeHtml(household.name) + '</div>' +
-                            '</div>' +
-                            '<div class="form-group" style="margin-bottom: 12px;">' +
-                            '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Select Department</label>' +
-                            '<select id="assignDepartmentSelect" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                            '<option value="">Select a department</option>' +
-                            deptOptions +
-                            '</select>' +
-                            '</div>' +
-                            '</div>';
-
-                        _openModal({
-                            title: 'Assign to Department',
-                            content: deptModalContent,
-                            confirmText: 'Assign',
-                            cancelText: 'Cancel',
-                            onConfirm: function() {
-                                var deptId = document.getElementById('assignDepartmentSelect').value;
-                                if (!deptId) {
-                                    _showToast('Please select a department', 'error');
-                                    return false;
-                                }
-
-                                var result = _commands.updateMember(householdId, characterId, {
-                                    departmentId: deptId
-                                });
-
-                                if (result && result.success) {
-                                    var dept = _getDepartment(householdId, deptId);
-                                    _showToast(character.name + ' assigned to ' + dept.name, 'success');
-                                    _closeTopModal();
-                                    _processingStaffModal = false;
-                                } else {
-                                    _showToast(result ? result.reason : 'Failed to assign', 'error');
-                                }
-                                return true;
-                            },
-                            onCancel: function() {
-                                _processingStaffModal = false;
-                            }
-                        });
-                    };
-                }
-            }, 100);
-
-        } catch (e) {
-            _processingStaffModal = false;
-            _showToast('Error opening staff details', 'error');
-        }
-    }
-
-    // =========================================================================
-    // 9. VIEW ALL STAFF MODAL
-    // =========================================================================
-
-    function openViewAllStaffModal(householdId) {
-        if (_processingStaffModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingStaffModal = true;
-
-        try {
-            var household = _getHousehold(householdId);
-            if (!household) {
-                _showToast('Household not found', 'error');
-                _processingStaffModal = false;
-                return;
-            }
-
-            var staff = _getHouseholdStaff(householdId);
-            var departments = _getDepartments(householdId);
-            var deptMap = {};
-            for (var i = 0; i < departments.length; i++) {
-                deptMap[departments[i].id] = departments[i].name;
-            }
-
-            var staffHtml = '';
-            if (staff.length === 0) {
-                staffHtml = '<div style="color: var(--dim); text-align: center; padding: 40px; font-size: 0.6rem;">No staff members in this household</div>';
-            } else {
-                // Group by department
-                var grouped = {
-                    assigned: {},
-                    unassigned: []
-                };
-
-                for (var i = 0; i < staff.length; i++) {
-                    var s = staff[i];
-                    if (s.member.departmentId) {
-                        if (!grouped.assigned[s.member.departmentId]) {
-                            grouped.assigned[s.member.departmentId] = [];
-                        }
-                        grouped.assigned[s.member.departmentId].push(s);
-                    } else {
-                        grouped.unassigned.push(s);
-                    }
-                }
-
-                // Render assigned staff
-                for (var deptId in grouped.assigned) {
-                    var deptName = deptMap[deptId] || 'Unknown Department';
-                    var members = grouped.assigned[deptId];
-
-                    staffHtml +=
-                        '<div style="margin-top: 8px;">' +
-                        '<div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 4px;">' + _escapeHtml(deptName) + ' (' + members.length + ')</div>';
-
-                    for (var i = 0; i < members.length; i++) {
-                        var char = members[i].character;
-                        var member = members[i].member;
-                        var age = _calculateAge(char.birthYear, char.isDeceased, char.deathYear);
-                        var genderSymbol = char.gender === 'male' ? '♂' : (char.gender === 'female' ? '♀' : '?');
-
-                        staffHtml +=
-                            '<div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 8px; background: var(--bg2); border-radius: 4px; margin-bottom: 2px; font-size: 0.55rem;">' +
-                            '<span>' + genderSymbol + ' ' + _escapeHtml(char.name) + ' ' + _escapeHtml(char.surname || '') + ' <span style="color: var(--dim);">(' + age + 'y)</span></span>' +
-                            '<span style="color: var(--dim); font-size: 0.5rem;">' + _escapeHtml(member.role || 'Staff') + '</span>' +
-                            '</div>';
-                    }
-
-                    staffHtml += '</div>';
-                }
-
-                // Render unassigned staff
-                if (grouped.unassigned.length > 0) {
-                    staffHtml +=
-                        '<div style="margin-top: 8px;">' +
-                        '<div style="font-size: 0.6rem; color: var(--warn); margin-bottom: 4px;">Unassigned (' + grouped.unassigned.length + ')</div>';
-
-                    for (var i = 0; i < grouped.unassigned.length; i++) {
-                        var char = grouped.unassigned[i].character;
-                        var member = grouped.unassigned[i].member;
-                        var age = _calculateAge(char.birthYear, char.isDeceased, char.deathYear);
-                        var genderSymbol = char.gender === 'male' ? '♂' : (char.gender === 'female' ? '♀' : '?');
-
-                        staffHtml +=
-                            '<div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 8px; background: var(--bg2); border-radius: 4px; margin-bottom: 2px; font-size: 0.55rem;">' +
-                            '<span>' + genderSymbol + ' ' + _escapeHtml(char.name) + ' ' + _escapeHtml(char.surname || '') + ' <span style="color: var(--dim);">(' + age + 'y)</span></span>' +
-                            '<span style="color: var(--dim); font-size: 0.5rem;">' + _escapeHtml(member.role || 'Staff') + '</span>' +
-                            '</div>';
-                    }
-
-                    staffHtml += '</div>';
-                }
-            }
-
-            var modalContent =
-                '<div style="margin-bottom: 16px; padding: 12px; background: var(--bg2); border-radius: 8px;">' +
-                '<strong>Household:</strong> ' + _escapeHtml(household.name) +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">Total Staff: ' + staff.length + '</div>' +
-                '</div>' +
-                '<div style="max-height: 400px; overflow-y: auto;">' +
-                staffHtml +
-                '</div>';
-
-            _openModal({
-                title: 'Staff of ' + household.name,
-                content: modalContent,
-                confirmText: 'Close',
-                cancelText: '',
-                onConfirm: function() {
-                    _closeTopModal();
-                    _processingStaffModal = false;
+                    _processingModal = false;
                 }
             });
 
         } catch (e) {
-            _processingStaffModal = false;
-            _showToast('Error opening staff view', 'error');
+            _processingModal = false;
+            _showToast('Error opening staff assignments', 'error');
         }
     }
 
@@ -895,21 +1125,17 @@
     // 10. EXPORTS
     // =========================================================================
 
-    window.openAssignStaffModal = openAssignStaffModal;
-    window.openRemoveStaffAssignmentModal = openRemoveStaffAssignmentModal;
-    window.openViewStaffByDepartmentModal = openViewStaffByDepartmentModal;
-    window.openStaffDetailsModal = openStaffDetailsModal;
-    window.openViewAllStaffModal = openViewAllStaffModal;
+    window.openAssignStaffToHouseholdPositionModal = openAssignStaffToHouseholdPositionModal;
+    window.openRemoveHouseholdAssignmentModal = openRemoveHouseholdAssignmentModal;
+    window.openHouseholdAssignmentHistoryModal = openHouseholdAssignmentHistoryModal;
+    window.openBulkHouseholdAssignModal = openBulkHouseholdAssignModal;
+    window.openViewHouseholdStaffAssignmentsModal = openViewHouseholdStaffAssignmentsModal;
 
-    // ES Module exports
-    if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            openAssignStaffModal: openAssignStaffModal,
-            openRemoveStaffAssignmentModal: openRemoveStaffAssignmentModal,
-            openViewStaffByDepartmentModal: openViewStaffByDepartmentModal,
-            openStaffDetailsModal: openStaffDetailsModal,
-            openViewAllStaffModal: openViewAllStaffModal
-        };
-    }
+    // Legacy aliases
+    window._openAssignStaffToHouseholdPositionModal = openAssignStaffToHouseholdPositionModal;
+    window._openRemoveHouseholdAssignmentModal = openRemoveHouseholdAssignmentModal;
+    window._openHouseholdAssignmentHistoryModal = openHouseholdAssignmentHistoryModal;
+    window._openBulkHouseholdAssignModal = openBulkHouseholdAssignModal;
+    window._openViewHouseholdStaffAssignmentsModal = openViewHouseholdStaffAssignmentsModal;
 
 })();

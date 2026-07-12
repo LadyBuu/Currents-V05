@@ -1,22 +1,18 @@
 /**
  * =============================================================================
- * GOVERNMENT QUERIES - All read operations for government system
+ * GOVERNMENT QUERIES (government-queries.js)
  * =============================================================================
  * 
- * This file contains ALL read-only queries for government data:
- * - Search and filter departments, positions, assignments
- * - Statistics and analytics
- * - Comparison and ranking
- * - Hierarchy queries
- * - History queries
- * - LEADER QUERIES
- * - INDUSTRY QUERIES (tax revenue, enterprise stats, health scores)
+ * PURPOSE: All read-only queries for government system.
  * 
- * No side effects, no mutations. Uses caching for performance.
+ * UPDATED: Added role-based queries for positions with role requirements
+ *          Added assignment queries with role/skill tracking
+ *          Added industry queries with health scores
  * 
  * DEPENDENCIES:
  *   - government-state.js (GovernmentState)
  *   - accessors.js (getCharacterById, getPlaceById, getPlaces, getCurrentYear)
+ *   - role-queries.js (RoleQueries) - for role lookups
  * 
  * =============================================================================
  */
@@ -66,6 +62,13 @@
         return null;
     }
 
+    function _getRoleById(id) {
+        if (typeof window.getRoleById === 'function') {
+            return window.getRoleById(id);
+        }
+        return null;
+    }
+
     function _getIcon(name) {
         if (window.Icons && window.Icons[name]) {
             return window.Icons[name];
@@ -74,7 +77,7 @@
     }
 
     // =========================================================================
-    // 3. SEARCH FUNCTIONS (Existing)
+    // 3. SEARCH FUNCTIONS
     // =========================================================================
 
     function searchDepartments(options, queryOptions) {
@@ -215,8 +218,121 @@
         }
     }
 
+    function searchPositions(options) {
+        if (_processingQuery) {
+            return [];
+        }
+        _processingQuery = true;
+
+        try {
+            options = options || {};
+            var departments = options.departmentId ? 
+                [GovernmentState.getDepartment(options.departmentId)] : 
+                GovernmentState.getAllDepartments({ includeDeprecated: options.includeDeprecated || false });
+
+            var results = [];
+
+            for (var i = 0; i < departments.length; i++) {
+                var dept = departments[i];
+                if (!dept) continue;
+
+                var positions = dept.positions || [];
+                for (var j = 0; j < positions.length; j++) {
+                    var pos = positions[j];
+                    var match = true;
+
+                    if (options.search) {
+                        var searchLower = options.search.toLowerCase();
+                        var nameMatch = pos.name && pos.name.toLowerCase().indexOf(searchLower) !== -1;
+                        var descMatch = pos.description && pos.description.toLowerCase().indexOf(searchLower) !== -1;
+                        if (!nameMatch && !descMatch) {
+                            match = false;
+                        }
+                    }
+
+                    if (match && options.requiredRoleId !== undefined) {
+                        var requiredId = options.requiredRoleId || null;
+                        if (pos.requiredRoleId !== requiredId) {
+                            match = false;
+                        }
+                    }
+
+                    if (match && options.minSkillLevel !== undefined) {
+                        if ((pos.minSkillLevel || 0) < options.minSkillLevel) {
+                            match = false;
+                        }
+                    }
+
+                    if (match && options.hasRoleRequirement !== undefined) {
+                        var hasReq = !!pos.requiredRoleId;
+                        if (hasReq !== options.hasRoleRequirement) {
+                            match = false;
+                        }
+                    }
+
+                    if (match && options.genderRestriction) {
+                        if (pos.genderRestriction && pos.genderRestriction !== 'either') {
+                            if (pos.genderRestriction !== options.genderRestriction) {
+                                match = false;
+                            }
+                        }
+                    }
+
+                    if (match && options.minPriority !== undefined) {
+                        if ((pos.priority || 10) < options.minPriority) {
+                            match = false;
+                        }
+                    }
+
+                    if (match && options.maxPriority !== undefined) {
+                        if ((pos.priority || 10) > options.maxPriority) {
+                            match = false;
+                        }
+                    }
+
+                    if (match) {
+                        results.push({
+                            position: pos,
+                            departmentId: dept.id,
+                            departmentName: dept.name
+                        });
+                    }
+                }
+            }
+
+            if (options.sortBy) {
+                results.sort(function(a, b) {
+                    var compare = 0;
+                    switch (options.sortBy) {
+                        case 'name':
+                            compare = a.position.name.localeCompare(b.position.name);
+                            break;
+                        case 'priority':
+                            compare = (a.position.priority || 10) - (b.position.priority || 10);
+                            break;
+                        case 'department':
+                            compare = a.departmentName.localeCompare(b.departmentName);
+                            break;
+                        default:
+                            compare = a.position.name.localeCompare(b.position.name);
+                    }
+                    return options.sortOrder === 'desc' ? -compare : compare;
+                });
+            }
+
+            if (options.limit) {
+                results = results.slice(0, options.limit);
+            }
+
+            return results;
+
+        } finally {
+            _processingQuery = false;
+        }
+    }
+
     // =========================================================================
-    // 4. STATISTICS FUNCTIONS (Existing)
+    // 4. STATISTICS FUNCTIONS
     // =========================================================================
 
     function getStatistics(options) {
@@ -237,8 +353,10 @@
                 activeAssignments: 0,
                 departmentsWithPositions: 0,
                 departmentsWithAssignments: 0,
+                positionsWithRoleRequirement: 0,
                 byLocation: {},
-                byParent: {}
+                byParent: {},
+                byRole: {}
             };
 
             for (var i = 0; i < departments.length; i++) {
@@ -253,6 +371,20 @@
 
                 if (posCount > 0) stats.departmentsWithPositions++;
                 if (assignCount > 0) stats.departmentsWithAssignments++;
+
+                // Count positions with role requirements
+                if (dept.positions) {
+                    for (var j = 0; j < dept.positions.length; j++) {
+                        if (dept.positions[j].requiredRoleId) {
+                            stats.positionsWithRoleRequirement++;
+                            var roleId = dept.positions[j].requiredRoleId;
+                            if (!stats.byRole[roleId]) {
+                                stats.byRole[roleId] = 0;
+                            }
+                            stats.byRole[roleId]++;
+                        }
+                    }
+                }
 
                 if (dept.locationId) {
                     if (!stats.byLocation[dept.locationId]) {
@@ -284,6 +416,8 @@
                 Math.round((stats.totalPositions / stats.totalDepartments) * 10) / 10 : 0;
             stats.averageAssignmentsPerDepartment = stats.totalDepartments > 0 ?
                 Math.round((stats.totalAssignments / stats.totalDepartments) * 10) / 10 : 0;
+            stats.percentagePositionsWithRole = stats.totalPositions > 0 ?
+                Math.round((stats.positionsWithRoleRequirement / stats.totalPositions) * 100) : 0;
 
             return stats;
 
@@ -309,6 +443,7 @@
                 withoutAssignments: 0,
                 activeAssignments: 0,
                 totalAssignments: 0,
+                withRoleRequirement: 0,
                 byPriority: {},
                 byParent: {}
             };
@@ -325,6 +460,10 @@
                     stats.withAssignments++;
                 } else {
                     stats.withoutAssignments++;
+                }
+
+                if (pos.requiredRoleId) {
+                    stats.withRoleRequirement++;
                 }
 
                 var priority = pos.priority || 10;
@@ -369,7 +508,8 @@
                 active: 0,
                 ended: 0,
                 byPosition: {},
-                byYear: {}
+                byYear: {},
+                withRoles: 0
             };
 
             for (var i = 0; i < assignments.length; i++) {
@@ -379,6 +519,10 @@
                     stats.ended++;
                 } else {
                     stats.active++;
+                }
+
+                if (a.roleIdAtAssignment) {
+                    stats.withRoles++;
                 }
 
                 if (a.positionId) {
@@ -403,7 +547,7 @@
     }
 
     // =========================================================================
-    // 5. COMPARISON FUNCTIONS (Existing)
+    // 5. COMPARISON FUNCTIONS
     // =========================================================================
 
     function compareDepartments(departmentId1, departmentId2) {
@@ -425,7 +569,8 @@
                     location: _getPlaceById(dept1.locationId)?.displayName || 'Unknown',
                     positions: (dept1.positions || []).length,
                     assignments: (dept1.assignments || []).length,
-                    activeAssignments: (dept1.assignments || []).filter(function(a) { return !a.endYear; }).length
+                    activeAssignments: (dept1.assignments || []).filter(function(a) { return !a.endYear; }).length,
+                    positionsWithRole: (dept1.positions || []).filter(function(p) { return p.requiredRoleId; }).length
                 },
                 department2: {
                     id: dept2.id,
@@ -433,11 +578,15 @@
                     location: _getPlaceById(dept2.locationId)?.displayName || 'Unknown',
                     positions: (dept2.positions || []).length,
                     assignments: (dept2.assignments || []).length,
-                    activeAssignments: (dept2.assignments || []).filter(function(a) { return !a.endYear; }).length
+                    activeAssignments: (dept2.assignments || []).filter(function(a) { return !a.endYear; }).length,
+                    positionsWithRole: (dept2.positions || []).filter(function(p) { return p.requiredRoleId; }).length
                 },
                 comparison: {
                     largerPositions: dept1.positions.length > dept2.positions.length ? dept1.name : dept2.name,
                     largerAssignments: dept1.assignments.length > dept2.assignments.length ? dept1.name : dept2.name,
+                    moreRolePositions: (dept1.positions || []).filter(function(p) { return p.requiredRoleId; }).length > 
+                                       (dept2.positions || []).filter(function(p) { return p.requiredRoleId; }).length ? 
+                                       dept1.name : dept2.name,
                     difference: Math.abs((dept1.positions || []).length - (dept2.positions || []).length)
                 }
             };
@@ -450,7 +599,7 @@
     }
 
     // =========================================================================
-    // 6. RANKING FUNCTIONS (Existing)
+    // 6. RANKING FUNCTIONS
     // =========================================================================
 
     function getLargestDepartments(limit, locationId) {
@@ -473,7 +622,8 @@
                     department: d,
                     positionCount: (d.positions || []).length,
                     assignmentCount: (d.assignments || []).length,
-                    activeAssignmentCount: (d.assignments || []).filter(function(a) { return !a.endYear; }).length
+                    activeAssignmentCount: (d.assignments || []).filter(function(a) { return !a.endYear; }).length,
+                    rolePositionCount: (d.positions || []).filter(function(p) { return p.requiredRoleId; }).length
                 };
             });
 
@@ -509,7 +659,8 @@
                     department: d,
                     activeAssignmentCount: active.length,
                     totalAssignmentCount: (d.assignments || []).length,
-                    positionCount: (d.positions || []).length
+                    positionCount: (d.positions || []).length,
+                    rolePositionCount: (d.positions || []).filter(function(p) { return p.requiredRoleId; }).length
                 };
             });
 
@@ -524,8 +675,26 @@
         }
     }
 
+    function getPositionsByRoleRequirement(roleId, departmentId) {
+        if (_processingQuery) {
+            return [];
+        }
+        _processingQuery = true;
+
+        try {
+            var options = { requiredRoleId: roleId };
+            if (departmentId) {
+                options.departmentId = departmentId;
+            }
+            return searchPositions(options);
+
+        } finally {
+            _processingQuery = false;
+        }
+    }
+
     // =========================================================================
-    // 7. HIERARCHY QUERIES (Existing)
+    // 7. HIERARCHY QUERIES
     // =========================================================================
 
     function getDepartmentPath(departmentId) {
@@ -593,7 +762,7 @@
     }
 
     // =========================================================================
-    // 8. ASSIGNMENT HISTORY QUERIES (Existing)
+    // 8. ASSIGNMENT HISTORY QUERIES
     // =========================================================================
 
     function getAssignmentHistory(departmentId, positionId, characterId, limit) {
@@ -639,7 +808,10 @@
                     endReason: a.endReason,
                     notes: a.notes,
                     isActive: !a.endYear,
-                    duration: a.endYear ? (a.endYear - a.startYear) : (_getCurrentYear() - a.startYear)
+                    duration: a.endYear ? (a.endYear - a.startYear) : (_getCurrentYear() - a.startYear),
+                    roleIdAtAssignment: a.roleIdAtAssignment,
+                    roleNameAtAssignment: a.roleIdAtAssignment ? (_getRoleById(a.roleIdAtAssignment)?.name || 'Unknown') : null,
+                    skillLevelAtAssignment: a.skillLevelAtAssignment || 0
                 });
             }
 
@@ -651,7 +823,7 @@
     }
 
     // =========================================================================
-    // 9. LOCATION ANALYTICS (Existing + Industry)
+    // 9. LOCATION ANALYTICS
     // =========================================================================
 
     function getLocationGovernmentSummary(locationId) {
@@ -671,6 +843,7 @@
                 totalPositions: 0,
                 totalAssignments: 0,
                 activeAssignments: 0,
+                totalRolePositions: 0,
                 departments: []
             };
 
@@ -679,15 +852,18 @@
                 var posCount = (dept.positions || []).length;
                 var assignCount = (dept.assignments || []).length;
                 var activeCount = (dept.assignments || []).filter(function(a) { return !a.endYear; }).length;
+                var rolePosCount = (dept.positions || []).filter(function(p) { return p.requiredRoleId; }).length;
 
                 summary.totalPositions += posCount;
                 summary.totalAssignments += assignCount;
                 summary.activeAssignments += activeCount;
+                summary.totalRolePositions += rolePosCount;
 
                 summary.departments.push({
                     id: dept.id,
                     name: dept.name,
                     positions: posCount,
+                    rolePositions: rolePosCount,
                     assignments: assignCount,
                     activeAssignments: activeCount
                 });
@@ -714,7 +890,7 @@
     }
 
     // =========================================================================
-    // 10. LEADER QUERIES (Existing)
+    // 10. LEADER QUERIES
     // =========================================================================
 
     function getCurrentLeader(placeId) {
@@ -960,7 +1136,8 @@
                 totalTaxRevenue: taxRevenue,
                 taxRate: GovernmentState.getIndustryTaxRate(locationId) * 100,
                 byCategory: stats.byCategory,
-                byStatus: stats.byStatus
+                byStatus: stats.byStatus,
+                averageProfit: stats.averageProfit
             };
 
         } finally {
@@ -969,12 +1146,130 @@
     }
 
     // =========================================================================
-    // 12. EXPORTS (UPDATED with Industry Queries)
+    // 12. ROLE-BASED POSITION QUERIES (NEW)
+    // =========================================================================
+
+    function getPositionsRequiringRole(roleId) {
+        if (_processingQuery) {
+            return [];
+        }
+        _processingQuery = true;
+
+        try {
+            return getPositionsByRoleRequirement(roleId);
+
+        } finally {
+            _processingQuery = false;
+        }
+    }
+
+    function getCharactersQualifiedForPosition(departmentId, positionId, options) {
+        if (_processingQuery) {
+            return [];
+        }
+        _processingQuery = true;
+
+        try {
+            options = options || {};
+            var position = GovernmentState.getPositionById(departmentId, positionId);
+            if (!position) return [];
+
+            var allChars = _getCharacters();
+            var results = [];
+
+            for (var i = 0; i < allChars.length; i++) {
+                var char = allChars[i];
+                if (char.isDeceased) continue;
+
+                var qualified = true;
+                var skillLevel = 0;
+                var hasRole = false;
+
+                // Check role requirement
+                if (position.requiredRoleId) {
+                    if (char.professions) {
+                        for (var j = 0; j < char.professions.length; j++) {
+                            if (char.professions[j].id === position.requiredRoleId) {
+                                hasRole = true;
+                                skillLevel = char.professions[j].skillLevel || 0;
+                                break;
+                            }
+                        }
+                    }
+                    if (!hasRole) {
+                        qualified = false;
+                    }
+                    if (hasRole && position.minSkillLevel && skillLevel < position.minSkillLevel) {
+                        qualified = false;
+                    }
+                }
+
+                // Check gender restriction
+                if (qualified && position.genderRestriction && position.genderRestriction !== 'either') {
+                    if (char.gender !== position.genderRestriction) {
+                        qualified = false;
+                    }
+                }
+
+                // Check rank requirement
+                if (qualified && position.requiredRankId && char.activeRankId !== position.requiredRankId) {
+                    qualified = false;
+                }
+
+                // Check experience requirement
+                if (qualified && position.minExperience) {
+                    // Use age as proxy for experience
+                    var age = _getCurrentYear() - (char.birthYear || 0);
+                    if (age < position.minExperience) {
+                        qualified = false;
+                    }
+                }
+
+                // Check if already assigned
+                if (qualified) {
+                    var existing = GovernmentState.getAssignmentsForPosition(departmentId, positionId, true);
+                    for (var j = 0; j < existing.length; j++) {
+                        if (existing[j].characterId === char.id) {
+                            qualified = false;
+                            break;
+                        }
+                    }
+                }
+
+                if (qualified) {
+                    results.push({
+                        character: char,
+                        skillLevel: skillLevel,
+                        hasRole: hasRole,
+                        age: _getCurrentYear() - (char.birthYear || 0)
+                    });
+                }
+            }
+
+            // Sort by skill level (highest first)
+            results.sort(function(a, b) {
+                return b.skillLevel - a.skillLevel;
+            });
+
+            if (options.limit) {
+                results = results.slice(0, options.limit);
+            }
+
+            return results;
+
+        } finally {
+            _processingQuery = false;
+        }
+    }
+
+    // =========================================================================
+    // 13. EXPORTS (UPDATED with Industry Queries)
     // =========================================================================
 
     window.GovernmentQueries = {
         // Search
         searchDepartments: searchDepartments,
+        searchPositions: searchPositions,
 
         // Statistics
         getStatistics: getStatistics,
@@ -987,6 +1282,7 @@
         // Ranking
         getLargestDepartments: getLargestDepartments,
         getMostActiveDepartments: getMostActiveDepartments,
+        getPositionsByRoleRequirement: getPositionsByRoleRequirement,
 
         // Hierarchy
         getDepartmentPath: getDepartmentPath,
@@ -1011,7 +1307,18 @@
         getIndustryEnterpriseStats: getIndustryEnterpriseStats,
         getIndustryTaxRate: getIndustryTaxRate,
         getIndustryHealthScore: getIndustryHealthScore,
-        getGovernmentIndustrySummary: getGovernmentIndustrySummary
+        getGovernmentIndustrySummary: getGovernmentIndustrySummary,
+
+        // ROLE-BASED POSITION QUERIES - NEW
+        getPositionsRequiringRole: getPositionsRequiringRole,
+        getCharactersQualifiedForPosition: getCharactersQualifiedForPosition
     };
+
+    // Legacy aliases
+    window.getCurrentLeader = getCurrentLeader;
+    window.getLeaderHistory = getLeaderHistory;
+    window.getLeaderCount = getLeaderCount;
+    window.getActiveLeaderCount = getActiveLeaderCount;
+    window.getLeadersByLocation = getLeadersByLocation;
 
 })();

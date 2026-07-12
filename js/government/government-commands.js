@@ -1,17 +1,13 @@
 /**
  * =============================================================================
- * GOVERNMENT COMMANDS - All write operations for government system
+ * GOVERNMENT COMMANDS (government-commands.js)
  * =============================================================================
  * 
- * This file contains ALL write operations for government management:
- * - Department CRUD (create, update, delete)
- * - Position CRUD (add, update, remove)
- * - Assignment CRUD (assign, update, remove)
- * - Government type CRUD
- * - Bulk operations
- * - Leader management (assign, end term)
+ * PURPOSE: All write operations for government system.
  * 
- * All operations include validation, event logging, and change notifications.
+ * UPDATED: Added role integration (requiredRoleId, minSkillLevel)
+ *          Added settlement integration for leader assignment
+ *          Added justice commands with crime integration
  * 
  * DEPENDENCIES:
  *   - government-state.js (GovernmentState)
@@ -48,6 +44,10 @@
         return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
     }
 
+    function _getPlaces() {
+        return typeof window.getPlaces === 'function' ? window.getPlaces() : [];
+    }
+
     function _getCurrentYear() {
         if (typeof window.getCurrentYearSafe === 'function') return window.getCurrentYearSafe();
         if (typeof window.getCurrentYear === 'function') return window.getCurrentYear();
@@ -75,6 +75,30 @@
     function _generateId(prefix) {
         if (typeof window.generateId === 'function') return window.generateId(prefix);
         return prefix + '_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+    }
+
+    function _getRoleById(id) {
+        if (typeof window.getRoleById === 'function') {
+            return window.getRoleById(id);
+        }
+        return null;
+    }
+
+    function _addProfession(characterId, roleId, options) {
+        if (typeof window.addProfession === 'function') {
+            return window.addProfession(characterId, roleId, options);
+        }
+        return { success: false };
+    }
+
+    function _getSettlementData(locationId) {
+        if (typeof window.getSettlementData === 'function') {
+            return window.getSettlementData(locationId);
+        }
+        if (typeof window.getOrCreateSettlementData === 'function') {
+            return window.getOrCreateSettlementData(locationId);
+        }
+        return null;
     }
 
     // =========================================================================
@@ -142,6 +166,17 @@
             }
         }
 
+        if (data.requiredRoleId !== undefined && data.requiredRoleId !== null) {
+            var role = _getRoleById(data.requiredRoleId);
+            if (!role) {
+                return { valid: false, reason: 'Required role not found' };
+            }
+        }
+
+        if (data.minSkillLevel !== undefined && data.minSkillLevel < 0) {
+            return { valid: false, reason: 'Minimum skill level cannot be negative' };
+        }
+
         return { valid: true };
     }
 
@@ -174,10 +209,41 @@
             return { valid: false, reason: 'Character is deceased' };
         }
 
+        // Check gender restriction
+        if (position.genderRestriction && position.genderRestriction !== 'either') {
+            if (character.gender !== position.genderRestriction) {
+                return { valid: false, reason: 'Character gender does not meet position requirement' };
+            }
+        }
+
+        // Check if already assigned to this position
         var existing = GovernmentState.getAssignmentsForPosition(data.departmentId, data.positionId, true);
         for (var i = 0; i < existing.length; i++) {
             if (existing[i].characterId === data.characterId) {
                 return { valid: false, reason: 'Character already assigned to this position' };
+            }
+        }
+
+        // Check role requirement
+        if (position.requiredRoleId) {
+            var hasRole = false;
+            var skillLevel = 0;
+            if (character.professions) {
+                for (var i = 0; i < character.professions.length; i++) {
+                    if (character.professions[i].id === position.requiredRoleId) {
+                        hasRole = true;
+                        skillLevel = character.professions[i].skillLevel || 0;
+                        break;
+                    }
+                }
+            }
+
+            if (!hasRole && !data.addRoleIfMissing) {
+                return { valid: false, reason: 'Character does not have the required role' };
+            }
+
+            if (hasRole && position.minSkillLevel && skillLevel < position.minSkillLevel) {
+                return { valid: false, reason: 'Character skill level (' + skillLevel + ') is below requirement (' + position.minSkillLevel + ')' };
             }
         }
 
@@ -393,13 +459,19 @@
                 name: data.name.trim(),
                 description: data.description || '',
                 priority: data.priority || 10,
-                parentPositionId: data.parentPositionId || null
+                parentPositionId: data.parentPositionId || null,
+                requiredRoleId: data.requiredRoleId || null,
+                minSkillLevel: data.minSkillLevel || 0,
+                genderRestriction: data.genderRestriction || 'either',
+                requiredRankId: data.requiredRankId || null,
+                minExperience: data.minExperience || 0
             };
 
             var result = GovernmentState._addPosition(departmentId, position);
 
+            var roleName = data.requiredRoleId ? (_getRoleById(data.requiredRoleId)?.name || 'Unknown') : 'None';
             _logEvent('government', 'position_added',
-                'Position "' + position.name + '" added to department "' + dept.name + '"',
+                'Position "' + position.name + '" added to department "' + dept.name + '" (Role: ' + roleName + ')',
                 []);
 
             _showToast('Position "' + position.name + '" added', 'success');
@@ -519,12 +591,56 @@
                 return null;
             }
 
+            // Handle role requirement - check before validation
+            var roleId = position.requiredRoleId;
+            var skillLevel = 0;
+            var hasRole = false;
+
+            if (roleId) {
+                if (character.professions) {
+                    for (var i = 0; i < character.professions.length; i++) {
+                        if (character.professions[i].id === roleId) {
+                            hasRole = true;
+                            skillLevel = character.professions[i].skillLevel || 0;
+                            break;
+                        }
+                    }
+                }
+
+                if (!hasRole) {
+                    if (options.addRoleIfMissing !== false) {
+                        var defaultSkill = options.defaultSkillLevel || 10;
+                        var role = _getRoleById(roleId);
+                        var result = _addProfession(characterId, roleId, {
+                            skillLevel: defaultSkill,
+                            startYear: options.startYear || _getCurrentYear()
+                        });
+                        if (result && result.success) {
+                            hasRole = true;
+                            skillLevel = defaultSkill;
+                        } else {
+                            _showToast('Failed to add required role to character', 'error');
+                            return null;
+                        }
+                    } else {
+                        _showToast('Character does not have required role: ' + (_getRoleById(roleId)?.name || roleId), 'error');
+                        return null;
+                    }
+                }
+
+                if (position.minSkillLevel && skillLevel < position.minSkillLevel) {
+                    _showToast('Character skill level (' + skillLevel + ') is below requirement (' + position.minSkillLevel + ')', 'error');
+                    return null;
+                }
+            }
+
             var validation = _validateAssignment({
                 departmentId: departmentId,
                 positionId: positionId,
                 characterId: characterId,
                 startYear: options.startYear,
-                endYear: options.endYear
+                endYear: options.endYear,
+                addRoleIfMissing: options.addRoleIfMissing !== false
             });
 
             if (!validation.valid) {
@@ -543,13 +659,16 @@
                 endYear: options.endYear || null,
                 endReason: null,
                 title: options.title || position.name,
-                notes: options.notes || ''
+                notes: options.notes || '',
+                roleIdAtAssignment: roleId,
+                skillLevelAtAssignment: skillLevel
             };
 
             var result = GovernmentState._addAssignment(departmentId, assignment);
 
+            var roleName = roleId ? (_getRoleById(roleId)?.name || 'None') : 'None';
             _logEvent('government', 'character_assigned',
-                character.name + ' assigned to "' + position.name + '" in department "' + dept.name + '"',
+                character.name + ' assigned to "' + position.name + '" in department "' + dept.name + '" (Role: ' + roleName + ')',
                 [character]);
 
             var endMsg = options.endYear ? ' until ' + options.endYear : '';
@@ -730,7 +849,7 @@
                 return false;
             }
 
-            var places = typeof window.getPlaces === 'function' ? window.getPlaces() : [];
+            var places = _getPlaces();
             var usedBy = places.filter(function(p) { return p.governmentTypeId === typeId; });
             if (usedBy.length > 0) {
                 _showToast('Cannot delete: Used by ' + usedBy.length + ' location(s)', 'warning');
@@ -778,7 +897,9 @@
                         startYear: data.startYear,
                         endYear: data.endYear,
                         title: data.title,
-                        notes: data.notes
+                        notes: data.notes,
+                        addRoleIfMissing: data.addRoleIfMissing !== false,
+                        defaultSkillLevel: data.defaultSkillLevel || 10
                     }
                 );
 
@@ -852,7 +973,6 @@
             // =====================================================================
             if (typeof SettlementEconomy !== 'undefined' && typeof SettlementState !== 'undefined') {
                 try {
-                    // Recalculate prosperity with new leader
                     var newProsperity = SettlementEconomy.calculateProsperity(placeId);
                     SettlementState._updateSettlementData(placeId, { 
                         prosperity: newProsperity,
@@ -969,14 +1089,16 @@
                 return { success: false, reason: 'Invalid severity' };
             }
 
-            var data = SettlementState.getSettlementData(locationId);
+            var data = _getSettlementData(locationId);
             if (!data) {
                 return { success: false, reason: 'Settlement data not found' };
             }
 
             data.justiceSeverity = severity;
 
-            SettlementState._updateSettlementData(locationId, { justiceSeverity: severity });
+            if (typeof SettlementState !== 'undefined' && SettlementState._updateSettlementData) {
+                SettlementState._updateSettlementData(locationId, { justiceSeverity: severity });
+            }
 
             // =====================================================================
             // INTEGRATION: Justice severity changed → Recalculate crime rate
@@ -984,9 +1106,11 @@
             if (typeof SettlementEconomy !== 'undefined') {
                 try {
                     var newCrimeRate = SettlementEconomy.calculateCrimeRate(locationId);
-                    SettlementState._updateSettlementData(locationId, { 
-                        crimeRate: newCrimeRate 
-                    });
+                    if (typeof SettlementState !== 'undefined' && SettlementState._updateSettlementData) {
+                        SettlementState._updateSettlementData(locationId, { 
+                            crimeRate: newCrimeRate 
+                        });
+                    }
                     
                     _logEvent('justice', 'crime_rate_updated',
                         'Crime rate updated to ' + Math.round(newCrimeRate * 100) + '% after justice severity change at ' + 
@@ -1018,7 +1142,7 @@
                 return { success: false, reason: 'Invalid watch size' };
             }
 
-            var data = SettlementState.getSettlementData(locationId);
+            var data = _getSettlementData(locationId);
             if (!data) {
                 return { success: false, reason: 'Settlement data not found' };
             }
@@ -1026,10 +1150,12 @@
             data.hasWatch = !!hasWatch;
             data.watchSize = hasWatch ? (size || 0) : 0;
 
-            SettlementState._updateSettlementData(locationId, {
-                hasWatch: data.hasWatch,
-                watchSize: data.watchSize
-            });
+            if (typeof SettlementState !== 'undefined' && SettlementState._updateSettlementData) {
+                SettlementState._updateSettlementData(locationId, {
+                    hasWatch: data.hasWatch,
+                    watchSize: data.watchSize
+                });
+            }
 
             // =====================================================================
             // INTEGRATION: Watch changed → Recalculate crime rate
@@ -1037,9 +1163,11 @@
             if (typeof SettlementEconomy !== 'undefined') {
                 try {
                     var newCrimeRate = SettlementEconomy.calculateCrimeRate(locationId);
-                    SettlementState._updateSettlementData(locationId, { 
-                        crimeRate: newCrimeRate 
-                    });
+                    if (typeof SettlementState !== 'undefined' && SettlementState._updateSettlementData) {
+                        SettlementState._updateSettlementData(locationId, { 
+                            crimeRate: newCrimeRate 
+                        });
+                    }
                 } catch(e) {
                     // Silent fail
                 }
@@ -1097,5 +1225,40 @@
         validateGovernmentType: _validateGovernmentType,
         validateLeaderAssignment: _validateLeaderAssignment
     };
+
+    // Legacy aliases
+    window.assignGovernment = function(placeId, govTypeId, govStyle) {
+        var place = _getPlaceById(placeId);
+        if (!place) {
+            _showToast('Place not found', 'error');
+            return false;
+        }
+        place.governmentTypeId = govTypeId || null;
+        place.governmentStyle = govStyle || null;
+        place.updatedAt = Date.now();
+        _saveMasterData();
+        if (typeof LocationState !== 'undefined' && LocationState.invalidateCache) {
+            LocationState.invalidateCache();
+        }
+        _showToast('Government updated for ' + place.displayName, 'success');
+        return true;
+    };
+
+    window.createGovernmentDepartment = createDepartment;
+    window.updateGovernmentDepartment = updateDepartment;
+    window.deleteGovernmentDepartment = deleteDepartment;
+    window.addPositionToDepartment = addPosition;
+    window.updatePosition = updatePosition;
+    window.removePositionFromDepartment = deletePosition;
+    window.assignCharacterToPosition = assignCharacterToPosition;
+    window.removeCharacterFromPosition = function(departmentId, assignmentId, endYear) {
+        if (endYear) {
+            return endAssignment(departmentId, assignmentId, endYear);
+        }
+        return removeAssignment(departmentId, assignmentId);
+    };
+    window.bulkAssignCharacters = bulkAssignCharacters;
+    window.assignLeader = assignLeader;
+    window.endLeaderTerm = endLeaderTerm;
 
 })();

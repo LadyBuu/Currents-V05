@@ -3,36 +3,11 @@
  * HOUSEHOLD COMMANDS (household-commands.js)
  * =============================================================================
  * 
- * PURPOSE: All write operations for households (member management, transfers,
- *          department management, succession). Separates business logic from
- *          UI and data access.
+ * PURPOSE: All write operations for households.
  * 
- * UPDATED: Removed all vendetta functions - vendettas now in vendetta-system.js
- * 
- * DEPENDS ON:
- *   - household-state.js (HouseholdState)
- *   - accessors.js (for getCharacterById, getCharacters, getCurrentYear)
- *   - storage.js (for saveMasterData)
- * 
- * EXPORTS:
- *   - HouseholdCommands.addMember()         - Add member to household
- *   - HouseholdCommands.removeMember()      - Remove member from household
- *   - HouseholdCommands.updateMember()      - Update member role/type
- *   - HouseholdCommands.transferMember()    - Transfer member between households
- *   - HouseholdCommands.setHead()           - Set household head
- *   - HouseholdCommands.addDepartment()     - Add department
- *   - HouseholdCommands.removeDepartment()  - Remove department
- *   - HouseholdCommands.updateDepartment()  - Update department
- *   - HouseholdCommands.setDepartmentHead() - Set department head
- *   - HouseholdCommands.recordHistory()     - Record household change in history
- *   - HouseholdCommands.repairMemberships() - Fix broken member references
- *   - HouseholdCommands.fixCharacterHousehold() - Fix single character membership
- * 
- * REMOVED (moved to vendetta-system.js):
- *   - declareVendetta()
- *   - resolveVendetta()
- *   - getHouseholdVendettas()
- *   - recordVendettaDeath()
+ * UPDATED: Added household position management commands
+ *          Added assignment management commands
+ *          Integrated with Role System via requiredRoleId
  * 
  * =============================================================================
  */
@@ -82,6 +57,13 @@
         return null;
     }
 
+    function _getRoleById(id) {
+        if (typeof window.getRoleById === 'function') {
+            return window.getRoleById(id);
+        }
+        return null;
+    }
+
     function _saveMasterData() {
         if (typeof window.saveMasterData === 'function') {
             window.saveMasterData();
@@ -112,6 +94,13 @@
         return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
+    function _addProfession(characterId, roleId, options) {
+        if (typeof window.addProfession === 'function') {
+            return window.addProfession(characterId, roleId, options);
+        }
+        return { success: false };
+    }
+
     // =========================================================================
     // 2. HOUSEHOLD STATE REFERENCE
     // =========================================================================
@@ -122,10 +111,6 @@
     // 3. INTERNAL HELPERS
     // =========================================================================
 
-    /**
-     * Generates a unique ID
-     * @private
-     */
     function _generateId(prefix) {
         if (typeof window.generateId === 'function') {
             return window.generateId(prefix);
@@ -133,10 +118,6 @@
         return prefix + '_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
     }
 
-    /**
-     * Logs an activity event for a household
-     * @private
-     */
     function _addActivityLog(householdId, action, details, actorId) {
         var household = _state.getHousehold(householdId);
         if (!household) return false;
@@ -153,12 +134,10 @@
             timestamp: Date.now()
         });
         
-        // Trim log to 100 entries
         if (household.activityLog.length > 100) {
             household.activityLog = household.activityLog.slice(-100);
         }
         
-        // Save via state
         _state.updateHousehold(householdId, {
             activityLog: household.activityLog
         }, { recordHistory: false });
@@ -166,10 +145,6 @@
         return true;
     }
 
-    /**
-     * Records a household change in a character's history
-     * @private
-     */
     function _recordCharacterHouseholdChange(characterId, householdId, year, action, reason, options) {
         if (_recordingHistory) return false;
         _recordingHistory = true;
@@ -186,7 +161,6 @@
             var household = householdId ? _state.getHousehold(householdId) : null;
             var householdName = household ? household.name : (options.previousHouseholdName || null);
             
-            // Handle leaving action
             if (action === 'left' || action === 'dissolved' || action === 'removed') {
                 var previousHouseholdId = options.previousHouseholdId || householdId;
                 var membershipFound = false;
@@ -233,13 +207,11 @@
                     }
                 }
                 
-                // Clear character's household reference if leaving
                 if (character.household === previousHouseholdId) {
                     character.household = '';
                     character.householdId = '';
                 }
                 
-            // Handle joining action
             } else if (action === 'joined' || action === 'born' || action === 'created' || action === 'inherited') {
                 var existingActive = null;
                 for (var i = 0; i < character.householdHistory.length; i++) {
@@ -285,12 +257,10 @@
                     }
                 }
                 
-                // Update character's household reference
                 character.household = householdId || '';
                 character.householdId = householdId || '';
             }
             
-            // Sort history
             character.householdHistory.sort(function(a, b) {
                 return (a.joinedYear || 0) - (b.joinedYear || 0);
             });
@@ -303,10 +273,6 @@
         }
     }
 
-    /**
-     * Validates a character can be added to a household
-     * @private
-     */
     function _validateMemberAddition(householdId, characterId, type) {
         var household = _state.getHousehold(householdId);
         if (!household) {
@@ -318,7 +284,6 @@
             return { valid: false, reason: 'Character not found' };
         }
         
-        // Check if already a member
         if (household.members) {
             for (var i = 0; i < household.members.length; i++) {
                 if (household.members[i].characterId === characterId) {
@@ -334,10 +299,6 @@
         return { valid: true, reason: '' };
     }
 
-    /**
-     * Updates household status based on members
-     * @private
-     */
     function _updateHouseholdStatus(householdId) {
         var household = _state.getHousehold(householdId);
         if (!household) return;
@@ -350,24 +311,30 @@
         }
     }
 
+    function _validatePositionCreation(householdId, name, requiredRoleId) {
+        var household = _state.getHousehold(householdId);
+        if (!household) {
+            return { valid: false, reason: 'Household not found' };
+        }
+
+        if (!name || name.trim() === '') {
+            return { valid: false, reason: 'Position name is required' };
+        }
+
+        if (requiredRoleId) {
+            var role = _getRoleById(requiredRoleId);
+            if (!role) {
+                return { valid: false, reason: 'Required role not found' };
+            }
+        }
+
+        return { valid: true, reason: '' };
+    }
+
     // =========================================================================
     // 4. MEMBER MANAGEMENT
     // =========================================================================
 
-    /**
-     * Adds a member to a household
-     * @param {string} householdId - Household ID
-     * @param {string} characterId - Character ID
-     * @param {string} type - 'family' or 'staff'
-     * @param {Object} options - Options
-     * @param {string} options.role - Role/title
-     * @param {number} options.joinedYear - Year joined (defaults to current)
-     * @param {boolean} options.isHead - Whether this member is head
-     * @param {string} options.departmentId - Department ID
-     * @param {string} options.notes - Notes
-     * @param {boolean} options.recordHistory - Record in character history (default: true)
-     * @returns {Object} Result object
-     */
     function addMember(householdId, characterId, type, options) {
         if (_processingCommand) {
             return { success: false, reason: 'Command already in progress' };
@@ -377,7 +344,6 @@
         try {
             options = options || {};
             
-            // Validate
             var validation = _validateMemberAddition(householdId, characterId, type);
             if (!validation.valid) {
                 return { success: false, reason: validation.reason };
@@ -389,7 +355,6 @@
             var role = options.role || (type === 'family' ? 'Family Member' : 'Staff');
             var isHead = options.isHead || false;
             
-            // Create member object
             var member = {
                 characterId: characterId,
                 characterName: (character.name || '') + (character.surname ? ' ' + character.surname : ''),
@@ -402,13 +367,11 @@
                 notes: options.notes || ''
             };
             
-            // Add to household
             if (!household.members) {
                 household.members = [];
             }
             household.members.push(member);
             
-            // Update household
             var updates = {
                 members: household.members,
                 updatedAt: Date.now()
@@ -416,7 +379,6 @@
             
             _state.updateHousehold(householdId, updates, { recordHistory: false });
             
-            // If this is a head, remove head status from other members
             if (isHead) {
                 for (var i = 0; i < household.members.length; i++) {
                     if (household.members[i].characterId !== characterId && household.members[i].isHead) {
@@ -427,34 +389,28 @@
                 _state.updateHousehold(householdId, { members: household.members }, { recordHistory: false });
             }
             
-            // Record in character history
             if (options.recordHistory !== false) {
                 _recordCharacterHouseholdChange(characterId, householdId, joinedYear, 'joined',
                     options.notes || 'Added to household as ' + type + (role ? ' (' + role + ')' : ''),
                     { newRole: role, isHead: isHead });
             }
             
-            // Update character's household reference
             if (character) {
                 character.household = householdId;
                 character.householdId = householdId;
                 _saveMasterData();
             }
             
-            // Log activity
             _addActivityLog(householdId, 'member_added',
                 (character.name || 'Unknown') + ' added as ' + type + (role ? ' (' + role + ')' : ''),
                 characterId);
             
-            // Log event
             _logEvent('household', 'Member Added',
                 (character.name || 'Unknown') + ' added to ' + household.name + ' as ' + type,
                 [character]);
             
-            // Update status
             _updateHouseholdStatus(householdId);
             
-            // Invalidate caches
             if (typeof window.invalidateAccessorCaches === 'function') {
                 window.invalidateAccessorCaches();
             }
@@ -471,16 +427,6 @@
         }
     }
 
-    /**
-     * Removes a member from a household
-     * @param {string} householdId - Household ID
-     * @param {string} characterId - Character ID
-     * @param {Object} options - Options
-     * @param {string} options.reason - Reason for removal
-     * @param {number} options.leftYear - Year left (defaults to current)
-     * @param {boolean} options.recordHistory - Record in character history (default: true)
-     * @returns {Object} Result object
-     */
     function removeMember(householdId, characterId, options) {
         if (_processingCommand) {
             return { success: false, reason: 'Command already in progress' };
@@ -503,7 +449,6 @@
             var leftYear = options.leftYear || _getCurrentYear();
             var reason = options.reason || 'Removed';
             
-            // Find member
             var memberIndex = -1;
             var member = null;
             for (var i = 0; i < household.members.length; i++) {
@@ -518,13 +463,10 @@
                 return { success: false, reason: 'Character is not a member' };
             }
             
-            // Check if this is the head
             var wasHead = member.isHead;
             
-            // Remove from household
             household.members.splice(memberIndex, 1);
             
-            // Update household
             var updates = {
                 members: household.members,
                 updatedAt: Date.now()
@@ -532,21 +474,18 @@
             
             _state.updateHousehold(householdId, updates, { recordHistory: false });
             
-            // Record in character history
             if (options.recordHistory !== false) {
                 _recordCharacterHouseholdChange(characterId, null, leftYear, 'left',
                     reason || 'Left ' + household.name,
                     { previousHouseholdId: householdId, previousHouseholdName: household.name });
             }
             
-            // Clear character's household reference
             if (character.household === householdId) {
                 character.household = '';
                 character.householdId = '';
                 _saveMasterData();
             }
             
-            // If this was the head, assign new head
             if (wasHead) {
                 var newHead = null;
                 for (var i = 0; i < household.members.length; i++) {
@@ -564,20 +503,16 @@
                 }
             }
             
-            // Log activity
             _addActivityLog(householdId, 'member_removed',
                 (character.name || 'Unknown') + ' removed (' + reason + ')',
                 characterId);
             
-            // Log event
             _logEvent('household', 'Member Removed',
                 (character.name || 'Unknown') + ' removed from ' + household.name,
                 [character]);
             
-            // Update status
             _updateHouseholdStatus(householdId);
             
-            // Invalidate caches
             if (typeof window.invalidateAccessorCaches === 'function') {
                 window.invalidateAccessorCaches();
             }
@@ -595,20 +530,6 @@
         }
     }
 
-    /**
-     * Updates a member's role or other properties
-     * @param {string} householdId - Household ID
-     * @param {string} characterId - Character ID
-     * @param {Object} updates - Updates to apply
-     * @param {string} updates.role - New role
-     * @param {string} updates.type - New type ('family' or 'staff')
-     * @param {string} updates.departmentId - New department ID
-     * @param {boolean} updates.isHead - Whether this member is head
-     * @param {string} updates.notes - New notes
-     * @param {number} updates.joinedYear - New joined year
-     * @param {boolean} options.recordHistory - Record in character history (default: true)
-     * @returns {Object} Result object
-     */
     function updateMember(householdId, characterId, updates, options) {
         if (_processingCommand) {
             return { success: false, reason: 'Command already in progress' };
@@ -628,7 +549,6 @@
                 return { success: false, reason: 'Character not found' };
             }
             
-            // Find member
             var member = null;
             var memberIndex = -1;
             for (var i = 0; i < household.members.length; i++) {
@@ -643,12 +563,10 @@
                 return { success: false, reason: 'Character is not a member' };
             }
             
-            // Track old values for logging
             var oldRole = member.role;
             var oldType = member.type;
             var oldIsHead = member.isHead;
             
-            // Apply updates
             var allowedFields = ['role', 'type', 'departmentId', 'isHead', 'notes', 'joinedYear'];
             var changed = false;
             
@@ -673,10 +591,8 @@
                 return { success: false, reason: 'No changes to apply' };
             }
             
-            // Update household
             _state.updateHousehold(householdId, { members: household.members }, { recordHistory: false });
             
-            // If this is now a head, remove head status from other members
             if (member.isHead && !oldIsHead) {
                 for (var i = 0; i < household.members.length; i++) {
                     if (household.members[i].characterId !== characterId && household.members[i].isHead) {
@@ -687,14 +603,12 @@
                 _state.updateHousehold(householdId, { members: household.members }, { recordHistory: false });
             }
             
-            // Record in character history
             if (options.recordHistory !== false && member.role !== oldRole) {
                 _recordCharacterHouseholdChange(characterId, householdId, _getCurrentYear(), 'transferred',
                     'Role changed from ' + oldRole + ' to ' + member.role,
                     { newRole: member.role });
             }
             
-            // Log activity
             var details = [];
             if (member.role !== oldRole) details.push('role: ' + oldRole + ' → ' + member.role);
             if (member.type !== oldType) details.push('type: ' + oldType + ' → ' + member.type);
@@ -704,10 +618,8 @@
                 (character.name || 'Unknown') + ' updated: ' + details.join(', '),
                 characterId);
             
-            // Update status
             _updateHouseholdStatus(householdId);
             
-            // Invalidate caches
             if (typeof window.invalidateAccessorCaches === 'function') {
                 window.invalidateAccessorCaches();
             }
@@ -725,24 +637,6 @@
         }
     }
 
-    // =========================================================================
-    // 5. MEMBER TRANSFER
-    // =========================================================================
-
-    /**
-     * Transfers a member from one household to another
-     * @param {string} characterId - Character ID
-     * @param {string} targetHouseholdId - Target household ID
-     * @param {Object} options - Options
-     * @param {number} options.year - Transfer year (defaults to current)
-     * @param {string} options.reason - Transfer reason
-     * @param {string} options.role - New role (defaults to existing)
-     * @param {string} options.type - New type (defaults to existing)
-     * @param {string} options.departmentId - New department ID
-     * @param {boolean} options.isHead - Whether to make head
-     * @param {boolean} options.recordHistory - Record in character history (default: true)
-     * @returns {Object} Result object
-     */
     function transferMember(characterId, targetHouseholdId, options) {
         if (_processingCommand) {
             return { success: false, reason: 'Command already in progress' };
@@ -770,7 +664,6 @@
             var year = options.year || _getCurrentYear();
             var reason = options.reason || 'Transferred';
             
-            // Get existing member data
             var existingMember = null;
             var currentMemberData = {};
             
@@ -790,7 +683,6 @@
                 }
             }
             
-            // Remove from current household
             if (currentHousehold) {
                 var removeResult = removeMember(currentHousehold.id, characterId, {
                     reason: 'Transferred to ' + targetHousehold.name + ': ' + reason,
@@ -803,7 +695,6 @@
                 }
             }
             
-            // Add to target household
             var memberType = options.type || (existingMember ? existingMember.type : 'family');
             var memberRole = options.role || (existingMember ? existingMember.role : 'Family Member');
             
@@ -817,7 +708,6 @@
             });
             
             if (!addResult.success) {
-                // Rollback: add back to original household
                 if (currentHousehold && existingMember) {
                     addMember(currentHousehold.id, characterId, currentMemberData.type || 'family', {
                         role: currentMemberData.role || 'Family Member',
@@ -831,7 +721,6 @@
                 return { success: false, reason: 'Failed to add to target household: ' + addResult.reason };
             }
             
-            // Log activity in both households
             if (currentHousehold) {
                 _addActivityLog(currentHousehold.id, 'member_transferred_out',
                     (character.name || 'Unknown') + ' transferred to ' + targetHousehold.name + ': ' + reason,
@@ -842,12 +731,10 @@
                 (character.name || 'Unknown') + ' transferred from ' + (currentHousehold ? currentHousehold.name : 'None') + ': ' + reason,
                 characterId);
             
-            // Log event
             _logEvent('household', 'Member Transferred',
                 (character.name || 'Unknown') + ' transferred from ' + (currentHousehold ? currentHousehold.name : 'None') + ' to ' + targetHousehold.name,
                 [character]);
             
-            // Invalidate caches
             if (typeof window.invalidateAccessorCaches === 'function') {
                 window.invalidateAccessorCaches();
             }
@@ -867,19 +754,9 @@
     }
 
     // =========================================================================
-    // 6. HEAD OF HOUSEHOLD MANAGEMENT
+    // 5. HEAD OF HOUSEHOLD MANAGEMENT
     // =========================================================================
 
-    /**
-     * Sets the head of a household
-     * @param {string} householdId - Household ID
-     * @param {string} characterId - Character ID (or null to remove head)
-     * @param {Object} options - Options
-     * @param {number} options.year - Year of succession (defaults to current)
-     * @param {string} options.reason - Reason for change
-     * @param {boolean} options.recordHistory - Record in character history (default: true)
-     * @returns {Object} Result object
-     */
     function setHead(householdId, characterId, options) {
         if (_processingCommand) {
             return { success: false, reason: 'Command already in progress' };
@@ -897,7 +774,6 @@
             var year = options.year || _getCurrentYear();
             var reason = options.reason || 'Succession';
             
-            // If removing head
             if (characterId === null) {
                 var oldHead = null;
                 for (var i = 0; i < household.members.length; i++) {
@@ -922,7 +798,6 @@
                 return { success: true, oldHead: oldHead };
             }
             
-            // Find character and member
             var character = _getCharacterById(characterId);
             if (!character) {
                 return { success: false, reason: 'Character not found' };
@@ -938,7 +813,6 @@
                 }
             }
             
-            // If character is not a member, add them as family
             if (!member) {
                 var addResult = addMember(householdId, characterId, 'family', {
                     role: 'Head of Household',
@@ -965,7 +839,6 @@
                 };
             }
             
-            // Remove existing head
             var oldHead = null;
             for (var i = 0; i < household.members.length; i++) {
                 if (household.members[i].isHead) {
@@ -976,14 +849,12 @@
                 }
             }
             
-            // Set new head
             member.isHead = true;
             member.role = 'Head of Household';
             member.headSince = year;
             
             _state.updateHousehold(householdId, { members: household.members }, { recordHistory: false });
             
-            // Record history
             if (options.recordHistory !== false) {
                 _recordCharacterHouseholdChange(characterId, householdId, year, 'transferred',
                     'Became head of household' + (oldHead ? ' (replacing ' + oldHead.characterName + ')' : ''),
@@ -996,20 +867,16 @@
                 }
             }
             
-            // Log activity
             _addActivityLog(householdId, 'head_changed',
                 (character.name || 'Unknown') + ' became head' + (oldHead ? ' (replacing ' + oldHead.characterName + ')' : ''),
                 characterId);
             
-            // Log event
             _logEvent('household', 'Head Changed',
                 (character.name || 'Unknown') + ' became head of ' + household.name,
                 [character]);
             
-            // Update status
             _updateHouseholdStatus(householdId);
             
-            // Invalidate caches
             if (typeof window.invalidateAccessorCaches === 'function') {
                 window.invalidateAccessorCaches();
             }
@@ -1028,17 +895,9 @@
     }
 
     // =========================================================================
-    // 7. DEPARTMENT MANAGEMENT
+    // 6. DEPARTMENT MANAGEMENT
     // =========================================================================
 
-    /**
-     * Adds a department to a household
-     * @param {string} householdId - Household ID
-     * @param {string} name - Department name
-     * @param {Object} options - Options
-     * @param {string} options.headId - Department head character ID
-     * @returns {Object} Result object
-     */
     function addDepartment(householdId, name, options) {
         if (_processingCommand) {
             return { success: false, reason: 'Command already in progress' };
@@ -1059,7 +918,6 @@
             
             var trimmedName = name.trim();
             
-            // Check for duplicate
             if (household.departments) {
                 for (var i = 0; i < household.departments.length; i++) {
                     if (household.departments[i].name.toLowerCase() === trimmedName.toLowerCase()) {
@@ -1076,11 +934,9 @@
                 createdAt: Date.now()
             };
             
-            // Set head if provided
             if (options.headId) {
                 var headChar = _getCharacterById(options.headId);
                 if (headChar) {
-                    // Check if character is a member
                     var isMember = false;
                     for (var i = 0; i < household.members.length; i++) {
                         if (household.members[i].characterId === options.headId) {
@@ -1103,7 +959,6 @@
             
             _state.updateHousehold(householdId, { departments: household.departments }, { recordHistory: false });
             
-            // If head set, update member
             if (department.headId) {
                 for (var i = 0; i < household.members.length; i++) {
                     if (household.members[i].characterId === department.headId) {
@@ -1117,7 +972,6 @@
             
             _addActivityLog(householdId, 'department_added', 'Added department: ' + trimmedName);
             
-            // Invalidate caches
             if (typeof window.invalidateAccessorCaches === 'function') {
                 window.invalidateAccessorCaches();
             }
@@ -1133,14 +987,6 @@
         }
     }
 
-    /**
-     * Removes a department from a household
-     * @param {string} householdId - Household ID
-     * @param {string} departmentId - Department ID
-     * @param {Object} options - Options
-     * @param {boolean} options.transferMembers - Transfer members to no department (default: true)
-     * @returns {Object} Result object
-     */
     function removeDepartment(householdId, departmentId, options) {
         if (_processingCommand) {
             return { success: false, reason: 'Command already in progress' };
@@ -1173,7 +1019,6 @@
                 return { success: false, reason: 'Department not found' };
             }
             
-            // Remove department from members
             if (options.transferMembers !== false) {
                 for (var i = 0; i < household.members.length; i++) {
                     if (household.members[i].departmentId === departmentId) {
@@ -1193,7 +1038,6 @@
             
             _addActivityLog(householdId, 'department_deleted', 'Deleted department: ' + departmentName);
             
-            // Invalidate caches
             if (typeof window.invalidateAccessorCaches === 'function') {
                 window.invalidateAccessorCaches();
             }
@@ -1209,15 +1053,6 @@
         }
     }
 
-    /**
-     * Updates a department
-     * @param {string} householdId - Household ID
-     * @param {string} departmentId - Department ID
-     * @param {Object} updates - Updates to apply
-     * @param {string} updates.name - New name
-     * @param {string} updates.headId - New head character ID
-     * @returns {Object} Result object
-     */
     function updateDepartment(householdId, departmentId, updates) {
         if (_processingCommand) {
             return { success: false, reason: 'Command already in progress' };
@@ -1250,7 +1085,6 @@
             
             var changed = false;
             
-            // Update name
             if (updates.name && updates.name.trim()) {
                 var trimmedName = updates.name.trim();
                 if (trimmedName !== department.name) {
@@ -1259,9 +1093,7 @@
                 }
             }
             
-            // Update head
             if (updates.headId !== undefined) {
-                // Clear old head
                 if (department.headId) {
                     for (var i = 0; i < household.members.length; i++) {
                         if (household.members[i].characterId === department.headId) {
@@ -1278,7 +1110,6 @@
                 } else {
                     var headChar = _getCharacterById(updates.headId);
                     if (headChar) {
-                        // Check if character is a member
                         var isMember = false;
                         for (var i = 0; i < household.members.length; i++) {
                             if (household.members[i].characterId === updates.headId) {
@@ -1292,7 +1123,6 @@
                             department.headName = (headChar.name || '') + (headChar.surname ? ' ' + headChar.surname : '');
                             changed = true;
                             
-                            // Set member as head of this department
                             for (var i = 0; i < household.members.length; i++) {
                                 if (household.members[i].characterId === updates.headId) {
                                     household.members[i].isHead = true;
@@ -1309,7 +1139,6 @@
                 return { success: false, reason: 'No changes to apply' };
             }
             
-            // Save department
             household.departments[departmentIndex] = department;
             _state.updateHousehold(householdId, { 
                 departments: household.departments,
@@ -1319,7 +1148,6 @@
             _addActivityLog(householdId, 'department_updated', 
                 'Updated department: ' + department.name);
             
-            // Invalidate caches
             if (typeof window.invalidateAccessorCaches === 'function') {
                 window.invalidateAccessorCaches();
             }
@@ -1335,28 +1163,307 @@
         }
     }
 
-    /**
-     * Sets the head of a department
-     * @param {string} householdId - Household ID
-     * @param {string} departmentId - Department ID
-     * @param {string} characterId - Character ID (or null to remove)
-     * @returns {Object} Result object
-     */
     function setDepartmentHead(householdId, departmentId, characterId) {
         return updateDepartment(householdId, departmentId, { headId: characterId });
     }
 
     // =========================================================================
-    // 8. REPAIR FUNCTIONS
+    // 7. HOUSEHOLD POSITION COMMANDS (NEW)
     // =========================================================================
 
-    /**
-     * Repairs household memberships across all characters and households
-     * @param {Object} options - Options
-     * @param {boolean} options.saveAfter - Save after repair (default: true)
-     * @param {boolean} options.verbose - Log details (default: false)
-     * @returns {Object} Repair results
-     */
+    function createHouseholdPosition(data) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Command already in progress' };
+        }
+        _processingCommand = true;
+
+        try {
+            var validation = _validatePositionCreation(data.householdId, data.name, data.requiredRoleId);
+            if (!validation.valid) {
+                return { success: false, reason: validation.reason };
+            }
+
+            var result = _state.createHouseholdPosition(data);
+            if (result) {
+                var roleName = data.requiredRoleId ? (_getRoleById(data.requiredRoleId)?.name || 'Unknown') : 'None';
+                _logEvent('household', 'position_created',
+                    'Created household position: ' + data.name + ' (Role: ' + roleName + ')',
+                    []);
+                return { success: true, position: result };
+            }
+
+            return { success: false, reason: 'Failed to create position' };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    function updateHouseholdPosition(positionId, updates) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Command already in progress' };
+        }
+        _processingCommand = true;
+
+        try {
+            var position = _state.getHouseholdPosition(positionId);
+            if (!position) {
+                return { success: false, reason: 'Position not found' };
+            }
+
+            if (updates.requiredRoleId !== undefined && updates.requiredRoleId !== null) {
+                var role = _getRoleById(updates.requiredRoleId);
+                if (!role) {
+                    return { success: false, reason: 'Required role not found' };
+                }
+            }
+
+            var result = _state.updateHouseholdPosition(positionId, updates);
+            if (result) {
+                _logEvent('household', 'position_updated',
+                    'Updated household position: ' + result.name,
+                    []);
+                return { success: true, position: result };
+            }
+
+            return { success: false, reason: 'Failed to update position' };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    function deleteHouseholdPosition(positionId, options) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Command already in progress' };
+        }
+        _processingCommand = true;
+
+        try {
+            options = options || {};
+            var position = _state.getHouseholdPosition(positionId);
+            if (!position) {
+                return { success: false, reason: 'Position not found' };
+            }
+
+            var result = _state.deleteHouseholdPosition(positionId, options);
+            if (result) {
+                _logEvent('household', 'position_deleted',
+                    'Deleted household position: ' + position.name,
+                    []);
+                return { success: true };
+            }
+
+            return { success: false, reason: 'Failed to delete position' };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    // =========================================================================
+    // 8. HOUSEHOLD ASSIGNMENT COMMANDS (NEW)
+    // =========================================================================
+
+    function assignCharacterToHouseholdPosition(positionId, characterId, options) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Command already in progress' };
+        }
+        _processingCommand = true;
+
+        try {
+            options = options || {};
+
+            var position = _state.getHouseholdPosition(positionId);
+            if (!position) {
+                return { success: false, reason: 'Position not found' };
+            }
+
+            var character = _getCharacterById(characterId);
+            if (!character) {
+                return { success: false, reason: 'Character not found' };
+            }
+
+            if (character.isDeceased) {
+                return { success: false, reason: 'Character is deceased' };
+            }
+
+            // Check if already assigned
+            var existing = _state.getAssignmentsForPosition(positionId, true);
+            for (var i = 0; i < existing.length; i++) {
+                if (existing[i].characterId === characterId) {
+                    return { success: false, reason: 'Character already assigned to this position' };
+                }
+            }
+
+            // Handle role requirement
+            var requiredRoleId = position.requiredRoleId;
+            var hasRole = false;
+            var skillLevel = 0;
+
+            if (requiredRoleId) {
+                if (character.professions) {
+                    for (var i = 0; i < character.professions.length; i++) {
+                        if (character.professions[i].id === requiredRoleId) {
+                            hasRole = true;
+                            skillLevel = character.professions[i].skillLevel || 0;
+                            break;
+                        }
+                    }
+                }
+
+                if (!hasRole) {
+                    if (options.addRoleIfMissing !== false) {
+                        var defaultSkill = options.defaultSkillLevel || 10;
+                        var role = _getRoleById(requiredRoleId);
+                        var result = _addProfession(characterId, requiredRoleId, {
+                            skillLevel: defaultSkill,
+                            startYear: options.startYear || _getCurrentYear()
+                        });
+                        if (result && result.success) {
+                            hasRole = true;
+                            skillLevel = defaultSkill;
+                        } else {
+                            return { success: false, reason: 'Failed to add required role to character' };
+                        }
+                    } else {
+                        return { success: false, reason: 'Character does not have required role: ' + (_getRoleById(requiredRoleId)?.name || requiredRoleId) };
+                    }
+                }
+
+                if (position.minSkillLevel && skillLevel < position.minSkillLevel) {
+                    return { success: false, reason: 'Character skill level (' + skillLevel + ') is below requirement (' + position.minSkillLevel + ')' };
+                }
+            }
+
+            var result = _state.assignCharacterToHouseholdPosition(positionId, characterId, options);
+            if (result) {
+                var title = options.title || position.name;
+                var roleName = requiredRoleId ? (_getRoleById(requiredRoleId)?.name || 'None') : 'None';
+                _logEvent('household', 'assigned_to_position',
+                    character.name + ' assigned as ' + title + ' (Role: ' + roleName + ')',
+                    [character]);
+                return { success: true, assignment: result };
+            }
+
+            return { success: false, reason: 'Failed to assign character' };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    function endHouseholdAssignment(assignmentId, endYear, reason) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Command already in progress' };
+        }
+        _processingCommand = true;
+
+        try {
+            var assignment = _state.getHouseholdAssignment(assignmentId);
+            if (!assignment) {
+                return { success: false, reason: 'Assignment not found' };
+            }
+
+            if (assignment.endYear) {
+                return { success: false, reason: 'Assignment already ended' };
+            }
+
+            var result = _state.endHouseholdAssignment(assignmentId, endYear, reason);
+            if (result) {
+                var character = _getCharacterById(assignment.characterId);
+                _logEvent('household', 'assignment_ended',
+                    (character ? character.name : 'Unknown') + ' ended assignment',
+                    []);
+                return { success: true, assignment: result };
+            }
+
+            return { success: false, reason: 'Failed to end assignment' };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    function deleteHouseholdAssignment(assignmentId) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Command already in progress' };
+        }
+        _processingCommand = true;
+
+        try {
+            var assignment = _state.getHouseholdAssignment(assignmentId);
+            if (!assignment) {
+                return { success: false, reason: 'Assignment not found' };
+            }
+
+            var result = _state.deleteHouseholdAssignment(assignmentId);
+            if (result) {
+                _logEvent('household', 'assignment_deleted',
+                    'Deleted household assignment',
+                    []);
+                return { success: true };
+            }
+
+            return { success: false, reason: 'Failed to delete assignment' };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    // =========================================================================
+    // 9. BULK HOUSEHOLD ASSIGNMENT (NEW)
+    // =========================================================================
+
+    function bulkAssignHouseholdPositions(assignments, options) {
+        if (_processingCommand) {
+            return { success: 0, failed: 0, errors: [] };
+        }
+        _processingCommand = true;
+
+        try {
+            options = options || {};
+            var results = { success: 0, failed: 0, errors: [] };
+
+            for (var i = 0; i < assignments.length; i++) {
+                var data = assignments[i];
+                var result = assignCharacterToHouseholdPosition(
+                    data.positionId,
+                    data.characterId,
+                    {
+                        startYear: options.startYear || data.startYear,
+                        endYear: options.endYear || data.endYear,
+                        title: options.title || data.title,
+                        notes: options.notes || data.notes,
+                        addRoleIfMissing: options.addRoleIfMissing !== false,
+                        defaultSkillLevel: options.defaultSkillLevel || 10
+                    }
+                );
+
+                if (result.success) {
+                    results.success++;
+                } else {
+                    results.failed++;
+                    results.errors.push({
+                        positionId: data.positionId,
+                        characterId: data.characterId,
+                        reason: result.reason
+                    });
+                }
+            }
+
+            return results;
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    // =========================================================================
+    // 10. REPAIR FUNCTIONS
+    // =========================================================================
+
     function repairMemberships(options) {
         options = options || {};
         var saveAfter = options.saveAfter !== false;
@@ -1382,19 +1489,16 @@
                 errors: []
             };
             
-            // Build character map
             var charMap = {};
             for (var i = 0; i < characters.length; i++) {
                 charMap[characters[i].id] = characters[i];
             }
             
-            // Build household map
             var householdMap = {};
             for (var i = 0; i < households.length; i++) {
                 householdMap[households[i].id] = households[i];
             }
             
-            // Step 1: Ensure all households have members array
             for (var i = 0; i < households.length; i++) {
                 var h = households[i];
                 if (!h.members) {
@@ -1408,7 +1512,6 @@
                 }
             }
             
-            // Step 2: Find characters with household references
             var charsWithHousehold = characters.filter(function(c) { 
                 return c.household || c.householdId; 
             });
@@ -1417,7 +1520,6 @@
                 console.log('📊 Found ' + charsWithHousehold.length + ' characters with household references');
             }
             
-            // Step 3: Ensure characters are in members arrays
             for (var i = 0; i < charsWithHousehold.length; i++) {
                 var c = charsWithHousehold[i];
                 var householdId = c.household || c.householdId;
@@ -1450,7 +1552,6 @@
                         notes: 'Added by repair function'
                     };
                     
-                    // Check if character was head in history
                     if (c.householdHistory) {
                         for (var j = 0; j < c.householdHistory.length; j++) {
                             var entry = c.householdHistory[j];
@@ -1475,7 +1576,6 @@
                 }
             }
             
-            // Step 4: Remove characters from members if they don't have household reference
             for (var i = 0; i < households.length; i++) {
                 var h = households[i];
                 if (!h.members) continue;
@@ -1522,7 +1622,6 @@
                 }
             }
             
-            // Step 5: Ensure head is properly set
             for (var i = 0; i < households.length; i++) {
                 var h = households[i];
                 if (!h.members || h.members.length === 0) continue;
@@ -1579,12 +1678,10 @@
                 }
             }
             
-            // Step 6: Update household status
             for (var i = 0; i < households.length; i++) {
                 _updateHouseholdStatus(households[i].id);
             }
             
-            // Step 7: Save
             if (saveAfter) {
                 _saveMasterData();
                 if (typeof window.invalidateAccessorCaches === 'function') {
@@ -1608,17 +1705,6 @@
         }
     }
 
-    /**
-     * Fix a single character's household membership
-     * @param {string} characterId - Character ID
-     * @param {string} householdId - Household ID (or null to remove)
-     * @param {Object} options - Options
-     * @param {string} options.role - Role (default: 'Family Member')
-     * @param {number} options.joinedYear - Year joined (default: current)
-     * @param {boolean} options.isHead - Whether to make head
-     * @param {string} options.notes - Notes
-     * @returns {Object} Result object
-     */
     function fixCharacterHousehold(characterId, householdId, options) {
         if (_processingCommand) {
             return { success: false, reason: 'Command already in progress' };
@@ -1635,7 +1721,6 @@
             
             var currentHouseholdId = character.household || character.householdId || null;
             
-            // If removing from household
             if (!householdId) {
                 if (currentHouseholdId) {
                     var removeResult = removeMember(currentHouseholdId, characterId, {
@@ -1668,7 +1753,6 @@
                 return { success: false, reason: 'Target household not found' };
             }
             
-            // If already in target
             if (currentHouseholdId === householdId) {
                 return { 
                     success: true, 
@@ -1677,7 +1761,6 @@
                 };
             }
             
-            // Remove from current household if any
             if (currentHouseholdId) {
                 removeMember(currentHouseholdId, characterId, {
                     reason: 'Moved to ' + targetHousehold.name + ' by repair function',
@@ -1685,7 +1768,6 @@
                 });
             }
             
-            // Add to new household
             var joinedYear = options.joinedYear || character.birthYear || _getCurrentYear();
             var role = options.role || 'Family Member';
             var isHead = options.isHead || false;
@@ -1718,25 +1800,15 @@
     }
 
     // =========================================================================
-    // 9. PUBLIC API - HISTORY
+    // 11. PUBLIC API - HISTORY
     // =========================================================================
 
-    /**
-     * Records a household change in a character's history
-     * @param {string} characterId - Character ID
-     * @param {string|null} householdId - Household ID (null if leaving)
-     * @param {number} year - Year of change
-     * @param {string} action - 'joined', 'left', 'born', 'inherited', 'created', 'dissolved'
-     * @param {string} reason - Reason for change
-     * @param {Object} options - Additional options
-     * @returns {boolean} True if recorded
-     */
     function recordHistory(characterId, householdId, year, action, reason, options) {
         return _recordCharacterHouseholdChange(characterId, householdId, year, action, reason, options);
     }
 
     // =========================================================================
-    // 10. EXPORTS - REMOVED VENDETTA FUNCTIONS
+    // 12. EXPORTS
     // =========================================================================
 
     window.HouseholdCommands = {
@@ -1760,8 +1832,30 @@
         
         // Repair
         repairMemberships: repairMemberships,
-        fixCharacterHousehold: fixCharacterHousehold
+        fixCharacterHousehold: fixCharacterHousehold,
+
+        // NEW: Household position commands
+        createHouseholdPosition: createHouseholdPosition,
+        updateHouseholdPosition: updateHouseholdPosition,
+        deleteHouseholdPosition: deleteHouseholdPosition,
+
+        // NEW: Household assignment commands
+        assignCharacterToHouseholdPosition: assignCharacterToHouseholdPosition,
+        endHouseholdAssignment: endHouseholdAssignment,
+        deleteHouseholdAssignment: deleteHouseholdAssignment,
+
+        // NEW: Bulk operations
+        bulkAssignHouseholdPositions: bulkAssignHouseholdPositions
     };
+
+    // Legacy aliases
+    window.createHouseholdPosition = createHouseholdPosition;
+    window.updateHouseholdPosition = updateHouseholdPosition;
+    window.deleteHouseholdPosition = deleteHouseholdPosition;
+    window.assignCharacterToHouseholdPosition = assignCharacterToHouseholdPosition;
+    window.endHouseholdAssignment = endHouseholdAssignment;
+    window.deleteHouseholdAssignment = deleteHouseholdAssignment;
+    window.bulkAssignHouseholdPositions = bulkAssignHouseholdPositions;
 
     // ES Module exports
     if (typeof module !== 'undefined' && module.exports) {
@@ -1777,7 +1871,14 @@
             setDepartmentHead: setDepartmentHead,
             recordHistory: recordHistory,
             repairMemberships: repairMemberships,
-            fixCharacterHousehold: fixCharacterHousehold
+            fixCharacterHousehold: fixCharacterHousehold,
+            createHouseholdPosition: createHouseholdPosition,
+            updateHouseholdPosition: updateHouseholdPosition,
+            deleteHouseholdPosition: deleteHouseholdPosition,
+            assignCharacterToHouseholdPosition: assignCharacterToHouseholdPosition,
+            endHouseholdAssignment: endHouseholdAssignment,
+            deleteHouseholdAssignment: deleteHouseholdAssignment,
+            bulkAssignHouseholdPositions: bulkAssignHouseholdPositions
         };
     }
 

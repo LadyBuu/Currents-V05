@@ -1,14 +1,11 @@
 /**
  * =============================================================================
- * GOVERNMENT STATE - Single source of truth for government data
+ * GOVERNMENT STATE (government-state.js)
  * =============================================================================
  * 
- * Responsibilities:
- * - Store all government departments, positions, assignments
- * - Cache for performance
- * - Change notifications
- * - UI state management
- * - INDUSTRY DATA CACHE (industry tax revenue, enterprise stats)
+ * PURPOSE: Single source of truth for government data.
+ * 
+ * UPDATED: Added industry tax revenue, enterprise stats, and settlement integration
  * 
  * DEPENDENCIES:
  *   - accessors.js (getPlaces, getPlaceById, getCharacters, getCharacterById)
@@ -26,6 +23,7 @@
 
     var _initializingState = false;
     var _notifyingSubscribers = false;
+    var _processingUpdate = false;
 
     // =========================================================================
     // 2. DEPENDENCY WRAPPERS
@@ -71,6 +69,25 @@
 
     function _getIndustryQueries() {
         return typeof window.IndustryQueries !== 'undefined' ? window.IndustryQueries : null;
+    }
+
+    function _invalidateAccessorCaches() {
+        if (typeof window.invalidateAccessorCaches === 'function') {
+            window.invalidateAccessorCaches();
+        }
+        if (typeof window.refreshCaches === 'function') {
+            window.refreshCaches();
+        }
+    }
+
+    function _getSettlementData(locationId) {
+        if (typeof window.getSettlementData === 'function') {
+            return window.getSettlementData(locationId);
+        }
+        if (typeof window.getOrCreateSettlementData === 'function') {
+            return window.getOrCreateSettlementData(locationId);
+        }
+        return null;
     }
 
     // =========================================================================
@@ -143,10 +160,7 @@
             // Ensure all departments have required fields
             for (var i = 0; i < _state.governmentDepartments.length; i++) {
                 var dept = _state.governmentDepartments[i];
-                if (!dept.positions) dept.positions = [];
-                if (!dept.assignments) dept.assignments = [];
-                if (!dept.createdAt) dept.createdAt = _getCurrentYear();
-                if (!dept.updatedAt) dept.updatedAt = _getCurrentYear();
+                _ensureDepartmentInitialized(dept);
             }
 
             // Build caches
@@ -159,6 +173,38 @@
             // Silent fail
         } finally {
             _initializingState = false;
+        }
+    }
+
+    function _ensureDepartmentInitialized(dept) {
+        if (!dept) return;
+        if (!dept.positions) dept.positions = [];
+        if (!dept.assignments) dept.assignments = [];
+        if (!dept.createdAt) dept.createdAt = _getCurrentYear();
+        if (!dept.updatedAt) dept.updatedAt = _getCurrentYear();
+        if (dept.isDeprecated === undefined) dept.isDeprecated = false;
+        
+        // Ensure positions have required fields
+        for (var i = 0; i < dept.positions.length; i++) {
+            var pos = dept.positions[i];
+            if (pos.priority === undefined) pos.priority = 10;
+            if (pos.parentPositionId === undefined) pos.parentPositionId = null;
+            if (pos.requiredRoleId === undefined) pos.requiredRoleId = null;
+            if (pos.minSkillLevel === undefined) pos.minSkillLevel = 0;
+            if (pos.genderRestriction === undefined) pos.genderRestriction = 'either';
+            if (pos.requiredRankId === undefined) pos.requiredRankId = null;
+            if (pos.minExperience === undefined) pos.minExperience = 0;
+        }
+        
+        // Ensure assignments have required fields
+        for (var i = 0; i < dept.assignments.length; i++) {
+            var a = dept.assignments[i];
+            if (a.characterName === undefined) a.characterName = 'Unknown';
+            if (a.endYear === undefined) a.endYear = null;
+            if (a.endReason === undefined) a.endReason = null;
+            if (a.notes === undefined) a.notes = '';
+            if (a.roleIdAtAssignment === undefined) a.roleIdAtAssignment = null;
+            if (a.skillLevelAtAssignment === undefined) a.skillLevelAtAssignment = 0;
         }
     }
 
@@ -184,6 +230,7 @@
         // Build department caches
         for (var i = 0; i < departments.length; i++) {
             var dept = departments[i];
+            _ensureDepartmentInitialized(dept);
 
             // By location
             if (dept.locationId) {
@@ -279,6 +326,7 @@
         if (!departmentId) return null;
         for (var i = 0; i < _state.governmentDepartments.length; i++) {
             if (_state.governmentDepartments[i].id === departmentId) {
+                _ensureDepartmentInitialized(_state.governmentDepartments[i]);
                 return _state.governmentDepartments[i];
             }
         }
@@ -334,12 +382,21 @@
         options = options || {};
         if (!characterId) return [];
 
-        var cached = _state.cache.departmentsByCharacter.get(characterId);
-        if (!cached) return [];
+        // First get assignments for character
+        var assignments = getAssignmentsForCharacter(characterId, true);
+        var deptIds = {};
+        for (var i = 0; i < assignments.length; i++) {
+            if (assignments[i].departmentId) {
+                deptIds[assignments[i].departmentId] = true;
+            }
+        }
 
-        var result = cached.slice();
-        if (options.includeDeprecated !== true) {
-            result = result.filter(function(d) { return !d.isDeprecated; });
+        var result = [];
+        for (var id in deptIds) {
+            var dept = getDepartment(id);
+            if (dept && (options.includeDeprecated !== false || !dept.isDeprecated)) {
+                result.push(dept);
+            }
         }
 
         return result;
@@ -500,11 +557,9 @@
         var taxRate = 0.05; // Default 5% industry tax
 
         // Get settlement tax rate if available
-        if (typeof window.getSettlementData === 'function') {
-            var settlement = window.getSettlementData(locationId);
-            if (settlement && settlement.industryTaxRate) {
-                taxRate = settlement.industryTaxRate / 100;
-            }
+        var settlement = _getSettlementData(locationId);
+        if (settlement && settlement.industryTaxRate !== undefined) {
+            taxRate = settlement.industryTaxRate / 100;
         }
 
         for (var i = 0; i < enterprises.length; i++) {
@@ -547,11 +602,9 @@
         };
 
         var taxRate = 0.05;
-        if (typeof window.getSettlementData === 'function') {
-            var settlement = window.getSettlementData(locationId);
-            if (settlement && settlement.industryTaxRate) {
-                taxRate = settlement.industryTaxRate / 100;
-            }
+        var settlement = _getSettlementData(locationId);
+        if (settlement && settlement.industryTaxRate !== undefined) {
+            taxRate = settlement.industryTaxRate / 100;
         }
 
         for (var i = 0; i < enterprises.length; i++) {
@@ -585,11 +638,9 @@
     function getIndustryTaxRate(locationId) {
         if (!locationId) return 0.05;
 
-        if (typeof window.getSettlementData === 'function') {
-            var settlement = window.getSettlementData(locationId);
-            if (settlement && settlement.industryTaxRate) {
-                return settlement.industryTaxRate / 100;
-            }
+        var settlement = _getSettlementData(locationId);
+        if (settlement && settlement.industryTaxRate !== undefined) {
+            return settlement.industryTaxRate / 100;
         }
         return 0.05;
     }
@@ -643,6 +694,7 @@
     // =========================================================================
 
     function _addDepartment(department) {
+        _ensureDepartmentInitialized(department);
         _state.governmentDepartments.push(department);
         _saveMasterData();
         invalidateCache();
@@ -690,6 +742,15 @@
         var dept = getDepartment(departmentId);
         if (!dept) return null;
 
+        // Ensure position has all required fields
+        if (position.priority === undefined) position.priority = 10;
+        if (position.parentPositionId === undefined) position.parentPositionId = null;
+        if (position.requiredRoleId === undefined) position.requiredRoleId = null;
+        if (position.minSkillLevel === undefined) position.minSkillLevel = 0;
+        if (position.genderRestriction === undefined) position.genderRestriction = 'either';
+        if (position.requiredRankId === undefined) position.requiredRankId = null;
+        if (position.minExperience === undefined) position.minExperience = 0;
+
         if (!dept.positions) dept.positions = [];
         dept.positions.push(position);
         _saveMasterData();
@@ -711,7 +772,7 @@
         }
         if (index === -1) return false;
 
-        var allowed = ['name', 'description', 'priority', 'parentPositionId'];
+        var allowed = ['name', 'description', 'priority', 'parentPositionId', 'requiredRoleId', 'minSkillLevel', 'genderRestriction', 'requiredRankId', 'minExperience'];
         for (var i = 0; i < allowed.length; i++) {
             var key = allowed[i];
             if (updates[key] !== undefined) {
@@ -745,6 +806,14 @@
         var dept = getDepartment(departmentId);
         if (!dept) return null;
 
+        // Ensure assignment has all required fields
+        if (assignment.characterName === undefined) assignment.characterName = 'Unknown';
+        if (assignment.endYear === undefined) assignment.endYear = null;
+        if (assignment.endReason === undefined) assignment.endReason = null;
+        if (assignment.notes === undefined) assignment.notes = '';
+        if (assignment.roleIdAtAssignment === undefined) assignment.roleIdAtAssignment = null;
+        if (assignment.skillLevelAtAssignment === undefined) assignment.skillLevelAtAssignment = 0;
+
         if (!dept.assignments) dept.assignments = [];
         dept.assignments.push(assignment);
         _saveMasterData();
@@ -766,7 +835,7 @@
         }
         if (index === -1) return false;
 
-        var allowed = ['endYear', 'endReason', 'notes', 'title'];
+        var allowed = ['endYear', 'endReason', 'notes', 'title', 'roleIdAtAssignment', 'skillLevelAtAssignment'];
         for (var i = 0; i < allowed.length; i++) {
             var key = allowed[i];
             if (updates[key] !== undefined) {
@@ -870,6 +939,8 @@
     // 11. EXPORTS (UPDATED with Industry Integration)
     // =========================================================================
 
+    _initializeState();
+
     window.GovernmentState = {
         // Core access
         getState: getState,
@@ -932,17 +1003,49 @@
         _initialize: _initializeState
     };
 
-    // Auto-initialize
-    if (typeof window !== 'undefined') {
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', function() {
-                _initializeState();
-            });
-        } else {
-            setTimeout(function() {
-                _initializeState();
-            }, 0);
-        }
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = {
+            getState: getState,
+            getDepartment: getDepartment,
+            getAllDepartments: getAllDepartments,
+            getDepartmentsByLocation: getDepartmentsByLocation,
+            getDepartmentsByParent: getDepartmentsByParent,
+            getDepartmentsByCharacter: getDepartmentsByCharacter,
+            getDepartmentTree: getDepartmentTree,
+            getPositionsForDepartment: getPositionsForDepartment,
+            getPositionById: getPositionById,
+            getPositionHierarchy: getPositionHierarchy,
+            getAssignmentsForDepartment: getAssignmentsForDepartment,
+            getAssignmentsForPosition: getAssignmentsForPosition,
+            getAssignmentsForCharacter: getAssignmentsForCharacter,
+            getAssignmentById: getAssignmentById,
+            getGovernmentTypes: getGovernmentTypes,
+            getGovernmentTypeById: getGovernmentTypeById,
+            getGovernmentHistory: getGovernmentHistory,
+            getIndustryTaxRevenue: getIndustryTaxRevenue,
+            getIndustryEnterpriseStats: getIndustryEnterpriseStats,
+            getIndustryTaxRate: getIndustryTaxRate,
+            getIndustryIncomeForLocation: getIndustryIncomeForLocation,
+            getUIState: getUIState,
+            setUIState: setUIState,
+            updateUIState: updateUIState,
+            invalidateCache: invalidateCache,
+            refreshFromMasterData: refreshFromMasterData,
+            subscribe: subscribe,
+            _addDepartment: _addDepartment,
+            _updateDepartment: _updateDepartment,
+            _deleteDepartment: _deleteDepartment,
+            _addPosition: _addPosition,
+            _updatePosition: _updatePosition,
+            _deletePosition: _deletePosition,
+            _addAssignment: _addAssignment,
+            _updateAssignment: _updateAssignment,
+            _deleteAssignment: _deleteAssignment,
+            _addGovernmentType: _addGovernmentType,
+            _updateGovernmentType: _updateGovernmentType,
+            _deleteGovernmentType: _deleteGovernmentType,
+            _initialize: _initializeState
+        };
     }
 
 })();
