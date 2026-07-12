@@ -10,6 +10,7 @@
  * - Manage State Enterprises
  * - Settlement Budget View
  * - Employment Management
+ * - SETTLEMENT ROLES MODAL (NEW)
  * 
  * REFACTORED: Uses SettlementState, SettlementCommands, SettlementQueries
  * REFACTORED: Uses unified character selector from modals-core.js
@@ -238,11 +239,8 @@
     }
 
     function _getSpecializationRoles() {
-        if (typeof SettlementQueries !== 'undefined') {
-            var roles = _getRoles();
-            return roles.filter(function(r) { return r.specializations && r.specializations.length > 0; });
-        }
-        return [];
+        var roles = _getRoles();
+        return roles.filter(function(r) { return r.specializations && r.specializations.length > 0; });
     }
 
     function _getSettlementSpecializationRole(locationId) {
@@ -275,6 +273,13 @@
             return SettlementCommands.removeStateEnterprise(locationId, enterpriseId);
         }
         return false;
+    }
+
+    function _getSettlementRoleStats(locationId) {
+        if (typeof SettlementQueries !== 'undefined' && SettlementQueries.getSettlementRoleStats) {
+            return SettlementQueries.getSettlementRoleStats(locationId);
+        }
+        return null;
     }
 
     // =========================================================================
@@ -1365,6 +1370,7 @@
                 '<button id="budgetBtn" class="btn" style="font-size: 0.65rem; padding: 4px 12px;">Budget</button>' +
                 '<button id="employmentBtn" class="btn" style="font-size: 0.65rem; padding: 4px 12px;">Employment</button>' +
                 '<button id="stateEnterprisesBtn" class="btn" style="font-size: 0.65rem; padding: 4px 12px;">State Enterprises</button>' +
+                '<button id="rolesBtn" class="btn" style="font-size: 0.65rem; padding: 4px 12px;">Roles</button>' +
                 '</div>';
 
             content += '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim); margin-top: 12px;">' +
@@ -1439,6 +1445,14 @@
                         });
                     });
                 }
+
+                var rolesBtn = document.getElementById('rolesBtn');
+                if (rolesBtn) {
+                    rolesBtn.addEventListener('click', function() {
+                        _closeTopModal();
+                        openSettlementRolesModal(locationId);
+                    });
+                }
             }, 100);
 
         } finally {
@@ -1447,7 +1461,122 @@
     }
 
     // =========================================================================
-    // 12. EXPORTS
+    // 12. SETTLEMENT ROLES MODAL (NEW)
+    // =========================================================================
+
+    function openSettlementRolesModal(locationId) {
+        if (_openingModal) {
+            _showToast('Modal is already opening', 'warning');
+            return;
+        }
+        _openingModal = true;
+
+        try {
+            var place = _getPlaceById(locationId);
+            if (!place) {
+                _showToast('Location not found', 'error');
+                return;
+            }
+
+            var stats = _getSettlementRoleStats(locationId);
+            if (!stats) {
+                _showToast('Role statistics not available', 'error');
+                return;
+            }
+
+            var personIcon = _getIcon('PERSON');
+            var infoIcon = _getIcon('CIRCLE_DOT');
+            var crownIcon = _getIcon('CROWN');
+
+            var content = '<div style="max-height: 500px; overflow-y: auto; padding: 4px;">';
+
+            // Header
+            content += '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; margin-bottom: 16px;">' +
+                '<strong>' + personIcon + ' Role Distribution</strong>' +
+                '<div style="font-size: 0.65rem; color: var(--dim);">' + _escapeHtml(stats.settlementName) + '</div>' +
+                '<div style="font-size: 0.6rem; color: var(--dim); margin-top: 4px;">' + 
+                    stats.totalProfessions + ' professions · ' + stats.uniqueRoles + ' unique roles' +
+                '</div>' +
+                '</div>';
+
+            // By Category
+            content += '<div style="margin-bottom: 16px;">';
+            content += '<div style="font-size: 0.65rem; color: var(--accent); margin-bottom: 8px;">By Category</div>';
+            
+            var catKeys = Object.keys(stats.byCategory).sort(function(a, b) {
+                return stats.byCategory[b].count - stats.byCategory[a].count;
+            });
+            
+            for (var i = 0; i < catKeys.length; i++) {
+                var cat = stats.byCategory[catKeys[i]];
+                var pct = stats.totalProfessions > 0 ? 
+                    Math.round((cat.count / stats.totalProfessions) * 100) : 0;
+                content += 
+                    '<div style="display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--border-light); font-size: 0.6rem;">' +
+                        '<span style="min-width: 100px; color: var(--dim);">' + _escapeHtml(cat.name) + '</span>' +
+                        '<div style="flex: 1; height: 4px; background: var(--bg3); border-radius: 2px; overflow: hidden;">' +
+                            '<div style="width: ' + pct + '%; height: 100%; background: var(--accent); border-radius: 2px;"></div>' +
+                        '</div>' +
+                        '<span style="min-width: 30px; text-align: right;">' + cat.count + '</span>' +
+                    '</div>';
+                
+                // Sub-roles
+                if (cat.roles.length > 0 && cat.roles.length <= 5) {
+                    for (var j = 0; j < cat.roles.length; j++) {
+                        var r = cat.roles[j];
+                        content += 
+                            '<div style="padding-left: 20px; font-size: 0.55rem; color: var(--dim); display: flex; justify-content: space-between;">' +
+                                '<span>— ' + _escapeHtml(r.name) + '</span>' +
+                                '<span>' + r.count + '</span>' +
+                            '</div>';
+                    }
+                } else if (cat.roles.length > 5) {
+                    content += '<div style="padding-left: 20px; font-size: 0.5rem; color: var(--dim);">' + 
+                        cat.roles.length + ' roles in this category</div>';
+                }
+            }
+            content += '</div>';
+
+            // Top Roles
+            content += '<div style="margin-bottom: 16px;">';
+            content += '<div style="font-size: 0.65rem; color: var(--accent); margin-bottom: 8px;">Top Roles</div>';
+            
+            var topRoles = stats.topRoles || [];
+            for (var i = 0; i < topRoles.length; i++) {
+                var r = topRoles[i];
+                var barWidth = Math.max(5, r.percentage || 5);
+                content +=
+                    '<div style="display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--border-light); font-size: 0.6rem;">' +
+                        '<span style="min-width: 80px;">' + _escapeHtml(r.name) + '</span>' +
+                        '<div style="flex: 1; height: 6px; background: var(--bg3); border-radius: 3px; overflow: hidden;">' +
+                            '<div style="width: ' + barWidth + '%; height: 100%; background: var(--accent); border-radius: 3px;"></div>' +
+                        '</div>' +
+                        '<span style="min-width: 30px; text-align: right;">' + r.count + ' (' + r.percentage + '%)</span>' +
+                    '</div>';
+            }
+            content += '</div>';
+
+            content += '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
+                infoIcon + ' Role diversity affects settlement prosperity. Masters (76+ skill) provide bonus prosperity.' +
+                '</div>';
+
+            content += '</div>';
+
+            _openModal({
+                title: 'Roles in ' + place.displayName,
+                content: content,
+                confirmText: 'Close',
+                cancelText: '',
+                onConfirm: function() {}
+            });
+
+        } finally {
+            _openingModal = false;
+        }
+    }
+
+    // =========================================================================
+    // 13. EXPORTS
     // =========================================================================
 
     window.openManageFeaturesModal = openManageFeaturesModal;
@@ -1458,5 +1587,7 @@
     window.openStateEnterpriseManagementModal = openStateEnterpriseManagementModal;
     window.openCreateStateEnterpriseModal = openCreateStateEnterpriseModal;
     window.openSettlementDetailsModal = openSettlementDetailsModal;
+    // NEW
+    window.openSettlementRolesModal = openSettlementRolesModal;
 
 })();

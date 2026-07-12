@@ -9,6 +9,7 @@
  * - Location comparison
  * - Population analytics
  * - Move analytics
+ * - ROLE-LOCATION INTEGRATION (NEW)
  * 
  * DEPENDENCIES:
  *   - location-state.js (LocationState)
@@ -56,6 +57,60 @@
 
     function _getLocationTypePriority(typeId) {
         return LocationState.getLocationTypePriority(typeId);
+    }
+
+    function _getCurrentLocationId(character) {
+        if (!character) return null;
+
+        if (character.moves && character.moves.length > 0) {
+            var sortedMoves = character.moves.slice().sort(function(a, b) {
+                return (b.year || 0) - (a.year || 0);
+            });
+            var lastMove = sortedMoves[0];
+            if (lastMove && lastMove.locationId) {
+                return lastMove.locationId;
+            }
+        }
+
+        if (character.currentLocationId) return character.currentLocationId;
+        if (character.birthplaceId) return character.birthplaceId;
+
+        return null;
+    }
+
+    function _getSkillLevelName(level) {
+        if (typeof window.ApprenticeshipQueries !== 'undefined') {
+            return window.ApprenticeshipQueries.getSkillLevelName(level);
+        }
+        if (typeof window.getSkillLevelName === 'function') {
+            return window.getSkillLevelName(level);
+        }
+        if (level >= 91) return 'Master';
+        if (level >= 76) return 'Expert';
+        if (level >= 51) return 'Journeyman';
+        if (level >= 26) return 'Apprentice';
+        if (level >= 1) return 'Novice';
+        return 'Untrained';
+    }
+
+    function _getTeachingThresholds() {
+        return window.TEACHING_THRESHOLDS || {
+            NOVICE: 0,
+            APPRENTICE: 26,
+            JOURNEYMAN: 51,
+            EXPERT: 76,
+            MASTER: 91
+        };
+    }
+
+    function _getRoleById(id) {
+        if (typeof window.getRoleById === 'function') {
+            return window.getRoleById(id);
+        }
+        if (typeof window.RoleState !== 'undefined') {
+            return window.RoleState.getRole(id);
+        }
+        return null;
     }
 
     // =========================================================================
@@ -313,7 +368,7 @@
 
             for (var i = 0; i < characters.length; i++) {
                 var char = characters[i];
-                var charLocationId = LocationState.getCurrentLocationId(char.id);
+                var charLocationId = _getCurrentLocationId(char);
 
                 if (!charLocationId || !locationIdSet.has(charLocationId)) continue;
 
@@ -643,7 +698,181 @@
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 9. ROLE-LOCATION INTEGRATION (NEW)
+    // =========================================================================
+
+    /**
+     * Gets all roles present at a location (with counts)
+     * @param {string} locationId - Location ID
+     * @returns {Object} Role distribution at location
+     */
+    function getRolesAtLocation(locationId) {
+        if (_processingQuery) {
+            return {};
+        }
+        _processingQuery = true;
+
+        try {
+            if (!locationId) return {};
+
+            var locationIds = LocationState.getAllSubLocationIds(locationId);
+            var locationIdSet = new Set(locationIds);
+            var characters = _getCharacters();
+            var roles = {};
+
+            for (var i = 0; i < characters.length; i++) {
+                var char = characters[i];
+                if (char.isDeceased) continue;
+
+                var charLocationId = _getCurrentLocationId(char);
+                if (charLocationId && locationIdSet.has(charLocationId)) {
+                    if (char.professions) {
+                        for (var j = 0; j < char.professions.length; j++) {
+                            var prof = char.professions[j];
+                            if (!roles[prof.id]) {
+                                var role = _getRoleById(prof.id);
+                                roles[prof.id] = {
+                                    id: prof.id,
+                                    name: prof.name || (role ? role.name : prof.id),
+                                    count: 0,
+                                    characters: []
+                                };
+                            }
+                            roles[prof.id].count++;
+                            roles[prof.id].characters.push(char.id);
+                        }
+                    }
+                }
+            }
+
+            return roles;
+
+        } finally {
+            _processingQuery = false;
+        }
+    }
+
+    /**
+     * Gets characters at a location with a specific role
+     * @param {string} locationId - Location ID
+     * @param {string} roleId - Role ID
+     * @param {boolean} mastersOnly - Only masters (skill 76+)
+     * @returns {Array} Character objects with role details
+     */
+    function getCharactersByRoleAtLocation(locationId, roleId, mastersOnly) {
+        if (_processingQuery) {
+            return [];
+        }
+        _processingQuery = true;
+
+        try {
+            if (!locationId || !roleId) return [];
+
+            var locationIds = LocationState.getAllSubLocationIds(locationId);
+            var locationIdSet = new Set(locationIds);
+            var characters = _getCharacters();
+            var results = [];
+            var thresholds = _getTeachingThresholds();
+
+            for (var i = 0; i < characters.length; i++) {
+                var char = characters[i];
+                if (char.isDeceased) continue;
+
+                var charLocationId = _getCurrentLocationId(char);
+                if (!charLocationId || !locationIdSet.has(charLocationId)) continue;
+
+                if (char.professions) {
+                    for (var j = 0; j < char.professions.length; j++) {
+                        var prof = char.professions[j];
+                        if (prof.id === roleId) {
+                            var skillLevel = prof.skillLevel || 0;
+                            if (mastersOnly && skillLevel < 76) continue;
+
+                            results.push({
+                                character: char,
+                                profession: prof,
+                                skillLevel: skillLevel,
+                                skillTier: _getSkillLevelName(skillLevel),
+                                isMaster: skillLevel >= 76,
+                                isExpert: skillLevel >= 76,
+                                isJourneyman: skillLevel >= 51,
+                                canTeach: skillLevel >= 51
+                            });
+                            break;
+                        }
+                    }
+                }
+            }
+
+            return results;
+
+        } finally {
+            _processingQuery = false;
+        }
+    }
+
+    /**
+     * Gets profession distribution at a location
+     * @param {string} locationId - Location ID
+     * @returns {Object} Distribution stats
+     */
+    function getProfessionDistribution(locationId) {
+        if (_processingQuery) {
+            return null;
+        }
+        _processingQuery = true;
+
+        try {
+            if (!locationId) return null;
+
+            var roles = getRolesAtLocation(locationId);
+            var roleIds = Object.keys(roles);
+            var total = 0;
+
+            for (var i = 0; i < roleIds.length; i++) {
+                total += roles[roleIds[i]].count;
+            }
+
+            var distribution = {};
+            for (var i = 0; i < roleIds.length; i++) {
+                var id = roleIds[i];
+                distribution[id] = {
+                    name: roles[id].name,
+                    count: roles[id].count,
+                    percentage: total > 0 ? Math.round((roles[id].count / total) * 100) : 0
+                };
+            }
+
+            // Get top 5 roles
+            var sorted = roleIds.slice().sort(function(a, b) {
+                return roles[b].count - roles[a].count;
+            });
+            var topRoles = [];
+            for (var i = 0; i < Math.min(5, sorted.length); i++) {
+                var id = sorted[i];
+                topRoles.push({
+                    id: id,
+                    name: roles[id].name,
+                    count: roles[id].count,
+                    percentage: total > 0 ? Math.round((roles[id].count / total) * 100) : 0
+                });
+            }
+
+            return {
+                locationId: locationId,
+                totalProfessions: total,
+                uniqueRoles: roleIds.length,
+                distribution: distribution,
+                topRoles: topRoles
+            };
+
+        } finally {
+            _processingQuery = false;
+        }
+    }
+
+    // =========================================================================
+    // 10. EXPORTS
     // =========================================================================
 
     window.LocationQueries = {
@@ -655,7 +884,11 @@
         getLargestLocations: getLargestLocations,
         getMostDenseLocations: getMostDenseLocations,
         getMoveStatistics: getMoveStatistics,
-        getMigrationPatterns: getMigrationPatterns
+        getMigrationPatterns: getMigrationPatterns,
+        // NEW: Role-location integration
+        getRolesAtLocation: getRolesAtLocation,
+        getCharactersByRoleAtLocation: getCharactersByRoleAtLocation,
+        getProfessionDistribution: getProfessionDistribution
     };
 
 })();

@@ -9,7 +9,7 @@
  * - UI state management
  * - NO business logic
  * 
- * UPDATED: Added tuition fields to institution schema
+ * UPDATED: Added specializationCategory, taughtRoles, and role-based caching
  * 
  * DEPENDENCIES:
  *   - accessors.js (getCharacters, getPlaces)
@@ -37,14 +37,21 @@
         cache: {
             byId: new Map(),
             byLocation: new Map(),
-            byType: new Map()
+            byType: new Map(),
+            byOwner: new Map(),
+            byOwnershipType: new Map(),
+            byRole: new Map(),           // NEW: role ID → institutions
+            bySpecializationCategory: new Map()  // NEW: category → institutions
         },
         uiState: {
             selectedInstitutionId: null,
             filters: {
                 type: null,
                 location: null,
-                minReputation: null
+                minReputation: null,
+                ownershipType: null,
+                roleCategory: null,      // NEW: filter by category
+                taughtRole: null         // NEW: filter by specific role
             },
             viewMode: 'list'
         },
@@ -127,15 +134,23 @@
         if (!institution.headmasterHistory) institution.headmasterHistory = [];
 
         // ================================================================
-        // NEW: Tuition fields
+        // NEW: Specialization fields
         // ================================================================
+        if (institution.specializationCategory === undefined) {
+            institution.specializationCategory = null;
+        }
+        if (institution.isSpecialized === undefined) {
+            institution.isSpecialized = false;
+        }
+
+        // Tuition fields
         if (institution.tuitionPerYear === undefined || institution.tuitionPerYear === null) {
             var typeTuition = window.DEFAULT_TUITION_BY_TYPE?.[institution.type];
             institution.tuitionPerYear = typeTuition !== undefined ? typeTuition : window.DEFAULT_TUITION || 10;
         }
 
         if (institution.customTuition === undefined) {
-            institution.customTuition = null; // null = use calculated
+            institution.customTuition = null;
         }
 
         if (!institution.tuitionHistory) {
@@ -143,7 +158,46 @@
         }
 
         if (institution.waiveTuition === undefined) {
-            institution.waiveTuition = false; // Scholarship/sponsorship flag
+            institution.waiveTuition = false;
+        }
+
+        // Ownership fields
+        if (institution.ownershipType === undefined) {
+            institution.ownershipType = 'public';
+        }
+
+        if (institution.ownerId === undefined) {
+            institution.ownerId = null;
+        }
+        if (institution.ownerType === undefined) {
+            institution.ownerType = null;
+        }
+        if (institution.ownerName === undefined) {
+            institution.ownerName = null;
+        }
+
+        if (institution.governmentFunding === undefined) {
+            institution.governmentFunding = 0;
+        }
+        if (!institution.governmentFundingHistory) {
+            institution.governmentFundingHistory = [];
+        }
+
+        if (institution.annualIncome === undefined) {
+            institution.annualIncome = 0;
+        }
+        if (institution.annualExpenses === undefined) {
+            institution.annualExpenses = 0;
+        }
+        if (institution.netProfit === undefined) {
+            institution.netProfit = 0;
+        }
+        if (!institution.profitHistory) {
+            institution.profitHistory = [];
+        }
+
+        if (institution.studentCount === undefined) {
+            institution.studentCount = institution.students ? institution.students.length : 0;
         }
     }
 
@@ -151,6 +205,10 @@
         _state.cache.byId.clear();
         _state.cache.byLocation.clear();
         _state.cache.byType.clear();
+        _state.cache.byOwner.clear();
+        _state.cache.byOwnershipType.clear();
+        _state.cache.byRole.clear();              // NEW
+        _state.cache.bySpecializationCategory.clear();  // NEW
 
         for (var i = 0; i < _state.institutions.length; i++) {
             var inst = _state.institutions[i];
@@ -172,6 +230,45 @@
                     _state.cache.byType.set(inst.type, []);
                 }
                 _state.cache.byType.get(inst.type).push(inst);
+            }
+
+            // By owner
+            if (inst.ownerId && inst.ownershipType === 'private') {
+                var ownerKey = inst.ownerType + '_' + inst.ownerId;
+                if (!_state.cache.byOwner.has(ownerKey)) {
+                    _state.cache.byOwner.set(ownerKey, []);
+                }
+                _state.cache.byOwner.get(ownerKey).push(inst);
+            }
+
+            // By ownership type
+            if (!_state.cache.byOwnershipType.has(inst.ownershipType)) {
+                _state.cache.byOwnershipType.set(inst.ownershipType, []);
+            }
+            _state.cache.byOwnershipType.get(inst.ownershipType).push(inst);
+
+            // ================================================================
+            // NEW: By taught role
+            // ================================================================
+            if (inst.taughtRoles && inst.taughtRoles.length > 0) {
+                for (var j = 0; j < inst.taughtRoles.length; j++) {
+                    var roleId = inst.taughtRoles[j];
+                    if (!_state.cache.byRole.has(roleId)) {
+                        _state.cache.byRole.set(roleId, []);
+                    }
+                    _state.cache.byRole.get(roleId).push(inst);
+                }
+            }
+
+            // ================================================================
+            // NEW: By specialization category
+            // ================================================================
+            if (inst.specializationCategory) {
+                var cat = inst.specializationCategory;
+                if (!_state.cache.bySpecializationCategory.has(cat)) {
+                    _state.cache.bySpecializationCategory.set(cat, []);
+                }
+                _state.cache.bySpecializationCategory.get(cat).push(inst);
             }
         }
     }
@@ -264,6 +361,96 @@
         return result;
     }
 
+    function getInstitutionsByOwner(ownerId, ownerType) {
+        _initializeState();
+        if (!ownerId) return [];
+        var ownerKey = ownerType + '_' + ownerId;
+        var result = _state.cache.byOwner.get(ownerKey) || [];
+        for (var i = 0; i < result.length; i++) {
+            _ensureInstitutionInitialized(result[i]);
+        }
+        return result;
+    }
+
+    function getInstitutionsByOwnershipType(ownershipType) {
+        _initializeState();
+        if (!ownershipType) return [];
+        var result = _state.cache.byOwnershipType.get(ownershipType) || [];
+        for (var i = 0; i < result.length; i++) {
+            _ensureInstitutionInitialized(result[i]);
+        }
+        return result;
+    }
+
+    function getPublicSchools() {
+        return getInstitutionsByOwnershipType('public');
+    }
+
+    function getPrivateSchools() {
+        return getInstitutionsByOwnershipType('private');
+    }
+
+    // ================================================================
+    // NEW: Role-based queries
+    // ================================================================
+
+    function getInstitutionsByTaughtRole(roleId) {
+        _initializeState();
+        if (!roleId) return [];
+        var result = _state.cache.byRole.get(roleId) || [];
+        for (var i = 0; i < result.length; i++) {
+            _ensureInstitutionInitialized(result[i]);
+        }
+        return result;
+    }
+
+    function getInstitutionsBySpecializationCategory(categoryId) {
+        _initializeState();
+        if (!categoryId) return [];
+        var result = _state.cache.bySpecializationCategory.get(categoryId) || [];
+        for (var i = 0; i < result.length; i++) {
+            _ensureInstitutionInitialized(result[i]);
+        }
+        return result;
+    }
+
+    function getInstitutionsTeachingRoleCategory(categoryId) {
+        _initializeState();
+        if (!categoryId) return [];
+
+        // Find all institutions where ANY taught role belongs to the category
+        var all = getAllInstitutions();
+        var result = [];
+
+        for (var i = 0; i < all.length; i++) {
+            var inst = all[i];
+            if (!inst.taughtRoles || inst.taughtRoles.length === 0) continue;
+
+            // Check if any taught role belongs to this category
+            var hasRoleInCategory = inst.taughtRoles.some(function(roleId) {
+                var role = _getRoleById(roleId);
+                return role && role.category === categoryId;
+            });
+
+            if (hasRoleInCategory) {
+                result.push(inst);
+            }
+        }
+
+        return result;
+    }
+
+    // Helper to get role by ID (uses RoleState if available)
+    function _getRoleById(roleId) {
+        if (typeof window.RoleState !== 'undefined' && window.RoleState.getRole) {
+            return window.RoleState.getRole(roleId);
+        }
+        if (typeof window.getRoleById === 'function') {
+            return window.getRoleById(roleId);
+        }
+        return null;
+    }
+
     function getUIState() {
         _initializeState();
         return _state.uiState;
@@ -302,6 +489,11 @@
             if (updates.hasOwnProperty(key)) {
                 institution[key] = updates[key];
             }
+        }
+
+        // If specializationCategory is set, auto-set isSpecialized
+        if (updates.specializationCategory !== undefined) {
+            institution.isSpecialized = !!updates.specializationCategory;
         }
 
         _ensureInstitutionInitialized(institution);
@@ -349,6 +541,13 @@
         getInstitution: getInstitution,
         getInstitutionsByLocation: getInstitutionsByLocation,
         getInstitutionsByType: getInstitutionsByType,
+        getInstitutionsByOwner: getInstitutionsByOwner,
+        getInstitutionsByOwnershipType: getInstitutionsByOwnershipType,
+        getPublicSchools: getPublicSchools,
+        getPrivateSchools: getPrivateSchools,
+        getInstitutionsByTaughtRole: getInstitutionsByTaughtRole,
+        getInstitutionsBySpecializationCategory: getInstitutionsBySpecializationCategory,
+        getInstitutionsTeachingRoleCategory: getInstitutionsTeachingRoleCategory,
         getUIState: getUIState,
         updateUIState: updateUIState,
 
@@ -393,7 +592,14 @@
             getAllInstitutions: getAllInstitutions,
             getInstitution: getInstitution,
             getInstitutionsByLocation: getInstitutionsByLocation,
-            getInstitutionsByType: getInstitutionsByType
+            getInstitutionsByType: getInstitutionsByType,
+            getInstitutionsByOwner: getInstitutionsByOwner,
+            getInstitutionsByOwnershipType: getInstitutionsByOwnershipType,
+            getPublicSchools: getPublicSchools,
+            getPrivateSchools: getPrivateSchools,
+            getInstitutionsByTaughtRole: getInstitutionsByTaughtRole,
+            getInstitutionsBySpecializationCategory: getInstitutionsBySpecializationCategory,
+            getInstitutionsTeachingRoleCategory: getInstitutionsTeachingRoleCategory
         };
     }
 

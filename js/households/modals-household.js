@@ -1,47 +1,23 @@
 /**
  * =============================================================================
- * HOUSEHOLD MODALS (modals-household.js)
+ * STILL WATERS - HOUSEHOLD MODALS (modals-household.js)
  * =============================================================================
  * 
- * PURPOSE: UI modals for household management (CRUD, member management,
- *          department management, head management, transfers, and more).
+ * LOCATION: js/systems/household/modals-household.js
  * 
- * UPDATED: Removed all vendetta-related modals - vendettas now in vendetta-system.js
+ * UI modals for household management - create, edit, detail, delete.
  * 
- * DEPENDS ON:
- *   - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
- *   - modals-char-select.js (openCharacterSelector)
- *   - modals-household-selector.js (openHouseholdSelector)
- *   - household-state.js (HouseholdState)
- *   - household-commands.js (HouseholdCommands)
- *   - household-queries.js (HouseholdQueries)
- *   - household-assignment.js (HouseholdAssignment)
+ * UPDATED: Added enterprise section to household detail modal
+ * UPDATED: Uses icons from icons.js (no emojis)
+ * UPDATED: No icons in confirm/cancel buttons
  * 
- * EXPORTS:
- *   - openNewHouseholdModal()
- *   - openEditHouseholdModal()
- *   - openDeleteHouseholdModal()
- *   - openHouseholdDetailsModal()
- *   - openRenameHouseholdModal()
- *   - openAddMemberModal()
- *   - openEditMemberModal()
- *   - openTransferMemberModal()
- *   - openSetHeadOfHouseholdModal()
- *   - openAddDepartmentModal()
- *   - openJoinHouseholdModal()
- *   - openViewHouseholdHistoryModal()
- *   - openLeaveHouseholdModal()
- *   - openLeaveHouseholdNoTraceModal()
- * 
- * REMOVED (moved to vendetta-system.js):
- *   - openDeclareVendettaModal()
- *   - openResolveVendettaModal()
- *   - openViewVendettasModal()
- * 
- * ICON POLICY:
- *   - All icons from icons.js via _getIcon()
- *   - NO emojis
- *   - NO icons in confirm/cancel buttons (plain text only)
+ * DEPENDENCIES:
+ *   - modals-core.js - openModal, closeTopModal, _escapeHtml, _showToast, _getIcon
+ *   - modals-household-selector.js - openHouseholdSelector
+ *   - household-state.js - HouseholdState
+ *   - household-commands.js - HouseholdCommands
+ *   - household-queries.js - HouseholdQueries
+ *   - accessors.js - getCharacterById, getCharacters, getPlaceById, getPlaces, getCurrentYear
  * 
  * =============================================================================
  */
@@ -50,168 +26,24 @@
     'use strict';
 
     // =========================================================================
-    // 0. RECURSION GUARD
-    // =========================================================================
-
-    var _processingModal = false;
-
-    // =========================================================================
     // 1. DEPENDENCY WRAPPERS
     // =========================================================================
 
-    function _openModal(options) {
-        if (typeof window.openModal === 'function') {
-            return window.openModal(options);
-        }
-        if (typeof window._openModal === 'function') {
-            return window._openModal(options);
-        }
-        return null;
+    function _getState() {
+        return typeof window.HouseholdState !== 'undefined' ? window.HouseholdState : null;
     }
 
-    function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') {
-            window.closeTopModal();
-        }
-        if (typeof window._closeTopModal === 'function') {
-            window._closeTopModal();
-        }
+    function _getCommands() {
+        return typeof window.HouseholdCommands !== 'undefined' ? window.HouseholdCommands : null;
     }
 
-    function _confirmDialog(message, title, onConfirm, onCancel) {
-        if (typeof window.confirmDialog === 'function') {
-            return window.confirmDialog(message, title, onConfirm, onCancel);
-        }
-        if (typeof window._confirmDialog === 'function') {
-            return window._confirmDialog(message, title, onConfirm, onCancel);
-        }
-        if (confirm(message)) {
-            if (onConfirm) onConfirm();
-        } else {
-            if (onCancel) onCancel();
-        }
+    function _getQueries() {
+        return typeof window.HouseholdQueries !== 'undefined' ? window.HouseholdQueries : null;
     }
 
-    function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
-        }
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
-
-    function _showToast(message, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(message, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(message, type);
-        }
-    }
-
-    function _getCurrentYear() {
-        if (typeof window._getCurrentYear === 'function') {
-            return window._getCurrentYear();
-        }
-        if (typeof window.getCurrentYearSafe === 'function') {
-            return window.getCurrentYearSafe();
-        }
-        if (typeof window.getCurrentYear === 'function') {
-            return window.getCurrentYear();
-        }
-        return 1250;
-    }
-
-    function _getIcon(name) {
-        if (typeof window._getIcon === 'function') {
-            return window._getIcon(name);
-        }
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
-        return '';
-    }
-
-    function _buildLocationDropdown(selectedId, placeholderText, includeAll) {
-        if (typeof window.buildLocationDropdown === 'function') {
-            return window.buildLocationDropdown(selectedId, placeholderText, includeAll, true);
-        }
-        if (typeof window._buildLocationDropdown === 'function') {
-            return window._buildLocationDropdown(selectedId, placeholderText, includeAll, true);
-        }
-        return '';
-    }
-
-    function _openCharacterSelector(options) {
-        if (typeof window.openCharacterSelector === 'function') {
-            return window.openCharacterSelector(options);
-        }
-        if (typeof window.openUnifiedCharacterSelector === 'function') {
-            return window.openUnifiedCharacterSelector(options);
-        }
-        if (typeof window._openCharacterSelector === 'function') {
-            return window._openCharacterSelector(options);
-        }
-        _showToast('Character selector not available', 'error');
-        return null;
-    }
-
-    function _openHouseholdSelector(options) {
-        if (typeof window.openHouseholdSelector === 'function') {
-            return window.openHouseholdSelector(options);
-        }
-        if (typeof window._openHouseholdSelector === 'function') {
-            return window._openHouseholdSelector(options);
-        }
-        _showToast('Household selector not available', 'error');
-        return null;
-    }
-
-    // =========================================================================
-    // 2. STATE AND COMMANDS REFERENCE
-    // =========================================================================
-
-    var _state = window.HouseholdState;
-    var _commands = window.HouseholdCommands;
-    var _queries = window.HouseholdQueries;
-    var _assignment = window.HouseholdAssignment;
-
-    // =========================================================================
-    // 3. ICON HELPERS
-    // =========================================================================
-
-    function _getIconSafe(name) {
-        var icon = _getIcon(name);
-        return icon || '';
-    }
-
-    // =========================================================================
-    // 4. BUSINESS LOGIC WRAPPERS
-    // =========================================================================
-
-    function _getHousehold(householdId) {
-        return _state ? _state.getHousehold(householdId) : null;
-    }
-
-    function _getAllHouseholds() {
-        return _state ? _state.getAllHouseholds() : [];
-    }
-
-    function _getHouseholdHead(householdId) {
-        return _state ? _state.getHouseholdHead(householdId) : null;
-    }
-
-    function _getCharacterHousehold(characterId) {
-        return _state ? _state.getCharacterHousehold(characterId) : null;
-    }
-
-    function _getCharacterById(characterId) {
+    function _getCharacterById(id) {
         if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(characterId);
+            return window.getCharacterById(id);
         }
         return null;
     }
@@ -223,1961 +55,812 @@
         return [];
     }
 
-    function _getPlaceById(placeId) {
+    function _getPlaceById(id) {
         if (typeof window.getPlaceById === 'function') {
-            return window.getPlaceById(placeId);
+            return window.getPlaceById(id);
         }
         return null;
     }
 
-    function _getHouseholdStatus(householdId) {
-        return _state ? _state.getHouseholdStatus(householdId) : null;
-    }
-
-    function _getHouseholdMembers(householdId) {
-        var household = _getHousehold(householdId);
-        return household ? (household.members || []) : [];
-    }
-
-    function _getDepartments(householdId) {
-        var household = _getHousehold(householdId);
-        return household ? (household.departments || []) : [];
-    }
-
-    function _getHouseholdNameHistory(householdId) {
-        var household = _getHousehold(householdId);
-        return household ? (household.nameHistory || []) : [];
-    }
-
-    function _calculateAge(birthYear, isDeceased, deathYear) {
-        if (typeof window.calculateAge === 'function') {
-            return window.calculateAge(birthYear, isDeceased, deathYear);
+    function _getPlaces() {
+        if (typeof window.getPlaces === 'function') {
+            return window.getPlaces();
         }
-        var currentYear = _getCurrentYear();
-        if (!birthYear) return 0;
-        if (isDeceased && deathYear) return Math.max(0, deathYear - birthYear);
-        return Math.max(0, currentYear - birthYear);
+        return [];
+    }
+
+    function _getCurrentYear() {
+        if (typeof window.getCurrentYearSafe === 'function') {
+            return window.getCurrentYearSafe();
+        }
+        if (typeof window.getCurrentYear === 'function') {
+            return window.getCurrentYear();
+        }
+        return 1250;
+    }
+
+    function _escapeHtml(str) {
+        if (typeof window.escapeHtml === 'function') {
+            return window.escapeHtml(str);
+        }
+        if (typeof window._escapeHtml === 'function') {
+            return window._escapeHtml(str);
+        }
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function _showToast(message, type) {
+        if (typeof window._showToast === 'function') {
+            window._showToast(message, type);
+        } else if (typeof window.showToast === 'function') {
+            window.showToast(message, type);
+        }
+    }
+
+    function _openModal(options) {
+        if (typeof window.openModal === 'function') {
+            return window.openModal(options);
+        }
+        _showToast('Modal system not available', 'error');
+        return null;
+    }
+
+    function _closeTopModal() {
+        if (typeof window.closeTopModal === 'function') {
+            window.closeTopModal();
+        }
+    }
+
+    function _confirmDialog(message, title, onConfirm) {
+        if (typeof window.confirmDialog === 'function') {
+            return window.confirmDialog(message, title, onConfirm);
+        }
+        if (confirm(message)) {
+            onConfirm();
+        }
+    }
+
+    function _getIcon(name) {
+        if (window.Icons && window.Icons[name]) {
+            return window.Icons[name];
+        }
+        return '';
+    }
+
+    function _saveMasterData() {
+        if (typeof window.saveMasterData === 'function') {
+            window.saveMasterData();
+        }
+    }
+
+    function _invalidateCaches() {
+        var state = _getState();
+        if (state && typeof state.invalidateCache === 'function') {
+            state.invalidateCache();
+        }
+        if (typeof window.invalidateAccessorCaches === 'function') {
+            window.invalidateAccessorCaches();
+        }
     }
 
     // =========================================================================
-    // 5. NEW HOUSEHOLD MODAL
+    // 2. RECURSION GUARD
     // =========================================================================
 
-    function openNewHouseholdModal(onSuccess, options) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+    var _processingModal = false;
+
+    // =========================================================================
+    // 3. LOCATION DROPDOWN
+    // =========================================================================
+
+    function _getLocationOptions(selectedId, placeholderText, includeAll) {
+        placeholderText = placeholderText || '-- Select location --';
+        includeAll = includeAll !== undefined ? includeAll : false;
+
+        if (typeof window.buildLocationDropdown === 'function') {
+            return window.buildLocationDropdown(selectedId, placeholderText, includeAll);
         }
+
+        var places = _getPlaces();
+        var html = '';
+        if (placeholderText) {
+            html += '<option value="">' + _escapeHtml(placeholderText) + '</option>';
+        }
+        if (includeAll) {
+            html += '<option value="all">All Locations</option>';
+        }
+        for (var i = 0; i < places.length; i++) {
+            var selected = (selectedId === places[i].id) ? 'selected' : '';
+            html += '<option value="' + places[i].id + '" ' + selected + '>' +
+                _escapeHtml(places[i].displayName) + '</option>';
+        }
+        return html;
+    }
+
+    // =========================================================================
+    // 4. CREATE HOUSEHOLD MODAL
+    // =========================================================================
+
+    function openCreateHouseholdModal(onSuccess) {
+        if (_processingModal) return;
         _processingModal = true;
 
         try {
-            options = options || {};
-            var currentYear = _getCurrentYear();
-
-            var suggestedName = options.suggestedName || '';
-            var suggestedHeadId = options.suggestedHeadId || null;
-            var suggestedLocationId = options.suggestedLocationId || null;
-            var suggestedFoundedYear = options.suggestedFoundedYear || currentYear;
-
-            var locationOptions = _buildLocationDropdown(suggestedLocationId, '— No location —', false);
-
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Household Name *</label>' +
-                '<input type="text" id="newHouseholdName" value="' + _escapeHtml(suggestedName) + '" placeholder="e.g., House of Stark" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Location</label>' +
-                '<select id="newHouseholdLocation" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                locationOptions +
-                '</select>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Founded Year</label>' +
-                '<input type="number" id="newHouseholdFoundedYear" value="' + suggestedFoundedYear + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Founder / Head</label>' +
-                '<div style="display: flex; gap: 8px;">' +
-                '<input type="text" id="newHouseholdHeadName" placeholder="Select a character..." readonly style="flex: 1; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem; cursor: pointer; color: var(--text);">' +
-                '<input type="hidden" id="newHouseholdHeadId" value="">' +
-                '<button id="newHouseholdSelectHeadBtn" class="btn small" style="padding: 4px 12px; font-size: 0.6rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer;">Select</button>' +
-                '<button id="newHouseholdClearHeadBtn" class="btn small" style="padding: 4px 12px; font-size: 0.6rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Clear</button>' +
-                '</div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">Selecting a head will add them to the household</div>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes (optional)</label>' +
-                '<textarea id="newHouseholdNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;"></textarea>' +
-                '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Create New Household',
-                content: modalContent,
-                confirmText: 'Create Household',
-                cancelText: 'Cancel',
-                onOpen: function() {
-                    var headNameInput = document.getElementById('newHouseholdHeadName');
-                    var headIdInput = document.getElementById('newHouseholdHeadId');
-                    var selectHeadBtn = document.getElementById('newHouseholdSelectHeadBtn');
-                    var clearHeadBtn = document.getElementById('newHouseholdClearHeadBtn');
-
-                    if (selectHeadBtn) {
-                        selectHeadBtn.onclick = function() {
-                            _openCharacterSelector({
-                                title: 'Select Household Head',
-                                targetId: null,
-                                filters: {
-                                    showDeceased: false,
-                                    gender: 'all',
-                                    ageGroup: 'all',
-                                    location: 'all',
-                                    role: 'all'
-                                },
-                                onSelect: function(character) {
-                                    if (character) {
-                                        if (headNameInput) {
-                                            headNameInput.value = character.name + ' ' + (character.surname || '');
-                                        }
-                                        if (headIdInput) {
-                                            headIdInput.value = character.id;
-                                        }
-                                        _showToast('Selected: ' + character.name, 'success');
-                                    }
-                                }
-                            });
-                        };
-                    }
-
-                    if (clearHeadBtn) {
-                        clearHeadBtn.onclick = function() {
-                            if (headNameInput) headNameInput.value = '';
-                            if (headIdInput) headIdInput.value = '';
-                        };
-                    }
-
-                    var nameInput = document.getElementById('newHouseholdName');
-                    if (nameInput) {
-                        setTimeout(function() { nameInput.focus(); }, 100);
-                    }
-                },
-                onConfirm: function() {
-                    var name = document.getElementById('newHouseholdName').value.trim();
-                    var locationId = document.getElementById('newHouseholdLocation').value;
-                    var foundedYear = parseInt(document.getElementById('newHouseholdFoundedYear').value);
-                    var headId = document.getElementById('newHouseholdHeadId').value;
-                    var notes = document.getElementById('newHouseholdNotes').value.trim();
-
-                    if (!name) {
-                        _showToast('Please enter a household name', 'error');
-                        return false;
-                    }
-
-                    if (isNaN(foundedYear) || foundedYear < 1) {
-                        _showToast('Please enter a valid year', 'error');
-                        return false;
-                    }
-
-                    var newHousehold = _state.createHousehold(name, locationId || null, {
-                        foundedYear: foundedYear,
-                        notes: notes,
-                        founderId: headId || null
-                    });
-
-                    if (!newHousehold) {
-                        _showToast('Failed to create household', 'error');
-                        return false;
-                    }
-
-                    if (headId) {
-                        var headChar = _getCharacterById(headId);
-                        if (headChar) {
-                            _commands.addMember(newHousehold.id, headId, 'family', {
-                                role: 'Head of Household',
-                                joinedYear: foundedYear,
-                                isHead: true,
-                                notes: 'Founder and head of household'
-                            });
-                            _showToast(headChar.name + ' added as head', 'success');
-                        }
-                    }
-
-                    _closeTopModal();
-                    _processingModal = false;
-                    if (onSuccess) {
-                        onSuccess(newHousehold.id);
-                    }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingModal = false;
-                }
-            });
-
-        } catch (e) {
-            _processingModal = false;
-            _showToast('Error opening new household modal', 'error');
-        }
-    }
-
-    // =========================================================================
-    // 6. EDIT HOUSEHOLD MODAL
-    // =========================================================================
-
-    function openEditHouseholdModal(householdId, onSuccess) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingModal = true;
-
-        try {
-            var household = _getHousehold(householdId);
-            if (!household) {
-                _showToast('Household not found', 'error');
-                _processingModal = false;
+            var commands = _getCommands();
+            if (!commands) {
+                _showToast('Household commands not available', 'error');
                 return;
             }
 
-            var currentYear = _getCurrentYear();
-            var locationOptions = _buildLocationDropdown(household.locationId, '— No location —', false);
-            var nameHistory = _getHouseholdNameHistory(householdId);
+            var locationOptions = _getLocationOptions(null, '-- Select location --', false);
 
-            var historyHtml = '';
-            if (nameHistory && nameHistory.length > 0) {
-                var recent = nameHistory.slice(-5).reverse();
-                historyHtml = '<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-light);">' +
-                    '<div style="font-size: 0.55rem; color: var(--dim); margin-bottom: 4px;">Previous names:</div>';
-                for (var i = 0; i < recent.length; i++) {
-                    var h = recent[i];
-                    historyHtml += '<div style="font-size: 0.5rem; color: var(--dim); padding: 2px 0;">' +
-                        h.year + ': ' + _escapeHtml(h.oldName || '—') + ' → ' + _escapeHtml(h.newName) +
-                        '</div>';
-                }
-                historyHtml += '</div>';
-            }
+            var content = `
+                <div style="max-height: 500px; overflow-y: auto; padding: 4px;">
+                    <div class="form-group" style="margin-bottom: 12px;">
+                        <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Household Name *</label>
+                        <input type="text" id="hhName" placeholder="Enter household name" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">
+                    </div>
 
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; font-size: 0.6rem; color: var(--dim);">' +
-                'Editing <strong>' + _escapeHtml(household.name) + '</strong>' +
-                ' · Founded: ' + (household.foundedYear || 'Unknown') +
-                ' · Location: ' + (household.locationName || 'None') +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Household Name *</label>' +
-                '<input type="text" id="editHouseholdName" value="' + _escapeHtml(household.name) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div style="margin-bottom: 12px; padding: 8px; background: var(--bg3); border-radius: 6px;">' +
-                '<label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.65rem;">' +
-                '<input type="checkbox" id="editRenameWithHistory" checked>' +
-                '<span>Record this name change in history</span>' +
-                '</label>' +
-                '<div id="editRenameHistoryOptions" style="margin-top: 8px; padding-left: 24px;">' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">' +
-                '<div><label style="font-size: 0.55rem; color: var(--dim);">Year of change</label>' +
-                '<input type="number" id="editRenameYear" value="' + currentYear + '" min="1" max="' + (currentYear + 5) + '" style="width: 100%; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 0.55rem; color: var(--text);">' +
-                '</div>' +
-                '<div><label style="font-size: 0.55rem; color: var(--dim);">Reason (optional)</label>' +
-                '<input type="text" id="editRenameReason" placeholder="e.g., Succession, Renovation..." style="width: 100%; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 0.55rem; color: var(--text);">' +
-                '</div>' +
-                '</div></div></div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Founding Year</label>' +
-                '<input type="number" id="editHouseholdFoundedYear" value="' + (household.foundedYear || currentYear) + '" min="1" max="' + (currentYear + 5) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Location</label>' +
-                '<select id="editHouseholdLocation" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                locationOptions +
-                '</select>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes</label>' +
-                '<textarea id="editHouseholdNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' + _escapeHtml(household.notes || '') + '</textarea>' +
-                '</div>' +
-                historyHtml +
-                '</div>';
+                    <div class="form-group" style="margin-bottom: 12px;">
+                        <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Location</label>
+                        <select id="hhLocation" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">
+                            ${locationOptions}
+                        </select>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                        <div>
+                            <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Initial Wealth</label>
+                            <input type="number" id="hhWealth" value="0" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
+                        </div>
+                        <div>
+                            <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Initial Reputation</label>
+                            <input type="number" id="hhReputation" value="10" min="0" max="100" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
+                        </div>
+                    </div>
+
+                    <div class="form-group" style="margin-bottom: 12px;">
+                        <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Head of Household</label>
+                        <div style="display: flex; gap: 6px;">
+                            <input type="text" id="hhHeadDisplay" placeholder="Select head..." readonly style="flex: 1; padding: 6px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem; cursor: pointer;">
+                            <input type="hidden" id="hhHeadId">
+                            <button id="selectHeadBtn" class="btn" style="font-size: 0.6rem; padding: 4px 10px;">Select</button>
+                            <button id="clearHeadBtn" class="btn" style="font-size: 0.6rem; padding: 4px 8px;">Clear</button>
+                        </div>
+                    </div>
+
+                    <div class="form-group" style="margin-bottom: 12px;">
+                        <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes</label>
+                        <textarea id="hhNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;" placeholder="Additional notes..."></textarea>
+                    </div>
+                </div>
+            `;
 
             _openModal({
-                title: 'Edit Household: ' + household.name,
-                content: modalContent,
-                confirmText: 'Save Changes',
+                title: 'Create Household',
+                content: content,
+                confirmText: 'Create',
                 cancelText: 'Cancel',
-                onOpen: function() {
-                    var historyCheckbox = document.getElementById('editRenameWithHistory');
-                    var historyOptions = document.getElementById('editRenameHistoryOptions');
-                    if (historyCheckbox && historyOptions) {
-                        historyCheckbox.onchange = function() {
-                            historyOptions.style.display = this.checked ? 'block' : 'none';
-                        };
-                    }
-                    var nameInput = document.getElementById('editHouseholdName');
-                    if (nameInput) {
-                        setTimeout(function() { nameInput.focus(); }, 100);
-                    }
-                },
                 onConfirm: function() {
-                    var name = document.getElementById('editHouseholdName').value.trim();
-                    var locationId = document.getElementById('editHouseholdLocation').value;
-                    var foundedYear = parseInt(document.getElementById('editHouseholdFoundedYear').value);
-                    var notes = document.getElementById('editHouseholdNotes').value.trim();
-                    var renameWithHistory = document.getElementById('editRenameWithHistory').checked;
-                    var renameYear = parseInt(document.getElementById('editRenameYear').value);
-                    var renameReason = document.getElementById('editRenameReason').value.trim();
-
+                    var name = document.getElementById('hhName').value.trim();
                     if (!name) {
-                        _showToast('Please enter a household name', 'error');
+                        _showToast('Household name is required', 'error');
                         return false;
                     }
 
-                    if (isNaN(foundedYear) || foundedYear < 1) {
-                        _showToast('Please enter a valid founding year', 'error');
+                    var data = {
+                        name: name,
+                        locationId: document.getElementById('hhLocation').value || null,
+                        wealth: parseInt(document.getElementById('hhWealth').value) || 0,
+                        reputation: parseInt(document.getElementById('hhReputation').value) || 10,
+                        notes: document.getElementById('hhNotes').value,
+                        foundedYear: _getCurrentYear()
+                    };
+
+                    var headId = document.getElementById('hhHeadId').value || null;
+                    if (headId) {
+                        data.headId = headId;
+                    }
+
+                    var result = commands.createHousehold(data);
+                    if (result && result.success) {
+                        _saveMasterData();
+                        _invalidateCaches();
+                        _showToast('Household created: ' + result.data.name, 'success');
+                        _closeTopModal();
+                        if (onSuccess) onSuccess(result.data);
+                        return true;
+                    } else {
+                        _showToast('Failed to create household: ' + (result ? result.reason : 'Unknown error'), 'error');
+                        return false;
+                    }
+                }
+            });
+
+            // Set up head selection after modal renders
+            setTimeout(function() {
+                var selectBtn = document.getElementById('selectHeadBtn');
+                if (selectBtn) {
+                    selectBtn.addEventListener('click', function() {
+                        if (typeof window.openCharacterSelector === 'function') {
+                            window.openCharacterSelector({
+                                title: 'Select Head of Household',
+                                onSelect: function(character) {
+                                    if (character) {
+                                        document.getElementById('hhHeadDisplay').value = character.name + (character.surname ? ' ' + character.surname : '');
+                                        document.getElementById('hhHeadId').value = character.id;
+                                        _showToast('Selected: ' + character.name, 'success');
+                                    }
+                                },
+                                filters: {
+                                    gender: 'all',
+                                    status: 'all',
+                                    showDeceased: false
+                                }
+                            });
+                        } else {
+                            _showToast('Character selector not available', 'warning');
+                        }
+                    });
+                }
+
+                var clearBtn = document.getElementById('clearHeadBtn');
+                if (clearBtn) {
+                    clearBtn.addEventListener('click', function() {
+                        document.getElementById('hhHeadDisplay').value = '';
+                        document.getElementById('hhHeadId').value = '';
+                        _showToast('Head cleared', 'info');
+                    });
+                }
+            }, 100);
+
+        } finally {
+            _processingModal = false;
+        }
+    }
+
+    // =========================================================================
+    // 5. EDIT HOUSEHOLD MODAL
+    // =========================================================================
+
+    function openEditHouseholdModal(householdId, onSuccess) {
+        if (_processingModal) return;
+        _processingModal = true;
+
+        try {
+            var state = _getState();
+            var commands = _getCommands();
+            if (!state || !commands) {
+                _showToast('Household system not available', 'error');
+                return;
+            }
+
+            var household = state.getHousehold(householdId);
+            if (!household) {
+                _showToast('Household not found', 'error');
+                return;
+            }
+
+            var locationOptions = _getLocationOptions(household.locationId, '-- Select location --', false);
+
+            var content = `
+                <div style="max-height: 500px; overflow-y: auto; padding: 4px;">
+                    <div class="form-group" style="margin-bottom: 12px;">
+                        <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Household Name *</label>
+                        <input type="text" id="editName" value="${_escapeHtml(household.name)}" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">
+                    </div>
+
+                    <div class="form-group" style="margin-bottom: 12px;">
+                        <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Location</label>
+                        <select id="editLocation" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">
+                            ${locationOptions}
+                        </select>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                        <div>
+                            <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Wealth</label>
+                            <input type="number" id="editWealth" value="${household.wealth || 0}" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
+                        </div>
+                        <div>
+                            <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Reputation</label>
+                            <input type="number" id="editReputation" value="${household.reputation || 10}" min="0" max="100" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
+                        </div>
+                    </div>
+
+                    <div class="form-group" style="margin-bottom: 12px;">
+                        <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Status</label>
+                        <select id="editStatus" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">
+                            <option value="active" ${household.status === 'active' ? 'selected' : ''}>Active</option>
+                            <option value="vacant" ${household.status === 'vacant' ? 'selected' : ''}>Vacant</option>
+                            <option value="abandoned" ${household.status === 'abandoned' ? 'selected' : ''}>Abandoned</option>
+                            <option value="declining" ${household.status === 'declining' ? 'selected' : ''}>Declining</option>
+                            <option value="deprecated" ${household.status === 'deprecated' ? 'selected' : ''}>Deprecated</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group" style="margin-bottom: 12px;">
+                        <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes</label>
+                        <textarea id="editNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">${_escapeHtml(household.notes || '')}</textarea>
+                    </div>
+                </div>
+            `;
+
+            _openModal({
+                title: 'Edit Household: ' + household.name,
+                content: content,
+                confirmText: 'Save',
+                cancelText: 'Cancel',
+                onConfirm: function() {
+                    var name = document.getElementById('editName').value.trim();
+                    if (!name) {
+                        _showToast('Household name is required', 'error');
                         return false;
                     }
 
                     var updates = {
-                        locationId: locationId || null,
-                        foundedYear: foundedYear,
-                        notes: notes
+                        name: name,
+                        locationId: document.getElementById('editLocation').value || null,
+                        wealth: parseInt(document.getElementById('editWealth').value) || 0,
+                        reputation: parseInt(document.getElementById('editReputation').value) || 10,
+                        status: document.getElementById('editStatus').value,
+                        notes: document.getElementById('editNotes').value
                     };
 
-                    if (name !== household.name) {
-                        var nameResult = _state.updateHousehold(householdId, { name: name }, {
-                            recordHistory: renameWithHistory,
-                            changeYear: renameYear || currentYear,
-                            changeReason: renameReason || 'Edited'
-                        });
-
-                        if (!nameResult) {
-                            _showToast('Failed to rename household', 'error');
-                            return false;
-                        }
-
-                        if (renameWithHistory) {
-                            _showToast('Household renamed to "' + name + '" (' + (renameYear || currentYear) + ')', 'success');
-                        } else {
-                            _showToast('Household name changed (no trace)', 'info');
-                        }
-                    }
-
-                    var result = _state.updateHousehold(householdId, updates, { recordHistory: false });
-
-                    if (result) {
-                        _showToast('Household updated', 'success');
+                    var result = commands.updateHousehold(householdId, updates);
+                    if (result && result.success) {
+                        _saveMasterData();
+                        _invalidateCaches();
+                        _showToast('Household updated: ' + result.data.name, 'success');
                         _closeTopModal();
-                        _processingModal = false;
-                        if (onSuccess) {
-                            onSuccess();
-                        }
+                        if (onSuccess) onSuccess(result.data);
+                        return true;
                     } else {
-                        _showToast('Failed to update household', 'error');
+                        _showToast('Failed to update household: ' + (result ? result.reason : 'Unknown error'), 'error');
+                        return false;
                     }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingModal = false;
                 }
             });
 
-        } catch (e) {
+        } finally {
             _processingModal = false;
-            _showToast('Error opening edit household modal', 'error');
         }
     }
 
     // =========================================================================
-    // 7. DELETE HOUSEHOLD MODAL
+    // 6. DELETE HOUSEHOLD MODAL
     // =========================================================================
 
     function openDeleteHouseholdModal(householdId, onSuccess) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
+        if (_processingModal) return;
         _processingModal = true;
 
         try {
-            var household = _getHousehold(householdId);
+            var state = _getState();
+            var commands = _getCommands();
+            if (!state || !commands) {
+                _showToast('Household system not available', 'error');
+                return;
+            }
+
+            var household = state.getHousehold(householdId);
             if (!household) {
                 _showToast('Household not found', 'error');
-                _processingModal = false;
                 return;
             }
 
             var memberCount = household.members ? household.members.length : 0;
 
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: rgba(244, 67, 54, 0.1); border-radius: 8px; padding: 16px; border-left: 3px solid #f44336; margin-bottom: 16px;">' +
-                '<div style="font-size: 0.9rem; color: #f44336;">Warning: This action cannot be undone</div>' +
-                '<div style="font-size: 0.65rem; color: var(--dim); margin-top: 4px;">' +
-                'Deleting "' + _escapeHtml(household.name) + '" will remove it from the game world.' +
-                (memberCount > 0 ? ' ' + memberCount + ' member(s) will be unassigned.' : '') +
-                '</div>' +
-                '</div>' +
-                '<div style="background: var(--bg3); border-radius: 8px; padding: 12px; margin-bottom: 12px;">' +
-                '<div style="display: flex; justify-content: space-between; font-size: 0.7rem;">' +
-                '<span>Name:</span>' +
-                '<span style="font-weight: bold;">' + _escapeHtml(household.name) + '</span>' +
-                '</div>' +
-                '<div style="display: flex; justify-content: space-between; font-size: 0.7rem; margin-top: 4px;">' +
-                '<span>Members:</span>' +
-                '<span>' + memberCount + '</span>' +
-                '</div>' +
-                '<div style="display: flex; justify-content: space-between; font-size: 0.7rem; margin-top: 4px;">' +
-                '<span>Founded:</span>' +
-                '<span>' + (household.foundedYear || 'Unknown') + '</span>' +
-                '</div>' +
-                '</div>' +
-                '<div style="font-size: 0.6rem; color: var(--warn);">' +
-                'Are you sure you want to delete this household?' +
-                '</div>' +
-                '<div class="form-group" style="margin-top: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Type "<strong>' + _escapeHtml(household.name) + '</strong>" to confirm</label>' +
-                '<input type="text" id="confirmDeleteHouseholdName" placeholder="Enter household name" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Delete Household: ' + household.name,
-                content: modalContent,
-                confirmText: 'Delete Household',
-                cancelText: 'Cancel',
-                confirmStyle: 'danger',
-                onConfirm: function() {
-                    var confirmName = document.getElementById('confirmDeleteHouseholdName').value.trim();
-                    if (confirmName !== household.name) {
-                        _showToast('Household name does not match', 'error');
-                        return false;
-                    }
-
-                    var result = _state.deleteHousehold(householdId, { force: true });
-                    if (result) {
-                        _showToast('Household "' + household.name + '" deleted', 'info');
-                        _closeTopModal();
-                        _processingModal = false;
-                        if (onSuccess) {
-                            onSuccess();
-                        }
-                    } else {
-                        _showToast('Failed to delete household', 'error');
-                    }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingModal = false;
-                }
-            });
-
-        } catch (e) {
-            _processingModal = false;
-            _showToast('Error opening delete household modal', 'error');
-        }
-    }
-
-    // =========================================================================
-    // 8. RENAME HOUSEHOLD MODAL
-    // =========================================================================
-
-    function openRenameHouseholdModal(householdId, onSuccess) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingModal = true;
-
-        try {
-            var household = _getHousehold(householdId);
-            if (!household) {
-                _showToast('Household not found', 'error');
-                _processingModal = false;
-                return;
-            }
-
-            var currentYear = _getCurrentYear();
-            var nameHistory = _getHouseholdNameHistory(householdId);
-
-            var historyHtml = '';
-            if (nameHistory && nameHistory.length > 0) {
-                var recent = nameHistory.slice(-5).reverse();
-                historyHtml = '<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-light);">' +
-                    '<div style="font-size: 0.55rem; color: var(--dim); margin-bottom: 4px;">Previous names:</div>';
-                for (var i = 0; i < recent.length; i++) {
-                    var h = recent[i];
-                    historyHtml += '<div style="font-size: 0.5rem; color: var(--dim); padding: 2px 0;">' +
-                        h.year + ': ' + _escapeHtml(h.oldName || '—') + ' → ' + _escapeHtml(h.newName) +
-                        '</div>';
-                }
-                historyHtml += '</div>';
-            }
-
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.6rem; color: var(--dim);">' +
-                'Current name: <strong>' + _escapeHtml(household.name) + '</strong>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">New Name *</label>' +
-                '<input type="text" id="renameHouseholdInput" value="' + _escapeHtml(household.name) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div style="margin-bottom: 12px; padding: 8px; background: var(--bg3); border-radius: 6px;">' +
-                '<label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.65rem;">' +
-                '<input type="checkbox" id="renameWithHistory" checked>' +
-                '<span>Record this name change in history</span>' +
-                '</label>' +
-                '<div id="renameHistoryOptions" style="margin-top: 8px; padding-left: 24px;">' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">' +
-                '<div><label style="font-size: 0.55rem; color: var(--dim);">Year</label>' +
-                '<input type="number" id="renameYear" value="' + currentYear + '" min="1" max="' + (currentYear + 5) + '" style="width: 100%; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 0.55rem; color: var(--text);">' +
-                '</div>' +
-                '<div><label style="font-size: 0.55rem; color: var(--dim);">Reason (optional)</label>' +
-                '<input type="text" id="renameReason" placeholder="e.g., Succession" style="width: 100%; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 0.55rem; color: var(--text);">' +
-                '</div>' +
-                '</div>' +
-                '</div>' +
-                '</div>' +
-                historyHtml +
-                '</div>';
-
-            _openModal({
-                title: 'Rename Household: ' + household.name,
-                content: modalContent,
-                confirmText: 'Rename',
-                cancelText: 'Cancel',
-                onOpen: function() {
-                    var input = document.getElementById('renameHouseholdInput');
-                    if (input) {
-                        setTimeout(function() { input.focus(); input.select(); }, 100);
-                    }
-
-                    var historyCheckbox = document.getElementById('renameWithHistory');
-                    var historyOptions = document.getElementById('renameHistoryOptions');
-                    if (historyCheckbox && historyOptions) {
-                        historyCheckbox.onchange = function() {
-                            historyOptions.style.display = this.checked ? 'block' : 'none';
-                        };
-                    }
-                },
-                onConfirm: function() {
-                    var newName = document.getElementById('renameHouseholdInput').value.trim();
-                    var year = parseInt(document.getElementById('renameYear').value);
-                    var reason = document.getElementById('renameReason').value.trim();
-                    var addToHistory = document.getElementById('renameWithHistory').checked;
-
-                    if (!newName) {
-                        _showToast('Please enter a name', 'error');
-                        return false;
-                    }
-
-                    if (newName === household.name) {
-                        _showToast('Name is the same', 'info');
-                        _closeTopModal();
-                        _processingModal = false;
-                        if (onSuccess) {
-                            onSuccess();
-                        }
-                        return true;
-                    }
-
-                    if (isNaN(year) || year < 1) {
-                        _showToast('Please enter a valid year', 'error');
-                        return false;
-                    }
-
-                    var result = _state.updateHousehold(householdId, { name: newName }, {
-                        recordHistory: addToHistory,
-                        changeYear: year,
-                        changeReason: reason || 'Renamed'
-                    });
-
-                    if (result) {
-                        _showToast('Household renamed to "' + newName + '"' + (addToHistory ? ' (' + year + ')' : ' (no trace)'), 'success');
-                        _closeTopModal();
-                        _processingModal = false;
-                        if (onSuccess) {
-                            onSuccess();
-                        }
-                    } else {
-                        _showToast('Failed to rename household', 'error');
-                    }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingModal = false;
-                }
-            });
-
-        } catch (e) {
-            _processingModal = false;
-            _showToast('Error opening rename household modal', 'error');
-        }
-    }
-
-    // =========================================================================
-    // 9. ADD MEMBER MODAL
-    // =========================================================================
-
-    function openAddMemberModal(householdId, type, onSuccess) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingModal = true;
-
-        try {
-            var household = _getHousehold(householdId);
-            if (!household) {
-                _showToast('Household not found', 'error');
-                _processingModal = false;
-                return;
-            }
-
-            var isFamily = (type === 'family');
-            var title = isFamily ? 'Add Family Member' : 'Add Staff Member';
-            var defaultRole = isFamily ? 'Family Member' : 'Staff';
-
-            var existingMemberIds = [];
-            if (household.members) {
-                for (var i = 0; i < household.members.length; i++) {
-                    existingMemberIds.push(household.members[i].characterId);
-                }
-            }
-
-            _openCharacterSelector({
-                title: title,
-                targetId: null,
-                filters: {
-                    showDeceased: true,
-                    gender: 'all',
-                    ageGroup: 'all',
-                    location: 'all',
-                    role: 'all'
-                },
-                excludeIds: existingMemberIds,
-                onSelect: function(character) {
-                    if (!character) {
-                        _processingModal = false;
-                        return;
-                    }
-
-                    _closeTopModal();
-
-                    setTimeout(function() {
-                        _openAddMemberRoleModal(household, character, type, defaultRole, function() {
-                            _processingModal = false;
-                            if (onSuccess) {
-                                onSuccess();
-                            }
-                        });
-                    }, 200);
-                },
-                onCancel: function() {
-                    _processingModal = false;
-                }
-            });
-
-        } catch (e) {
-            _processingModal = false;
-            _showToast('Error opening add member modal', 'error');
-        }
-    }
-
-    // =========================================================================
-    // 9.5 ADD MEMBER ROLE MODAL (Helper)
-    // =========================================================================
-
-    function _openAddMemberRoleModal(household, character, type, defaultRole, onSuccess) {
-        var isFamily = (type === 'family');
-        var currentYear = _getCurrentYear();
-        var isDeceased = character.isDeceased === true;
-
-        var roleModalContent =
-            '<div style="margin-bottom: 16px;">' +
-            '<div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">' +
-            '<div style="font-size: 0.7rem;"><strong>' + _escapeHtml(character.name) + ' ' + _escapeHtml(character.surname || '') + '</strong></div>' +
-            (isDeceased ? '<div style="font-size: 0.55rem; color: var(--warn); margin-top: 4px;">This character is DECEASED</div>' : '') +
-            '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">→ ' + _escapeHtml(household.name) + '</div>' +
-            '</div>' +
-            '<div class="form-group" style="margin-bottom: 12px;">' +
-            '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Role / Title</label>' +
-            '<input type="text" id="memberRoleInput" value="' + defaultRole + '" placeholder="Custom role" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-            '</div>' +
-            '<div class="form-group" style="margin-bottom: 12px;">' +
-            '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Year Joined</label>' +
-            '<input type="number" id="memberJoinedYear" value="' + currentYear + '" min="1" max="' + (currentYear + 10) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-            '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">When this character joined the household</div>' +
-            '</div>' +
-            (isFamily ? '<div class="form-group" style="margin-bottom: 12px;">' +
-            '<label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">' +
-            '<input type="checkbox" id="memberIsHead">' +
-            '<span style="font-size: 0.65rem;">Set as Head of Household</span>' +
-            '</label></div>' : '') +
-            '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 8px;">This will add the character to the household members list</div>' +
-            '</div>';
-
-        _openModal({
-            title: 'Add ' + (isFamily ? 'Family Member' : 'Staff Member'),
-            content: roleModalContent,
-            confirmText: 'Add to Household',
-            cancelText: 'Cancel',
-            onConfirm: function() {
-                var role = document.getElementById('memberRoleInput').value.trim() || defaultRole;
-                var joinedYear = parseInt(document.getElementById('memberJoinedYear').value);
-                var isHead = isFamily && document.getElementById('memberIsHead')?.checked || false;
-
-                if (isNaN(joinedYear) || joinedYear < 1) {
-                    _showToast('Please enter a valid year', 'error');
-                    return false;
-                }
-
-                var existingHousehold = _state.getCharacterHousehold(character.id);
-                if (existingHousehold && existingHousehold.id === household.id) {
-                    _showToast(character.name + ' is already in this household', 'warning');
-                    _closeTopModal();
-                    _processingModal = false;
-                    if (onSuccess) {
-                        onSuccess();
-                    }
-                    return true;
-                }
-
-                var result = _commands.addMember(household.id, character.id, type, {
-                    role: role,
-                    joinedYear: joinedYear,
-                    isHead: isHead,
-                    notes: character.isDeceased ? 'Deceased character added to household' : ''
-                });
-
-                if (result && result.success) {
-                    _showToast(character.name + ' added to ' + household.name, 'success');
-                    _closeTopModal();
-                    _processingModal = false;
-                    if (onSuccess) {
-                        onSuccess();
-                    }
-                    return true;
-                } else {
-                    _showToast(result ? result.reason : 'Failed to add member', 'error');
-                    return false;
-                }
-            },
-            onCancel: function() {
-                _processingModal = false;
-            }
-        });
-    }
-
-    // =========================================================================
-    // 10. EDIT MEMBER MODAL
-    // =========================================================================
-
-    function openEditMemberModal(householdId, characterId, onSuccess) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingModal = true;
-
-        try {
-            var household = _getHousehold(householdId);
-            if (!household) {
-                _showToast('Household not found', 'error');
-                _processingModal = false;
-                return;
-            }
-
-            var member = null;
-            for (var i = 0; i < household.members.length; i++) {
-                if (household.members[i].characterId === characterId) {
-                    member = household.members[i];
-                    break;
-                }
-            }
-
-            if (!member) {
-                _showToast('Member not found', 'error');
-                _processingModal = false;
-                return;
-            }
-
-            var character = _getCharacterById(characterId);
-            if (!character) {
-                _showToast('Character not found', 'error');
-                _processingModal = false;
-                return;
-            }
-
-            var departments = _getDepartments(householdId);
-            var deptOptions = '<option value="">None</option>';
-            for (var i = 0; i < departments.length; i++) {
-                var selected = (member.departmentId === departments[i].id) ? 'selected' : '';
-                deptOptions += '<option value="' + departments[i].id + '" ' + selected + '>' + _escapeHtml(departments[i].name) + '</option>';
-            }
-
-            var memberType = member.type || 'family';
-            var headSince = member.headSince || 'Unknown';
-            var isHead = member.isHead || false;
-
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">' +
-                '<div style="font-size: 0.7rem;">' + _escapeHtml(character.name) + ' ' + _escapeHtml(character.surname || '') + '</div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">' + (memberType === 'family' ? 'Family Member' : 'Staff Member') +
-                (isHead ? ' · Head since: ' + headSince : '') + '</div>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Role / Title</label>' +
-                '<input type="text" id="editMemberRole" value="' + _escapeHtml(member.role || '') + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Department</label>' +
-                '<select id="editMemberDepartment" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                deptOptions +
-                '</select>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Joined Year</label>' +
-                '<input type="number" id="editMemberJoinedYear" value="' + (member.joinedYear || _getCurrentYear()) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes</label>' +
-                '<textarea id="editMemberNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' + _escapeHtml(member.notes || '') + '</textarea>' +
-                '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Edit Member: ' + character.name,
-                content: modalContent,
-                confirmText: 'Save Changes',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var role = document.getElementById('editMemberRole').value.trim();
-                    var departmentId = document.getElementById('editMemberDepartment').value;
-                    var joinedYear = parseInt(document.getElementById('editMemberJoinedYear').value);
-                    var notes = document.getElementById('editMemberNotes').value.trim();
-
-                    var updates = {
-                        role: role || (memberType === 'family' ? 'Family Member' : 'Staff'),
-                        departmentId: departmentId || null,
-                        joinedYear: joinedYear || _getCurrentYear(),
-                        notes: notes
-                    };
-
-                    var result = _commands.updateMember(householdId, characterId, updates);
-
-                    if (result && result.success) {
-                        _showToast('Member updated', 'success');
-                        _closeTopModal();
-                        _processingModal = false;
-                        if (onSuccess) {
-                            onSuccess();
-                        }
-                    } else {
-                        _showToast(result ? result.reason : 'Failed to update member', 'error');
-                    }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingModal = false;
-                }
-            });
-
-        } catch (e) {
-            _processingModal = false;
-            _showToast('Error opening edit member modal', 'error');
-        }
-    }
-
-    // =========================================================================
-    // 11. TRANSFER MEMBER MODAL
-    // =========================================================================
-
-    function openTransferMemberModal(householdId, characterId, onSuccess) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingModal = true;
-
-        try {
-            var household = _getHousehold(householdId);
-            if (!household) {
-                _showToast('Household not found', 'error');
-                _processingModal = false;
-                return;
-            }
-
-            var character = _getCharacterById(characterId);
-            if (!character) {
-                _showToast('Character not found', 'error');
-                _processingModal = false;
-                return;
-            }
-
-            var currentYear = _getCurrentYear();
-
-            _openHouseholdSelector({
-                title: 'Select Target Household for ' + character.name,
-                targetCharacterId: characterId,
-                filterConfig: {
-                    showActive: true,
-                    showVacant: false,
-                    showEmpty: false,
-                    showDeprecated: false
-                },
-                onSelect: function(targetHousehold) {
-                    if (!targetHousehold) {
-                        _showToast('Selection cancelled', 'info');
-                        _processingModal = false;
-                        return;
-                    }
-
-                    if (targetHousehold.id === householdId) {
-                        _showToast(character.name + ' is already in this household', 'warning');
-                        _processingModal = false;
-                        return;
-                    }
-
-                    var transferContent =
-                        '<div style="margin-bottom: 16px;">' +
-                        '<div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">' +
-                        '<div style="font-size: 0.7rem;">' + _escapeHtml(character.name) + ' ' + _escapeHtml(character.surname || '') + '</div>' +
-                        '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">Current: ' + _escapeHtml(household.name) + '</div>' +
-                        '<div style="font-size: 0.55rem; color: var(--accent); margin-top: 4px;">→ Target: ' + _escapeHtml(targetHousehold.name) + '</div>' +
-                        '</div>' +
-                        '<div class="form-group" style="margin-bottom: 12px;">' +
-                        '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Transfer Year</label>' +
-                        '<input type="number" id="transferYear" value="' + currentYear + '" min="1" max="' + (currentYear + 10) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                        '</div>' +
-                        '<div class="form-group" style="margin-bottom: 12px;">' +
-                        '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Reason (optional)</label>' +
-                        '<input type="text" id="transferReason" placeholder="e.g., Marriage, Employment" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                        '</div>' +
-                        '<div style="font-size: 0.55rem; color: var(--warn);">This will remove the character from the current household</div>' +
-                        '</div>';
-
-                    _openModal({
-                        title: 'Transfer: ' + character.name + ' → ' + targetHousehold.name,
-                        content: transferContent,
-                        confirmText: 'Transfer',
-                        cancelText: 'Cancel',
-                        onConfirm: function() {
-                            var year = parseInt(document.getElementById('transferYear').value);
-                            var reason = document.getElementById('transferReason').value.trim() || 'Transferred';
-
-                            if (isNaN(year) || year < 1) {
-                                _showToast('Please enter a valid year', 'error');
-                                return false;
-                            }
-
-                            var result = _assignment.transferCharacterToHousehold(characterId, targetHousehold.id, {
-                                year: year,
-                                reason: reason,
-                                role: 'Family Member'
-                            });
-
-                            if (result && result.success) {
-                                _showToast(character.name + ' transferred to ' + result.toHousehold.name, 'success');
-                                _closeTopModal();
-                                _processingModal = false;
-                                if (onSuccess) {
-                                    onSuccess();
-                                }
-                            } else {
-                                _showToast(result ? result.reason : 'Failed to transfer member', 'error');
-                            }
-                            return true;
-                        },
-                        onCancel: function() {
-                            _processingModal = false;
-                        }
-                    });
-                },
-                onCancel: function() {
-                    _showToast('Transfer cancelled', 'info');
-                    _processingModal = false;
-                }
-            });
-
-        } catch (e) {
-            _processingModal = false;
-            _showToast('Error opening transfer modal', 'error');
-        }
-    }
-
-    // =========================================================================
-    // 12. SET HEAD OF HOUSEHOLD MODAL
-    // =========================================================================
-
-    function openSetHeadOfHouseholdModal(householdId, onSuccess) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingModal = true;
-
-        try {
-            var household = _getHousehold(householdId);
-            if (!household) {
-                _showToast('Household not found', 'error');
-                _processingModal = false;
-                return;
-            }
-
-            var currentHead = _getHouseholdHead(householdId);
-            var currentYear = _getCurrentYear();
-
-            var familyMembers = [];
-            if (household.members) {
-                for (var i = 0; i < household.members.length; i++) {
-                    var m = household.members[i];
-                    if (m.type === 'family') {
-                        var char = _getCharacterById(m.characterId);
-                        if (char && !char.isDeceased) {
-                            familyMembers.push({
-                                character: char,
-                                member: m,
-                                isCurrentHead: m.isHead || (currentHead && currentHead.id === char.id)
-                            });
-                        }
-                    }
-                }
-            }
-
-            var familyOptions = '';
-            if (familyMembers.length > 0) {
-                for (var i = 0; i < familyMembers.length; i++) {
-                    var fm = familyMembers[i];
-                    var selected = fm.isCurrentHead ? 'selected' : '';
-                    var headSince = fm.member.headSince || 'Unknown';
-                    var label = fm.character.name + ' ' + (fm.character.surname || '') +
-                        (fm.isCurrentHead ? ' (Current Head' + (headSince !== 'Unknown' ? ' since ' + headSince : '') + ')' : '') +
-                        (fm.member.role ? ' - ' + fm.member.role : '');
-                    familyOptions += '<option value="' + fm.character.id + '" ' + selected + '>' + _escapeHtml(label) + '</option>';
-                }
-            }
-
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">' +
-                '<div style="font-size: 0.6rem; color: var(--dim);">Current Head: <strong>' + (currentHead ? _escapeHtml(currentHead.name) + ' ' + _escapeHtml(currentHead.surname || '') : 'None') + '</strong></div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">' + familyMembers.length + ' family members available</div>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Select Head</label>' +
-                '<select id="headSelect" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                '<option value="">— Select a family member —</option>' +
-                familyOptions +
-                '</select>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Year of Succession</label>' +
-                '<input type="number" id="headYear" value="' + currentYear + '" min="1" max="' + (currentYear + 5) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">When the new head assumed leadership</div>' +
-                '</div>' +
-                '<div style="display: flex; gap: 8px; margin-top: 8px;">' +
-                '<button id="selectOtherHeadBtn" class="btn small" style="padding: 4px 12px; font-size: 0.6rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer;">Select Other Character</button>' +
-                '<button id="clearHeadBtn" class="btn small" style="padding: 4px 12px; font-size: 0.6rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Remove Head</button>' +
-                '</div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 8px;">Setting a head will transfer leadership from the current head</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Set Head of Household: ' + household.name,
-                content: modalContent,
-                confirmText: 'Set Head',
-                cancelText: 'Cancel',
-                onOpen: function() {
-                    var selectOtherBtn = document.getElementById('selectOtherHeadBtn');
-                    var clearHeadBtn = document.getElementById('clearHeadBtn');
-
-                    if (selectOtherBtn) {
-                        selectOtherBtn.onclick = function() {
-                            var existingMemberIds = [];
-                            if (household.members) {
-                                for (var i = 0; i < household.members.length; i++) {
-                                    existingMemberIds.push(household.members[i].characterId);
-                                }
-                            }
-
-                            _openCharacterSelector({
-                                title: 'Select New Head',
-                                targetId: null,
-                                filters: {
-                                    showDeceased: false,
-                                    gender: 'all',
-                                    ageGroup: 'all',
-                                    location: 'all',
-                                    role: 'all'
-                                },
-                                excludeIds: existingMemberIds,
-                                onSelect: function(character) {
-                                    if (character) {
-                                        var result = _commands.addMember(household.id, character.id, 'family', {
-                                            role: 'Head of Household',
-                                            joinedYear: currentYear,
-                                            isHead: true,
-                                            notes: 'Appointed as head of household'
-                                        });
-
-                                        if (result && result.success) {
-                                            _showToast(character.name + ' appointed as head', 'success');
-                                            _closeTopModal();
-                                            _processingModal = false;
-                                            if (onSuccess) {
-                                                onSuccess();
-                                            }
-                                        } else {
-                                            _showToast('Failed to appoint head', 'error');
-                                        }
-                                    }
-                                }
-                            });
-                        };
-                    }
-
-                    if (clearHeadBtn) {
-                        clearHeadBtn.onclick = function() {
-                            _confirmDialog('Remove the current head of household?', 'Remove Head', function() {
-                                var result = _commands.setHead(household.id, null, { year: currentYear });
-                                if (result && result.success) {
-                                    _showToast('Head removed', 'info');
-                                    _closeTopModal();
-                                    _processingModal = false;
-                                    if (onSuccess) {
-                                        onSuccess();
-                                    }
-                                } else {
-                                    _showToast('Failed to remove head', 'error');
-                                }
-                            });
-                        };
-                    }
-                },
-                onConfirm: function() {
-                    var selectedId = document.getElementById('headSelect').value;
-                    var year = parseInt(document.getElementById('headYear').value);
-
-                    if (!selectedId) {
-                        _showToast('Please select a head', 'error');
-                        return false;
-                    }
-
-                    if (isNaN(year) || year < 1) {
-                        _showToast('Please enter a valid year', 'error');
-                        return false;
-                    }
-
-                    var result = _commands.setHead(household.id, selectedId, { year: year });
-
-                    if (result && result.success) {
-                        var char = _getCharacterById(selectedId);
-                        _showToast(char ? char.name + ' is now head (since ' + year + ')' : 'Head set', 'success');
-                        _closeTopModal();
-                        _processingModal = false;
-                        if (onSuccess) {
-                            onSuccess();
-                        }
-                    } else {
-                        _showToast(result ? result.reason : 'Failed to set head', 'error');
-                    }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingModal = false;
-                }
-            });
-
-        } catch (e) {
-            _processingModal = false;
-            _showToast('Error opening set head modal', 'error');
-        }
-    }
-
-    // =========================================================================
-    // 13. ADD DEPARTMENT MODAL
-    // =========================================================================
-
-    function openAddDepartmentModal(householdId, onSuccess) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingModal = true;
-
-        try {
-            var household = _getHousehold(householdId);
-            if (!household) {
-                _showToast('Household not found', 'error');
-                _processingModal = false;
-                return;
-            }
-
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.6rem; color: var(--dim);">' +
-                'Adding department to: <strong>' + _escapeHtml(household.name) + '</strong>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Department Name *</label>' +
-                '<input type="text" id="newDepartmentName" placeholder="e.g., Kitchen, Guard, Treasury" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Add Department to ' + household.name,
-                content: modalContent,
-                confirmText: 'Create Department',
-                cancelText: 'Cancel',
-                onOpen: function() {
-                    var input = document.getElementById('newDepartmentName');
-                    if (input) {
-                        setTimeout(function() { input.focus(); }, 100);
-                    }
-                },
-                onConfirm: function() {
-                    var name = document.getElementById('newDepartmentName').value.trim();
-
-                    if (!name) {
-                        _showToast('Please enter a department name', 'error');
-                        return false;
-                    }
-
-                    var result = _commands.addDepartment(householdId, name);
-
-                    if (result && result.success) {
-                        _showToast('Department "' + name + '" created', 'success');
-                        _closeTopModal();
-                        _processingModal = false;
-                        if (onSuccess) {
-                            onSuccess();
-                        }
-                    } else {
-                        _showToast(result ? result.reason : 'Failed to create department', 'error');
-                    }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingModal = false;
-                }
-            });
-
-        } catch (e) {
-            _processingModal = false;
-            _showToast('Error opening add department modal', 'error');
-        }
-    }
-
-    // =========================================================================
-    // 14. JOIN HOUSEHOLD MODAL
-    // =========================================================================
-
-    function openJoinHouseholdModal(characterId, onSuccess, options) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingModal = true;
-
-        try {
-            options = options || {};
-
-            if (!characterId) {
-                _openCharacterSelector({
-                    title: 'Select Character to Join a Household',
-                    targetId: null,
-                    filters: {
-                        showDeceased: false,
-                        gender: 'all',
-                        ageGroup: 'all',
-                        location: 'all',
-                        role: 'all'
-                    },
-                    onSelect: function(character) {
-                        if (character) {
-                            _proceedWithJoinHousehold(character, onSuccess, options);
-                        } else {
-                            _processingModal = false;
-                        }
-                    },
-                    onCancel: function() {
-                        _processingModal = false;
-                    }
-                });
-                return;
-            }
-
-            var character = _getCharacterById(characterId);
-            if (!character) {
-                _showToast('Character not found', 'error');
-                _processingModal = false;
-                return;
-            }
-
-            _proceedWithJoinHousehold(character, onSuccess, options);
-
-        } catch (e) {
-            _processingModal = false;
-            _showToast('Error opening join household modal', 'error');
-        }
-    }
-
-    function _proceedWithJoinHousehold(character, onSuccess, options) {
-        var type = options.type || 'family';
-        var currentYear = _getCurrentYear();
-        var currentHousehold = _state.getCharacterHousehold(character.id);
-
-        _openHouseholdSelector({
-            title: 'Select Household for ' + character.name + ' to Join',
-            targetCharacterId: character.id,
-            filterConfig: {
-                showActive: true,
-                showVacant: false,
-                showEmpty: false,
-                showDeprecated: false
-            },
-            onSelect: function(household) {
-                if (!household) {
-                    _showToast('Selection cancelled', 'info');
-                    _processingModal = false;
-                    return;
-                }
-
-                if (currentHousehold && currentHousehold.id === household.id) {
-                    _showToast(character.name + ' is already in ' + household.name, 'warning');
-                    _processingModal = false;
-                    return;
-                }
-
-                _showJoinDetailsModal(character, household, type, currentYear, currentHousehold, onSuccess);
-            },
-            onCancel: function() {
-                _showToast('Selection cancelled', 'info');
-                _processingModal = false;
-            }
-        });
-    }
-
-    function _showJoinDetailsModal(character, household, type, currentYear, currentHousehold, onSuccess) {
-        var defaultRole = (type === 'family') ? 'Family Member' : 'Staff';
-
-        var joinContent =
-            '<div style="margin-bottom: 16px;">' +
-            '<div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">' +
-            '<div style="font-size: 0.7rem;"><strong>' + _escapeHtml(character.name) + ' ' + _escapeHtml(character.surname || '') + '</strong></div>' +
-            '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">→ ' + _escapeHtml(household.name) + '</div>' +
-            (currentHousehold ? '<div style="font-size: 0.55rem; color: var(--warn); margin-top: 4px;">Current: ' + _escapeHtml(currentHousehold.name) + '</div>' : '') +
-            '</div>' +
-            '<div class="form-group" style="margin-bottom: 12px;">' +
-            '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Role / Title</label>' +
-            '<input type="text" id="joinMemberRole" value="' + defaultRole + '" placeholder="Custom role" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-            '</div>' +
-            '<div class="form-group" style="margin-bottom: 12px;">' +
-            '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Year Joined</label>' +
-            '<input type="number" id="joinYear" value="' + currentYear + '" min="1" max="' + (currentYear + 10) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-            '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">When this character joined the household</div>' +
-            '</div>' +
-            '<div class="form-group" style="margin-bottom: 12px;">' +
-            '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes (optional)</label>' +
-            '<textarea id="joinNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;" placeholder="Reason for joining..."></textarea>' +
-            '</div>' +
-            (type === 'family' ? '<div class="form-group" style="margin-bottom: 12px;">' +
-            '<label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">' +
-            '<input type="checkbox" id="joinIsHead">' +
-            '<span style="font-size: 0.65rem;">Set as Head of Household</span>' +
-            '</label></div>' : '') +
-            '</div>';
-
-        _openModal({
-            title: 'Join Household: ' + household.name,
-            content: joinContent,
-            confirmText: 'Join Household',
-            cancelText: 'Cancel',
-            onConfirm: function() {
-                var role = document.getElementById('joinMemberRole').value.trim() || defaultRole;
-                var joinedYear = parseInt(document.getElementById('joinYear').value);
-                var notes = document.getElementById('joinNotes').value.trim();
-                var isHead = type === 'family' && document.getElementById('joinIsHead')?.checked || false;
-
-                if (isNaN(joinedYear) || joinedYear < 1) {
-                    _showToast('Please enter a valid year', 'error');
-                    return false;
-                }
-
-                var result = _commands.addMember(household.id, character.id, type, {
-                    role: role,
-                    joinedYear: joinedYear,
-                    isHead: isHead,
-                    notes: notes || 'Joined ' + household.name + ' in ' + joinedYear
-                });
-
-                if (result && result.success) {
-                    _showToast(character.name + ' joined ' + household.name + ' (' + joinedYear + ')' + (isHead ? ' as Head' : ''), 'success');
-                    _closeTopModal();
-                    _processingModal = false;
-                    if (onSuccess) {
-                        onSuccess();
-                    }
-                    return true;
-                } else {
-                    _showToast(result ? result.reason : 'Failed to join household', 'error');
-                    return false;
-                }
-            },
-            onCancel: function() {
-                _processingModal = false;
-            }
-        });
-    }
-
-    // =========================================================================
-    // 15. VIEW HOUSEHOLD HISTORY MODAL
-    // =========================================================================
-
-    function openViewHouseholdHistoryModal(householdId) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingModal = true;
-
-        try {
-            var household = _getHousehold(householdId);
-            if (!household) {
-                _showToast('Household not found', 'error');
-                _processingModal = false;
-                return;
-            }
-
-            var nameHistory = _getHouseholdNameHistory(householdId);
-
-            var historyHtml = '';
-            if (nameHistory.length === 0) {
-                historyHtml = '<div style="color: var(--dim); text-align: center; padding: 20px;">No name change history recorded</div>';
-            } else {
-                var sortedHistory = nameHistory.slice().sort(function(a, b) { return a.year - b.year; });
-                historyHtml = '<div style="display: flex; flex-direction: column; gap: 8px;">';
-                for (var i = 0; i < sortedHistory.length; i++) {
-                    var h = sortedHistory[i];
-                    var isCurrent = i === sortedHistory.length - 1;
-                    var periodDisplay = '';
-                    if (i < sortedHistory.length - 1) {
-                        periodDisplay = ' (' + h.year + ' - ' + (sortedHistory[i + 1].year - 1) + ')';
-                    } else {
-                        periodDisplay = ' (' + h.year + ' - present)';
-                    }
-
-                    historyHtml +=
-                        '<div style="background: var(--bg3); border-radius: 6px; padding: 10px; border-left: 3px solid ' + (isCurrent ? 'var(--accent)' : 'var(--border)') + ';">' +
-                        '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">' +
-                        '<div>' +
-                        '<span style="font-weight: bold;">' + h.year + '</span>' +
-                        '<span style="margin-left: 8px;">' + _escapeHtml(h.oldName || '—') + ' → <strong>' + _escapeHtml(h.newName) + '</strong></span>' +
-                        '<span style="font-size: 0.55rem; color: var(--dim); margin-left: 8px;">' + periodDisplay + '</span>' +
-                        '</div>' +
-                        (isCurrent ? '<span style="font-size: 0.55rem; color: var(--accent);">Current</span>' : '') +
-                        '</div>' +
-                        (h.reason ? '<div style="font-size: 0.6rem; color: var(--dim); margin-top: 4px;">Reason: ' + _escapeHtml(h.reason) + '</div>' : '') +
-                        (h.changedBy ? '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 2px;">By: ' + _escapeHtml(h.changedBy) + '</div>' : '') +
-                        '</div>';
-                }
-                historyHtml += '</div>';
-            }
-
-            var modalContent =
-                '<div style="margin-bottom: 16px; background: var(--bg2); padding: 12px; border-radius: 8px;">' +
-                '<div><strong>' + _escapeHtml(household.name) + '</strong></div>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">Founded: ' + (household.foundedYear || '?') + ' · Current name since: ' + (household.currentNameSince || household.foundedYear || '?') + '</div>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">Total name changes: ' + nameHistory.length + '</div>' +
-                '</div>' +
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="font-size: 0.7rem; color: var(--accent); margin-bottom: 8px;">Name Change History</div>' +
-                historyHtml +
-                '</div>' +
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
-                'Name changes help track the evolution of a household through generations.' +
-                '</div>';
-
-            _openModal({
-                title: 'Household History: ' + household.name,
-                content: modalContent,
-                confirmText: 'Close',
-                cancelText: '',
-                onConfirm: function() {
-                    _closeTopModal();
-                    _processingModal = false;
-                }
-            });
-
-        } catch (e) {
-            _processingModal = false;
-            _showToast('Error opening household history', 'error');
-        }
-    }
-
-    // =========================================================================
-    // 16. HOUSEHOLD DETAILS MODAL
-    // =========================================================================
-
-    function openHouseholdDetailsModal(householdId, onRefresh) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingModal = true;
-
-        try {
-            var household = _getHousehold(householdId);
-            if (!household) {
-                _showToast('Household not found', 'error');
-                _processingModal = false;
-                return;
-            }
-
-            var head = _getHouseholdHead(householdId);
-            var members = _getHouseholdMembers(householdId);
-            var departments = _getDepartments(householdId);
-            var status = _getHouseholdStatus(householdId);
-            var currentYear = _getCurrentYear();
-            var isProcessing = false;
-
-            // Build members HTML
-            var membersHtml = '';
-            if (members.length > 0) {
-                var displayMembers = members.slice(0, 10);
-                for (var i = 0; i < displayMembers.length; i++) {
-                    var m = displayMembers[i];
-                    var char = _getCharacterById(m.characterId);
-                    if (!char) continue;
-                    var isHead = m.isHead || (head && head.id === char.id);
-                    var isDeceased = char.isDeceased === true;
-                    var headSinceText = (isHead && m.headSince) ? ' since ' + m.headSince : '';
-                    membersHtml +=
-                        '<div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border-light); font-size: 0.65rem; ' + (isDeceased ? 'opacity: 0.5;' : '') + '">' +
-                        '<span>' + (isHead ? '◆ ' : '') + _escapeHtml(char.name) + ' ' + _escapeHtml(char.surname || '') + (isDeceased ? ' †' : '') + '</span>' +
-                        '<span style="color: var(--dim); font-size: 0.55rem;">' + (m.role || 'Member') + (isHead ? headSinceText : '') + '</span>' +
-                        '</div>';
-                }
-                if (members.length > 10) {
-                    membersHtml += '<div style="font-size: 0.55rem; color: var(--dim); text-align: center; padding-top: 4px;">... and ' + (members.length - 10) + ' more</div>';
-                }
-            } else {
-                membersHtml = '<div style="color: var(--dim); text-align: center; padding: 12px; font-size: 0.65rem;">No members</div>';
-            }
-
-            // Build departments HTML
-            var departmentsHtml = '';
-            if (departments.length > 0) {
-                for (var i = 0; i < departments.length; i++) {
-                    var d = departments[i];
-                    var deptHead = d.headId ? _getCharacterById(d.headId) : null;
-                    departmentsHtml +=
-                        '<div style="display: flex; justify-content: space-between; padding: 2px 0; border-bottom: 1px solid var(--border-light); font-size: 0.6rem;">' +
-                        '<span>' + _escapeHtml(d.name) + '</span>' +
-                        '<span style="color: var(--dim); font-size: 0.5rem;">' + (deptHead ? 'Head: ' + _escapeHtml(deptHead.name) : 'No head') + '</span>' +
-                        '</div>';
-                }
-            } else {
-                departmentsHtml = '<div style="color: var(--dim); text-align: center; padding: 8px; font-size: 0.55rem;">No departments</div>';
-            }
-
-            // Build name history
-            var nameHistory = _getHouseholdNameHistory(householdId);
-            var historyHtml = '';
-            if (nameHistory && nameHistory.length > 0) {
-                var recentHistory = nameHistory.slice(-3).reverse();
-                historyHtml = '<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-light);">' +
-                    '<div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 4px;">Name History (' + nameHistory.length + ' changes)</div>';
-                for (var i = 0; i < recentHistory.length; i++) {
-                    var h = recentHistory[i];
-                    historyHtml += '<div style="font-size: 0.55rem; color: var(--dim); padding: 2px 0;">' +
-                        h.year + ': ' + _escapeHtml(h.oldName || '—') + ' → ' + _escapeHtml(h.newName) +
-                        (h.reason ? ' (' + _escapeHtml(h.reason) + ')' : '') +
-                        '</div>';
-                }
-                if (nameHistory.length > 3) {
-                    historyHtml += '<div style="font-size: 0.5rem; color: var(--dim);">... and ' + (nameHistory.length - 3) + ' more</div>';
-                }
-                historyHtml += '</div>';
-            }
-
-            var statusColor = '#4a9e6a';
-            var statusText = status && status.statusMessage ? status.statusMessage : 'Active';
-            if (status && status.status === 'vacant') statusColor = '#8a8a8a';
-            else if (status && status.status === 'abandoned') statusColor = '#c87040';
-            else if (status && status.status === 'declining') statusColor = '#c8a844';
-
-            // Build action buttons - NO ICONS
-            var actionButtonsHtml =
-                '<div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);">' +
-                '<div style="display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px;">' +
-                '<button id="detailsEditBtn" class="btn small" style="padding: 3px 10px; font-size: 0.55rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 3px; cursor: pointer;">Edit</button>' +
-                '<button id="detailsRenameBtn" class="btn small" style="padding: 3px 10px; font-size: 0.55rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 3px; cursor: pointer;">Rename</button>' +
-                '<button id="detailsSetHeadBtn" class="btn small" style="padding: 3px 10px; font-size: 0.55rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 3px; cursor: pointer;">Set Head</button>' +
-                '</div>' +
-                '<div style="display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px;">' +
-                '<button id="detailsAddFamilyBtn" class="btn small" style="padding: 3px 10px; font-size: 0.55rem; background: var(--accent); border: none; color: white; border-radius: 3px; cursor: pointer;">Add Family</button>' +
-                '<button id="detailsAddStaffBtn" class="btn small" style="padding: 3px 10px; font-size: 0.55rem; background: var(--accent); border: none; color: white; border-radius: 3px; cursor: pointer;">Add Staff</button>' +
-                '<button id="detailsAddDeptBtn" class="btn small" style="padding: 3px 10px; font-size: 0.55rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 3px; cursor: pointer;">Add Dept</button>' +
-                '</div>' +
-                '<div style="display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px;">' +
-                '<button id="detailsViewHistoryBtn" class="btn small" style="padding: 3px 10px; font-size: 0.55rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 3px; cursor: pointer;">History</button>' +
-                '</div>' +
-                '<div style="display: flex; gap: 4px; flex-wrap: wrap;">' +
-                '<button id="detailsDeleteBtn" class="btn danger small" style="padding: 3px 10px; font-size: 0.55rem; background: #8a3020; border: none; color: white; border-radius: 3px; cursor: pointer;">Delete</button>' +
-                '</div></div>';
-
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; background: var(--bg3); border-radius: 8px; padding: 12px; margin-bottom: 12px;">' +
-                '<div><div style="font-size: 0.55rem; color: var(--dim);">Location</div><div style="font-size: 0.7rem;">' + (household.locationName || 'None') + '</div></div>' +
-                '<div><div style="font-size: 0.55rem; color: var(--dim);">Head</div><div style="font-size: 0.7rem;">' + (head ? _escapeHtml(head.name) + ' ' + _escapeHtml(head.surname || '') : 'None') + (head && head.headSince ? ' (since ' + head.headSince + ')' : '') + '</div></div>' +
-                '<div><div style="font-size: 0.55rem; color: var(--dim);">Founded</div><div style="font-size: 0.7rem;">' + (household.foundedYear || 'Unknown') + '</div></div>' +
-                '<div><div style="font-size: 0.55rem; color: var(--dim);">Members</div><div style="font-size: 0.7rem;">' + members.length + '</div></div>' +
-                '<div><div style="font-size: 0.55rem; color: var(--dim);">Departments</div><div style="font-size: 0.7rem;">' + departments.length + '</div></div>' +
-                '<div><div style="font-size: 0.55rem; color: var(--dim);">Status</div><div style="font-size: 0.7rem; color:' + statusColor + ';">' + statusText + '</div></div>' +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 8px;">Members (' + members.length + ')</div>' +
-                '<div style="max-height: 200px; overflow-y: auto; background: var(--bg3); border-radius: 6px; padding: 8px;">' +
-                membersHtml +
-                '</div></div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 8px;">Departments (' + departments.length + ')</div>' +
-                '<div style="max-height: 100px; overflow-y: auto; background: var(--bg3); border-radius: 6px; padding: 8px;">' +
-                departmentsHtml +
-                '</div></div>' +
-                (household.notes ? '<div style="background: var(--bg3); border-radius: 6px; padding: 8px; margin-bottom: 12px; font-size: 0.65rem; color: var(--dim);">' + _escapeHtml(household.notes) + '</div>' : '') +
-                historyHtml +
-                actionButtonsHtml +
-                '</div>';
-
-            _openModal({
-                title: 'Household Details: ' + household.name,
-                content: modalContent,
-                confirmText: 'Close',
-                cancelText: '',
-                onConfirm: function() {
-                    _closeTopModal();
-                    _processingModal = false;
-                    if (onRefresh) {
-                        onRefresh();
-                    }
-                }
-            });
-
-            // Attach event handlers
-            setTimeout(function() {
-                var isProcessing = false;
-
-                function closeAndReopen(callback) {
-                    if (isProcessing) return;
-                    isProcessing = true;
-                    _closeTopModal();
-                    setTimeout(function() {
-                        callback();
-                        isProcessing = false;
-                    }, 50);
-                }
-
-                var editBtn = document.getElementById('detailsEditBtn');
-                if (editBtn) {
-                    editBtn.onclick = function() {
-                        closeAndReopen(function() {
-                            openEditHouseholdModal(householdId, function() {
-                                openHouseholdDetailsModal(householdId, onRefresh);
-                            });
-                        });
-                    };
-                }
-
-                var renameBtn = document.getElementById('detailsRenameBtn');
-                if (renameBtn) {
-                    renameBtn.onclick = function() {
-                        closeAndReopen(function() {
-                            openRenameHouseholdModal(householdId, function() {
-                                openHouseholdDetailsModal(householdId, onRefresh);
-                            });
-                        });
-                    };
-                }
-
-                var setHeadBtn = document.getElementById('detailsSetHeadBtn');
-                if (setHeadBtn) {
-                    setHeadBtn.onclick = function() {
-                        closeAndReopen(function() {
-                            openSetHeadOfHouseholdModal(householdId, function() {
-                                openHouseholdDetailsModal(householdId, onRefresh);
-                            });
-                        });
-                    };
-                }
-
-                var addFamilyBtn = document.getElementById('detailsAddFamilyBtn');
-                if (addFamilyBtn) {
-                    addFamilyBtn.onclick = function() {
-                        closeAndReopen(function() {
-                            openAddMemberModal(householdId, 'family', function() {
-                                openHouseholdDetailsModal(householdId, onRefresh);
-                            });
-                        });
-                    };
-                }
-
-                var addStaffBtn = document.getElementById('detailsAddStaffBtn');
-                if (addStaffBtn) {
-                    addStaffBtn.onclick = function() {
-                        closeAndReopen(function() {
-                            openAddMemberModal(householdId, 'staff', function() {
-                                openHouseholdDetailsModal(householdId, onRefresh);
-                            });
-                        });
-                    };
-                }
-
-                var addDeptBtn = document.getElementById('detailsAddDeptBtn');
-                if (addDeptBtn) {
-                    addDeptBtn.onclick = function() {
-                        closeAndReopen(function() {
-                            openAddDepartmentModal(householdId, function() {
-                                openHouseholdDetailsModal(householdId, onRefresh);
-                            });
-                        });
-                    };
-                }
-
-                var viewHistoryBtn = document.getElementById('detailsViewHistoryBtn');
-                if (viewHistoryBtn) {
-                    viewHistoryBtn.onclick = function() {
-                        if (isProcessing) return;
-                        isProcessing = true;
-                        _closeTopModal();
-                        setTimeout(function() {
-                            openViewHouseholdHistoryModal(householdId);
-                            isProcessing = false;
-                        }, 50);
-                    };
-                }
-
-                var deleteBtn = document.getElementById('detailsDeleteBtn');
-                if (deleteBtn) {
-                    deleteBtn.onclick = function() {
-                        closeAndReopen(function() {
-                            openDeleteHouseholdModal(householdId, function() {
-                                if (onRefresh) {
-                                    onRefresh();
-                                }
-                                _processingModal = false;
-                            });
-                        });
-                    };
-                }
-
-            }, 100);
-
-        } catch (e) {
-            _processingModal = false;
-            _showToast('Error opening household details', 'error');
-        }
-    }
-
-    // =========================================================================
-    // 17. LEAVE HOUSEHOLD MODAL
-    // =========================================================================
-
-    function openLeaveHouseholdModal(householdId, characterId, onSuccess) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingModal = true;
-
-        try {
-            var household = _getHousehold(householdId);
-            if (!household) {
-                _showToast('Household not found', 'error');
-                _processingModal = false;
-                return;
-            }
-
-            var character = _getCharacterById(characterId);
-            if (!character) {
-                _showToast('Character not found', 'error');
-                _processingModal = false;
-                return;
-            }
-
-            var currentYear = _getCurrentYear();
-
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">' +
-                '<div style="font-size: 0.7rem;"><strong>' + _escapeHtml(character.name) + ' ' + _escapeHtml(character.surname || '') + '</strong></div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">Current Household: ' + _escapeHtml(household.name) + '</div>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Year Left</label>' +
-                '<input type="number" id="leaveYear" value="' + currentYear + '" min="1" max="' + (currentYear + 5) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Reason</label>' +
-                '<input type="text" id="leaveReason" placeholder="e.g., Moved away, Disagreement..." style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                '</div>' +
-                '<div style="font-size: 0.55rem; color: var(--warn);">This will remove the character from the household</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Leave Household: ' + household.name,
-                content: modalContent,
-                confirmText: 'Leave Household',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var year = parseInt(document.getElementById('leaveYear').value);
-                    var reason = document.getElementById('leaveReason').value.trim() || 'Left household';
-
-                    if (isNaN(year) || year < 1) {
-                        _showToast('Please enter a valid year', 'error');
-                        return false;
-                    }
-
-                    var result = _commands.removeMember(householdId, characterId, {
-                        reason: reason,
-                        leftYear: year
-                    });
-
-                    if (result && result.success) {
-                        _showToast(character.name + ' left ' + household.name, 'info');
-                        _closeTopModal();
-                        _processingModal = false;
-                        if (onSuccess) {
-                            onSuccess();
-                        }
-                    } else {
-                        _showToast(result ? result.reason : 'Failed to leave household', 'error');
-                    }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingModal = false;
-                }
-            });
-
-        } catch (e) {
-            _processingModal = false;
-            _showToast('Error opening leave household modal', 'error');
-        }
-    }
-
-    // =========================================================================
-    // 18. LEAVE HOUSEHOLD (NO TRACE) MODAL
-    // =========================================================================
-
-    function openLeaveHouseholdNoTraceModal(householdId, characterId, onSuccess) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingModal = true;
-
-        try {
-            var household = _getHousehold(householdId);
-            if (!household) {
-                _showToast('Household not found', 'error');
-                _processingModal = false;
-                return;
-            }
-
-            var character = _getCharacterById(characterId);
-            if (!character) {
-                _showToast('Character not found', 'error');
-                _processingModal = false;
-                return;
-            }
-
             _confirmDialog(
-                'Remove ' + character.name + ' from ' + household.name + ' without recording in history?',
-                'Leave Household (No Trace)',
+                'Delete household "' + household.name + '"?\n\n' +
+                'This will:\n' +
+                '- Remove all ' + memberCount + ' members from this household\n' +
+                '- Mark the household as deprecated\n' +
+                '- Remove any residence associations\n' +
+                '- Transfer any owned enterprises to the Crown\n\n' +
+                'This action can be undone by restoring the household.',
+                'Delete Household',
                 function() {
-                    var result = _commands.removeMember(householdId, characterId, {
-                        reason: 'Removed (no trace)',
-                        recordHistory: false
+                    var result = commands.deleteHousehold(householdId, {
+                        removeFromCharacters: true,
+                        transferEnterprisesToState: true
                     });
 
                     if (result && result.success) {
-                        _showToast(character.name + ' removed from ' + household.name + ' (no trace)', 'info');
-                        _processingModal = false;
-                        if (onSuccess) {
-                            onSuccess();
-                        }
+                        _saveMasterData();
+                        _invalidateCaches();
+                        _showToast('Household deleted: ' + household.name, 'info');
+                        _closeTopModal();
+                        if (onSuccess) onSuccess();
                     } else {
-                        _showToast(result ? result.reason : 'Failed to remove member', 'error');
-                        _processingModal = false;
+                        _showToast('Failed to delete household: ' + (result ? result.reason : 'Unknown error'), 'error');
                     }
-                },
-                function() {
-                    _processingModal = false;
                 }
             );
 
-        } catch (e) {
+        } finally {
             _processingModal = false;
-            _showToast('Error opening leave household (no trace) modal', 'error');
         }
     }
 
     // =========================================================================
-    // 19. EXPORTS - REMOVED VENDETTA MODALS
+    // 7. HOUSEHOLD DETAILS MODAL (Updated with Enterprise Section)
     // =========================================================================
 
-    // Household CRUD
-    window.openNewHouseholdModal = openNewHouseholdModal;
+    function openHouseholdDetailsModal(householdId, onSuccess) {
+        if (_processingModal) return;
+        _processingModal = true;
+
+        try {
+            var state = _getState();
+            var queries = _getQueries();
+            var commands = _getCommands();
+            if (!state || !queries || !commands) {
+                _showToast('Household system not available', 'error');
+                return;
+            }
+
+            var household = state.getHousehold(householdId);
+            if (!household) {
+                _showToast('Household not found', 'error');
+                return;
+            }
+
+            var currentYear = _getCurrentYear();
+            var status = state.getHouseholdStatus(householdId);
+            var members = state.getHouseholdMembersWithCharacters(householdId);
+            var head = state.getHouseholdHead(householdId);
+            var residence = state.getHouseholdResidence(householdId);
+
+            // Get demographics
+            var demographics = queries.getDemographics(householdId);
+
+            // =========================================================================
+            // ENTERPRISE SECTION (NEW)
+            // =========================================================================
+
+            var enterpriseSection = '';
+            var enterpriseStats = null;
+
+            if (queries && typeof queries.getHouseholdEnterpriseSummaries === 'function') {
+                var enterpriseSummaries = queries.getHouseholdEnterpriseSummaries(householdId);
+                enterpriseStats = queries.getHouseholdEnterpriseStats(householdId);
+
+                if (enterpriseSummaries && enterpriseSummaries.length > 0) {
+                    var enterpriseRows = enterpriseSummaries.slice(0, 5).map(function(s) {
+                        var profitColor = s.annualProfit >= 0 ? 'var(--success)' : 'var(--danger)';
+                        var statusColor = s.status === 'active' ? 'var(--success)' :
+                                         s.status === 'bankrupt' ? 'var(--danger)' :
+                                         'var(--warn)';
+                        return '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:var(--bg);border-radius:4px;margin-bottom:2px;font-size:0.65rem;cursor:pointer;" class="enterprise-item" data-enterprise-id="' + _escapeHtml(s.id) + '">' +
+                            '<span>' + _escapeHtml(s.name) + ' <span style="color:' + statusColor + ';font-size:0.5rem;">(' + _escapeHtml(s.status) + ')</span></span>' +
+                            '<span style="color:' + profitColor + ';">' + (s.annualProfit >= 0 ? '+' : '') + s.annualProfit + '</span>' +
+                            '</div>';
+                    }).join('');
+
+                    var totalProfit = enterpriseStats.totalProfit || 0;
+                    var profitColor = totalProfit >= 0 ? 'var(--success)' : 'var(--danger)';
+
+                    enterpriseSection = `
+                        <div style="margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px;">
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                                <div style="font-size: 0.7rem; color: var(--accent);">
+                                    Owned Enterprises (${enterpriseSummaries.length})
+                                </div>
+                                <div style="font-size: 0.6rem; color: var(--dim);">
+                                    Total Profit: <span style="color:${profitColor};font-weight:bold;">${totalProfit >= 0 ? '+' : ''}${totalProfit}</span>
+                                    <span style="margin-left:8px;">Workers: ${enterpriseStats.totalWorkers || 0}</span>
+                                </div>
+                            </div>
+                            <div style="max-height: 120px; overflow-y: auto;">
+                                ${enterpriseRows}
+                            </div>
+                            ${enterpriseSummaries.length > 5 ? '<div style="text-align:center;font-size:0.55rem;color:var(--dim);padding-top:4px;">+' + (enterpriseSummaries.length - 5) + ' more</div>' : ''}
+                            <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">
+                                <button id="viewEnterprisesBtn" class="btn" style="font-size:0.55rem;padding:2px 10px;">View All</button>
+                                <button id="createEnterpriseBtn" class="btn primary" style="font-size:0.55rem;padding:2px 10px;">Create Enterprise</button>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    enterpriseSection = `
+                        <div style="margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px;">
+                            <div style="font-size: 0.7rem; color: var(--dim);">No enterprises owned</div>
+                            <div style="margin-top:6px;">
+                                <button id="createEnterpriseBtn" class="btn primary" style="font-size:0.55rem;padding:2px 10px;">Create Enterprise</button>
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+
+            // Build member list
+            var memberHtml = '';
+            if (members && members.length > 0) {
+                memberHtml = members.map(function(m) {
+                    var headIcon = m.isHead ? '👑' : '';
+                    var typeIcon = m.type === 'family' ? '👤' : '🧑‍💼';
+                    var name = m.characterName || 'Unknown';
+                    var age = m.character && m.character.birthYear ?
+                        (m.character.isDeceased && m.character.deathYear ?
+                            (m.character.deathYear - m.character.birthYear) :
+                            (currentYear - m.character.birthYear)) :
+                        '?';
+                    var deceased = m.character && m.character.isDeceased ? '💀' : '';
+                    return '<div style="display:flex;justify-content:space-between;padding:3px 8px;background:var(--bg2);border-radius:4px;margin-bottom:2px;font-size:0.65rem;">' +
+                        '<span>' + headIcon + ' ' + typeIcon + ' ' + _escapeHtml(name) + ' ' + deceased + '</span>' +
+                        '<span style="color:var(--dim);">' + (m.role || m.type || 'Member') + ' · ' + age + ' years</span>' +
+                        '</div>';
+                }).join('');
+            } else {
+                memberHtml = '<div style="text-align:center;padding:8px;color:var(--dim);font-size:0.6rem;">No members</div>';
+            }
+
+            // Build content
+            var content = `
+                <div style="max-height: 500px; overflow-y: auto; padding: 4px;">
+                    <!-- Header -->
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                        <div>
+                            <h3 style="margin:0;font-size:1rem;">${_escapeHtml(household.name)}</h3>
+                            <div style="font-size:0.6rem;color:var(--dim);">
+                                Founded ${household.foundedYear || 'Unknown'}
+                                ${household.locationName ? ' · ' + _escapeHtml(household.locationName) : ''}
+                            </div>
+                        </div>
+                        <div style="text-align:right;">
+                            <div style="font-size:0.65rem;color:${status.statusColor};">
+                                ${status.statusIcon} ${_escapeHtml(status.statusMessage)}
+                            </div>
+                            <div style="font-size:0.55rem;color:var(--dim);">
+                                ${status.livingCount} living · ${status.deceasedCount} deceased
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Stats Grid -->
+                    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:12px;">
+                        <div style="background:var(--bg2);padding:8px;border-radius:6px;text-align:center;">
+                            <div style="font-size:0.5rem;color:var(--dim);">Members</div>
+                            <div style="font-size:0.9rem;font-weight:bold;">${members.length}</div>
+                        </div>
+                        <div style="background:var(--bg2);padding:8px;border-radius:6px;text-align:center;">
+                            <div style="font-size:0.5rem;color:var(--dim);">Wealth</div>
+                            <div style="font-size:0.9rem;font-weight:bold;color:${(household.wealth || 0) >= 0 ? 'var(--success)' : 'var(--danger)'};">${household.wealth || 0}</div>
+                        </div>
+                        <div style="background:var(--bg2);padding:8px;border-radius:6px;text-align:center;">
+                            <div style="font-size:0.5rem;color:var(--dim);">Reputation</div>
+                            <div style="font-size:0.9rem;font-weight:bold;">${household.reputation || 10}</div>
+                        </div>
+                        <div style="background:var(--bg2);padding:8px;border-radius:6px;text-align:center;">
+                            <div style="font-size:0.5rem;color:var(--dim);">Head</div>
+                            <div style="font-size:0.7rem;font-weight:bold;">${head ? _escapeHtml(head.name + (head.surname ? ' ' + head.surname : '')) : 'None'}</div>
+                        </div>
+                    </div>
+
+                    <!-- Demographics -->
+                    ${demographics ? `
+                        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:12px;">
+                            <div style="background:var(--bg2);padding:6px 8px;border-radius:4px;text-align:center;font-size:0.55rem;">
+                                <span style="color:var(--dim);">Male</span> ${demographics.male || 0}
+                            </div>
+                            <div style="background:var(--bg2);padding:6px 8px;border-radius:4px;text-align:center;font-size:0.55rem;">
+                                <span style="color:var(--dim);">Female</span> ${demographics.female || 0}
+                            </div>
+                            <div style="background:var(--bg2);padding:6px 8px;border-radius:4px;text-align:center;font-size:0.55rem;">
+                                <span style="color:var(--dim);">Children</span> ${demographics.children || 0}
+                            </div>
+                            <div style="background:var(--bg2);padding:6px 8px;border-radius:4px;text-align:center;font-size:0.55rem;">
+                                <span style="color:var(--dim);">Elders</span> ${demographics.elders || 0}
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    <!-- Residence -->
+                    ${residence ? `
+                        <div style="background:var(--bg2);padding:8px;border-radius:6px;margin-bottom:12px;font-size:0.65rem;">
+                            <span style="color:var(--dim);">Residence:</span>
+                            ${_escapeHtml(residence.residenceName || 'Unknown')}
+                            ${residence.unitNumber ? ' (Unit ' + residence.unitNumber + ')' : ''}
+                            ${residence.associatedYear ? ' · since ' + residence.associatedYear : ''}
+                        </div>
+                    ` : ''}
+
+                    <!-- Members -->
+                    <div style="margin-bottom:12px;">
+                        <div style="font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Members (${members.length})</div>
+                        <div style="max-height:150px;overflow-y:auto;">
+                            ${memberHtml}
+                        </div>
+                    </div>
+
+                    <!-- ENTERPRISE SECTION (NEW) -->
+                    ${enterpriseSection}
+
+                    <!-- Notes -->
+                    ${household.notes ? `
+                        <div style="background:var(--bg2);padding:8px;border-radius:6px;margin-top:12px;font-size:0.6rem;color:var(--dim);">
+                            ${_escapeHtml(household.notes)}
+                        </div>
+                    ` : ''}
+
+                    <!-- Actions -->
+                    <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:12px;">
+                        <button id="editHhBtn" class="btn primary" style="font-size:0.65rem;padding:4px 12px;">Edit</button>
+                        <button id="manageMembersBtn" class="btn" style="font-size:0.65rem;padding:4px 12px;">Manage Members</button>
+                        <button id="manageDepartmentsBtn" class="btn" style="font-size:0.65rem;padding:4px 12px;">Departments</button>
+                        <button id="processEconomyBtn" class="btn" style="font-size:0.65rem;padding:4px 12px;">Process Year</button>
+                        <button id="deleteHhBtn" class="btn danger" style="font-size:0.65rem;padding:4px 12px;">Delete</button>
+                    </div>
+                </div>
+            `;
+
+            _openModal({
+                title: 'Household Details',
+                content: content,
+                confirmText: 'Close',
+                cancelText: '',
+                onConfirm: function() {}
+            });
+
+            // Set up action buttons
+            setTimeout(function() {
+                // Edit button
+                var editBtn = document.getElementById('editHhBtn');
+                if (editBtn) {
+                    editBtn.addEventListener('click', function() {
+                        _closeTopModal();
+                        openEditHouseholdModal(householdId, onSuccess);
+                    });
+                }
+
+                // Delete button
+                var deleteBtn = document.getElementById('deleteHhBtn');
+                if (deleteBtn) {
+                    deleteBtn.addEventListener('click', function() {
+                        _closeTopModal();
+                        openDeleteHouseholdModal(householdId, onSuccess);
+                    });
+                }
+
+                // Manage Members button
+                var membersBtn = document.getElementById('manageMembersBtn');
+                if (membersBtn) {
+                    membersBtn.addEventListener('click', function() {
+                        _closeTopModal();
+                        if (typeof window.openHouseholdMemberManagerModal === 'function') {
+                            window.openHouseholdMemberManagerModal(householdId, onSuccess);
+                        } else {
+                            _showToast('Member manager not available', 'warning');
+                        }
+                    });
+                }
+
+                // Manage Departments button
+                var deptBtn = document.getElementById('manageDepartmentsBtn');
+                if (deptBtn) {
+                    deptBtn.addEventListener('click', function() {
+                        _closeTopModal();
+                        if (typeof window.openHouseholdDepartmentManagerModal === 'function') {
+                            window.openHouseholdDepartmentManagerModal(householdId, onSuccess);
+                        } else {
+                            _showToast('Department manager not available', 'warning');
+                        }
+                    });
+                }
+
+                // Process Economy button
+                var processBtn = document.getElementById('processEconomyBtn');
+                if (processBtn) {
+                    processBtn.addEventListener('click', function() {
+                        if (typeof window.HouseholdEconomy !== 'undefined' &&
+                            typeof window.HouseholdEconomy.processAnnualEconomy === 'function') {
+                            var result = window.HouseholdEconomy.processAnnualEconomy(householdId);
+                            if (result && result.success) {
+                                _showToast('Processed year for ' + result.householdName + ': ' +
+                                    (result.netChange >= 0 ? '+' : '') + result.netChange, 'success');
+                                _closeTopModal();
+                                if (onSuccess) onSuccess();
+                            } else {
+                                _showToast('Failed to process year: ' + (result ? result.reason : 'Unknown error'), 'error');
+                            }
+                        } else {
+                            _showToast('Household economy not available', 'error');
+                        }
+                    });
+                }
+
+                // =========================================================================
+                // ENTERPRISE BUTTONS (NEW)
+                // =========================================================================
+
+                // View Enterprises button
+                var viewEnterprisesBtn = document.getElementById('viewEnterprisesBtn');
+                if (viewEnterprisesBtn) {
+                    viewEnterprisesBtn.addEventListener('click', function() {
+                        _closeTopModal();
+                        if (typeof window.openEnterpriseListModal === 'function') {
+                            window.openEnterpriseListModal(function(enterprise) {
+                                if (enterprise && typeof window.openEnterpriseDetailsModal === 'function') {
+                                    window.openEnterpriseDetailsModal(enterprise.id);
+                                }
+                            });
+                        } else {
+                            _showToast('Enterprise list not available', 'warning');
+                        }
+                    });
+                }
+
+                // Create Enterprise button
+                var createEnterpriseBtn = document.getElementById('createEnterpriseBtn');
+                if (createEnterpriseBtn) {
+                    createEnterpriseBtn.addEventListener('click', function() {
+                        _closeTopModal();
+                        if (typeof window.openCreateEnterpriseModal === 'function') {
+                            window.openCreateEnterpriseModal(function(enterprise) {
+                                if (enterprise) {
+                                    _showToast('Enterprise created: ' + enterprise.name, 'success');
+                                    if (onSuccess) onSuccess();
+                                }
+                            }, {
+                                ownerType: 'household',
+                                ownerId: householdId,
+                                ownerName: household.name,
+                                locationId: household.locationId || null
+                            });
+                        } else {
+                            _showToast('Enterprise creation not available', 'warning');
+                        }
+                    });
+                }
+
+                // Click on enterprise items to view details
+                var enterpriseItems = document.querySelectorAll('.enterprise-item');
+                for (var i = 0; i < enterpriseItems.length; i++) {
+                    (function(item) {
+                        item.addEventListener('click', function() {
+                            var id = this.dataset.enterpriseId;
+                            _closeTopModal();
+                            if (typeof window.openEnterpriseDetailsModal === 'function') {
+                                window.openEnterpriseDetailsModal(id, function() {
+                                    // Refresh on close
+                                    openHouseholdDetailsModal(householdId, onSuccess);
+                                });
+                            } else {
+                                _showToast('Enterprise details not available', 'warning');
+                            }
+                        });
+                    })(enterpriseItems[i]);
+                }
+            }, 100);
+
+        } finally {
+            _processingModal = false;
+        }
+    }
+
+    // =========================================================================
+    // 8. EXPORTS
+    // =========================================================================
+
+    window.openCreateHouseholdModal = openCreateHouseholdModal;
     window.openEditHouseholdModal = openEditHouseholdModal;
     window.openDeleteHouseholdModal = openDeleteHouseholdModal;
     window.openHouseholdDetailsModal = openHouseholdDetailsModal;
-    window.openRenameHouseholdModal = openRenameHouseholdModal;
 
-    // Member management
-    window.openAddMemberModal = openAddMemberModal;
-    window.openEditMemberModal = openEditMemberModal;
-    window.openTransferMemberModal = openTransferMemberModal;
-    window.openSetHeadOfHouseholdModal = openSetHeadOfHouseholdModal;
+    // Legacy aliases
+    window._openCreateHouseholdModal = openCreateHouseholdModal;
+    window._openEditHouseholdModal = openEditHouseholdModal;
+    window._openDeleteHouseholdModal = openDeleteHouseholdModal;
+    window._openHouseholdDetailsModal = openHouseholdDetailsModal;
 
-    // Department management
-    window.openAddDepartmentModal = openAddDepartmentModal;
-
-    // Join/Leave Household
-    window.openJoinHouseholdModal = openJoinHouseholdModal;
-    window.openLeaveHouseholdModal = openLeaveHouseholdModal;
-    window.openLeaveHouseholdNoTraceModal = openLeaveHouseholdNoTraceModal;
-
-    // Household history
-    window.openViewHouseholdHistoryModal = openViewHouseholdHistoryModal;
-
-    // REMOVED: Vendetta modals - now in vendetta-system.js
-    // window.openDeclareVendettaModal = openDeclareVendettaModal;
-    // window.openResolveVendettaModal = openResolveVendettaModal;
-    // window.openViewVendettasModal = openViewVendettasModal;
-
-    // ES Module exports
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
-            openNewHouseholdModal: openNewHouseholdModal,
+            openCreateHouseholdModal: openCreateHouseholdModal,
             openEditHouseholdModal: openEditHouseholdModal,
             openDeleteHouseholdModal: openDeleteHouseholdModal,
-            openHouseholdDetailsModal: openHouseholdDetailsModal,
-            openRenameHouseholdModal: openRenameHouseholdModal,
-            openAddMemberModal: openAddMemberModal,
-            openEditMemberModal: openEditMemberModal,
-            openTransferMemberModal: openTransferMemberModal,
-            openSetHeadOfHouseholdModal: openSetHeadOfHouseholdModal,
-            openAddDepartmentModal: openAddDepartmentModal,
-            openJoinHouseholdModal: openJoinHouseholdModal,
-            openLeaveHouseholdModal: openLeaveHouseholdModal,
-            openLeaveHouseholdNoTraceModal: openLeaveHouseholdNoTraceModal,
-            openViewHouseholdHistoryModal: openViewHouseholdHistoryModal
+            openHouseholdDetailsModal: openHouseholdDetailsModal
         };
     }
 

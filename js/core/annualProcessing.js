@@ -8,6 +8,7 @@
  * UPDATED: Added government salary processing and tax collection integration
  * UPDATED: Added character salary processing
  * UPDATED: Added tuition processing
+ * UPDATED: Added education finances (public school funding + private school profit)
  * 
  * DEPENDENCIES:
  *   - accessors.js (getCharacters, getPlaces, getCurrentYear, saveMasterData)
@@ -16,6 +17,7 @@
  *   - character-commands.js (CharacterCommands - for salary calculation)
  *   - household-economy.js (HouseholdEconomy - for annual wealth processing, salary receipt)
  *   - education-commands.js (EducationCommands - for tuition calculation)
+ *   - education-annual.js (EducationAnnual - for school finances)
  *   - government-commands.js (GovernmentCommands - for salary/tax processing)
  *   - residence-system.js (ResidenceSystem - for vacancy processing)
  *   - randomness.js (chance, randomInt)
@@ -97,7 +99,7 @@
     }
 
     // =========================================================================
-    // 3. CHARACTER SALARY PROCESSING (NEW)
+    // 3. CHARACTER SALARY PROCESSING
     // =========================================================================
 
     function _processCharacterSalaries(year, options) {
@@ -152,7 +154,6 @@
 
             if (characterSalaries.length === 0) continue;
 
-            // Sum all salaries for this character
             var totalSalary = 0;
             for (var j = 0; j < characterSalaries.length; j++) {
                 totalSalary += characterSalaries[j].salary;
@@ -214,7 +215,7 @@
     }
 
     // =========================================================================
-    // 4. TUITION PROCESSING (NEW)
+    // 4. TUITION PROCESSING
     // =========================================================================
 
     function _processTuitionPayments(year, options) {
@@ -238,6 +239,9 @@
         for (var i = 0; i < institutions.length; i++) {
             var inst = institutions[i];
             if (!inst.students || inst.students.length === 0) continue;
+
+            // Public schools: no tuition
+            if (inst.ownershipType === 'public') continue;
 
             var tuitionResult = _calculateTuition(inst.id, year);
             if (!tuitionResult || !tuitionResult.success) continue;
@@ -437,7 +441,69 @@
     }
 
     // =========================================================================
-    // 7. PROCESS FULL ANNUAL UPDATE
+    // 7. EDUCATION FINANCES PROCESSING (NEW)
+    // =========================================================================
+
+    function _processEducationFinances(year, options) {
+        options = options || {};
+        var dryRun = options.dryRun || false;
+
+        var results = {
+            success: true,
+            year: year || _getCurrentYear(),
+            publicFunding: [],
+            privateProfits: [],
+            errors: [],
+            totalFunding: 0,
+            totalProfit: 0
+        };
+
+        try {
+            if (typeof window.EducationAnnual !== 'undefined' && 
+                typeof window.EducationAnnual._processSchoolFinances === 'function') {
+                var financeResults = window.EducationAnnual._processSchoolFinances(year, {
+                    silent: true,
+                    dryRun: dryRun
+                });
+                if (financeResults) {
+                    results.publicFunding = financeResults.publicFunding || [];
+                    results.privateProfits = financeResults.privateProfits || [];
+                    results.errors = financeResults.errors || [];
+                    results.totalFunding = financeResults.totalFunding || 0;
+                    results.totalProfit = financeResults.totalProfit || 0;
+                    results.success = financeResults.success !== false;
+                }
+            } else {
+                // Fallback: try using EducationCommands directly
+                if (typeof window.EducationCommands !== 'undefined' && 
+                    typeof window.EducationCommands.processAllSchoolFinances === 'function') {
+                    var financeResults = window.EducationCommands.processAllSchoolFinances(year);
+                    if (financeResults && financeResults.success) {
+                        var r = financeResults.results;
+                        results.publicFunding = r.publicFunding || [];
+                        results.privateProfits = r.privateProfits || [];
+                        results.errors = r.errors || [];
+                        results.totalFunding = financeResults.totalFunding || 0;
+                        results.totalProfit = financeResults.totalProfit || 0;
+                    }
+                } else {
+                    results.errors.push({
+                        error: 'Education finance system not available'
+                    });
+                }
+            }
+        } catch (err) {
+            results.errors.push({
+                error: err.message || 'Unknown error in education finances'
+            });
+            results.success = false;
+        }
+
+        return results;
+    }
+
+    // =========================================================================
+    // 8. PROCESS FULL ANNUAL UPDATE
     // =========================================================================
 
     function processFullAnnualUpdate(year, options) {
@@ -471,6 +537,13 @@
                     processed: 0,
                     totalAmount: 0,
                     details: []
+                },
+                educationFinances: {
+                    publicFunding: [],
+                    privateProfits: [],
+                    totalFunding: 0,
+                    totalProfit: 0,
+                    errors: []
                 },
                 households: {
                     processed: 0,
@@ -512,7 +585,7 @@
             }
 
             // =====================================================================
-            // 2. PROCESS CHARACTER SALARIES (NEW)
+            // 2. PROCESS CHARACTER SALARIES
             // =====================================================================
             if (options.processSalaries !== false) {
                 try {
@@ -535,7 +608,7 @@
             }
 
             // =====================================================================
-            // 3. PROCESS TUITION PAYMENTS (NEW)
+            // 3. PROCESS TUITION PAYMENTS
             // =====================================================================
             if (options.processTuition !== false) {
                 try {
@@ -557,7 +630,34 @@
             }
 
             // =====================================================================
-            // 4. PROCESS GOVERNMENT SALARIES
+            // 4. PROCESS EDUCATION FINANCES (NEW)
+            // =====================================================================
+            if (options.processEducationFinances !== false) {
+                try {
+                    var eduFinanceResults = _processEducationFinances(processYear, {
+                        dryRun: dryRun
+                    });
+                    if (eduFinanceResults) {
+                        results.educationFinances.publicFunding = eduFinanceResults.publicFunding || [];
+                        results.educationFinances.privateProfits = eduFinanceResults.privateProfits || [];
+                        results.educationFinances.totalFunding = eduFinanceResults.totalFunding || 0;
+                        results.educationFinances.totalProfit = eduFinanceResults.totalProfit || 0;
+                        results.educationFinances.errors = eduFinanceResults.errors || [];
+                        if (eduFinanceResults.errors && eduFinanceResults.errors.length > 0) {
+                            results.errors = results.errors.concat(
+                                eduFinanceResults.errors.map(function(e) {
+                                    return { system: 'education_finances', error: e.error, institutionId: e.institutionId };
+                                })
+                            );
+                        }
+                    }
+                } catch (err) {
+                    results.errors.push({ system: 'education_finances', error: err.message });
+                }
+            }
+
+            // =====================================================================
+            // 5. PROCESS GOVERNMENT SALARIES
             // =====================================================================
             if (options.processGovernmentSalaries !== false) {
                 try {
@@ -586,7 +686,7 @@
             }
 
             // =====================================================================
-            // 5. COLLECT HOUSEHOLD TAXES
+            // 6. COLLECT HOUSEHOLD TAXES
             // =====================================================================
             if (options.collectTaxes !== false) {
                 try {
@@ -614,7 +714,7 @@
             }
 
             // =====================================================================
-            // 6. PROCESS HOUSEHOLD ECONOMY
+            // 7. PROCESS HOUSEHOLD ECONOMY
             // =====================================================================
             if (options.processHouseholdEconomy !== false) {
                 try {
@@ -639,7 +739,7 @@
             }
 
             // =====================================================================
-            // 7. PROCESS RESIDENCE VACANCY
+            // 8. PROCESS RESIDENCE VACANCY
             // =====================================================================
             if (options.processResidences !== false) {
                 try {
@@ -668,7 +768,7 @@
             }
 
             // =====================================================================
-            // 8. SAVE AND FINALIZE
+            // 9. SAVE AND FINALIZE
             // =====================================================================
             if (!dryRun) {
                 _saveMasterData();
@@ -678,6 +778,8 @@
                     results.characters.died + ' died, ' +
                     results.salaries.paid + ' salaries paid (' + Math.round(results.salaries.totalAmount) + ' gold), ' +
                     results.tuition.processed + ' tuition payments (' + Math.round(results.tuition.totalAmount) + ' gold), ' +
+                    results.educationFinances.totalFunding + ' education funding, ' +
+                    results.educationFinances.totalProfit + ' education profit, ' +
                     results.government.salariesPaid + ' government salaries paid (' + results.government.totalSalaryPaid + ' gold), ' +
                     results.government.taxesCollected + ' households taxed (' + results.government.totalTaxCollected + ' gold), ' +
                     results.households.processed + ' households processed';
@@ -693,6 +795,10 @@
                     }
                     if (results.tuition.processed > 0) {
                         toastMsg += ', ' + results.tuition.processed + ' tuition payments';
+                    }
+                    if (results.educationFinances.totalFunding > 0 || results.educationFinances.totalProfit > 0) {
+                        toastMsg += ', education: ' + results.educationFinances.totalFunding + 'g funding, ' + 
+                            results.educationFinances.totalProfit + 'g profit';
                     }
                     if (results.government.salariesPaid > 0) {
                         toastMsg += ', ' + results.government.salariesPaid + ' gov salaries';
@@ -717,7 +823,7 @@
     }
 
     // =========================================================================
-    // 8. EXPORTS
+    // 9. EXPORTS
     // =========================================================================
 
     window.processFullAnnualUpdate = processFullAnnualUpdate;
@@ -725,6 +831,7 @@
     window._processAllHouseholdEconomy = _processAllHouseholdEconomy;
     window._processCharacterSalaries = _processCharacterSalaries;
     window._processTuitionPayments = _processTuitionPayments;
+    window._processEducationFinances = _processEducationFinances;
 
     // Legacy alias
     window.processAnnualUpdate = processFullAnnualUpdate;
@@ -735,7 +842,8 @@
             _processCharacterAging: _processCharacterAging,
             _processAllHouseholdEconomy: _processAllHouseholdEconomy,
             _processCharacterSalaries: _processCharacterSalaries,
-            _processTuitionPayments: _processTuitionPayments
+            _processTuitionPayments: _processTuitionPayments,
+            _processEducationFinances: _processEducationFinances
         };
     }
 

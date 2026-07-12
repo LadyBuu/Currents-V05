@@ -8,6 +8,7 @@
  * - Student/teacher/graduate lists
  * - Statistics and summaries
  * - Location-based queries
+ * - ROLE-BASED FILTERING (NEW)
  * 
  * DEPENDENCIES:
  *   - education-state.js (EducationState)
@@ -15,6 +16,7 @@
  *   - accessors.js (getCharacterById, getCharacters, getPlaceById, getPlaces)
  *   - time.js (getCurrentYearSafe, calculateAge)
  *   - world.js (getChildPlaces, getLocationPopulationCount, getCurrentLocation)
+ *   - roles/role-state.js (RoleState)
  * 
  * =============================================================================
  */
@@ -29,11 +31,87 @@
     var _processingQuery = false;
 
     // =========================================================================
-    // 2. DEPENDENCIES - Direct references to global functions
+    // 2. DEPENDENCY WRAPPERS
     // =========================================================================
 
-    // All functions are available globally from accessors.js, time.js, and world.js
-    // No wrapper functions needed - use them directly!
+    function _getCharacterById(id) {
+        if (typeof window.getCharacterById === 'function') {
+            return window.getCharacterById(id);
+        }
+        return null;
+    }
+
+    function _getCharacters() {
+        if (typeof window.getCharacters === 'function') {
+            return window.getCharacters();
+        }
+        return [];
+    }
+
+    function _getPlaceById(id) {
+        if (typeof window.getPlaceById === 'function') {
+            return window.getPlaceById(id);
+        }
+        return null;
+    }
+
+    function _getPlaces() {
+        if (typeof window.getPlaces === 'function') {
+            return window.getPlaces();
+        }
+        return [];
+    }
+
+    function _getChildPlaces(id, recursive) {
+        if (typeof window.getChildPlaces === 'function') {
+            return window.getChildPlaces(id, recursive);
+        }
+        return [];
+    }
+
+    function _getLocationPopulationCount(id) {
+        if (typeof window.getLocationPopulationCount === 'function') {
+            return window.getLocationPopulationCount(id);
+        }
+        return 0;
+    }
+
+    function _getCurrentLocation(character) {
+        if (typeof window.getCurrentLocation === 'function') {
+            return window.getCurrentLocation(character);
+        }
+        return 'Unknown';
+    }
+
+    function _getCurrentYear() {
+        if (typeof window.getCurrentYearSafe === 'function') {
+            return window.getCurrentYearSafe();
+        }
+        if (typeof window.getCurrentYear === 'function') {
+            return window.getCurrentYear();
+        }
+        return 1250;
+    }
+
+    function _calculateAge(birthYear, isDeceased, deathYear) {
+        if (typeof window.calculateAge === 'function') {
+            return window.calculateAge(birthYear, isDeceased, deathYear);
+        }
+        var currentYear = _getCurrentYear();
+        if (!birthYear) return 0;
+        if (isDeceased && deathYear) return Math.max(0, deathYear - birthYear);
+        return Math.max(0, currentYear - birthYear);
+    }
+
+    function _getRoleById(id) {
+        if (typeof window.RoleState !== 'undefined' && window.RoleState.getRole) {
+            return window.RoleState.getRole(id);
+        }
+        if (typeof window.getRoleById === 'function') {
+            return window.getRoleById(id);
+        }
+        return null;
+    }
 
     // =========================================================================
     // 3. INSTITUTION QUERIES
@@ -65,6 +143,49 @@
             if (filters.minReputation !== undefined && filters.minReputation !== null) {
                 result = result.filter(function(inst) {
                     return (inst.reputation || 0) >= filters.minReputation;
+                });
+            }
+
+            // ================================================================
+            // NEW: Role-based filters
+            // ================================================================
+            if (filters.taughtRole) {
+                result = result.filter(function(inst) {
+                    return inst.taughtRoles && inst.taughtRoles.indexOf(filters.taughtRole) !== -1;
+                });
+            }
+
+            if (filters.specializationCategory) {
+                result = result.filter(function(inst) {
+                    return inst.specializationCategory === filters.specializationCategory;
+                });
+            }
+
+            if (filters.roleCategory) {
+                result = result.filter(function(inst) {
+                    if (!inst.taughtRoles || inst.taughtRoles.length === 0) return false;
+                    return inst.taughtRoles.some(function(roleId) {
+                        var role = _getRoleById(roleId);
+                        return role && role.category === filters.roleCategory;
+                    });
+                });
+            }
+
+            if (filters.hasTaughtRoles !== undefined) {
+                if (filters.hasTaughtRoles) {
+                    result = result.filter(function(inst) {
+                        return inst.taughtRoles && inst.taughtRoles.length > 0;
+                    });
+                } else {
+                    result = result.filter(function(inst) {
+                        return !inst.taughtRoles || inst.taughtRoles.length === 0;
+                    });
+                }
+            }
+
+            if (filters.isSpecialized !== undefined) {
+                result = result.filter(function(inst) {
+                    return inst.isSpecialized === filters.isSpecialized;
                 });
             }
 
@@ -101,11 +222,11 @@
             if (institution.students) {
                 for (var i = 0; i < institution.students.length; i++) {
                     var s = institution.students[i];
-                    var char = window.getCharacterById(s.studentId);
+                    var char = _getCharacterById(s.studentId);
                     students.push({
                         record: s,
                         character: char,
-                        age: char ? window.calculateAge(char.birthYear, false, null) : null
+                        age: char ? _calculateAge(char.birthYear, false, null) : null
                     });
                 }
             }
@@ -114,7 +235,7 @@
             if (institution.teachers) {
                 for (var i = 0; i < institution.teachers.length; i++) {
                     var t = institution.teachers[i];
-                    var char = window.getCharacterById(t.teacherId);
+                    var char = _getCharacterById(t.teacherId);
                     teachers.push({
                         record: t,
                         character: char
@@ -126,7 +247,7 @@
             if (institution.graduates) {
                 for (var i = 0; i < institution.graduates.length; i++) {
                     var g = institution.graduates[i];
-                    var char = window.getCharacterById(g.studentId);
+                    var char = _getCharacterById(g.studentId);
                     graduates.push({
                         record: g,
                         character: char
@@ -137,7 +258,7 @@
             var headmaster = null;
             if (institution.headmaster) {
                 headmaster = {
-                    character: window.getCharacterById(institution.headmaster.characterId),
+                    character: _getCharacterById(institution.headmaster.characterId),
                     details: institution.headmaster
                 };
             }
@@ -168,7 +289,7 @@
         try {
             var locationIds = [locationId];
             if (includeChildren) {
-                var children = window.getChildPlaces(locationId, true);
+                var children = _getChildPlaces(locationId, true);
                 for (var i = 0; i < children.length; i++) {
                     if (children[i] && children[i].id) {
                         locationIds.push(children[i].id);
@@ -209,7 +330,7 @@
                 return institution.students.map(function(s) {
                     return {
                         record: s,
-                        character: window.getCharacterById(s.studentId)
+                        character: _getCharacterById(s.studentId)
                     };
                 });
             }
@@ -235,7 +356,7 @@
                 return institution.graduates.map(function(g) {
                     return {
                         record: g,
-                        character: window.getCharacterById(g.studentId)
+                        character: _getCharacterById(g.studentId)
                     };
                 });
             }
@@ -254,7 +375,7 @@
         _processingQuery = true;
 
         try {
-            var student = window.getCharacterById(studentId);
+            var student = _getCharacterById(studentId);
             if (!student) return [];
 
             var institutions = EducationState.getAllInstitutions();
@@ -356,7 +477,7 @@
                 return institution.teachers.map(function(t) {
                     return {
                         record: t,
-                        character: window.getCharacterById(t.teacherId)
+                        character: _getCharacterById(t.teacherId)
                     };
                 });
             }
@@ -384,7 +505,7 @@
 
             return {
                 details: institution.headmaster,
-                character: window.getCharacterById(institution.headmaster.characterId)
+                character: _getCharacterById(institution.headmaster.characterId)
             };
 
         } finally {
@@ -409,7 +530,7 @@
                     var entry = institution.headmasterHistory[i];
                     history.push({
                         details: entry,
-                        character: window.getCharacterById(entry.characterId)
+                        character: _getCharacterById(entry.characterId)
                     });
                 }
             }
@@ -445,13 +566,7 @@
 
             var capacityUsed = institution.maxStudents ? Math.round((studentCount / institution.maxStudents) * 100) : 0;
 
-            var totalSkill = 0;
-            if (institution.teachers) {
-                for (var i = 0; i < institution.teachers.length; i++) {
-                    totalSkill += institution.teachers[i].skill || 0;
-                }
-            }
-            var avgTeacherSkill = teacherCount > 0 ? Math.round(totalSkill / teacherCount) : 0;
+            // No teacher skill calculation - removed
 
             var enrollmentByYear = {};
             if (institution.students) {
@@ -479,12 +594,14 @@
                 graduateCount: graduateCount,
                 capacityUsed: capacityUsed,
                 capacity: institution.maxStudents || 0,
-                avgTeacherSkill: avgTeacherSkill,
+                // avgTeacherSkill: REMOVED
                 reputation: institution.reputation || 50,
                 foundedYear: institution.foundedYear,
                 enrollmentByYear: enrollmentByYear,
                 graduatesByYear: graduatesByYear,
                 isSpecialized: institution.isSpecialized || false,
+                specializationCategory: institution.specializationCategory || null,
+                taughtRoles: institution.taughtRoles || [],
                 curriculumCount: institution.curriculum ? institution.curriculum.length : 0
             };
 
@@ -500,7 +617,7 @@
         _processingQuery = true;
 
         try {
-            var place = window.getPlaceById(locationId);
+            var place = _getPlaceById(locationId);
             if (!place) return {};
 
             var institutions = getInstitutionsInRegion(locationId, includeChildren);
@@ -540,7 +657,9 @@
                         reputation: inst.reputation || 50,
                         studentCount: inst.students ? inst.students.length : 0,
                         teacherCount: inst.teachers ? inst.teachers.length : 0,
-                        capacity: inst.maxStudents || 0
+                        capacity: inst.maxStudents || 0,
+                        specializationCategory: inst.specializationCategory || null,
+                        taughtRoles: inst.taughtRoles || []
                     };
                 })
             };
@@ -558,8 +677,8 @@
 
         try {
             var summary = getLocationEducationSummary(locationId, true);
-            var population = window.getLocationPopulationCount ? 
-                window.getLocationPopulationCount(locationId) : 
+            var population = _getLocationPopulationCount ? 
+                _getLocationPopulationCount(locationId) : 
                 0;
 
             var schoolAgePopulation = Math.round(population * 0.15);
@@ -614,13 +733,13 @@
 
         try {
             minSchoolAgePop = minSchoolAgePop || 50;
-            var places = window.getPlaces();
+            var places = _getPlaces();
             var recommendations = [];
 
             for (var i = 0; i < places.length; i++) {
                 var place = places[i];
-                var population = window.getLocationPopulationCount ? 
-                    window.getLocationPopulationCount(place.id) : 
+                var population = _getLocationPopulationCount ? 
+                    _getLocationPopulationCount(place.id) : 
                     0;
 
                 var schoolAgePop = Math.round(population * 0.15);
@@ -656,7 +775,97 @@
     }
 
     // =========================================================================
-    // 8. EDUCATION LEVELS HELPER
+    // 8. ROLE-BASED QUERIES (NEW)
+    // =========================================================================
+
+    function getInstitutionsByRole(roleId) {
+        if (_processingQuery) {
+            return [];
+        }
+        _processingQuery = true;
+
+        try {
+            return EducationState.getInstitutionsByTaughtRole(roleId);
+        } finally {
+            _processingQuery = false;
+        }
+    }
+
+    function getInstitutionsByRoleCategory(categoryId) {
+        if (_processingQuery) {
+            return [];
+        }
+        _processingQuery = true;
+
+        try {
+            return EducationState.getInstitutionsBySpecializationCategory(categoryId);
+        } finally {
+            _processingQuery = false;
+        }
+    }
+
+    function getInstitutionsTeachingRoleCategory(categoryId) {
+        if (_processingQuery) {
+            return [];
+        }
+        _processingQuery = true;
+
+        try {
+            return EducationState.getInstitutionsTeachingRoleCategory(categoryId);
+        } finally {
+            _processingQuery = false;
+        }
+    }
+
+    function getTaughtRolesByInstitution(institutionId) {
+        if (_processingQuery) {
+            return [];
+        }
+        _processingQuery = true;
+
+        try {
+            var institution = EducationState.getInstitution(institutionId);
+            if (!institution || !institution.taughtRoles) return [];
+
+            return institution.taughtRoles.map(function(roleId) {
+                return _getRoleById(roleId);
+            }).filter(function(role) { return role !== null; });
+
+        } finally {
+            _processingQuery = false;
+        }
+    }
+
+    function getAvailableRolesForInstitution(institutionId) {
+        if (_processingQuery) {
+            return [];
+        }
+        _processingQuery = true;
+
+        try {
+            var institution = EducationState.getInstitution(institutionId);
+            if (!institution) return [];
+
+            var category = institution.specializationCategory;
+            if (!category) return [];
+
+            // Get all roles from this category
+            if (typeof window.RoleState !== 'undefined' && window.RoleState.getAllRoles) {
+                var allRoles = window.RoleState.getAllRoles();
+                return allRoles.filter(function(role) {
+                    return role.category === category;
+                });
+            }
+
+            return [];
+
+        } finally {
+            _processingQuery = false;
+        }
+    }
+
+    // =========================================================================
+    // 9. EDUCATION LEVELS HELPER
     // =========================================================================
 
     function _getEducationLevels() {
@@ -670,7 +879,7 @@
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 10. EXPORTS
     // =========================================================================
 
     window.EducationQueries = {
@@ -688,7 +897,14 @@
         getLocationEducationSummary: getLocationEducationSummary,
         getEducationHealthScore: getEducationHealthScore,
         recommendNewSchoolLocations: recommendNewSchoolLocations,
-        _getEducationLevels: _getEducationLevels
+        _getEducationLevels: _getEducationLevels,
+
+        // NEW: Role-based queries
+        getInstitutionsByRole: getInstitutionsByRole,
+        getInstitutionsByRoleCategory: getInstitutionsByRoleCategory,
+        getInstitutionsTeachingRoleCategory: getInstitutionsTeachingRoleCategory,
+        getTaughtRolesByInstitution: getTaughtRolesByInstitution,
+        getAvailableRolesForInstitution: getAvailableRolesForInstitution
     };
 
     // Legacy aliases
@@ -708,6 +924,13 @@
     };
     window._getEducationLevels = _getEducationLevels;
 
+    // NEW legacy aliases
+    window._getInstitutionsByRole = getInstitutionsByRole;
+    window._getInstitutionsByRoleCategory = getInstitutionsByRoleCategory;
+    window._getInstitutionsTeachingRoleCategory = getInstitutionsTeachingRoleCategory;
+    window._getTaughtRolesByInstitution = getTaughtRolesByInstitution;
+    window._getAvailableRolesForInstitution = getAvailableRolesForInstitution;
+
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
             getInstitutions: getInstitutions,
@@ -724,7 +947,12 @@
             getLocationEducationSummary: getLocationEducationSummary,
             getEducationHealthScore: getEducationHealthScore,
             recommendNewSchoolLocations: recommendNewSchoolLocations,
-            _getEducationLevels: _getEducationLevels
+            _getEducationLevels: _getEducationLevels,
+            getInstitutionsByRole: getInstitutionsByRole,
+            getInstitutionsByRoleCategory: getInstitutionsByRoleCategory,
+            getInstitutionsTeachingRoleCategory: getInstitutionsTeachingRoleCategory,
+            getTaughtRolesByInstitution: getTaughtRolesByInstitution,
+            getAvailableRolesForInstitution: getAvailableRolesForInstitution
         };
     }
 

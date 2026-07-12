@@ -7,9 +7,6 @@
  * 
  * DEPENDENCIES: None (pure constants)
  * 
- * UPDATED: Added BASE_SALARY_BY_CATEGORY, DEFAULT_SALARY, salary constants,
- *          literacy requirement constants
- * 
  * =============================================================================
  */
 
@@ -41,22 +38,24 @@
     // =========================================================================
 
     var DEFAULT_ROLE_CATEGORIES = {
-        combat: { id: 'combat', name: 'Combat & Military', icon: '⚔' },
-        craft: { id: 'craft', name: 'Craftsmanship', icon: '⌇' },
-        trade: { id: 'trade', name: 'Trade & Commerce', icon: '⌇' },
-        agriculture: { id: 'agriculture', name: 'Agriculture & Fishing', icon: '⌇' },
-        academic: { id: 'academic', name: 'Academic & Scholar', icon: '⌇' },
-        medical: { id: 'medical', name: 'Medical & Healing', icon: '⌇' },
-        religious: { id: 'religious', name: 'Religious', icon: '⌆' },
-        admin: { id: 'admin', name: 'Administration', icon: '⌇' },
-        service: { id: 'service', name: 'Service', icon: '⌇' },
-        art: { id: 'art', name: 'Artistic', icon: '⌇' },
-        government: { id: 'government', name: 'Government & Public Service', icon: '◉' },
-        household: { id: 'household', name: 'Household & Domestic Service', icon: '⌂' }
+        combat: { id: 'combat', name: 'Combat & Military' },
+        craft: { id: 'craft', name: 'Craftsmanship' },
+        trade: { id: 'trade', name: 'Trade & Commerce' },
+        agriculture: { id: 'agriculture', name: 'Agriculture & Fishing' },
+        academic: { id: 'academic', name: 'Academic & Scholar' },
+        medical: { id: 'medical', name: 'Medical & Healing' },
+        religious: { id: 'religious', name: 'Religious' },
+        admin: { id: 'admin', name: 'Administration' },
+        service: { id: 'service', name: 'Service' },
+        art: { id: 'art', name: 'Artistic' },
+        government: { id: 'government', name: 'Government & Public Service' },
+        household: { id: 'household', name: 'Household & Domestic Service' },
+        industrial: { id: 'industrial', name: 'Industry & Manufacturing' },
+        other: { id: 'other', name: 'Other' }
     };
 
     // =========================================================================
-    // 4. SALARY CONSTANTS (NEW)
+    // 4. SALARY CONSTANTS
     // =========================================================================
 
     var BASE_SALARY_BY_CATEGORY = {
@@ -72,7 +71,8 @@
         'art': 12,
         'government': 22,
         'household': 8,
-        'uncategorized': 10
+        'industrial': 14,
+        'other': 10
     };
 
     var DEFAULT_SALARY = 10;
@@ -90,7 +90,7 @@
     var SALARY_RURAL_MODIFIER = 0.9;
 
     // =========================================================================
-    // 5. LITERACY REQUIREMENT CONSTANTS (NEW)
+    // 5. LITERACY REQUIREMENT CONSTANTS
     // =========================================================================
 
     var LITERACY_LEVELS = {
@@ -116,21 +116,14 @@
     };
 
     // =========================================================================
-    // 6. SUGGESTED ROLES
+    // 6. SUGGESTED ROLES - REMOVED
     // =========================================================================
 
-    var SUGGESTED_ROLES = {
-        government: [
-            { name: 'Government Worker', icon: '◉', category: 'government', baseSalary: 22 },
-            { name: 'Civil Servant', icon: '◉', category: 'government', baseSalary: 18 },
-            { name: 'Diplomat', icon: '◉', category: 'government', baseSalary: 25 }
-        ],
-        household: [
-            { name: 'Servant', icon: '⌂', category: 'household', baseSalary: 8 },
-            { name: 'Domestic Worker', icon: '⌂', category: 'household', baseSalary: 8 },
-            { name: 'Housekeeper', icon: '⌂', category: 'household', baseSalary: 10 }
-        ]
-    };
+    // NOTE: SUGGESTED_ROLES has been removed.
+    // Users should create roles through the role management UI.
+    // Specific household positions (Maid, Cook, Gardener, etc.) are now
+    // defined as Household Positions in the household system,
+    // NOT as Roles in the role system.
 
     // =========================================================================
     // 7. EXPORTS
@@ -141,7 +134,6 @@
     window.UNCATEGORIZED_ICON = UNCATEGORIZED_ICON;
     window.TEACHING_THRESHOLDS = TEACHING_THRESHOLDS;
     window.DEFAULT_ROLE_CATEGORIES = DEFAULT_ROLE_CATEGORIES;
-    window.SUGGESTED_ROLES = SUGGESTED_ROLES;
 
     window.BASE_SALARY_BY_CATEGORY = BASE_SALARY_BY_CATEGORY;
     window.DEFAULT_SALARY = DEFAULT_SALARY;
@@ -166,7 +158,6 @@
             UNCATEGORIZED_ICON: UNCATEGORIZED_ICON,
             TEACHING_THRESHOLDS: TEACHING_THRESHOLDS,
             DEFAULT_ROLE_CATEGORIES: DEFAULT_ROLE_CATEGORIES,
-            SUGGESTED_ROLES: SUGGESTED_ROLES,
             BASE_SALARY_BY_CATEGORY: BASE_SALARY_BY_CATEGORY,
             DEFAULT_SALARY: DEFAULT_SALARY,
             MIN_SALARY: MIN_SALARY,

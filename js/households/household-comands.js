@@ -9,6 +9,8 @@
  * UPDATED: Added assignment management commands
  * UPDATED: Integrated with Role System via requiredRoleId
  * UPDATED: Added salary and tuition command wrappers
+ * UPDATED: Added school profit command wrappers
+ * UPDATED: Removed role auto-creation - users must select from existing roles only
  * 
  * =============================================================================
  */
@@ -1296,6 +1298,7 @@
                 }
             }
 
+            // Check role requirement
             var requiredRoleId = position.requiredRoleId;
             var hasRole = false;
             var skillLevel = 0;
@@ -1312,7 +1315,8 @@
                 }
 
                 if (!hasRole) {
-                    if (options.addRoleIfMissing !== false) {
+                    // Only add role if explicitly requested via options
+                    if (options.addRoleIfMissing === true) {
                         var defaultSkill = options.defaultSkillLevel || 10;
                         var role = _getRoleById(requiredRoleId);
                         var result = _addProfession(characterId, requiredRoleId, {
@@ -1326,12 +1330,23 @@
                             return { success: false, reason: 'Failed to add required role to character' };
                         }
                     } else {
-                        return { success: false, reason: 'Character does not have required role: ' + (_getRoleById(requiredRoleId)?.name || requiredRoleId) };
+                        // Don't auto-add role - require user to assign it first
+                        return { 
+                            success: false, 
+                            reason: 'Character does not have the required role: ' + (_getRoleById(requiredRoleId)?.name || requiredRoleId),
+                            requiresRole: true,
+                            requiredRoleId: requiredRoleId
+                        };
                     }
                 }
 
                 if (position.minSkillLevel && skillLevel < position.minSkillLevel) {
-                    return { success: false, reason: 'Character skill level (' + skillLevel + ') is below requirement (' + position.minSkillLevel + ')' };
+                    return { 
+                        success: false, 
+                        reason: 'Character skill level (' + skillLevel + ') is below requirement (' + position.minSkillLevel + ')',
+                        currentSkill: skillLevel,
+                        requiredSkill: position.minSkillLevel
+                    };
                 }
             }
 
@@ -1427,6 +1442,9 @@
 
             for (var i = 0; i < assignments.length; i++) {
                 var data = assignments[i];
+                // Only add role if explicitly requested
+                var addRoleIfMissing = options.addRoleIfMissing === true;
+                
                 var result = assignCharacterToHouseholdPosition(
                     data.positionId,
                     data.characterId,
@@ -1435,7 +1453,7 @@
                         endYear: options.endYear || data.endYear,
                         title: options.title || data.title,
                         notes: options.notes || data.notes,
-                        addRoleIfMissing: options.addRoleIfMissing !== false,
+                        addRoleIfMissing: addRoleIfMissing,
                         defaultSkillLevel: options.defaultSkillLevel || 10
                     }
                 );
@@ -1460,19 +1478,9 @@
     }
 
     // =========================================================================
-    // 10. SALARY AND TUITION COMMANDS (NEW)
+    // 10. SALARY AND TUITION COMMANDS
     // =========================================================================
 
-    /**
-     * Adds salary to a household from a character's profession
-     * @param {string} householdId - Household ID
-     * @param {string} characterId - Character ID
-     * @param {string} roleId - Role ID (optional)
-     * @param {number} amount - Salary amount
-     * @param {string} reason - Reason for salary
-     * @param {number} year - Year (default: current)
-     * @returns {Object} Result object
-     */
     function addSalaryToHousehold(householdId, characterId, roleId, amount, reason, year) {
         if (_processingCommand) {
             return { success: false, reason: 'Command already in progress' };
@@ -1493,7 +1501,6 @@
             var currentYear = year || _getCurrentYear();
             var finalAmount = Math.max(0, amount);
 
-            // Use HouseholdEconomy.receiveSalary if available
             if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.receiveSalary) {
                 var result = window.HouseholdEconomy.receiveSalary(householdId, characterId, roleId, finalAmount, currentYear);
                 if (result) {
@@ -1506,7 +1513,6 @@
                 return { success: false, reason: 'Failed to add salary' };
             }
 
-            // Fallback: direct wealth update
             var newWealth = _updateHouseholdWealth(householdId, finalAmount, 'Salary for ' + character.name + (reason ? ' (' + reason + ')' : ''));
 
             if (newWealth !== null) {
@@ -1524,16 +1530,6 @@
         }
     }
 
-    /**
-     * Deducts tuition from a household
-     * @param {string} householdId - Household ID
-     * @param {string} studentId - Student character ID
-     * @param {string} institutionId - Institution ID
-     * @param {number} amount - Tuition amount
-     * @param {string} reason - Reason for tuition
-     * @param {number} year - Year (default: current)
-     * @returns {Object} Result object
-     */
     function deductTuitionFromHousehold(householdId, studentId, institutionId, amount, reason, year) {
         if (_processingCommand) {
             return { success: false, reason: 'Command already in progress' };
@@ -1554,17 +1550,14 @@
             var currentYear = year || _getCurrentYear();
             var finalAmount = Math.max(0, amount);
 
-            // Check if household can afford it
             var wealth = _getHouseholdWealth(householdId);
             if (wealth < finalAmount) {
                 return { success: false, reason: 'Household cannot afford tuition (' + finalAmount + 'g needed, ' + wealth + 'g available)' };
             }
 
-            // Use HouseholdEconomy.trackTuitionExpense if available
             if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.trackTuitionExpense) {
                 var result = window.HouseholdEconomy.trackTuitionExpense(householdId, finalAmount, institutionId, studentId, currentYear);
                 if (result) {
-                    // Also deduct from wealth
                     _updateHouseholdWealth(householdId, -finalAmount, 'Tuition for ' + student.name + (reason ? ' (' + reason + ')' : ''));
                     _logEvent('household', 'tuition_deducted',
                         'Deducted ' + finalAmount + 'g tuition for ' + student.name + (reason ? ' (' + reason + ')' : ''),
@@ -1575,7 +1568,6 @@
                 return { success: false, reason: 'Failed to track tuition' };
             }
 
-            // Fallback: direct wealth update
             var newWealth = _updateHouseholdWealth(householdId, -finalAmount, 'Tuition for ' + student.name + (reason ? ' (' + reason + ')' : ''));
 
             if (newWealth !== null) {
@@ -1593,12 +1585,6 @@
         }
     }
 
-    /**
-     * Gets the salary income for a household
-     * @param {string} householdId - Household ID
-     * @param {number} year - Year (optional)
-     * @returns {number} Salary income amount
-     */
     function getHouseholdSalaryIncome(householdId, year) {
         if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.getSalaryIncome) {
             return window.HouseholdEconomy.getSalaryIncome(householdId, year);
@@ -1606,12 +1592,6 @@
         return 0;
     }
 
-    /**
-     * Gets the tuition expenses for a household
-     * @param {string} householdId - Household ID
-     * @param {number} year - Year (optional)
-     * @returns {number} Tuition expenses amount
-     */
     function getHouseholdTuitionExpenses(householdId, year) {
         if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.getTuitionExpenses) {
             return window.HouseholdEconomy.getTuitionExpenses(householdId, year);
@@ -1620,7 +1600,62 @@
     }
 
     // =========================================================================
-    // 11. REPAIR FUNCTIONS
+    // 11. SCHOOL PROFIT COMMANDS
+    // =========================================================================
+
+    function addSchoolProfitToHousehold(householdId, amount, institutionId, year) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Command already in progress' };
+        }
+        _processingCommand = true;
+
+        try {
+            var household = _state.getHousehold(householdId);
+            if (!household) {
+                return { success: false, reason: 'Household not found' };
+            }
+
+            var currentYear = year || _getCurrentYear();
+            var finalAmount = Math.max(0, amount);
+
+            if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.receiveSchoolProfit) {
+                var result = window.HouseholdEconomy.receiveSchoolProfit(householdId, finalAmount, institutionId, currentYear);
+                if (result) {
+                    _logEvent('household', 'school_profit_added',
+                        'Added ' + finalAmount + 'g school profit from institution ' + institutionId + (currentYear ? ' (' + currentYear + ')' : ''),
+                        []);
+                    _showToast('School profit of ' + finalAmount + 'g added to ' + household.name, 'success');
+                    return { success: true, amount: finalAmount };
+                }
+                return { success: false, reason: 'Failed to add school profit' };
+            }
+
+            var newWealth = _updateHouseholdWealth(householdId, finalAmount, 'School profit');
+
+            if (newWealth !== null) {
+                _logEvent('household', 'school_profit_added',
+                    'Added ' + finalAmount + 'g school profit to ' + household.name,
+                    []);
+                _showToast('School profit of ' + finalAmount + 'g added to ' + household.name, 'success');
+                return { success: true, amount: finalAmount, newWealth: newWealth };
+            }
+
+            return { success: false, reason: 'Failed to add school profit' };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    function getSchoolProfits(householdId, year) {
+        if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.getSchoolProfits) {
+            return window.HouseholdEconomy.getSchoolProfits(householdId, year);
+        }
+        return 0;
+    }
+
+    // =========================================================================
+    // 12. REPAIR FUNCTIONS
     // =========================================================================
 
     function repairMemberships(options) {
@@ -1959,7 +1994,7 @@
     }
 
     // =========================================================================
-    // 12. PUBLIC API - HISTORY
+    // 13. PUBLIC API - HISTORY
     // =========================================================================
 
     function recordHistory(characterId, householdId, year, action, reason, options) {
@@ -1967,7 +2002,7 @@
     }
 
     // =========================================================================
-    // 13. EXPORTS
+    // 14. EXPORTS
     // =========================================================================
 
     window.HouseholdCommands = {
@@ -2006,11 +2041,15 @@
         // Bulk operations
         bulkAssignHouseholdPositions: bulkAssignHouseholdPositions,
 
-        // NEW: Salary and tuition commands
+        // Salary and tuition commands
         addSalaryToHousehold: addSalaryToHousehold,
         deductTuitionFromHousehold: deductTuitionFromHousehold,
         getHouseholdSalaryIncome: getHouseholdSalaryIncome,
-        getHouseholdTuitionExpenses: getHouseholdTuitionExpenses
+        getHouseholdTuitionExpenses: getHouseholdTuitionExpenses,
+
+        // School profit commands
+        addSchoolProfitToHousehold: addSchoolProfitToHousehold,
+        getSchoolProfits: getSchoolProfits
     };
 
     // Legacy aliases
@@ -2021,14 +2060,13 @@
     window.endHouseholdAssignment = endHouseholdAssignment;
     window.deleteHouseholdAssignment = deleteHouseholdAssignment;
     window.bulkAssignHouseholdPositions = bulkAssignHouseholdPositions;
-
-    // NEW legacy aliases
     window.addSalaryToHousehold = addSalaryToHousehold;
     window.deductTuitionFromHousehold = deductTuitionFromHousehold;
     window.getHouseholdSalaryIncome = getHouseholdSalaryIncome;
     window.getHouseholdTuitionExpenses = getHouseholdTuitionExpenses;
+    window.addSchoolProfitToHousehold = addSchoolProfitToHousehold;
+    window.getSchoolProfits = getSchoolProfits;
 
-    // ES Module exports
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
             addMember: addMember,
@@ -2053,7 +2091,9 @@
             addSalaryToHousehold: addSalaryToHousehold,
             deductTuitionFromHousehold: deductTuitionFromHousehold,
             getHouseholdSalaryIncome: getHouseholdSalaryIncome,
-            getHouseholdTuitionExpenses: getHouseholdTuitionExpenses
+            getHouseholdTuitionExpenses: getHouseholdTuitionExpenses,
+            addSchoolProfitToHousehold: addSchoolProfitToHousehold,
+            getSchoolProfits: getSchoolProfits
         };
     }
 

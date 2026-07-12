@@ -10,6 +10,7 @@
  * - Tax/rate management
  * - Justice/watch management
  * - ANNUAL PROCESSING (processAnnualSettlementUpdate, processAllSettlements)
+ * - SETTLEMENT ROLE COMMANDS (NEW)
  * 
  * DEPENDENCIES:
  *   - settlement-state.js (SettlementState)
@@ -44,6 +45,10 @@
 
     function _getCharacterById(id) {
         return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    }
+
+    function _getCharacters() {
+        return typeof window.getCharacters === 'function' ? window.getCharacters() : [];
     }
 
     function _getCurrentYear() {
@@ -105,6 +110,32 @@
 
     function _getStateEnterpriseIds(locationId) {
         return SettlementState.getStateEnterpriseIds(locationId);
+    }
+
+    function _getAllSubLocationIds(locationId) {
+        if (typeof LocationState !== 'undefined' && LocationState.getAllSubLocationIds) {
+            return LocationState.getAllSubLocationIds(locationId);
+        }
+        return [locationId];
+    }
+
+    function _getCurrentLocationId(character) {
+        if (!character) return null;
+
+        if (character.moves && character.moves.length > 0) {
+            var sortedMoves = character.moves.slice().sort(function(a, b) {
+                return (b.year || 0) - (a.year || 0);
+            });
+            var lastMove = sortedMoves[0];
+            if (lastMove && lastMove.locationId) {
+                return lastMove.locationId;
+            }
+        }
+
+        if (character.currentLocationId) return character.currentLocationId;
+        if (character.birthplaceId) return character.birthplaceId;
+
+        return null;
     }
 
     // =========================================================================
@@ -829,7 +860,182 @@
     }
 
     // =========================================================================
-    // 12. ANNUAL PROCESSING - CRITICAL
+    // 12. SETTLEMENT ROLE COMMANDS (NEW)
+    // =========================================================================
+
+    /**
+     * Assigns a role to a character at a settlement
+     * @param {string} locationId - Settlement location ID
+     * @param {string} characterId - Character ID
+     * @param {string} roleId - Role ID
+     * @param {Object} options - Assignment options
+     * @returns {Object} Result object
+     */
+    function assignSettlementRole(locationId, characterId, roleId, options) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Command already processing' };
+        }
+        _processingCommand = true;
+
+        try {
+            var place = _getPlaceById(locationId);
+            if (!place) {
+                _showToast('Location not found', 'error');
+                return { success: false, reason: 'Location not found' };
+            }
+
+            var character = _getCharacterById(characterId);
+            if (!character) {
+                _showToast('Character not found', 'error');
+                return { success: false, reason: 'Character not found' };
+            }
+
+            var role = _getRoleById(roleId);
+            if (!role) {
+                _showToast('Role not found', 'error');
+                return { success: false, reason: 'Role not found' };
+            }
+
+            // Check if character is at this settlement
+            var charLocationId = _getCurrentLocationId(character);
+            var locationIds = _getAllSubLocationIds(locationId);
+            var locationIdSet = new Set(locationIds);
+
+            if (!charLocationId || !locationIdSet.has(charLocationId)) {
+                _showToast('Character is not located in this settlement', 'warning');
+                return { success: false, reason: 'Character not at location' };
+            }
+
+            // Use RoleCommands to assign
+            if (typeof window.RoleCommands !== 'undefined' && 
+                window.RoleCommands.assignRoleToCharacter) {
+                var result = window.RoleCommands.assignRoleToCharacter(characterId, roleId, options);
+                if (result && result.success) {
+                    _logEvent('settlement', 'role_assigned',
+                        'Assigned ' + role.name + ' to ' + character.name + ' at ' + place.displayName,
+                        [character]);
+                    _showToast('Assigned ' + role.name + ' to ' + character.name, 'success');
+                    return result;
+                } else {
+                    _showToast('Failed to assign role: ' + (result?.reason || 'Unknown error'), 'error');
+                    return result || { success: false, reason: 'Assignment failed' };
+                }
+            }
+
+            return { success: false, reason: 'Role assignment not available' };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    /**
+     * Removes a role from a character at a settlement
+     * @param {string} locationId - Settlement location ID
+     * @param {string} characterId - Character ID
+     * @param {string} roleId - Role ID
+     * @returns {Object} Result object
+     */
+    function removeSettlementRole(locationId, characterId, roleId) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Command already processing' };
+        }
+        _processingCommand = true;
+
+        try {
+            var place = _getPlaceById(locationId);
+            if (!place) {
+                _showToast('Location not found', 'error');
+                return { success: false, reason: 'Location not found' };
+            }
+
+            var character = _getCharacterById(characterId);
+            if (!character) {
+                _showToast('Character not found', 'error');
+                return { success: false, reason: 'Character not found' };
+            }
+
+            var role = _getRoleById(roleId);
+            if (!role) {
+                _showToast('Role not found', 'error');
+                return { success: false, reason: 'Role not found' };
+            }
+
+            // Use RoleCommands to remove
+            if (typeof window.RoleCommands !== 'undefined' && 
+                window.RoleCommands.removeRoleFromCharacter) {
+                var result = window.RoleCommands.removeRoleFromCharacter(characterId, roleId);
+                if (result && result.success) {
+                    _logEvent('settlement', 'role_removed',
+                        'Removed ' + role.name + ' from ' + character.name + ' at ' + place.displayName,
+                        [character]);
+                    _showToast('Removed ' + role.name + ' from ' + character.name, 'info');
+                    return result;
+                } else {
+                    _showToast('Failed to remove role: ' + (result?.reason || 'Unknown error'), 'error');
+                    return result || { success: false, reason: 'Removal failed' };
+                }
+            }
+
+            return { success: false, reason: 'Role removal not available' };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    /**
+     * Updates skill level for a character's role at a settlement
+     * @param {string} locationId - Settlement location ID
+     * @param {string} characterId - Character ID
+     * @param {string} roleId - Role ID
+     * @param {number} skillLevel - New skill level (0-100)
+     * @returns {Object} Result object
+     */
+    function updateSettlementCharacterSkill(locationId, characterId, roleId, skillLevel) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Command already processing' };
+        }
+        _processingCommand = true;
+
+        try {
+            var place = _getPlaceById(locationId);
+            if (!place) {
+                _showToast('Location not found', 'error');
+                return { success: false, reason: 'Location not found' };
+            }
+
+            var character = _getCharacterById(characterId);
+            if (!character) {
+                _showToast('Character not found', 'error');
+                return { success: false, reason: 'Character not found' };
+            }
+
+            // Use RoleCommands to update skill
+            if (typeof window.RoleCommands !== 'undefined' && 
+                window.RoleCommands.updateCharacterSkill) {
+                var result = window.RoleCommands.updateCharacterSkill(characterId, roleId, skillLevel);
+                if (result && result.success) {
+                    _logEvent('settlement', 'skill_updated',
+                        'Updated ' + character.name + '\'s skill to ' + skillLevel + ' at ' + place.displayName,
+                        [character]);
+                    _showToast('Skill updated to ' + skillLevel, 'success');
+                    return result;
+                } else {
+                    _showToast('Failed to update skill: ' + (result?.reason || 'Unknown error'), 'error');
+                    return result || { success: false, reason: 'Update failed' };
+                }
+            }
+
+            return { success: false, reason: 'Skill update not available' };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    // =========================================================================
+    // 13. ANNUAL PROCESSING - CRITICAL
     // =========================================================================
 
     function processAnnualSettlementUpdate(locationId) {
@@ -923,7 +1129,7 @@
                 totalExpenses: Math.floor(totalExpenses)
             };
 
-            // 8. Update prosperity
+            // 8. Update prosperity (includes role factors)
             var prosperity = SettlementEconomy.calculateProsperity(locationId);
             data.prosperity = prosperity;
 
@@ -976,7 +1182,8 @@
             _logEvent('settlement', 'annual_processed',
                 place.displayName + ' processed: ' + Math.floor(totalIncome) + ' income, ' +
                 Math.floor(totalExpenses) + ' expenses, ' +
-                (surplus >= 0 ? '+' : '') + Math.floor(surplus) + ' surplus',
+                (surplus >= 0 ? '+' : '') + Math.floor(surplus) + ' surplus' +
+                ' (Prosperity: ' + prosperity + '%)',
                 []);
 
             return {
@@ -1026,7 +1233,7 @@
     }
 
     // =========================================================================
-    // 13. EXPORTS
+    // 14. EXPORTS
     // =========================================================================
 
     window.SettlementCommands = {
@@ -1049,7 +1256,11 @@
         removeStateEnterprise: removeStateEnterprise,
         processAnnualSettlementUpdate: processAnnualSettlementUpdate,
         processAllSettlements: processAllSettlements,
-        validateFeature: _validateFeature
+        validateFeature: _validateFeature,
+        // NEW: Role-settlement commands
+        assignSettlementRole: assignSettlementRole,
+        removeSettlementRole: removeSettlementRole,
+        updateSettlementCharacterSkill: updateSettlementCharacterSkill
     };
 
 })();

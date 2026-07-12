@@ -1,21 +1,15 @@
 /**
  * =============================================================================
- * HOUSEHOLD QUERIES (household-queries.js)
+ * STILL WATERS - HOUSEHOLD QUERIES (household-queries.js)
  * =============================================================================
  * 
- * PURPOSE: All read-only queries for household data including positions and assignments.
+ * LOCATION: js/systems/household/household-queries.js
  * 
- * UPDATED: Added household position queries with role integration
- *          Added household assignment queries with role/skill tracking
- *          Added staff position statistics
+ * All read-only queries for household data. No side effects, no mutations.
  * 
- * DEPENDS ON:
- *   - household-state.js (HouseholdState)
- *   - accessors.js (getCharacterById, getCharacters, getPlaceById, getCurrentYear)
- *   - time.js (calculateAge)
- *   - constants.js (AGE_GROUPS)
- *   - icons.js (Icons)
- *   - world.js (getLocationCountry)
+ * DEPENDENCIES:
+ *   - household-state.js - HouseholdState
+ *   - accessors.js - getCharacterById, getCharacters, getPlaceById, getCurrentYear
  * 
  * =============================================================================
  */
@@ -24,75 +18,12 @@
     'use strict';
 
     // =========================================================================
-    // 0. RECURSION GUARD
+    // 1. DEPENDENCY WRAPPERS
     // =========================================================================
 
-    var _processingQuery = false;
-
-    // =========================================================================
-    // 1. DEPENDENCIES - Direct references to global functions
-    // =========================================================================
-
-    // All functions are available globally from accessors.js, time.js, world.js
-    // No wrapper functions needed - use them directly!
-
-    // =========================================================================
-    // 2. ICON HELPERS - FROM icons.js
-    // =========================================================================
-
-    function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
-        if (window.Icons && window.Icons.CIRCLE) {
-            return window.Icons.CIRCLE;
-        }
-        return '<svg viewBox="0 0 20 20" width="1em" height="1em" style="display:inline-block;fill:currentColor;stroke:currentColor;vertical-align:middle;"><circle cx="10" cy="10" r="5.71" fill="currentColor"/></svg>';
+    function _getState() {
+        return typeof window.HouseholdState !== 'undefined' ? window.HouseholdState : null;
     }
-
-    function _getPersonIcon() { return _getIcon('PERSON'); }
-    function _getHouseholdIcon() { return _getIcon('HOUSEHOLD'); }
-    function _getLocationIcon() { return _getIcon('LOCATION'); }
-    function _getCircleDotIcon() { return _getIcon('CIRCLE_DOT'); }
-    function _getCheckIcon() { return _getIcon('CHECK_SIMPLE'); }
-    function _getXIcon() { return _getIcon('X_HEAVY'); }
-    function _getWarningIcon() { return _getIcon('WARNING'); }
-    function _getStarIcon() { return _getIcon('STAR'); }
-    function _getDiamondIcon() { return _getIcon('DIAMOND'); }
-
-    // =========================================================================
-    // 3. AGE GROUPS - FROM constants.js
-    // =========================================================================
-
-    function _getAgeGroups() {
-        if (window.AGE_GROUPS && Array.isArray(window.AGE_GROUPS)) {
-            return window.AGE_GROUPS;
-        }
-        return ['0-10', '11-20', '21-30', '31-40', '41-50', '51-60', '61-70', '71-80', '81-90', '91+'];
-    }
-
-    function _getAgeGroupForAge(age) {
-        var groups = _getAgeGroups();
-        for (var i = 0; i < groups.length; i++) {
-            var parts = groups[i].split('-');
-            var min = parseInt(parts[0]);
-            var max = parts[1] === '+' ? Infinity : parseInt(parts[1]);
-            if (age >= min && age <= max) {
-                return groups[i];
-            }
-        }
-        return groups[groups.length - 1];
-    }
-
-    // =========================================================================
-    // 4. HOUSEHOLD STATE REFERENCE
-    // =========================================================================
-
-    var _state = window.HouseholdState;
-
-    // =========================================================================
-    // 5. INTERNAL HELPERS
-    // =========================================================================
 
     function _getCharacterById(id) {
         if (typeof window.getCharacterById === 'function') {
@@ -105,7 +36,21 @@
         if (typeof window.getCharacters === 'function') {
             return window.getCharacters();
         }
-        return window.masterData?.data?.characters || [];
+        return [];
+    }
+
+    function _getPlaceById(id) {
+        if (typeof window.getPlaceById === 'function') {
+            return window.getPlaceById(id);
+        }
+        return null;
+    }
+
+    function _getPlaces() {
+        if (typeof window.getPlaces === 'function') {
+            return window.getPlaces();
+        }
+        return [];
     }
 
     function _getCurrentYear() {
@@ -118,1020 +63,444 @@
         return 1250;
     }
 
-    function _getRoleById(id) {
-        if (typeof window.getRoleById === 'function') {
-            return window.getRoleById(id);
+    function _escapeHtml(str) {
+        if (typeof window.escapeHtml === 'function') {
+            return window.escapeHtml(str);
         }
-        return null;
+        if (typeof window._escapeHtml === 'function') {
+            return window._escapeHtml(str);
+        }
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
-    function _calculateAge(birthYear, isDeceased, deathYear) {
-        if (typeof window.calculateAge === 'function') {
-            return window.calculateAge(birthYear, isDeceased, deathYear);
+    function _showToast(message, type) {
+        if (typeof window._showToast === 'function') {
+            window._showToast(message, type);
+        } else if (typeof window.showToast === 'function') {
+            window.showToast(message, type);
         }
-        var currentYear = _getCurrentYear();
-        if (!birthYear) return 0;
-        if (isDeceased && deathYear) return Math.max(0, deathYear - birthYear);
-        return Math.max(0, currentYear - birthYear);
     }
 
     // =========================================================================
-    // 6. SEARCH FUNCTIONS
+    // 2. RECURSION GUARD
     // =========================================================================
 
-    /**
-     * Search options for household queries
-     * @typedef {Object} SearchOptions
-     * @property {string} search - Search term for household name
-     * @property {string} locationId - Filter by location ID
-     * @property {string} memberId - Filter by member character ID
-     * @property {string} headId - Filter by head character ID
-     * @property {string} type - 'family', 'staff', or 'any'
-     * @property {number} minMembers - Minimum member count
-     * @property {number} maxMembers - Maximum member count
-     * @property {boolean} hasDepartment - Filter by whether household has departments
-     * @property {string} status - Filter by status
-     * @property {number} minWealth - Minimum wealth
-     * @property {number} maxWealth - Maximum wealth
-     * @property {number} minReputation - Minimum reputation
-     * @property {number} maxReputation - Maximum reputation
-     * @property {boolean} hasHead - Filter by whether household has a head
-     * @property {boolean} hasPositions - Filter by whether household has positions
-     * @property {boolean} hasAssignments - Filter by whether household has assignments
-     * @property {string} requiredRoleId - Filter by position required role
-     */
+    var _processing = false;
 
-    /**
-     * Searches households with various filters
-     * @param {SearchOptions} options - Search options
-     * @param {Object} queryOptions - Options
-     * @param {boolean} queryOptions.includeDeprecated - Include deprecated households (default: false)
-     * @returns {Array} Array of matching household objects
-     */
+    // =========================================================================
+    // 3. SEARCH FUNCTIONS
+    // =========================================================================
+
     function search(options, queryOptions) {
-        if (_processingQuery) {
-            return [];
-        }
-        _processingQuery = true;
-        
+        if (_processing) return [];
+        _processing = true;
+
         try {
+            var state = _getState();
+            if (!state) return [];
+
             options = options || {};
             queryOptions = queryOptions || {};
-            var includeDeprecated = queryOptions.includeDeprecated || false;
-            
-            var households = _state.getAllHouseholds({ includeDeprecated: includeDeprecated });
+
+            var households = state.getAllHouseholds({ includeDeprecated: true });
             var results = [];
-            var characters = _getCharacters();
-            var charMap = {};
-            for (var i = 0; i < characters.length; i++) {
-                charMap[characters[i].id] = characters[i];
-            }
-            
+
             for (var i = 0; i < households.length; i++) {
                 var h = households[i];
                 var match = true;
-                
-                // Name search
-                if (options.search && match) {
-                    if (h.name.toLowerCase().indexOf(options.search.toLowerCase()) === -1) {
+
+                // Search by name
+                if (options.search) {
+                    var searchLower = options.search.toLowerCase();
+                    var nameMatch = (h.name || '').toLowerCase().indexOf(searchLower) !== -1;
+                    var locationMatch = (h.locationName || '').toLowerCase().indexOf(searchLower) !== -1;
+                    if (!nameMatch && !locationMatch) {
                         match = false;
                     }
                 }
-                
-                // Location filter
-                if (options.locationId && match) {
-                    if (h.locationId !== options.locationId) match = false;
+
+                // Filter by location
+                if (match && options.locationId) {
+                    if (h.locationId !== options.locationId) {
+                        match = false;
+                    }
                 }
-                
-                // Member filter
-                if (options.memberId && match) {
-                    var isMember = false;
+
+                // Filter by member
+                if (match && options.memberId) {
+                    var hasMember = false;
                     if (h.members) {
                         for (var j = 0; j < h.members.length; j++) {
                             if (h.members[j].characterId === options.memberId) {
-                                isMember = true;
+                                hasMember = true;
                                 break;
                             }
                         }
                     }
-                    if (!isMember) match = false;
-                }
-                
-                // Head filter
-                if (options.headId && match) {
-                    var head = _state.getHouseholdHead(h.id);
-                    if (!head || head.id !== options.headId) match = false;
-                }
-                
-                // Type filter
-                if (options.type && match) {
-                    if (options.type === 'family') {
-                        var hasFamily = false;
-                        if (h.members) {
-                            for (var j = 0; j < h.members.length; j++) {
-                                if (h.members[j].type === 'family') {
-                                    hasFamily = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if (!hasFamily) match = false;
-                    } else if (options.type === 'staff') {
-                        var hasStaff = false;
-                        if (h.members) {
-                            for (var j = 0; j < h.members.length; j++) {
-                                if (h.members[j].type === 'staff') {
-                                    hasStaff = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if (!hasStaff) match = false;
+                    if (!hasMember) {
+                        match = false;
                     }
                 }
-                
-                // Member count filters
-                if (options.minMembers !== undefined && match) {
-                    var count = h.members ? h.members.length : 0;
-                    if (count < options.minMembers) match = false;
+
+                // Filter by head
+                if (match && options.headId) {
+                    var hasHead = false;
+                    if (h.members) {
+                        for (var j = 0; j < h.members.length; j++) {
+                            if (h.members[j].characterId === options.headId && h.members[j].isHead) {
+                                hasHead = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!hasHead) {
+                        match = false;
+                    }
                 }
-                if (options.maxMembers !== undefined && match) {
-                    var count = h.members ? h.members.length : 0;
-                    if (count > options.maxMembers) match = false;
+
+                // Filter by type (family/staff composition)
+                if (match && options.type) {
+                    var hasType = false;
+                    if (h.members) {
+                        for (var j = 0; j < h.members.length; j++) {
+                            if (h.members[j].type === options.type) {
+                                hasType = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!hasType) {
+                        match = false;
+                    }
                 }
-                
-                // Department filter
-                if (options.hasDepartment !== undefined && match) {
+
+                // Filter by member count
+                if (match && options.minMembers !== undefined) {
+                    var memberCount = h.members ? h.members.length : 0;
+                    if (memberCount < options.minMembers) {
+                        match = false;
+                    }
+                }
+
+                if (match && options.maxMembers !== undefined) {
+                    var memberCount = h.members ? h.members.length : 0;
+                    if (memberCount > options.maxMembers) {
+                        match = false;
+                    }
+                }
+
+                // Filter by department
+                if (match && options.hasDepartment !== undefined) {
                     var hasDept = h.departments && h.departments.length > 0;
-                    if (hasDept !== options.hasDepartment) match = false;
-                }
-                
-                // Status filter
-                if (options.status && match) {
-                    var status = _state.getHouseholdStatus(h.id);
-                    if (status.status !== options.status) match = false;
-                }
-                
-                // Wealth filters
-                if (options.minWealth !== undefined && match) {
-                    var wealth = h.wealth || 0;
-                    if (wealth < options.minWealth) match = false;
-                }
-                if (options.maxWealth !== undefined && match) {
-                    var wealth = h.wealth || 0;
-                    if (wealth > options.maxWealth) match = false;
-                }
-                
-                // Reputation filters
-                if (options.minReputation !== undefined && match) {
-                    var rep = h.reputation || 0;
-                    if (rep < options.minReputation) match = false;
-                }
-                if (options.maxReputation !== undefined && match) {
-                    var rep = h.reputation || 0;
-                    if (rep > options.maxReputation) match = false;
-                }
-                
-                // Has head filter
-                if (options.hasHead !== undefined && match) {
-                    var head = _state.getHouseholdHead(h.id);
-                    if (options.hasHead && !head) match = false;
-                    if (!options.hasHead && head) match = false;
-                }
-                
-                // NEW: Has positions filter
-                if (options.hasPositions !== undefined && match) {
-                    var positions = _state.getHouseholdPositions({ householdId: h.id });
-                    var hasPos = positions.length > 0;
-                    if (hasPos !== options.hasPositions) match = false;
-                }
-                
-                // NEW: Has assignments filter
-                if (options.hasAssignments !== undefined && match) {
-                    var assignments = _state.getAssignmentsForHousehold(h.id, true);
-                    var hasAssign = assignments.length > 0;
-                    if (hasAssign !== options.hasAssignments) match = false;
-                }
-                
-                // NEW: Required role filter
-                if (options.requiredRoleId && match) {
-                    var positions = _state.getHouseholdPositions({ householdId: h.id });
-                    var hasRolePos = positions.some(function(p) { return p.requiredRoleId === options.requiredRoleId; });
-                    if (!hasRolePos) match = false;
-                }
-                
-                if (match) results.push(h);
-            }
-            
-            return results;
-            
-        } finally {
-            _processingQuery = false;
-        }
-    }
-
-    /**
-     * Advanced household search with more complex filters and sorting
-     * @param {Object} filters - Advanced search filters
-     * @param {string} filters.name - Household name (partial match)
-     * @param {string} filters.locationId - Location ID
-     * @param {string} filters.status - Status filter
-     * @param {number} filters.minMembers - Minimum members
-     * @param {number} filters.maxMembers - Maximum members
-     * @param {number} filters.minWealth - Minimum wealth
-     * @param {number} filters.maxWealth - Maximum wealth
-     * @param {number} filters.minReputation - Minimum reputation
-     * @param {number} filters.maxReputation - Maximum reputation
-     * @param {boolean} filters.hasHead - Has head
-     * @param {string} filters.memberId - Member ID
-     * @param {string} filters.headId - Head ID
-     * @param {string} filters.type - 'family' or 'staff'
-     * @param {boolean} filters.hasDepartment - Has departments
-     * @param {number} filters.minAge - Minimum household age
-     * @param {number} filters.maxAge - Maximum household age
-     * @param {string} filters.sortBy - Sort field (name, wealth, reputation, members, age, powerScore, positions, assignments)
-     * @param {string} filters.sortOrder - 'asc' or 'desc'
-     * @param {number} filters.limit - Max results
-     * @param {Object} options - Options
-     * @param {boolean} options.includeDeprecated - Include deprecated households (default: false)
-     * @returns {Array} Array of matching household objects
-     */
-    function advancedSearch(filters, options) {
-        if (_processingQuery) {
-            return [];
-        }
-        _processingQuery = true;
-        
-        try {
-            filters = filters || {};
-            options = options || {};
-            var includeDeprecated = options.includeDeprecated || false;
-            var currentYear = _getCurrentYear();
-            
-            // Basic search
-            var households = search({
-                search: filters.name,
-                locationId: filters.locationId,
-                status: filters.status,
-                minMembers: filters.minMembers,
-                maxMembers: filters.maxMembers,
-                minWealth: filters.minWealth,
-                maxWealth: filters.maxWealth,
-                minReputation: filters.minReputation,
-                maxReputation: filters.maxReputation,
-                hasHead: filters.hasHead,
-                memberId: filters.memberId,
-                headId: filters.headId,
-                type: filters.type,
-                hasDepartment: filters.hasDepartment,
-                hasPositions: filters.hasPositions,
-                hasAssignments: filters.hasAssignments,
-                requiredRoleId: filters.requiredRoleId
-            }, { includeDeprecated: includeDeprecated });
-            
-            // Age filter
-            if (filters.minAge !== undefined || filters.maxAge !== undefined) {
-                var filtered = [];
-                for (var i = 0; i < households.length; i++) {
-                    var h = households[i];
-                    var age = currentYear - (h.foundedYear || currentYear);
-                    var match = true;
-                    if (filters.minAge !== undefined && age < filters.minAge) match = false;
-                    if (filters.maxAge !== undefined && age > filters.maxAge) match = false;
-                    if (match) filtered.push(h);
-                }
-                households = filtered;
-            }
-            
-            // Sorting
-            if (filters.sortBy) {
-                var sortField = filters.sortBy;
-                var sortOrder = filters.sortOrder === 'desc' ? -1 : 1;
-                
-                households.sort(function(a, b) {
-                    var valA, valB;
-                    switch (sortField) {
-                        case 'name':
-                            valA = a.name;
-                            valB = b.name;
-                            break;
-                        case 'wealth':
-                            valA = a.wealth || 0;
-                            valB = b.wealth || 0;
-                            break;
-                        case 'reputation':
-                            valA = a.reputation || 0;
-                            valB = b.reputation || 0;
-                            break;
-                        case 'members':
-                            valA = a.members ? a.members.length : 0;
-                            valB = b.members ? b.members.length : 0;
-                            break;
-                        case 'age':
-                            valA = currentYear - (a.foundedYear || currentYear);
-                            valB = currentYear - (b.foundedYear || currentYear);
-                            break;
-                        case 'powerScore':
-                            valA = a.powerScore || 0;
-                            valB = b.powerScore || 0;
-                            break;
-                        case 'positions':
-                            var posA = _state.getHouseholdPositions({ householdId: a.id });
-                            var posB = _state.getHouseholdPositions({ householdId: b.id });
-                            valA = posA.length;
-                            valB = posB.length;
-                            break;
-                        case 'assignments':
-                            var assignA = _state.getAssignmentsForHousehold(a.id, true);
-                            var assignB = _state.getAssignmentsForHousehold(b.id, true);
-                            valA = assignA.length;
-                            valB = assignB.length;
-                            break;
-                        default:
-                            valA = a.name;
-                            valB = b.name;
+                    if (options.hasDepartment !== hasDept) {
+                        match = false;
                     }
-                    if (valA < valB) return -1 * sortOrder;
-                    if (valA > valB) return 1 * sortOrder;
-                    return 0;
-                });
-            }
-            
-            // Limit
-            if (filters.limit && filters.limit > 0) {
-                households = households.slice(0, filters.limit);
-            }
-            
-            return households;
-            
-        } finally {
-            _processingQuery = false;
-        }
-    }
+                }
 
-    // =========================================================================
-    // 7. HOUSEHOLD POSITION QUERIES (NEW)
-    // =========================================================================
-
-    /**
-     * Gets all household positions with optional filtering
-     * @param {Object} options - Filter options
-     * @param {string} options.householdId - Filter by household
-     * @param {string} options.departmentId - Filter by department
-     * @param {string} options.requiredRoleId - Filter by required role
-     * @param {boolean} options.hasRoleRequirement - Filter by role requirement
-     * @param {number} options.minSkillLevel - Filter by minimum skill level
-     * @param {boolean} options.includeUnassigned - Include positions with no assignments
-     * @param {string} options.search - Search term for position name
-     * @param {string} options.sortBy - Sort field (name, priority, assignments)
-     * @param {string} options.sortOrder - 'asc' or 'desc'
-     * @param {number} options.limit - Max results
-     * @returns {Array} Array of position objects
-     */
-    function getHouseholdPositions(options) {
-        if (_processingQuery) {
-            return [];
-        }
-        _processingQuery = true;
-        
-        try {
-            options = options || {};
-            var positions = _state.getHouseholdPositions(options);
-            
-            // Additional filtering (beyond what state provides)
-            if (options.requiredRoleId) {
-                positions = positions.filter(function(p) { return p.requiredRoleId === options.requiredRoleId; });
-            }
-            
-            if (options.hasRoleRequirement !== undefined) {
-                positions = positions.filter(function(p) { return !!p.requiredRoleId === options.hasRoleRequirement; });
-            }
-            
-            if (options.minSkillLevel !== undefined) {
-                positions = positions.filter(function(p) { return (p.minSkillLevel || 0) >= options.minSkillLevel; });
-            }
-            
-            if (options.search) {
-                var searchLower = options.search.toLowerCase();
-                positions = positions.filter(function(p) {
-                    return p.name.toLowerCase().indexOf(searchLower) !== -1 ||
-                        (p.description && p.description.toLowerCase().indexOf(searchLower) !== -1);
-                });
-            }
-            
-            // Sort
-            if (options.sortBy) {
-                var sortOrder = options.sortOrder === 'desc' ? -1 : 1;
-                positions.sort(function(a, b) {
-                    var valA, valB;
-                    switch (options.sortBy) {
-                        case 'name':
-                            valA = a.name;
-                            valB = b.name;
-                            break;
-                        case 'priority':
-                            valA = a.priority || 10;
-                            valB = b.priority || 10;
-                            break;
-                        case 'assignments':
-                            var assignA = _state.getAssignmentsForPosition(a.id, true);
-                            var assignB = _state.getAssignmentsForPosition(b.id, true);
-                            valA = assignA.length;
-                            valB = assignB.length;
-                            break;
-                        default:
-                            valA = a.name;
-                            valB = b.name;
+                // Filter by status
+                if (match && options.status) {
+                    var status = h.status || 'active';
+                    if (status !== options.status) {
+                        match = false;
                     }
-                    if (valA < valB) return -1 * sortOrder;
-                    if (valA > valB) return 1 * sortOrder;
-                    return 0;
-                });
-            }
-            
-            if (options.limit && options.limit > 0) {
-                positions = positions.slice(0, options.limit);
-            }
-            
-            return positions;
-            
-        } finally {
-            _processingQuery = false;
-        }
-    }
+                }
 
-    /**
-     * Gets positions by household with role and assignment details
-     * @param {string} householdId - Household ID
-     * @param {Object} options - Options
-     * @param {boolean} options.includeAssignments - Include assignment details (default: true)
-     * @param {boolean} options.activeOnly - Only active assignments (default: true)
-     * @returns {Array} Array of position objects with details
-     */
-    function getHouseholdPositionsWithDetails(householdId, options) {
-        if (_processingQuery) {
-            return [];
-        }
-        _processingQuery = true;
-        
-        try {
-            options = options || {};
-            var includeAssignments = options.includeAssignments !== false;
-            var activeOnly = options.activeOnly !== false;
-            
-            var positions = _state.getHouseholdPositions({ householdId: householdId });
-            var result = [];
-            
-            for (var i = 0; i < positions.length; i++) {
-                var p = positions[i];
-                var assignments = _state.getAssignmentsForPosition(p.id, activeOnly);
-                var roleName = p.requiredRoleId ? (_getRoleById(p.requiredRoleId)?.name || 'Unknown') : null;
-                
-                var posObj = {
-                    id: p.id,
-                    name: p.name,
-                    householdId: p.householdId,
-                    departmentId: p.departmentId,
-                    requiredRoleId: p.requiredRoleId,
-                    requiredRoleName: roleName,
-                    minSkillLevel: p.minSkillLevel || 0,
-                    description: p.description || '',
-                    priority: p.priority || 10,
-                    assignmentCount: assignments.length
-                };
-                
-                if (includeAssignments) {
-                    posObj.assignments = assignments.map(function(a) {
-                        var char = _getCharacterById(a.characterId);
-                        return {
-                            id: a.id,
-                            characterId: a.characterId,
-                            characterName: a.characterName || (char ? char.name : 'Unknown'),
-                            title: a.title || p.name,
-                            startYear: a.startYear,
-                            endYear: a.endYear,
-                            isActive: !a.endYear,
-                            roleIdAtAssignment: a.roleIdAtAssignment,
-                            roleNameAtAssignment: a.roleIdAtAssignment ? (_getRoleById(a.roleIdAtAssignment)?.name || 'Unknown') : null,
-                            skillLevelAtAssignment: a.skillLevelAtAssignment || 0
-                        };
+                // Filter by wealth
+                if (match && options.minWealth !== undefined) {
+                    var wealth = h.wealth || 0;
+                    if (wealth < options.minWealth) {
+                        match = false;
+                    }
+                }
+
+                if (match && options.maxWealth !== undefined) {
+                    var wealth = h.wealth || 0;
+                    if (wealth > options.maxWealth) {
+                        match = false;
+                    }
+                }
+
+                // Filter by has head
+                if (match && options.hasHead !== undefined) {
+                    var head = state.getHouseholdHead(h.id);
+                    if (options.hasHead !== (head !== null)) {
+                        match = false;
+                    }
+                }
+
+                // Filter by has positions
+                if (match && options.hasPositions !== undefined) {
+                    var positions = state.getHouseholdPositions({ householdId: h.id });
+                    var hasPos = positions && positions.length > 0;
+                    if (options.hasPositions !== hasPos) {
+                        match = false;
+                    }
+                }
+
+                // Filter by has assignments
+                if (match && options.hasAssignments !== undefined) {
+                    var assignments = state.getAssignmentsForHousehold(h.id, false);
+                    var hasAssign = assignments && assignments.length > 0;
+                    if (options.hasAssignments !== hasAssign) {
+                        match = false;
+                    }
+                }
+
+                // Filter by required role
+                if (match && options.requiredRoleId) {
+                    var positions = state.getHouseholdPositions({
+                        householdId: h.id,
+                        requiredRoleId: options.requiredRoleId
                     });
+                    if (!positions || positions.length === 0) {
+                        match = false;
+                    }
                 }
-                
-                result.push(posObj);
-            }
-            
-            return result;
-            
-        } finally {
-            _processingQuery = false;
-        }
-    }
 
-    /**
-     * Gets household assignments by position with character and role info
-     * @param {string} householdId - Household ID
-     * @param {boolean} activeOnly - Only active assignments (default: true)
-     * @returns {Array} Array of assignments with details
-     */
-    function getHouseholdAssignmentsWithDetails(householdId, activeOnly) {
-        if (_processingQuery) {
-            return [];
-        }
-        _processingQuery = true;
-        
-        try {
-            activeOnly = activeOnly !== false;
-            var assignments = _state.getAssignmentsForHousehold(householdId, activeOnly);
-            var positions = _state.getHouseholdPositions({ householdId: householdId });
-            var posMap = {};
-            for (var i = 0; i < positions.length; i++) {
-                posMap[positions[i].id] = positions[i];
+                if (match) {
+                    results.push(h);
+                }
             }
-            
-            var result = [];
-            for (var i = 0; i < assignments.length; i++) {
-                var a = assignments[i];
-                var char = _getCharacterById(a.characterId);
-                var pos = posMap[a.positionId];
-                var roleName = a.roleIdAtAssignment ? (_getRoleById(a.roleIdAtAssignment)?.name || 'Unknown') : null;
-                var posName = pos ? pos.name : 'Unknown';
-                
-                result.push({
-                    id: a.id,
-                    positionId: a.positionId,
-                    positionName: posName,
-                    characterId: a.characterId,
-                    characterName: a.characterName || (char ? char.name : 'Unknown'),
-                    title: a.title || posName,
-                    startYear: a.startYear,
-                    endYear: a.endYear,
-                    isActive: !a.endYear,
-                    endReason: a.endReason || null,
-                    notes: a.notes || '',
-                    roleIdAtAssignment: a.roleIdAtAssignment,
-                    roleNameAtAssignment: roleName,
-                    skillLevelAtAssignment: a.skillLevelAtAssignment || 0,
-                    character: char
+
+            // Sort results
+            if (options.sortBy) {
+                var sortKey = options.sortBy;
+                var sortOrder = options.sortOrder || 'asc';
+                results.sort(function(a, b) {
+                    var valA = a[sortKey] || '';
+                    var valB = b[sortKey] || '';
+                    if (typeof valA === 'string') {
+                        valA = valA.toLowerCase();
+                        valB = valB.toLowerCase();
+                    }
+                    if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
+                    if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
+                    return 0;
                 });
             }
-            
-            // Sort by start year (most recent first)
-            result.sort(function(a, b) {
-                return (b.startYear || 0) - (a.startYear || 0);
-            });
-            
-            return result;
-            
+
+            // Apply limit
+            if (options.limit && options.limit > 0) {
+                results = results.slice(0, options.limit);
+            }
+
+            return results;
+
         } finally {
-            _processingQuery = false;
+            _processing = false;
         }
     }
 
-    /**
-     * Gets household position statistics
-     * @param {string} householdId - Household ID
-     * @returns {Object} Statistics object
-     */
-    function getHouseholdPositionStatistics(householdId) {
-        if (_processingQuery) {
-            return null;
-        }
-        _processingQuery = true;
-        
-        try {
-            var positions = _state.getHouseholdPositions({ householdId: householdId });
-            var assignments = _state.getAssignmentsForHousehold(householdId, false);
-            var activeAssignments = _state.getAssignmentsForHousehold(householdId, true);
-            
-            var stats = {
-                totalPositions: positions.length,
-                totalAssignments: assignments.length,
-                activeAssignments: activeAssignments.length,
-                positionsWithRole: 0,
-                positionsWithSkillRequirement: 0,
-                byDepartment: {},
-                byRole: {},
-                averageSkillLevel: 0,
-                totalSkillLevel: 0
-            };
-            
-            var skillSum = 0;
-            var skillCount = 0;
-            
-            for (var i = 0; i < positions.length; i++) {
-                var p = positions[i];
-                if (p.requiredRoleId) {
-                    stats.positionsWithRole++;
-                    stats.byRole[p.requiredRoleId] = (stats.byRole[p.requiredRoleId] || 0) + 1;
-                }
-                if (p.minSkillLevel > 0) {
-                    stats.positionsWithSkillRequirement++;
-                }
-                if (p.departmentId) {
-                    stats.byDepartment[p.departmentId] = (stats.byDepartment[p.departmentId] || 0) + 1;
-                }
-            }
-            
-            for (var i = 0; i < assignments.length; i++) {
-                if (assignments[i].skillLevelAtAssignment) {
-                    skillSum += assignments[i].skillLevelAtAssignment;
-                    skillCount++;
-                }
-            }
-            
-            stats.averageSkillLevel = skillCount > 0 ? Math.round(skillSum / skillCount) : 0;
-            
-            return stats;
-            
-        } finally {
-            _processingQuery = false;
-        }
+    function advancedSearch(filters, options) {
+        return search(filters, options);
     }
 
     // =========================================================================
-    // 8. HOUSEHOLD STAFF QUERIES
+    // 4. STATISTICS FUNCTIONS
     // =========================================================================
 
-    /**
-     * Gets staff members of a household with position and role info
-     * @param {string} householdId - Household ID
-     * @param {Object} options - Options
-     * @param {string} options.positionId - Filter by position
-     * @param {string} options.departmentId - Filter by department
-     * @param {boolean} options.withRole - Only include staff with a role
-     * @param {boolean} options.withoutRole - Only include staff without a role
-     * @param {number} options.minSkillLevel - Minimum skill level
-     * @param {boolean} options.activeOnly - Only active staff (default: true)
-     * @returns {Array} Array of staff members with details
-     */
-    function getHouseholdStaff(householdId, options) {
-        if (_processingQuery) {
-            return [];
-        }
-        _processingQuery = true;
-        
-        try {
-            options = options || {};
-            var activeOnly = options.activeOnly !== false;
-            
-            var household = _state.getHousehold(householdId);
-            if (!household || !household.members) return [];
-            
-            var characters = _getCharacters();
-            var charMap = {};
-            for (var i = 0; i < characters.length; i++) {
-                charMap[characters[i].id] = characters[i];
-            }
-            
-            var positions = _state.getHouseholdPositions({ householdId: householdId });
-            var posMap = {};
-            for (var i = 0; i < positions.length; i++) {
-                posMap[positions[i].id] = positions[i];
-            }
-            
-            var assignments = _state.getAssignmentsForHousehold(householdId, activeOnly);
-            var assignMap = {};
-            for (var i = 0; i < assignments.length; i++) {
-                assignMap[assignments[i].characterId] = assignments[i];
-            }
-            
-            var result = [];
-            
-            for (var i = 0; i < household.members.length; i++) {
-                var member = household.members[i];
-                if (member.type !== 'staff') continue;
-                
-                var char = charMap[member.characterId];
-                if (!char) continue;
-                
-                var assignment = assignMap[member.characterId] || null;
-                var position = assignment ? posMap[assignment.positionId] : null;
-                
-                var roleName = assignment?.roleIdAtAssignment ? 
-                    (_getRoleById(assignment.roleIdAtAssignment)?.name || 'Unknown') : null;
-                
-                // Apply filters
-                if (options.positionId && (!assignment || assignment.positionId !== options.positionId)) continue;
-                if (options.departmentId && member.departmentId !== options.departmentId) continue;
-                if (options.withRole && !assignment?.roleIdAtAssignment) continue;
-                if (options.withoutRole && assignment?.roleIdAtAssignment) continue;
-                if (options.minSkillLevel && (assignment?.skillLevelAtAssignment || 0) < options.minSkillLevel) continue;
-                
-                result.push({
-                    characterId: member.characterId,
-                    character: char,
-                    characterName: char.name + (char.surname ? ' ' + char.surname : ''),
-                    type: member.type,
-                    role: member.role || 'Staff',
-                    departmentId: member.departmentId || null,
-                    joinedYear: member.joinedYear,
-                    isHead: member.isHead || false,
-                    notes: member.notes || '',
-                    assignment: assignment ? {
-                        id: assignment.id,
-                        positionId: assignment.positionId,
-                        positionName: position ? position.name : 'Unknown',
-                        title: assignment.title || (position ? position.name : 'Unknown'),
-                        startYear: assignment.startYear,
-                        endYear: assignment.endYear,
-                        isActive: !assignment.endYear,
-                        roleIdAtAssignment: assignment.roleIdAtAssignment,
-                        roleNameAtAssignment: roleName,
-                        skillLevelAtAssignment: assignment.skillLevelAtAssignment || 0
-                    } : null,
-                    position: position
-                });
-            }
-            
-            return result;
-            
-        } finally {
-            _processingQuery = false;
-        }
-    }
-
-    /**
-     * Gets unassigned staff members (no position assignment)
-     * @param {string} householdId - Household ID
-     * @returns {Array} Array of unassigned staff members
-     */
-    function getUnassignedHouseholdStaff(householdId) {
-        if (_processingQuery) {
-            return [];
-        }
-        _processingQuery = true;
-        
-        try {
-            var household = _state.getHousehold(householdId);
-            if (!household || !household.members) return [];
-            
-            var assignments = _state.getAssignmentsForHousehold(householdId, true);
-            var assignedIds = {};
-            for (var i = 0; i < assignments.length; i++) {
-                assignedIds[assignments[i].characterId] = true;
-            }
-            
-            var characters = _getCharacters();
-            var charMap = {};
-            for (var i = 0; i < characters.length; i++) {
-                charMap[characters[i].id] = characters[i];
-            }
-            
-            var result = [];
-            for (var i = 0; i < household.members.length; i++) {
-                var member = household.members[i];
-                if (member.type !== 'staff') continue;
-                if (assignedIds[member.characterId]) continue;
-                
-                var char = charMap[member.characterId];
-                if (!char) continue;
-                
-                result.push({
-                    characterId: member.characterId,
-                    character: char,
-                    characterName: char.name + (char.surname ? ' ' + char.surname : ''),
-                    role: member.role || 'Staff',
-                    departmentId: member.departmentId || null,
-                    joinedYear: member.joinedYear,
-                    notes: member.notes || ''
-                });
-            }
-            
-            return result;
-            
-        } finally {
-            _processingQuery = false;
-        }
-    }
-
-    // =========================================================================
-    // 9. HOUSEHOLD STATISTICS (ENHANCED)
-    // =========================================================================
-
-    /**
-     * Calculates comprehensive household statistics including positions
-     * @param {Object} options - Options
-     * @param {boolean} options.includeDeprecated - Include deprecated households (default: false)
-     * @returns {Object} Statistics object
-     */
     function getStatistics(options) {
-        if (_processingQuery) {
-            return null;
-        }
-        _processingQuery = true;
-        
+        if (_processing) return null;
+        _processing = true;
+
         try {
+            var state = _getState();
+            if (!state) return null;
+
             options = options || {};
-            var includeDeprecated = options.includeDeprecated || false;
-            
-            var households = _state.getAllHouseholds({ includeDeprecated: includeDeprecated });
-            
-            if (households.length === 0) {
-                return {
-                    totalHouseholds: 0,
-                    totalMembers: 0,
-                    averageMembersPerHousehold: 0,
-                    medianMembersPerHousehold: 0,
-                    largestHouseholdSize: 0,
-                    largestHouseholdName: null,
-                    smallestHouseholdSize: 0,
-                    householdsWithDepartments: 0,
-                    totalDepartments: 0,
-                    totalFamilyMembers: 0,
-                    totalStaffMembers: 0,
-                    averageWealth: 0,
-                    averageReputation: 0,
-                    householdsWithHead: 0,
-                    householdsWithoutHead: 0,
-                    emptyHouseholds: 0,
-                    abandonedHouseholds: 0,
-                    // NEW: Position statistics
-                    totalPositions: 0,
-                    totalAssignments: 0,
-                    activeAssignments: 0,
-                    positionsWithRole: 0,
-                    householdsWithPositions: 0,
-                    householdsWithAssignments: 0
-                };
-            }
-            
+            var households = state.getAllHouseholds({ includeDeprecated: options.includeDeprecated || false });
+
+            var stats = {
+                totalHouseholds: households.length,
+                totalMembers: 0,
+                averageMembersPerHousehold: 0,
+                medianMembersPerHousehold: 0,
+                largestHouseholdSize: 0,
+                largestHouseholdName: '',
+                smallestHouseholdSize: Infinity,
+                householdsWithDepartments: 0,
+                totalDepartments: 0,
+                totalFamilyMembers: 0,
+                totalStaffMembers: 0,
+                averageWealth: 0,
+                averageReputation: 0,
+                householdsWithHead: 0,
+                householdsWithoutHead: 0,
+                emptyHouseholds: 0,
+                abandonedHouseholds: 0,
+                totalPositions: 0,
+                totalAssignments: 0,
+                activeAssignments: 0,
+                positionsWithRole: 0,
+                householdsWithPositions: 0,
+                householdsWithAssignments: 0,
+                averagePositionsPerHousehold: 0,
+                averageAssignmentsPerHousehold: 0
+            };
+
             var memberCounts = [];
-            var totalMembers = 0;
-            var totalFamilyMembers = 0;
-            var totalStaffMembers = 0;
-            var totalDepartments = 0;
-            var householdsWithDepts = 0;
             var totalWealth = 0;
             var totalReputation = 0;
-            var householdsWithHead = 0;
-            var emptyCount = 0;
-            var abandonedCount = 0;
-            
-            // NEW: Position statistics
-            var totalPositions = 0;
-            var totalAssignments = 0;
-            var activeAssignments = 0;
-            var positionsWithRole = 0;
-            var householdsWithPositions = 0;
-            var householdsWithAssignments = 0;
-            
+            var wealthCount = 0;
+            var repCount = 0;
+
             for (var i = 0; i < households.length; i++) {
                 var h = households[i];
-                var count = h.members ? h.members.length : 0;
-                memberCounts.push(count);
-                totalMembers += count;
-                
+                var memberCount = h.members ? h.members.length : 0;
+                memberCounts.push(memberCount);
+                stats.totalMembers += memberCount;
+
+                // Track largest/smallest
+                if (memberCount > stats.largestHouseholdSize) {
+                    stats.largestHouseholdSize = memberCount;
+                    stats.largestHouseholdName = h.name || 'Unnamed';
+                }
+                if (memberCount < stats.smallestHouseholdSize) {
+                    stats.smallestHouseholdSize = memberCount;
+                }
+
+                // Departments
+                if (h.departments && h.departments.length > 0) {
+                    stats.householdsWithDepartments++;
+                    stats.totalDepartments += h.departments.length;
+                }
+
+                // Member types
                 if (h.members) {
                     for (var j = 0; j < h.members.length; j++) {
-                        if (h.members[j].type === 'family') totalFamilyMembers++;
-                        else if (h.members[j].type === 'staff') totalStaffMembers++;
+                        if (h.members[j].type === 'family') {
+                            stats.totalFamilyMembers++;
+                        } else if (h.members[j].type === 'staff') {
+                            stats.totalStaffMembers++;
+                        }
                     }
                 }
-                
-                if (h.departments && h.departments.length > 0) {
-                    householdsWithDepts++;
-                    totalDepartments += h.departments.length;
+
+                // Head
+                var head = state.getHouseholdHead(h.id);
+                if (head) {
+                    stats.householdsWithHead++;
+                } else {
+                    stats.householdsWithoutHead++;
                 }
-                
-                totalWealth += h.wealth || 0;
-                totalReputation += h.reputation || 0;
-                
-                var head = _state.getHouseholdHead(h.id);
-                if (head) householdsWithHead++;
-                
-                var status = _state.getHouseholdStatus(h.id);
-                if (status.status === 'empty') emptyCount++;
-                if (status.status === 'abandoned') abandonedCount++;
-                
-                // Position statistics
-                var positions = _state.getHouseholdPositions({ householdId: h.id });
-                if (positions.length > 0) {
-                    householdsWithPositions++;
-                    totalPositions += positions.length;
-                    for (var j = 0; j < positions.length; j++) {
-                        if (positions[j].requiredRoleId) positionsWithRole++;
+
+                // Empty/abandoned
+                if (memberCount === 0) {
+                    stats.emptyHouseholds++;
+                }
+                if (h.status === 'abandoned' || h.status === 'vacant') {
+                    stats.abandonedHouseholds++;
+                }
+
+                // Wealth
+                if (h.wealth !== undefined && h.wealth !== null) {
+                    totalWealth += h.wealth;
+                    wealthCount++;
+                }
+
+                // Reputation
+                if (h.reputation !== undefined && h.reputation !== null) {
+                    totalReputation += h.reputation;
+                    repCount++;
+                }
+
+                // Positions
+                var positions = state.getHouseholdPositions({ householdId: h.id });
+                if (positions && positions.length > 0) {
+                    stats.householdsWithPositions++;
+                    stats.totalPositions += positions.length;
+                    for (var k = 0; k < positions.length; k++) {
+                        if (positions[k].requiredRoleId) {
+                            stats.positionsWithRole++;
+                        }
                     }
                 }
-                
-                var assignments = _state.getAssignmentsForHousehold(h.id, false);
-                var active = _state.getAssignmentsForHousehold(h.id, true);
-                if (assignments.length > 0) {
-                    householdsWithAssignments++;
-                    totalAssignments += assignments.length;
-                    activeAssignments += active.length;
+
+                // Assignments
+                var assignments = state.getAssignmentsForHousehold(h.id, false);
+                if (assignments && assignments.length > 0) {
+                    stats.householdsWithAssignments++;
+                    stats.totalAssignments += assignments.length;
+                    for (var k = 0; k < assignments.length; k++) {
+                        if (assignments[k].endYear === null) {
+                            stats.activeAssignments++;
+                        }
+                    }
                 }
             }
-            
-            memberCounts.sort(function(a, b) { return a - b; });
-            var median = memberCounts.length % 2 === 0
-                ? (memberCounts[memberCounts.length / 2 - 1] + memberCounts[memberCounts.length / 2]) / 2
-                : memberCounts[Math.floor(memberCounts.length / 2)];
-            
-            var largest = { size: 0, name: null };
-            var smallest = { size: Infinity, name: null };
-            for (var i = 0; i < households.length; i++) {
-                var size = households[i].members ? households[i].members.length : 0;
-                if (size > largest.size) {
-                    largest.size = size;
-                    largest.name = households[i].name;
+
+            // Calculate averages
+            if (households.length > 0) {
+                stats.averageMembersPerHousehold = stats.totalMembers / households.length;
+
+                // Median
+                memberCounts.sort(function(a, b) { return a - b; });
+                var mid = Math.floor(memberCounts.length / 2);
+                if (memberCounts.length % 2 === 0) {
+                    stats.medianMembersPerHousehold = (memberCounts[mid - 1] + memberCounts[mid]) / 2;
+                } else {
+                    stats.medianMembersPerHousehold = memberCounts[mid];
                 }
-                if (size < smallest.size) {
-                    smallest.size = size;
-                    smallest.name = households[i].name;
+
+                if (stats.smallestHouseholdSize === Infinity) {
+                    stats.smallestHouseholdSize = 0;
                 }
+
+                stats.averageWealth = wealthCount > 0 ? totalWealth / wealthCount : 0;
+                stats.averageReputation = repCount > 0 ? totalReputation / repCount : 0;
+
+                stats.averagePositionsPerHousehold = stats.totalPositions / households.length;
+                stats.averageAssignmentsPerHousehold = stats.totalAssignments / households.length;
+            } else {
+                stats.smallestHouseholdSize = 0;
             }
-            if (smallest.size === Infinity) smallest.size = 0;
-            
-            return {
-                totalHouseholds: households.length,
-                totalMembers: totalMembers,
-                averageMembersPerHousehold: Math.round(totalMembers / households.length * 10) / 10,
-                medianMembersPerHousehold: median,
-                largestHouseholdSize: largest.size,
-                largestHouseholdName: largest.name,
-                smallestHouseholdSize: smallest.size,
-                householdsWithDepartments: householdsWithDepts,
-                totalDepartments: totalDepartments,
-                totalFamilyMembers: totalFamilyMembers,
-                totalStaffMembers: totalStaffMembers,
-                averageWealth: Math.round(totalWealth / households.length),
-                averageReputation: Math.round(totalReputation / households.length),
-                householdsWithHead: householdsWithHead,
-                householdsWithoutHead: households.length - householdsWithHead,
-                emptyHouseholds: emptyCount,
-                abandonedHouseholds: abandonedCount,
-                // NEW
-                totalPositions: totalPositions,
-                totalAssignments: totalAssignments,
-                activeAssignments: activeAssignments,
-                positionsWithRole: positionsWithRole,
-                householdsWithPositions: householdsWithPositions,
-                householdsWithAssignments: householdsWithAssignments,
-                averagePositionsPerHousehold: households.length > 0 ? Math.round((totalPositions / households.length) * 10) / 10 : 0,
-                averageAssignmentsPerHousehold: households.length > 0 ? Math.round((totalAssignments / households.length) * 10) / 10 : 0
-            };
-            
+
+            return stats;
+
         } finally {
-            _processingQuery = false;
+            _processing = false;
         }
     }
 
-    // =========================================================================
-    // 10. MEMBER ANALYTICS (ENHANCED)
-    // =========================================================================
-
-    /**
-     * Gets member type breakdown for a household including positions
-     * @param {string} householdId - Household ID
-     * @returns {Object} Breakdown with position info
-     */
     function getMemberBreakdown(householdId) {
-        if (_processingQuery) {
-            return null;
-        }
-        _processingQuery = true;
-        
+        if (_processing) return null;
+        _processing = true;
+
         try {
-            var household = _state.getHousehold(householdId);
-            if (!household || !household.members) {
-                return { 
-                    familyCount: 0, 
-                    staffCount: 0, 
-                    total: 0, 
-                    familyPercentage: 0, 
-                    staffPercentage: 0,
-                    staffWithPositions: 0,
-                    staffWithoutPositions: 0
-                };
-            }
-            
+            var state = _getState();
+            if (!state) return null;
+
+            var household = state.getHousehold(householdId);
+            if (!household) return null;
+
             var familyCount = 0;
             var staffCount = 0;
             var staffWithPositions = 0;
             var staffWithoutPositions = 0;
-            
-            var assignments = _state.getAssignmentsForHousehold(householdId, true);
-            var assignedIds = {};
-            for (var i = 0; i < assignments.length; i++) {
-                assignedIds[assignments[i].characterId] = true;
-            }
-            
-            for (var i = 0; i < household.members.length; i++) {
-                if (household.members[i].type === 'family') {
-                    familyCount++;
-                } else if (household.members[i].type === 'staff') {
-                    staffCount++;
-                    if (assignedIds[household.members[i].characterId]) {
-                        staffWithPositions++;
-                    } else {
-                        staffWithoutPositions++;
+
+            if (household.members) {
+                for (var i = 0; i < household.members.length; i++) {
+                    if (household.members[i].type === 'family') {
+                        familyCount++;
+                    } else if (household.members[i].type === 'staff') {
+                        staffCount++;
+                        // Check if staff has a position
+                        var assignments = state.getAssignmentsForCharacter(
+                            household.members[i].characterId,
+                            true
+                        );
+                        if (assignments && assignments.length > 0) {
+                            staffWithPositions++;
+                        } else {
+                            staffWithoutPositions++;
+                        }
                     }
                 }
             }
-            
-            var total = household.members.length;
-            
+
+            var total = familyCount + staffCount;
+
             return {
                 familyCount: familyCount,
                 staffCount: staffCount,
@@ -1142,70 +511,632 @@
                 staffWithoutPositions: staffWithoutPositions,
                 staffWithPositionsPercentage: staffCount > 0 ? (staffWithPositions / staffCount) * 100 : 0
             };
-            
+
         } finally {
-            _processingQuery = false;
+            _processing = false;
+        }
+    }
+
+    function getDemographics(householdId) {
+        if (_processing) return null;
+        _processing = true;
+
+        try {
+            var state = _getState();
+            if (!state) return null;
+
+            var household = state.getHousehold(householdId);
+            if (!household) return null;
+
+            var currentYear = _getCurrentYear();
+
+            var stats = {
+                total: 0,
+                male: 0,
+                female: 0,
+                unknown: 0,
+                children: 0,  // 0-17
+                youth: 0,     // 18-25
+                adults: 0,    // 26-59
+                elders: 0,    // 60+
+                living: 0,
+                deceased: 0,
+                byAgeGroup: {}
+            };
+
+            if (household.members) {
+                for (var i = 0; i < household.members.length; i++) {
+                    var char = _getCharacterById(household.members[i].characterId);
+                    if (!char) continue;
+
+                    stats.total++;
+
+                    // Gender
+                    if (char.gender === 'male') stats.male++;
+                    else if (char.gender === 'female') stats.female++;
+                    else stats.unknown++;
+
+                    // Living/Deceased
+                    if (char.isDeceased) {
+                        stats.deceased++;
+                    } else {
+                        stats.living++;
+                    }
+
+                    // Age
+                    var age = null;
+                    if (char.birthYear) {
+                        if (char.isDeceased && char.deathYear) {
+                            age = char.deathYear - char.birthYear;
+                        } else {
+                            age = currentYear - char.birthYear;
+                        }
+                    }
+
+                    if (age !== null) {
+                        if (age < 18) stats.children++;
+                        else if (age < 26) stats.youth++;
+                        else if (age < 60) stats.adults++;
+                        else stats.elders++;
+
+                        // By age group
+                        var group;
+                        if (age < 10) group = '0-9';
+                        else if (age < 20) group = '10-19';
+                        else if (age < 30) group = '20-29';
+                        else if (age < 40) group = '30-39';
+                        else if (age < 50) group = '40-49';
+                        else if (age < 60) group = '50-59';
+                        else if (age < 70) group = '60-69';
+                        else if (age < 80) group = '70-79';
+                        else group = '80+';
+
+                        if (!stats.byAgeGroup[group]) stats.byAgeGroup[group] = 0;
+                        stats.byAgeGroup[group]++;
+                    }
+                }
+            }
+
+            return stats;
+
+        } finally {
+            _processing = false;
         }
     }
 
     // =========================================================================
-    // 11. CACHE MANAGEMENT
+    // 5. POSITION QUERIES
+    // =========================================================================
+
+    function getHouseholdPositions(options) {
+        if (_processing) return [];
+        _processing = true;
+
+        try {
+            var state = _getState();
+            if (!state) return [];
+
+            options = options || {};
+            var positions = state.getHouseholdPositions(options);
+
+            // Additional filtering beyond what state provides
+            if (options.requiredRoleId) {
+                positions = positions.filter(function(p) {
+                    return p.requiredRoleId === options.requiredRoleId;
+                });
+            }
+
+            if (options.hasRoleRequirement !== undefined) {
+                positions = positions.filter(function(p) {
+                    return options.hasRoleRequirement === (!!p.requiredRoleId);
+                });
+            }
+
+            if (options.minSkillLevel !== undefined) {
+                positions = positions.filter(function(p) {
+                    return (p.minSkillLevel || 0) >= options.minSkillLevel;
+                });
+            }
+
+            if (options.search) {
+                var searchLower = options.search.toLowerCase();
+                positions = positions.filter(function(p) {
+                    return (p.name || '').toLowerCase().indexOf(searchLower) !== -1 ||
+                           (p.description || '').toLowerCase().indexOf(searchLower) !== -1;
+                });
+            }
+
+            // Sort
+            if (options.sortBy) {
+                var sortKey = options.sortBy;
+                var sortOrder = options.sortOrder || 'asc';
+                positions.sort(function(a, b) {
+                    var valA = a[sortKey] || 0;
+                    var valB = b[sortKey] || 0;
+                    if (typeof valA === 'string') {
+                        valA = valA.toLowerCase();
+                        valB = valB.toLowerCase();
+                    }
+                    if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
+                    if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
+                    return 0;
+                });
+            }
+
+            if (options.limit && options.limit > 0) {
+                positions = positions.slice(0, options.limit);
+            }
+
+            return positions;
+
+        } finally {
+            _processing = false;
+        }
+    }
+
+    function getHouseholdPositionsWithDetails(householdId, options) {
+        if (_processing) return [];
+        _processing = true;
+
+        try {
+            var state = _getState();
+            if (!state) return [];
+
+            options = options || {};
+            var positions = state.getHouseholdPositions({ householdId: householdId });
+
+            var result = [];
+            for (var i = 0; i < positions.length; i++) {
+                var p = positions[i];
+                var detail = {
+                    id: p.id,
+                    name: p.name,
+                    householdId: p.householdId,
+                    departmentId: p.departmentId,
+                    requiredRoleId: p.requiredRoleId,
+                    minSkillLevel: p.minSkillLevel || 0,
+                    description: p.description || '',
+                    priority: p.priority || 10,
+                    assignments: []
+                };
+
+                if (options.includeAssignments !== false) {
+                    var assignments = state.getAssignmentsForPosition(p.id, options.activeOnly || false);
+                    detail.assignments = assignments;
+                    detail.activeAssignmentCount = assignments.filter(function(a) {
+                        return a.endYear === null;
+                    }).length;
+                    detail.totalAssignmentCount = assignments.length;
+                }
+
+                // Get role details if available
+                if (p.requiredRoleId && typeof window.getRoleById === 'function') {
+                    var role = window.getRoleById(p.requiredRoleId);
+                    if (role) {
+                        detail.roleName = role.name;
+                        detail.roleCategory = role.category;
+                    }
+                }
+
+                result.push(detail);
+            }
+
+            return result;
+
+        } finally {
+            _processing = false;
+        }
+    }
+
+    function getHouseholdPositionStatistics(householdId) {
+        if (_processing) return null;
+        _processing = true;
+
+        try {
+            var state = _getState();
+            if (!state) return null;
+
+            var positions = state.getHouseholdPositions({ householdId: householdId });
+            var assignments = state.getAssignmentsForHousehold(householdId, false);
+
+            var stats = {
+                totalPositions: positions.length,
+                totalAssignments: assignments.length,
+                activeAssignments: 0,
+                positionsWithRole: 0,
+                positionsWithSkillRequirement: 0,
+                byDepartment: {},
+                byRole: {},
+                averageSkillLevel: 0
+            };
+
+            var totalSkill = 0;
+            var skillCount = 0;
+
+            for (var i = 0; i < positions.length; i++) {
+                var p = positions[i];
+                if (p.requiredRoleId) {
+                    stats.positionsWithRole++;
+                    if (!stats.byRole[p.requiredRoleId]) stats.byRole[p.requiredRoleId] = 0;
+                    stats.byRole[p.requiredRoleId]++;
+                }
+                if (p.minSkillLevel && p.minSkillLevel > 0) {
+                    stats.positionsWithSkillRequirement++;
+                }
+                if (p.departmentId) {
+                    if (!stats.byDepartment[p.departmentId]) stats.byDepartment[p.departmentId] = 0;
+                    stats.byDepartment[p.departmentId]++;
+                }
+            }
+
+            for (var j = 0; j < assignments.length; j++) {
+                var a = assignments[j];
+                if (a.endYear === null) {
+                    stats.activeAssignments++;
+                }
+                if (a.skillLevelAtAssignment) {
+                    totalSkill += a.skillLevelAtAssignment;
+                    skillCount++;
+                }
+            }
+
+            stats.averageSkillLevel = skillCount > 0 ? totalSkill / skillCount : 0;
+
+            return stats;
+
+        } finally {
+            _processing = false;
+        }
+    }
+
+    // =========================================================================
+    // 6. STAFF QUERIES
+    // =========================================================================
+
+    function getHouseholdStaff(householdId, options) {
+        if (_processing) return [];
+        _processing = true;
+
+        try {
+            var state = _getState();
+            if (!state) return [];
+
+            options = options || {};
+            var household = state.getHousehold(householdId);
+            if (!household || !household.members) return [];
+
+            var result = [];
+
+            for (var i = 0; i < household.members.length; i++) {
+                var member = household.members[i];
+                if (member.type !== 'staff') continue;
+
+                var char = _getCharacterById(member.characterId);
+                if (!char) continue;
+
+                // Filter by position
+                if (options.positionId) {
+                    var assignments = state.getAssignmentsForCharacter(member.characterId, options.activeOnly || false);
+                    var hasPosition = false;
+                    for (var j = 0; j < assignments.length; j++) {
+                        if (assignments[j].positionId === options.positionId) {
+                            hasPosition = true;
+                            break;
+                        }
+                    }
+                    if (!hasPosition) continue;
+                }
+
+                // Filter by department
+                if (options.departmentId && member.departmentId !== options.departmentId) {
+                    continue;
+                }
+
+                // Filter by role
+                if (options.withRole !== undefined || options.withoutRole !== undefined) {
+                    var assignments = state.getAssignmentsForCharacter(member.characterId, options.activeOnly || false);
+                    var hasRole = false;
+                    for (var j = 0; j < assignments.length; j++) {
+                        if (assignments[j].positionId) {
+                            hasRole = true;
+                            break;
+                        }
+                    }
+                    if (options.withRole && !hasRole) continue;
+                    if (options.withoutRole && hasRole) continue;
+                }
+
+                // Filter by skill level
+                if (options.minSkillLevel !== undefined) {
+                    var maxSkill = 0;
+                    var assignments = state.getAssignmentsForCharacter(member.characterId, options.activeOnly || false);
+                    for (var j = 0; j < assignments.length; j++) {
+                        if (assignments[j].skillLevelAtAssignment > maxSkill) {
+                            maxSkill = assignments[j].skillLevelAtAssignment;
+                        }
+                    }
+                    if (maxSkill < options.minSkillLevel) continue;
+                }
+
+                result.push({
+                    characterId: member.characterId,
+                    character: char,
+                    characterName: char.name + (char.surname ? ' ' + char.surname : ''),
+                    type: member.type,
+                    departmentId: member.departmentId || null,
+                    role: member.role || null,
+                    isHead: member.isHead || false,
+                    joinedYear: member.joinedYear || null,
+                    notes: member.notes || '',
+                    assignments: state.getAssignmentsForCharacter(member.characterId, options.activeOnly || false)
+                });
+            }
+
+            return result;
+
+        } finally {
+            _processing = false;
+        }
+    }
+
+    function getUnassignedHouseholdStaff(householdId) {
+        if (_processing) return [];
+        _processing = true;
+
+        try {
+            var state = _getState();
+            if (!state) return [];
+
+            var staff = getHouseholdStaff(householdId, { activeOnly: true });
+            var result = [];
+
+            for (var i = 0; i < staff.length; i++) {
+                var s = staff[i];
+                if (!s.assignments || s.assignments.length === 0) {
+                    result.push(s);
+                } else {
+                    var hasActive = false;
+                    for (var j = 0; j < s.assignments.length; j++) {
+                        if (s.assignments[j].endYear === null) {
+                            hasActive = true;
+                            break;
+                        }
+                    }
+                    if (!hasActive) {
+                        result.push(s);
+                    }
+                }
+            }
+
+            return result;
+
+        } finally {
+            _processing = false;
+        }
+    }
+
+    // =========================================================================
+    // 7. ENTERPRISE QUERIES (NEW)
     // =========================================================================
 
     /**
-     * Clears all query caches
+     * Gets all enterprises owned by a household
      */
-    function clearCache() {
-        // Clear any internal caches
-        if (window.HouseholdState && typeof window.HouseholdState.invalidateCache === 'function') {
-            window.HouseholdState.invalidateCache();
+    function getHouseholdEnterprises(householdId) {
+        if (_processing) return [];
+        _processing = true;
+
+        try {
+            var state = _getState();
+            if (!state) return [];
+
+            var enterpriseIds = state.getHouseholdEnterprises(householdId);
+            if (!enterpriseIds || enterpriseIds.length === 0) return [];
+
+            var result = [];
+
+            if (typeof window.IndustryState !== 'undefined') {
+                for (var i = 0; i < enterpriseIds.length; i++) {
+                    var enterprise = window.IndustryState.getEnterprise(enterpriseIds[i]);
+                    if (enterprise) {
+                        result.push(enterprise);
+                    }
+                }
+            }
+
+            return result;
+
+        } finally {
+            _processing = false;
+        }
+    }
+
+    /**
+     * Gets enterprise summaries for a household
+     */
+    function getHouseholdEnterpriseSummaries(householdId) {
+        if (_processing) return [];
+        _processing = true;
+
+        try {
+            var enterprises = getHouseholdEnterprises(householdId);
+            var result = [];
+
+            if (typeof window.IndustryQueries !== 'undefined') {
+                for (var i = 0; i < enterprises.length; i++) {
+                    var summary = window.IndustryQueries.getEnterpriseSummary(enterprises[i].id);
+                    if (summary) {
+                        result.push(summary);
+                    }
+                }
+            } else {
+                // Fallback - return basic enterprise data
+                for (var i = 0; i < enterprises.length; i++) {
+                    var e = enterprises[i];
+                    result.push({
+                        id: e.id,
+                        name: e.name,
+                        type: e.typeName,
+                        category: e.category,
+                        wealth: e.wealth || 0,
+                        debt: e.debt || 0,
+                        workerCount: e.workerList ? e.workerList.length : 0,
+                        annualProfit: (e.income || 0) - (e.expenses || 0) - ((e.workerList ? e.workerList.length : 0) * (e.wages || 8)),
+                        status: e.status || 'active'
+                    });
+                }
+            }
+
+            return result;
+
+        } finally {
+            _processing = false;
+        }
+    }
+
+    /**
+     * Gets enterprise statistics for a household
+     */
+    function getHouseholdEnterpriseStats(householdId) {
+        if (_processing) return null;
+        _processing = true;
+
+        try {
+            var summaries = getHouseholdEnterpriseSummaries(householdId);
+
+            var stats = {
+                total: summaries.length,
+                profitable: 0,
+                unprofitable: 0,
+                totalProfit: 0,
+                totalWealth: 0,
+                totalDebt: 0,
+                totalWorkers: 0,
+                byStatus: {},
+                byCategory: {},
+                profitableEnterprises: [],
+                unprofitableEnterprises: []
+            };
+
+            for (var i = 0; i < summaries.length; i++) {
+                var s = summaries[i];
+
+                if (s.annualProfit > 0) {
+                    stats.profitable++;
+                    stats.profitableEnterprises.push(s);
+                } else if (s.annualProfit < 0) {
+                    stats.unprofitable++;
+                    stats.unprofitableEnterprises.push(s);
+                }
+
+                stats.totalProfit += s.annualProfit || 0;
+                stats.totalWealth += s.wealth || 0;
+                stats.totalDebt += s.debt || 0;
+                stats.totalWorkers += s.workerCount || 0;
+
+                var status = s.status || 'active';
+                if (!stats.byStatus[status]) stats.byStatus[status] = 0;
+                stats.byStatus[status]++;
+
+                var category = s.category || 'other';
+                if (!stats.byCategory[category]) stats.byCategory[category] = 0;
+                stats.byCategory[category]++;
+            }
+
+            return stats;
+
+        } finally {
+            _processing = false;
+        }
+    }
+
+    /**
+     * Gets the total enterprise value for a household
+     */
+    function getHouseholdEnterpriseValue(householdId) {
+        if (_processing) return 0;
+        _processing = true;
+
+        try {
+            var summaries = getHouseholdEnterpriseSummaries(householdId);
+            var totalValue = 0;
+
+            for (var i = 0; i < summaries.length; i++) {
+                // Enterprise value = wealth + (annual profit * 5) - debt
+                var value = (summaries[i].wealth || 0) + (summaries[i].annualProfit || 0) * 5 - (summaries[i].debt || 0);
+                totalValue += value;
+            }
+
+            return totalValue;
+
+        } finally {
+            _processing = false;
+        }
+    }
+
+    /**
+     * Searches enterprises owned by a household
+     */
+    function searchHouseholdEnterprises(householdId, query) {
+        if (_processing) return [];
+        _processing = true;
+
+        try {
+            var summaries = getHouseholdEnterpriseSummaries(householdId);
+            if (!query || query.trim() === '') return summaries;
+
+            var lowerQuery = query.toLowerCase().trim();
+            var result = [];
+
+            for (var i = 0; i < summaries.length; i++) {
+                var s = summaries[i];
+                if (s.name && s.name.toLowerCase().indexOf(lowerQuery) !== -1) {
+                    result.push(s);
+                } else if (s.type && s.type.toLowerCase().indexOf(lowerQuery) !== -1) {
+                    result.push(s);
+                }
+            }
+
+            return result;
+
+        } finally {
+            _processing = false;
         }
     }
 
     // =========================================================================
-    // 12. EXPORTS
+    // 8. EXPORTS
     // =========================================================================
 
     window.HouseholdQueries = {
         // Search
         search: search,
         advancedSearch: advancedSearch,
-        
-        // Statistics (enhanced)
+
+        // Statistics
         getStatistics: getStatistics,
-        
-        // Member analytics (enhanced)
         getMemberBreakdown: getMemberBreakdown,
-        
-        // Household position queries (NEW)
+        getDemographics: getDemographics,
+
+        // Positions
         getHouseholdPositions: getHouseholdPositions,
         getHouseholdPositionsWithDetails: getHouseholdPositionsWithDetails,
-        getHouseholdAssignmentsWithDetails: getHouseholdAssignmentsWithDetails,
         getHouseholdPositionStatistics: getHouseholdPositionStatistics,
-        
-        // Household staff queries (NEW)
+
+        // Staff
         getHouseholdStaff: getHouseholdStaff,
         getUnassignedHouseholdStaff: getUnassignedHouseholdStaff,
-        
-        // Cache
-        clearCache: clearCache
+
+        // Enterprise Integration (NEW)
+        getHouseholdEnterprises: getHouseholdEnterprises,
+        getHouseholdEnterpriseSummaries: getHouseholdEnterpriseSummaries,
+        getHouseholdEnterpriseStats: getHouseholdEnterpriseStats,
+        getHouseholdEnterpriseValue: getHouseholdEnterpriseValue,
+        searchHouseholdEnterprises: searchHouseholdEnterprises
     };
 
-    // ES Module exports
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            search: search,
-            advancedSearch: advancedSearch,
-            getStatistics: getStatistics,
-            getMemberBreakdown: getMemberBreakdown,
-            getHouseholdPositions: getHouseholdPositions,
-            getHouseholdPositionsWithDetails: getHouseholdPositionsWithDetails,
-            getHouseholdAssignmentsWithDetails: getHouseholdAssignmentsWithDetails,
-            getHouseholdPositionStatistics: getHouseholdPositionStatistics,
-            getHouseholdStaff: getHouseholdStaff,
-            getUnassignedHouseholdStaff: getUnassignedHouseholdStaff,
-            clearCache: clearCache
-        };
+        module.exports = window.HouseholdQueries;
     }
 
 })();

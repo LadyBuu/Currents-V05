@@ -11,6 +11,7 @@
  * - Statistics and analytics
  * - Comparison and ranking
  * - LITERACY STATS (getSettlementLiteracyStats)
+ * - ROLE-SETTLEMENT INTEGRATION (NEW)
  * 
  * No side effects, no mutations. Uses caching for performance.
  * 
@@ -74,6 +75,56 @@
 
     function _getSettlementEmployment(locationId) {
         return SettlementState.getSettlementEmployment(locationId);
+    }
+
+    function _getCharacters() {
+        return typeof window.getCharacters === 'function' ? window.getCharacters() : [];
+    }
+
+    function _getCurrentLocationId(character) {
+        if (!character) return null;
+
+        if (character.moves && character.moves.length > 0) {
+            var sortedMoves = character.moves.slice().sort(function(a, b) {
+                return (b.year || 0) - (a.year || 0);
+            });
+            var lastMove = sortedMoves[0];
+            if (lastMove && lastMove.locationId) {
+                return lastMove.locationId;
+            }
+        }
+
+        if (character.currentLocationId) return character.currentLocationId;
+        if (character.birthplaceId) return character.birthplaceId;
+
+        return null;
+    }
+
+    function _getRoleById(id) {
+        if (typeof window.getRoleById === 'function') {
+            return window.getRoleById(id);
+        }
+        if (typeof window.RoleState !== 'undefined') {
+            return window.RoleState.getRole(id);
+        }
+        return null;
+    }
+
+    function _getRoleCategories() {
+        if (typeof window.getRoleCategories === 'function') {
+            return window.getRoleCategories();
+        }
+        if (typeof window.RoleState !== 'undefined') {
+            return window.RoleState.getCategories();
+        }
+        return {};
+    }
+
+    function _getAllSubLocationIds(locationId) {
+        if (typeof LocationState !== 'undefined' && LocationState.getAllSubLocationIds) {
+            return LocationState.getAllSubLocationIds(locationId);
+        }
+        return [locationId];
     }
 
     // =========================================================================
@@ -515,9 +566,8 @@
 
             if (!locationId) return emptyResult;
 
-            var characters = typeof window.getCharacters === 'function' ? window.getCharacters() : [];
-            var locationIds = typeof LocationState !== 'undefined' && LocationState.getAllSubLocationIds ?
-                LocationState.getAllSubLocationIds(locationId) : [locationId];
+            var characters = _getCharacters();
+            var locationIds = _getAllSubLocationIds(locationId);
             var locationIdSet = new Set(locationIds);
 
             var displayNameToId = {};
@@ -788,7 +838,288 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 10. ROLE-SETTLEMENT INTEGRATION (NEW)
+    // =========================================================================
+
+    /**
+     * Gets all roles present in a settlement (with counts)
+     * @param {string} locationId - Settlement location ID
+     * @returns {Object} Role distribution
+     */
+    function getSettlementRoles(locationId) {
+        if (_processingQuery) {
+            return {};
+        }
+        _processingQuery = true;
+
+        try {
+            if (!locationId) return {};
+
+            // Use LocationQueries if available
+            if (typeof LocationQueries !== 'undefined' && 
+                LocationQueries.getRolesAtLocation) {
+                return LocationQueries.getRolesAtLocation(locationId);
+            }
+
+            // Fallback implementation
+            var characters = _getCharacters();
+            var locationIds = _getAllSubLocationIds(locationId);
+            var locationIdSet = new Set(locationIds);
+            var roles = {};
+
+            for (var i = 0; i < characters.length; i++) {
+                var char = characters[i];
+                if (char.isDeceased) continue;
+
+                var charLocationId = _getCurrentLocationId(char);
+                if (charLocationId && locationIdSet.has(charLocationId)) {
+                    if (char.professions) {
+                        for (var j = 0; j < char.professions.length; j++) {
+                            var prof = char.professions[j];
+                            if (!roles[prof.id]) {
+                                var role = _getRoleById(prof.id);
+                                roles[prof.id] = {
+                                    id: prof.id,
+                                    name: prof.name || (role ? role.name : prof.id),
+                                    count: 0
+                                };
+                            }
+                            roles[prof.id].count++;
+                        }
+                    }
+                }
+            }
+
+            return roles;
+
+        } finally {
+            _processingQuery = false;
+        }
+    }
+
+    /**
+     * Gets characters in a settlement with a specific role
+     * @param {string} locationId - Settlement location ID
+     * @param {string} roleId - Role ID
+     * @param {boolean} mastersOnly - Only masters (skill 76+)
+     * @returns {Array} Character objects
+     */
+    function getSettlementCharactersByRole(locationId, roleId, mastersOnly) {
+        if (_processingQuery) {
+            return [];
+        }
+        _processingQuery = true;
+
+        try {
+            if (!locationId || !roleId) return [];
+
+            // Use LocationQueries if available
+            if (typeof LocationQueries !== 'undefined' &&
+                LocationQueries.getCharactersByRoleAtLocation) {
+                return LocationQueries.getCharactersByRoleAtLocation(locationId, roleId, mastersOnly);
+            }
+
+            // Fallback implementation
+            var characters = _getCharacters();
+            var locationIds = _getAllSubLocationIds(locationId);
+            var locationIdSet = new Set(locationIds);
+            var results = [];
+
+            for (var i = 0; i < characters.length; i++) {
+                var char = characters[i];
+                if (char.isDeceased) continue;
+
+                var charLocationId = _getCurrentLocationId(char);
+                if (!charLocationId || !locationIdSet.has(charLocationId)) continue;
+
+                if (char.professions) {
+                    for (var j = 0; j < char.professions.length; j++) {
+                        var prof = char.professions[j];
+                        if (prof.id === roleId) {
+                            var skillLevel = prof.skillLevel || 0;
+                            if (mastersOnly && skillLevel < 76) continue;
+                            results.push(char);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            return results;
+
+        } finally {
+            _processingQuery = false;
+        }
+    }
+
+    /**
+     * Gets role statistics for a settlement
+     * @param {string} locationId - Settlement location ID
+     * @returns {Object} Role statistics
+     */
+    function getSettlementRoleStats(locationId) {
+        if (_processingQuery) {
+            return null;
+        }
+        _processingQuery = true;
+
+        try {
+            if (!locationId) return null;
+
+            var roles = getSettlementRoles(locationId);
+            var roleIds = Object.keys(roles);
+            var total = 0;
+
+            for (var i = 0; i < roleIds.length; i++) {
+                total += roles[roleIds[i]].count;
+            }
+
+            var place = _getPlaceById(locationId);
+            var categories = _getRoleCategories();
+
+            var stats = {
+                settlementId: locationId,
+                settlementName: place ? place.displayName : 'Unknown',
+                totalProfessions: total,
+                uniqueRoles: roleIds.length,
+                topRoles: [],
+                byCategory: {}
+            };
+
+            // Get top 5 roles
+            var sorted = roleIds.slice().sort(function(a, b) {
+                return roles[b].count - roles[a].count;
+            });
+
+            for (var i = 0; i < Math.min(5, sorted.length); i++) {
+                var id = sorted[i];
+                var role = roles[id];
+                stats.topRoles.push({
+                    id: id,
+                    name: role.name,
+                    count: role.count,
+                    percentage: total > 0 ? Math.round((role.count / total) * 100) : 0
+                });
+            }
+
+            // Group by category
+            for (var i = 0; i < roleIds.length; i++) {
+                var id = roleIds[i];
+                var role = roles[id];
+                var roleObj = _getRoleById(id);
+                var category = roleObj ? (roleObj.category || 'uncategorized') : 'uncategorized';
+
+                if (!stats.byCategory[category]) {
+                    var catName = categories[category] ? categories[category].name : 'Uncategorized';
+                    stats.byCategory[category] = {
+                        id: category,
+                        name: catName,
+                        count: 0,
+                        roles: []
+                    };
+                }
+                stats.byCategory[category].count += role.count;
+                stats.byCategory[category].roles.push({
+                    id: id,
+                    name: role.name,
+                    count: role.count
+                });
+            }
+
+            // Sort categories by count
+            var catKeys = Object.keys(stats.byCategory);
+            var sortedCats = {};
+            catKeys.sort(function(a, b) {
+                return stats.byCategory[b].count - stats.byCategory[a].count;
+            });
+            for (var i = 0; i < catKeys.length; i++) {
+                sortedCats[catKeys[i]] = stats.byCategory[catKeys[i]];
+            }
+            stats.byCategory = sortedCats;
+
+            return stats;
+
+        } finally {
+            _processingQuery = false;
+        }
+    }
+
+    /**
+     * Gets master concentration in a settlement
+     * @param {string} locationId - Settlement location ID
+     * @param {string} roleId - Optional role ID filter
+     * @returns {Object} Master statistics
+     */
+    function getSettlementMasterStats(locationId, roleId) {
+        if (_processingQuery) {
+            return null;
+        }
+        _processingQuery = true;
+
+        try {
+            if (!locationId) return null;
+
+            var locationIds = _getAllSubLocationIds(locationId);
+            var locationIdSet = new Set(locationIds);
+            var characters = _getCharacters();
+            var masters = [];
+            var masterCount = 0;
+            var byRole = {};
+
+            for (var i = 0; i < characters.length; i++) {
+                var char = characters[i];
+                if (char.isDeceased) continue;
+
+                var charLocationId = _getCurrentLocationId(char);
+                if (!charLocationId || !locationIdSet.has(charLocationId)) continue;
+
+                if (char.professions) {
+                    for (var j = 0; j < char.professions.length; j++) {
+                        var prof = char.professions[j];
+                        var skillLevel = prof.skillLevel || 0;
+                        if (skillLevel >= 76) {
+                            if (!roleId || prof.id === roleId) {
+                                if (!byRole[prof.id]) {
+                                    var role = _getRoleById(prof.id);
+                                    byRole[prof.id] = {
+                                        id: prof.id,
+                                        name: prof.name || (role ? role.name : prof.id),
+                                        count: 0,
+                                        masters: []
+                                    };
+                                }
+                                byRole[prof.id].count++;
+                                byRole[prof.id].masters.push({
+                                    id: char.id,
+                                    name: char.name + (char.surname ? ' ' + char.surname : ''),
+                                    skillLevel: skillLevel
+                                });
+                                masterCount++;
+                                masters.push(char);
+                            }
+                        }
+                    }
+                }
+            }
+
+            var place = _getPlaceById(locationId);
+
+            return {
+                settlementId: locationId,
+                settlementName: place ? place.displayName : 'Unknown',
+                totalMasters: masterCount,
+                uniqueMasterRoles: Object.keys(byRole).length,
+                byRole: byRole,
+                masters: masters.slice(0, 50) // Limit for performance
+            };
+
+        } finally {
+            _processingQuery = false;
+        }
+    }
+
+    // =========================================================================
+    // 11. EXPORTS
     // =========================================================================
 
     window.SettlementQueries = {
@@ -813,7 +1144,12 @@
         getGlobalSettlementStatistics: getGlobalSettlementStatistics,
         getLargestSettlements: getLargestSettlements,
         getWealthiestSettlements: getWealthiestSettlements,
-        getMostProsperousSettlements: getMostProsperousSettlements
+        getMostProsperousSettlements: getMostProsperousSettlements,
+        // NEW: Role-settlement integration
+        getSettlementRoles: getSettlementRoles,
+        getSettlementCharactersByRole: getSettlementCharactersByRole,
+        getSettlementRoleStats: getSettlementRoleStats,
+        getSettlementMasterStats: getSettlementMasterStats
     };
 
 })();

@@ -8,6 +8,7 @@
  * - Expense calculation (maintenance, wages, spending)
  * - Surplus calculation
  * - PROSPERITY CALCULATION (calculateProsperity) - UPDATED with Government Leader integration
+ * - PROSPERITY CALCULATION - UPDATED with Role integration (NEW)
  * - CRIME RATE CALCULATION (calculateCrimeRate)
  * - SPECIALIZATION BONUSES (calculateSpecializationIncomeBonus, calculateSpecializationProsperityBonus)
  * - LITERACY STATS (getSettlementLiteracyStats)
@@ -99,6 +100,32 @@
 
     function _getSettlementRanks() {
         return SettlementState._getAllRanks();
+    }
+
+    function _getCurrentLocationId(character) {
+        if (!character) return null;
+
+        if (character.moves && character.moves.length > 0) {
+            var sortedMoves = character.moves.slice().sort(function(a, b) {
+                return (b.year || 0) - (a.year || 0);
+            });
+            var lastMove = sortedMoves[0];
+            if (lastMove && lastMove.locationId) {
+                return lastMove.locationId;
+            }
+        }
+
+        if (character.currentLocationId) return character.currentLocationId;
+        if (character.birthplaceId) return character.birthplaceId;
+
+        return null;
+    }
+
+    function _getAllSubLocationIds(locationId) {
+        if (typeof LocationState !== 'undefined' && LocationState.getAllSubLocationIds) {
+            return LocationState.getAllSubLocationIds(locationId);
+        }
+        return [locationId];
     }
 
     // =========================================================================
@@ -429,7 +456,7 @@
     }
 
     // =========================================================================
-    // 7. PROSPERITY CALCULATION - CRITICAL (UPDATED with Government Leader integration)
+    // 7. PROSPERITY CALCULATION - CRITICAL (UPDATED with Role integration)
     // =========================================================================
 
     function calculateProsperity(locationId) {
@@ -551,6 +578,131 @@
                     // Silent fail - leader data may not be available
                 }
             }
+            // =====================================================================
+
+            // =====================================================================
+            // NEW: ROLE-BASED PROSPERITY FACTORS
+            // =====================================================================
+            
+            // Get roles at this settlement
+            var locationIds = _getAllSubLocationIds(locationId);
+            var locationIdSet = new Set(locationIds);
+            var characters = _getCharacters();
+            var roles = {};
+            var masterCount = 0;
+            var totalProfessions = 0;
+            
+            // Collect role data
+            for (var i = 0; i < characters.length; i++) {
+                var char = characters[i];
+                if (char.isDeceased) continue;
+                
+                var charLocationId = _getCurrentLocationId(char);
+                if (charLocationId && locationIdSet.has(charLocationId)) {
+                    if (char.professions) {
+                        for (var j = 0; j < char.professions.length; j++) {
+                            var prof = char.professions[j];
+                            var skillLevel = prof.skillLevel || 0;
+                            totalProfessions++;
+                            
+                            if (!roles[prof.id]) {
+                                var role = _getRoleById(prof.id);
+                                roles[prof.id] = {
+                                    id: prof.id,
+                                    name: prof.name || (role ? role.name : prof.id),
+                                    count: 0,
+                                    masters: 0
+                                };
+                            }
+                            roles[prof.id].count++;
+                            if (skillLevel >= 76) {
+                                roles[prof.id].masters++;
+                                masterCount++;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            var roleCount = Object.keys(roles).length;
+            
+            // 1. Role diversity bonus
+            if (roleCount > 10) {
+                prosperity = Math.min(100, prosperity + 4);
+            } else if (roleCount > 5) {
+                prosperity = Math.min(100, prosperity + 2);
+            } else if (roleCount === 0 && totalProfessions === 0) {
+                prosperity = Math.max(0, prosperity - 3);
+            }
+            
+            // 2. Master concentration bonus
+            if (masterCount > 20) {
+                prosperity = Math.min(100, prosperity + 3);
+            } else if (masterCount > 10) {
+                prosperity = Math.min(100, prosperity + 2);
+            } else if (masterCount > 0) {
+                prosperity = Math.min(100, prosperity + 1);
+            }
+            
+            // 3. Role specialization synergy bonus
+            // If settlement has specialization AND high role diversity
+            var specBonus = calculateSpecializationProsperityBonus(locationId);
+            if (specBonus > 5 && roleCount > 5) {
+                prosperity = Math.min(100, prosperity + 2);
+            }
+            
+            // 4. Underserved roles penalty
+            // Check if settlement has important roles missing
+            var importantRoles = ['blacksmith', 'merchant', 'healer', 'farmer', 'carpenter', 'baker', 'butcher'];
+            var missingCount = 0;
+            var roleNames = Object.keys(roles).map(function(id) { 
+                return roles[id].name.toLowerCase(); 
+            });
+            
+            for (var i = 0; i < importantRoles.length; i++) {
+                var found = false;
+                for (var j = 0; j < roleNames.length; j++) {
+                    if (roleNames[j].indexOf(importantRoles[i]) !== -1) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) missingCount++;
+            }
+            
+            if (missingCount > 3) {
+                prosperity = Math.max(0, prosperity - 3);
+            } else if (missingCount > 1) {
+                prosperity = Math.max(0, prosperity - 1);
+            }
+            
+            // 5. Skill level average bonus
+            var totalSkill = 0;
+            var skillCount = 0;
+            for (var i = 0; i < characters.length; i++) {
+                var char = characters[i];
+                if (char.isDeceased) continue;
+                
+                var charLocationId = _getCurrentLocationId(char);
+                if (charLocationId && locationIdSet.has(charLocationId)) {
+                    if (char.professions) {
+                        for (var j = 0; j < char.professions.length; j++) {
+                            totalSkill += (char.professions[j].skillLevel || 0);
+                            skillCount++;
+                        }
+                    }
+                }
+            }
+            
+            var avgSkill = skillCount > 0 ? Math.round(totalSkill / skillCount) : 0;
+            if (avgSkill > 60) {
+                prosperity = Math.min(100, prosperity + 2);
+            } else if (avgSkill > 40) {
+                prosperity = Math.min(100, prosperity + 1);
+            } else if (avgSkill < 20 && skillCount > 0) {
+                prosperity = Math.max(0, prosperity - 1);
+            }
+            
             // =====================================================================
 
             // Random variation (small)
@@ -745,8 +897,7 @@
             if (!locationId) return emptyResult;
 
             var characters = _getCharacters();
-            var locationIds = typeof LocationState !== 'undefined' && LocationState.getAllSubLocationIds ?
-                LocationState.getAllSubLocationIds(locationId) : [locationId];
+            var locationIds = _getAllSubLocationIds(locationId);
             var locationIdSet = new Set(locationIds);
 
             var displayNameToId = {};

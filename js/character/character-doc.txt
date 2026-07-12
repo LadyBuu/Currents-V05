@@ -9,13 +9,14 @@ The Character System is the foundation of the Still Waters simulation. It manage
 ## FILE STRUCTURE
 
 ```
-js/core/character/
-├── character-state.js          # Single source of truth + cache + notifications
-├── character-commands.js       # All write operations (create, update, delete, soft delete, bulk)
-├── character-queries.js        # All read operations (search, filter, stats)
-├── character-lifecycle.js      # Lifecycle business logic (birth, aging, death, inheritance)
-├── character-ui-list.js        # UI list rendering
-└── modals-character.js         # UI modals (updated to use new system)
+js/character/
+├── character-state.js              # Single source of truth + cache + notifications
+├── character-commands.js           # All write operations (create, update, delete, soft delete, bulk)
+├── character-queries.js            # All read operations (search, filter, stats)
+├── character-lifecycle.js          # Lifecycle business logic (birth, aging, death, inheritance)
+├── character-ui-list.js            # UI list rendering
+├── modals-character.js             # UI modals
+└── character-doc.txt               # This documentation
 ```
 
 ---
@@ -30,6 +31,7 @@ js/core/character/
 | **Recursion Guards** | All public functions protected from infinite loops |
 | **Change Notifications** | Subscriptions for reactive updates |
 | **No Direct masterData Access** | All access through the state layer |
+| **No Emojis** | All icons from `core/icons.js` via `_getIcon()` |
 
 ---
 
@@ -38,8 +40,8 @@ js/core/character/
 **PURPOSE:** Single source of truth for all character data. Manages caching, subscriptions, and data loading.
 
 **DEPENDENCIES:**
-- `storage.js` - `masterData`, `saveMasterData`
-- `ids.js` - `generateId`
+- `core/storage.js` - `masterData`, `saveMasterData`
+- `core/ids.js` - `generateId`
 
 ---
 
@@ -98,6 +100,38 @@ js/core/character/
 | **Description** | Gets all deceased characters |
 | **Returns** | `Array` - Array of character objects |
 
+### `CharacterState.getCharactersByGender(gender)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets characters by gender |
+| **Parameters** | `gender` (string) - 'male', 'female', 'unknown' |
+| **Returns** | `Array` - Array of character objects |
+
+### `CharacterState.getCharactersByProfession(roleId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets characters by profession |
+| **Parameters** | `roleId` (string) - Role/profession ID |
+| **Returns** | `Array` - Array of character objects |
+
+### `CharacterState.getCharactersByRank(rankId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets characters by rank |
+| **Parameters** | `rankId` (string) - Rank ID |
+| **Returns** | `Array` - Array of character objects |
+
+### `CharacterState.getCharactersByBirthDecade(decade)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets characters by birth decade |
+| **Parameters** | `decade` (number) - Decade (e.g., 1200) |
+| **Returns** | `Array` - Array of character objects |
+
 ### `CharacterState.searchByName(query)`
 
 | Property | Value |
@@ -105,6 +139,14 @@ js/core/character/
 | **Description** | Searches characters by name |
 | **Parameters** | `query` (string) - Search term |
 | **Returns** | `Array` - Array of matching character objects |
+
+### `CharacterState.getCharactersByAgeRange(minAge, maxAge, asOfYear)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets characters by age range |
+| **Parameters** | `minAge` (number), `maxAge` (number), `asOfYear` (number, optional) |
+| **Returns** | `Array` - Array of character objects |
 
 ### `CharacterState.getTotalCharacterCount()`
 
@@ -166,13 +208,12 @@ js/core/character/
 **PURPOSE:** All write operations for character management including create, update, delete, soft delete, bulk operations, random generation, and profession management.
 
 **DEPENDENCIES:**
-- `character-state.js` - `CharacterState`
-- `character-lifecycle.js` - `CharacterLifecycle`
-- `accessors.js` - `getCharacterById`, `getCharacters`, `getPlaces`, `getPlaceById`, `getRoles`, `getRoleById`, `getNameLists`
-- `ids.js` - `generateId`
-- `time.js` - `getCurrentYearSafe`
-- `names.js` - `getRandomNameFromCountry`, `getRandomSurnameFromCountry`
-- `world.js` - `getLocationTypePriority`, `getLocationTypeById`
+- `character/character-state.js` - `CharacterState`
+- `core/accessors.js` - `getCharacterById`, `getCharacters`, `getPlaces`, `getPlaceById`, `getRoles`, `getRoleById`, `getNameLists`
+- `core/ids.js` - `generateId`
+- `core/time.js` - `getCurrentYearSafe`
+- `core/names.js` - `getRandomNameFromCountry`, `getRandomSurnameFromCountry`
+- `core/world.js` - `getLocationTypePriority`, `getLocationTypeById`
 
 ---
 
@@ -436,115 +477,14 @@ js/core/character/
 **PURPOSE:** All read-only queries for character data. No side effects, no mutations.
 
 **DEPENDENCIES:**
-- `character-state.js` - `CharacterState`
-- `accessors.js` - `getCharacterById`, `getCharacters`, `getPlaceById`, `getPlaces`
-- `time.js` - `calculateAge`, `getCurrentYearSafe`
-- `world.js` - `getCurrentLocation`, `getActiveRankDisplay`
+- `character/character-state.js` - `CharacterState`
+- `core/accessors.js` - `getCharacterById`, `getCharacters`, `getPlaceById`, `getPlaces`
+- `core/time.js` - `calculateAge`, `getCurrentYearSafe`
+- `core/world.js` - `getCurrentLocation`, `getActiveRankDisplay`
 
 ---
 
 ## Core Queries
-
-### `CharacterQueries.getCharacter(id)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a single character by ID |
-| **Parameters** | `id` (string) - Character ID |
-| **Returns** | `Object|null` - Character object or null |
-
-### `CharacterQueries.getAllCharacters()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all characters |
-| **Returns** | `Array` - Array of character objects |
-
-### `CharacterQueries.getLivingCharacters()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all living characters |
-| **Returns** | `Array` - Array of character objects |
-
-### `CharacterQueries.getDeceasedCharacters()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all deceased characters |
-| **Returns** | `Array` - Array of character objects |
-
----
-
-## Filter Queries
-
-### `CharacterQueries.getCharactersByGender(gender)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets characters by gender |
-| **Parameters** | `gender` (string) - 'male', 'female', or 'unknown' |
-| **Returns** | `Array` - Array of character objects |
-
-### `CharacterQueries.getCharactersByLocation(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets characters by location |
-| **Parameters** | `locationId` (string) - Location ID |
-| **Returns** | `Array` - Array of character objects |
-
-### `CharacterQueries.getCharactersByHousehold(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets characters by household |
-| **Parameters** | `householdId` (string) - Household ID |
-| **Returns** | `Array` - Array of character objects |
-
-### `CharacterQueries.getCharactersByAgeRange(minAge, maxAge, asOfYear)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets characters by age range |
-| **Parameters** | `minAge` (number), `maxAge` (number), `asOfYear` (number, optional) |
-| **Returns** | `Array` - Array of character objects |
-
-### `CharacterQueries.getCharactersByProfession(roleId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets characters by profession |
-| **Parameters** | `roleId` (string) - Role/profession ID |
-| **Returns** | `Array` - Array of character objects |
-
-### `CharacterQueries.getCharactersByProfessionSkill(roleId, minSkill)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets characters with a profession at or above a skill level |
-| **Parameters** | `roleId` (string), `minSkill` (number) |
-| **Returns** | `Array` - Array of character objects |
-
-### `CharacterQueries.getCharactersByRank(rankId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets characters by rank |
-| **Parameters** | `rankId` (string) - Rank ID |
-| **Returns** | `Array` - Array of character objects |
-
-### `CharacterQueries.getMasterCharacters(roleId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all master characters (skill level >= 76) in a profession |
-| **Parameters** | `roleId` (string, optional) - Filter by role |
-| **Returns** | `Array` - Array of character objects |
-
----
-
-## Search Queries
 
 ### `CharacterQueries.searchCharacters(query)`
 
@@ -552,6 +492,14 @@ js/core/character/
 |----------|-------|
 | **Description** | Searches characters by name (full name matching) |
 | **Parameters** | `query` (string) - Search term |
+| **Returns** | `Array` - Array of matching character objects |
+
+### `CharacterQueries.readCharactersByName(name)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Alias for searchCharacters |
+| **Parameters** | `name` (string) - Search term |
 | **Returns** | `Array` - Array of matching character objects |
 
 ---
@@ -612,6 +560,50 @@ js/core/character/
 | **Parameters** | `id` (string) - Character ID |
 | **Returns** | `Object` - Surname history |
 
+---
+
+## Profession Skill Queries
+
+### `CharacterQueries.getCharactersByProfessionSkill(roleId, minSkill)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets characters with a profession at or above a minimum skill level |
+| **Parameters** | `roleId` (string), `minSkill` (number 0-100) |
+| **Returns** | `Array` - Array of character objects |
+
+### `CharacterQueries.getMasterCharacters(roleId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all master characters (skill level >= 76) in a profession |
+| **Parameters** | `roleId` (string, optional) - Filter by role |
+| **Returns** | `Array` - Array of character objects |
+
+---
+
+## Education Queries
+
+### `CharacterQueries.getCharactersByEducationStatus(status, institutionId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets characters by education status |
+| **Parameters** | `status` (string) - 'enrolled', 'graduated', 'withdrawn', 'never_attended' |
+| **Returns** | `Array` - Array of character objects |
+
+### `CharacterQueries.getCharactersNotInEducation(minAge, maxAge)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets school-age characters not enrolled in any education institution |
+| **Parameters** | `minAge` (number, default 7), `maxAge` (number, default 16) |
+| **Returns** | `Array` - Array of character objects |
+
+---
+
+## Statistics
+
 ### `CharacterQueries.getCharacterStatistics()`
 
 | Property | Value |
@@ -643,37 +635,17 @@ js/core/character/
 
 ---
 
-## Education Queries
-
-### `CharacterQueries.getCharactersByEducationStatus(status, institutionId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets characters by education status |
-| **Parameters** | `status` (string) - 'enrolled', 'graduated', 'withdrawn', 'never_attended' |
-| **Returns** | `Array` - Array of character objects |
-
-### `CharacterQueries.getCharactersNotInEducation(minAge, maxAge)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets school-age characters not enrolled |
-| **Parameters** | `minAge` (number, default 7), `maxAge` (number, default 16) |
-| **Returns** | `Array` - Array of character objects |
-
----
-
 # 4. CHARACTER-LIFECYCLE.JS
 
 **PURPOSE:** Business logic for character lifecycle (birth, aging, death, inheritance).
 
 **DEPENDENCIES:**
-- `character-state.js` - `CharacterState`
-- `character-commands.js` - `CharacterCommands`
-- `character-queries.js` - `CharacterQueries`
-- `time.js` - `calculateAge`, `getCurrentYearSafe`
-- `constants.js` - `AGE_GROUPS`, `LIFE_STAGES`, `DEATH_CAUSES`
-- `randomness.js` - `chance`, `pickRandom`, `random`
+- `character/character-state.js` - `CharacterState`
+- `character/character-commands.js` - `CharacterCommands`
+- `character/character-queries.js` - `CharacterQueries`
+- `core/time.js` - `calculateAge`, `getCurrentYearSafe`
+- `core/constants.js` - `AGE_GROUPS`, `LIFE_STAGES`, `DEATH_CAUSES`
+- `core/randomness.js` - `chance`, `pickRandom`, `random`
 
 ---
 
@@ -760,7 +732,7 @@ js/core/character/
 
 | Property | Value |
 |----------|-------|
-| **Description** | Gets the age group icon (SVG) |
+| **Description** | Gets the age group icon (SVG from icons.js) |
 | **Parameters** | `group` (string) - Age group key |
 | **Returns** | `string` - SVG icon HTML |
 
@@ -919,9 +891,9 @@ Fell from a height, Drowning, Fire, Hunting accident, Crushed by falling object,
 **PURPOSE:** UI rendering for character lists and cards.
 
 **DEPENDENCIES:**
-- `character-queries.js` - `CharacterQueries`
-- `formatting.js` - `escapeHtml`
-- `icons.js` - `Icons`
+- `character/character-queries.js` - `CharacterQueries`
+- `core/formatting.js` - `escapeHtml`
+- `core/icons.js` - `Icons`
 
 ---
 
@@ -960,12 +932,12 @@ Fell from a height, Drowning, Fire, Hunting accident, Crushed by falling object,
 **PURPOSE:** UI modals for character management (CRUD, details, deletion).
 
 **DEPENDENCIES:**
-- `modals-core.js` - `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon`
-- `modals-char-select.js` - `openCharacterSelector`
-- `character-state.js` - `CharacterState`
-- `character-commands.js` - `CharacterCommands`
-- `character-queries.js` - `CharacterQueries`
-- `character-lifecycle.js` - `CharacterLifecycle`
+- `core/modals-core.js` - `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon`
+- `core/modals-char-select.js` - `openCharacterSelector`
+- `character/character-state.js` - `CharacterState`
+- `character/character-commands.js` - `CharacterCommands`
+- `character/character-queries.js` - `CharacterQueries`
+- `character/character-lifecycle.js` - `CharacterLifecycle`
 
 ---
 
@@ -1113,7 +1085,12 @@ Fell from a height, Drowning, Fire, Hunting accident, Crushed by falling object,
 | `getCharactersByStatus(status)` | Query | Filter by status |
 | `getLivingCharacters()` | Query | Get living only |
 | `getDeceasedCharacters()` | Query | Get deceased only |
+| `getCharactersByGender(gender)` | Query | Filter by gender |
+| `getCharactersByProfession(roleId)` | Query | Filter by profession |
+| `getCharactersByRank(rankId)` | Query | Filter by rank |
+| `getCharactersByBirthDecade(decade)` | Query | Filter by birth decade |
 | `searchByName(query)` | Query | Search by name |
+| `getCharactersByAgeRange(min, max, year)` | Query | Filter by age |
 | `invalidateCache()` | Command | Clear all caches |
 | `subscribe(callback)` | Command | Subscribe to changes |
 | `getTotalCharacterCount()` | Query | Get total count |
@@ -1153,26 +1130,17 @@ Fell from a height, Drowning, Fire, Hunting accident, Crushed by falling object,
 
 | Function | Type | Description |
 |----------|------|-------------|
-| `getCharacter(id)` | Query | Get character by ID |
-| `getAllCharacters()` | Query | Get all characters |
-| `getLivingCharacters()` | Query | Get living only |
-| `getDeceasedCharacters()` | Query | Get deceased only |
-| `getCharactersByGender(gender)` | Query | Filter by gender |
-| `getCharactersByLocation(locationId)` | Query | Filter by location |
-| `getCharactersByHousehold(householdId)` | Query | Filter by household |
-| `getCharactersByAgeRange(min, max, year)` | Query | Filter by age |
-| `getCharactersByProfession(roleId)` | Query | Filter by profession |
-| `getCharactersByProfessionSkill(roleId, minSkill)` | Query | Filter by skill |
-| `getCharactersByRank(rankId)` | Query | Filter by rank |
-| `getMasterCharacters(roleId)` | Query | Get masters |
 | `searchCharacters(query)` | Query | Search by name |
+| `readCharactersByName(name)` | Query | Search by name (alias) |
 | `getCharacterSummary(id)` | Query | Get summary |
 | `getCharacterProfessions(id)` | Query | Get professions |
 | `getPrimaryProfession(id)` | Query | Get primary profession |
 | `getCharacterSurnameHistory(id)` | Query | Get surname history |
-| `getCharacterStatistics()` | Query | Get statistics |
+| `getCharactersByProfessionSkill(roleId, minSkill)` | Query | Filter by skill |
+| `getMasterCharacters(roleId)` | Query | Get masters |
 | `getCharactersByEducationStatus(status, instId)` | Query | Filter by education |
 | `getCharactersNotInEducation(min, max)` | Query | Get not enrolled |
+| `getCharacterStatistics()` | Query | Get statistics |
 
 ---
 
@@ -1223,116 +1191,39 @@ Fell from a height, Drowning, Fire, Hunting accident, Crushed by falling object,
 
 # 9. DEPENDENCY MAP
 
-## Core Dependencies
+## Core Dependencies (from js/core/)
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    CORE DEPENDENCIES                                       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  modals-core.js ─────────────────────────────────────────────────────────┐ │
-│  ├── openModal()                                                         │ │
-│  ├── closeTopModal()                                                     │ │
-│  ├── _escapeHtml()                                                       │ │
-│  ├── _showToast()                                                        │ │
-│  ├── _getIcon()                                                          │ │
-│  ├── _getCurrentYear()                                                   │ │
-│  └── _getCharacterById()                                                 │ │
-│                                                                             │
-│  modals-char-select.js ──────────────────────────────────────────────────┐ │
-│  └── openCharacterSelector()                                             │ │
-│                                                                             │
-│  accessors.js ──────────────────────────────────────────────────────────┐ │
-│  ├── getCharacterById()                                                  │ │
-│  ├── getCharacters()                                                     │ │
-│  ├── getPlaceById()                                                      │ │
-│  ├── getPlaces()                                                         │ │
-│  ├── getCurrentYear()                                                    │ │
-│  ├── getLocationTypeById()                                               │ │
-│  ├── getRoles()                                                          │ │
-│  ├── getRoleById()                                                       │ │
-│  ├── getNameLists()                                                      │ │
-│  ├── getActiveRankDisplay()                                              │ │
-│  └── getHousehold()                                                      │ │
-│                                                                             │
-│  storage.js ────────────────────────────────────────────────────────────┐ │
-│  └── saveMasterData()                                                    │ │
-│                                                                             │
-│  ids.js ────────────────────────────────────────────────────────────────┐ │
-│  └── generateId()                                                        │ │
-│                                                                             │
-│  time.js ───────────────────────────────────────────────────────────────┐ │
-│  ├── calculateAge()                                                      │ │
-│  └── getCurrentYearSafe()                                                │ │
-│                                                                             │
-│  constants.js ──────────────────────────────────────────────────────────┐ │
-│  ├── AGE_GROUPS                                                          │ │
-│  ├── LIFE_STAGES                                                         │ │
-│  └── DEATH_CAUSES                                                        │ │
-│                                                                             │
-│  icons.js ──────────────────────────────────────────────────────────────┐ │
-│  └── Icons                                                               │ │
-│                                                                             │
-│  formatting.js ─────────────────────────────────────────────────────────┐ │
-│  └── escapeHtml()                                                        │ │
-│                                                                             │
-│  names.js ──────────────────────────────────────────────────────────────┐ │
-│  ├── getRandomNameFromCountry()                                          │ │
-│  └── getRandomSurnameFromCountry()                                       │ │
-│                                                                             │
-│  world.js ──────────────────────────────────────────────────────────────┐ │
-│  ├── getLocationTypePriority()                                           │ │
-│  └── getLocationTypeById()                                               │ │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+js/core/
+├── accessors.js                   # getCharacterById, getCharacters, getPlaces, getRoles, getNameLists
+├── constants.js                   # AGE_GROUPS, LIFE_STAGES, DEATH_CAUSES
+├── formatting.js                  # escapeHtml
+├── icons.js                       # Icons object
+├── ids.js                         # generateId
+├── modals-char-select.js          # openCharacterSelector
+├── modals-core.js                 # openModal, closeTopModal, _showToast
+├── names.js                       # getRandomNameFromCountry, getRandomSurnameFromCountry
+├── randomness.js                  # chance, pickRandom, random
+├── storage.js                     # masterData, saveMasterData
+├── time.js                        # calculateAge, getCurrentYearSafe
+└── world.js                       # getLocationTypePriority, getCurrentLocation, getActiveRankDisplay
 ```
 
 ## Character System Dependencies
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    CHARACTER SYSTEM DEPENDENCIES                           │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  character-state.js ─────────────────────────────────────────────────────┐ │
-│  ├── storage.js                                                          │ │
-│  └── ids.js                                                              │ │
-│                                                                             │
-│  character-commands.js ─────────────────────────────────────────────────┐ │
-│  ├── character-state.js                                                  │ │
-│  ├── accessors.js                                                        │ │
-│  ├── ids.js                                                              │ │
-│  ├── time.js                                                             │ │
-│  ├── names.js                                                            │ │
-│  └── world.js                                                            │ │
-│                                                                             │
-│  character-queries.js ──────────────────────────────────────────────────┐ │
-│  ├── character-state.js                                                  │ │
-│  ├── accessors.js                                                        │ │
-│  └── time.js                                                             │ │
-│                                                                             │
-│  character-lifecycle.js ────────────────────────────────────────────────┐ │
-│  ├── character-state.js                                                  │ │
-│  ├── character-commands.js                                               │ │
-│  ├── character-queries.js                                                │ │
-│  ├── time.js                                                             │ │
-│  ├── constants.js                                                        │ │
-│  └── randomness.js                                                       │ │
-│                                                                             │
-│  character-ui-list.js ──────────────────────────────────────────────────┐ │
-│  ├── character-queries.js                                                │ │
-│  ├── formatting.js                                                       │ │
-│  └── icons.js                                                            │ │
-│                                                                             │
-│  modals-character.js ───────────────────────────────────────────────────┐ │
-│  ├── modals-core.js                                                      │ │
-│  ├── modals-char-select.js                                               │ │
-│  ├── character-state.js                                                  │ │
-│  ├── character-commands.js                                               │ │
-│  ├── character-queries.js                                                │ │
-│  └── character-lifecycle.js                                              │ │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+js/character/
+├── character-state.js ───────────► js/core/{storage.js, ids.js}
+├── character-commands.js ────────► js/core/{accessors.js, ids.js, time.js, names.js, world.js}
+│                                 └► js/character/character-state.js
+├── character-queries.js ─────────► js/core/{accessors.js, time.js, world.js}
+│                                 └► js/character/character-state.js
+├── character-lifecycle.js ───────► js/core/{time.js, constants.js, randomness.js}
+│                                 └► js/character/{character-state.js, character-commands.js, character-queries.js}
+├── character-ui-list.js ─────────► js/core/{formatting.js, icons.js}
+│                                 └► js/character/character-queries.js
+└── modals-character.js ──────────► js/core/{modals-core.js, modals-char-select.js}
+                                 └► js/character/{character-state.js, character-commands.js, character-queries.js, character-lifecycle.js}
 ```
 
 ---
@@ -1354,7 +1245,7 @@ All modules implement recursion guards to prevent infinite loops:
 
 # 11. ICON POLICY
 
-All icons must come from `icons.js` via the `_getIcon()` function.
+All icons must come from `js/core/icons.js` via the `_getIcon()` function.
 
 ## Rules
 
@@ -1405,43 +1296,6 @@ For backward compatibility, legacy aliases are provided:
 
 ---
 
-# 13. MIGRATION NOTES
-
-## What Was Preserved
-
-| Category | Count | Status |
-|----------|-------|--------|
-| Character CRUD | 15 | ✅ Preserved |
-| Character Creation | 14 | ✅ Preserved (with new random generator) |
-| Character Lifecycle | 19 | ✅ Preserved |
-| Profession Management | 10 | ✅ Preserved |
-| Surname History | 5 | ✅ Preserved |
-
-## What Was Added (NEW)
-
-| Function | Priority | Description |
-|----------|----------|-------------|
-| `createRandomCharacter()` | 🔴 HIGH | Fully automatic random character generation |
-| `softDeleteCharacter()` | 🟡 MEDIUM | Non-destructive deletion |
-| `restoreSoftDeletedCharacter()` | 🟡 MEDIUM | Restore soft-deleted character |
-| `getSoftDeletedCharacters()` | 🟡 MEDIUM | Get all soft-deleted characters |
-| `purgeSoftDeletedCharacters()` | 🟡 MEDIUM | Permanently remove soft-deleted |
-| `bulkCreateCharacters()` | 🟡 MEDIUM | Create multiple at once |
-| `bulkUpdateCharacters()` | 🟡 MEDIUM | Update multiple at once |
-| `bulkDeleteCharacters()` | 🟡 MEDIUM | Delete multiple at once |
-
-## What Was Improved
-
-| Area | Improvement |
-|------|-------------|
-| **Cache Management** | Full cache invalidation with recursion guards |
-| **Error Handling** | Consistent result objects with success/reason |
-| **Event Emission** | Character changes broadcast via events |
-| **Documentation** | Complete JSDoc comments on all functions |
-| **Architecture** | Clean separation of state, commands, queries |
-
----
-
 # 14. INTEGRATION WITH OTHER SYSTEMS
 
 ## Character ↔ Household Integration
@@ -1470,4 +1324,4 @@ For backward compatibility, legacy aliases are provided:
 
 **Generated:** 2026-07-12
 **Version:** 2.0
-**File Count:** 6 core modules + 2 supporting files
+**File Count:** 6 core modules

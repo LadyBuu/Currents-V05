@@ -18,6 +18,8 @@
  *   - NO emojis
  *   - NO icons in confirm/cancel buttons (plain text only)
  * 
+ * UPDATED: Removed "Create Role" button - users must select from existing roles only
+ * 
  * =============================================================================
  */
 
@@ -447,8 +449,9 @@
 
                     if (result && result.success) {
                         var char = _getCharacterById(characterId);
+                        var roleMsg = position.requiredRoleId ? ' (Role: ' + _getRoleById(position.requiredRoleId)?.name + ')' : '';
                         var endMsg = endYearValue ? ' until ' + endYearValue : '';
-                        _showToast((char ? char.name : 'Staff member') + ' assigned as ' + title + endMsg, 'success');
+                        _showToast((char ? char.name : 'Staff member') + ' assigned as ' + title + roleMsg + endMsg, 'success');
                         _closeTopModal();
                         _processingModal = false;
                         if (onSuccess) {
@@ -950,7 +953,8 @@
                     });
 
                     if (results.success > 0) {
-                        _showToast('Assigned ' + results.success + ' staff members to ' + position.name, 'success');
+                        var roleMsg = position.requiredRoleId ? ' (Role: ' + _getRoleById(position.requiredRoleId)?.name + ')' : '';
+                        _showToast('Assigned ' + results.success + ' staff members to ' + position.name + roleMsg, 'success');
                         _closeTopModal();
                         _processingModal = false;
                         if (onSuccess) {

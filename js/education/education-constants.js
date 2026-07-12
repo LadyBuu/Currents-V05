@@ -7,7 +7,7 @@
  * 
  * DEPENDENCIES: None (pure constants)
  * 
- * UPDATED: Added DEFAULT_TUITION_BY_TYPE, DEFAULT_TUITION, tuition constants
+ * UPDATED: Removed requiredTeacherSkill from INSTITUTION_TYPES
  * 
  * =============================================================================
  */
@@ -88,7 +88,7 @@
     }
 
     // =============================================================================
-    // 5. INSTITUTION TYPES
+    // 5. INSTITUTION TYPES (NO requiredTeacherSkill)
     // =============================================================================
 
     var INSTITUTION_TYPES = {
@@ -102,8 +102,7 @@
             requiredYears: 3,
             minPopulation: 200,
             description: 'Small local school for basic education',
-            skillGainPerYear: 10,
-            requiredTeacherSkill: 51
+            skillGainPerYear: 10
         },
         GUILD_HALL: { 
             id: 'guild_hall', 
@@ -115,8 +114,7 @@
             requiredYears: 5,
             minPopulation: 1000,
             description: 'Trade and craft education center',
-            skillGainPerYear: 10,
-            requiredTeacherSkill: 51
+            skillGainPerYear: 10
         },
         CATHEDRAL_SCHOOL: { 
             id: 'cathedral_school', 
@@ -128,8 +126,7 @@
             requiredYears: 4,
             minPopulation: 500,
             description: 'Religious and classical education',
-            skillGainPerYear: 10,
-            requiredTeacherSkill: 60
+            skillGainPerYear: 10
         },
         UNIVERSITY: { 
             id: 'university', 
@@ -141,8 +138,7 @@
             requiredYears: 6,
             minPopulation: 5000,
             description: 'Higher education institution',
-            skillGainPerYear: 12,
-            requiredTeacherSkill: 76
+            skillGainPerYear: 12
         },
         MILITARY_ACADEMY: { 
             id: 'military_academy', 
@@ -154,8 +150,7 @@
             requiredYears: 4,
             minPopulation: 2000,
             description: 'Officer training and military science',
-            skillGainPerYear: 10,
-            requiredTeacherSkill: 60
+            skillGainPerYear: 10
         },
         COURT_TUTOR: { 
             id: 'court_tutor', 
@@ -167,8 +162,7 @@
             requiredYears: 4,
             minPopulation: 100,
             description: 'Private education for nobility',
-            skillGainPerYear: 15,
-            requiredTeacherSkill: 76
+            skillGainPerYear: 15
         },
         SPECIALIZED_SCHOOL: {
             id: 'specialized_school',
@@ -180,18 +174,14 @@
             requiredYears: 4,
             minPopulation: 500,
             description: 'School focused on a specific profession',
-            skillGainPerYear: 12,
-            requiredTeacherSkill: 60
+            skillGainPerYear: 12
         }
     };
 
     // =============================================================================
-    // 6. TUITION CONSTANTS (NEW)
+    // 6. TUITION CONSTANTS
     // =============================================================================
 
-    /**
-     * Default tuition by institution type (in gold per year)
-     */
     var DEFAULT_TUITION_BY_TYPE = {
         'village_school': 5,
         'guild_hall': 15,
@@ -202,27 +192,14 @@
         'specialized_school': 20
     };
 
-    /**
-     * Default tuition if type not found
-     */
     var DEFAULT_TUITION = 10;
-
-    /**
-     * Tuition bounds
-     */
     var MIN_TUITION = 0;
     var MAX_TUITION = 200;
 
-    /**
-     * Tuition modifiers
-     */
-    var TUITION_REPUTATION_MODIFIER_MIN = 0.75;  // Lowest reputation (0) gives 75% of base
-    var TUITION_REPUTATION_MODIFIER_MAX = 1.25;  // Highest reputation (100) gives 125% of base
-    var TUITION_REPUTATION_NEUTRAL = 50;         // Reputation at which modifier = 1.0
+    var TUITION_REPUTATION_MODIFIER_MIN = 0.75;
+    var TUITION_REPUTATION_MODIFIER_MAX = 1.25;
+    var TUITION_REPUTATION_NEUTRAL = 50;
 
-    /**
-     * Tuition type multipliers
-     */
     var TUITION_TYPE_MULTIPLIERS = {
         'village_school': 1.0,
         'guild_hall': 1.0,
@@ -234,7 +211,28 @@
     };
 
     // =============================================================================
-    // 7. EXPORTS
+    // 7. ROLE CATEGORY OPTIONS (for specialization)
+    // =============================================================================
+
+    var ROLE_CATEGORY_OPTIONS = {
+        'combat': { id: 'combat', name: 'Combat & Military', icon: '⚔' },
+        'craft': { id: 'craft', name: 'Craftsmanship', icon: '⌇' },
+        'trade': { id: 'trade', name: 'Trade & Commerce', icon: '⌇' },
+        'agriculture': { id: 'agriculture', name: 'Agriculture & Fishing', icon: '⌇' },
+        'academic': { id: 'academic', name: 'Academic & Scholar', icon: '⌇' },
+        'medical': { id: 'medical', name: 'Medical & Healing', icon: '⌆' },
+        'religious': { id: 'religious', name: 'Religious', icon: '⌆' },
+        'admin': { id: 'admin', name: 'Administration', icon: '⌇' },
+        'service': { id: 'service', name: 'Service', icon: '⌇' },
+        'art': { id: 'art', name: 'Artistic', icon: '⌇' },
+        'government': { id: 'government', name: 'Government & Public Service', icon: '⌇' },
+        'household': { id: 'household', name: 'Household & Domestic Service', icon: '⌇' },
+        'industrial': { id: 'industrial', name: 'Industry & Manufacturing', icon: '⌇' },
+        'other': { id: 'other', name: 'Other', icon: '⌇' }
+    };
+
+    // =============================================================================
+    // 8. EXPORTS
     // =============================================================================
 
     window.EDUCATION_LEVELS = EDUCATION_LEVELS;
@@ -242,6 +240,7 @@
     window.HIGHER_SUBJECTS = HIGHER_SUBJECTS;
     window.ALL_SUBJECTS = ALL_SUBJECTS;
     window.INSTITUTION_TYPES = INSTITUTION_TYPES;
+    window.ROLE_CATEGORY_OPTIONS = ROLE_CATEGORY_OPTIONS;
 
     window.DEFAULT_TUITION_BY_TYPE = DEFAULT_TUITION_BY_TYPE;
     window.DEFAULT_TUITION = DEFAULT_TUITION;
@@ -259,6 +258,7 @@
             HIGHER_SUBJECTS: HIGHER_SUBJECTS,
             ALL_SUBJECTS: ALL_SUBJECTS,
             INSTITUTION_TYPES: INSTITUTION_TYPES,
+            ROLE_CATEGORY_OPTIONS: ROLE_CATEGORY_OPTIONS,
             DEFAULT_TUITION_BY_TYPE: DEFAULT_TUITION_BY_TYPE,
             DEFAULT_TUITION: DEFAULT_TUITION,
             MIN_TUITION: MIN_TUITION,

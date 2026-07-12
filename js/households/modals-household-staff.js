@@ -11,11 +11,14 @@
  *   - household-commands.js (HouseholdCommands)
  *   - role-state.js (RoleState) - for role selection
  *   - role-queries.js (RoleQueries) - for role queries
+ *   - modals-role-select.js (openRoleSelector, openRolePickerForPosition)
  * 
  * ICON POLICY:
  *   - All icons from icons.js via _getIcon()
  *   - NO emojis
  *   - NO icons in confirm/cancel buttons (plain text only)
+ * 
+ * UPDATED: Removed "Create Role" button - users must select from existing roles only
  * 
  * =============================================================================
  */
@@ -121,6 +124,20 @@
             return window._openCharacterSelector(options);
         }
         _showToast('Character selector not available', 'error');
+        return null;
+    }
+
+    function _openRoleSelector(options) {
+        if (typeof window.openRoleSelector === 'function') {
+            return window.openRoleSelector(options);
+        }
+        if (typeof window.openRolePickerForPosition === 'function') {
+            return window.openRolePickerForPosition(options);
+        }
+        if (typeof window._openRoleSelector === 'function') {
+            return window._openRoleSelector(options);
+        }
+        _showToast('Role selector not available', 'error');
         return null;
     }
 
@@ -235,10 +252,13 @@
                 '</div>' +
                 '<div class="form-group" style="margin-bottom: 12px;">' +
                 '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Required Role</label>' +
-                '<select id="newPosRequiredRole" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                roleOptions +
-                '</select>' +
-                '<small style="font-size: 0.55rem; color: var(--dim);">Optional: Link this position to a role (e.g., "Servant")</small>' +
+                '<div style="display: flex; gap: 4px;">' +
+                '<input type="text" id="newPosRequiredRoleDisplay" placeholder="Select a role..." readonly style="flex: 1; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem; cursor: pointer;">' +
+                '<input type="hidden" id="newPosRequiredRoleId">' +
+                '<button id="newPosSelectRoleBtn" class="btn small" style="padding: 4px 8px; font-size: 0.6rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer;">Select</button>' +
+                '<button id="newPosClearRoleBtn" class="btn small" style="padding: 4px 8px; font-size: 0.6rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Clear</button>' +
+                '</div>' +
+                '<small style="font-size: 0.55rem; color: var(--dim);">Optional: Link this position to a role. Characters must have this role to be assigned.</small>' +
                 '</div>' +
                 '<div class="form-group" style="margin-bottom: 12px;">' +
                 '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Minimum Skill Level</label>' +
@@ -254,7 +274,7 @@
                 '<input type="text" id="newPosDescription" placeholder="e.g., Responsible for meal preparation" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
                 '</div>' +
                 '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
-                'Positions define specific roles within a household. Staff can be assigned to positions, and positions can require a specific role (e.g., "Servant").' +
+                'Positions define specific roles within a household. Staff can be assigned to positions, and positions can require a specific role.' +
                 '</div>' +
                 '</div>';
 
@@ -268,11 +288,43 @@
                     if (nameInput) {
                         setTimeout(function() { nameInput.focus(); }, 100);
                     }
+
+                    // Select role button
+                    var selectBtn = document.getElementById('newPosSelectRoleBtn');
+                    var displayInput = document.getElementById('newPosRequiredRoleDisplay');
+                    var hiddenInput = document.getElementById('newPosRequiredRoleId');
+                    var clearBtn = document.getElementById('newPosClearRoleBtn');
+
+                    if (selectBtn) {
+                        selectBtn.onclick = function() {
+                            _openRoleSelector({
+                                title: 'Select Required Role',
+                                context: 'household',
+                                onSelect: function(role) {
+                                    if (role) {
+                                        displayInput.value = role.name;
+                                        hiddenInput.value = role.id;
+                                        _showToast('Selected role: ' + role.name, 'success');
+                                    }
+                                },
+                                onCancel: function() {
+                                    // Do nothing
+                                }
+                            });
+                        };
+                    }
+
+                    if (clearBtn) {
+                        clearBtn.onclick = function() {
+                            displayInput.value = '';
+                            hiddenInput.value = '';
+                        };
+                    }
                 },
                 onConfirm: function() {
                     var name = document.getElementById('newPosName').value.trim();
                     var departmentId = document.getElementById('newPosDepartment').value || null;
-                    var requiredRoleId = document.getElementById('newPosRequiredRole').value || null;
+                    var requiredRoleId = document.getElementById('newPosRequiredRoleId').value || null;
                     var minSkillLevel = parseInt(document.getElementById('newPosMinSkill').value) || 0;
                     var priority = parseInt(document.getElementById('newPosPriority').value) || 10;
                     var description = document.getElementById('newPosDescription').value.trim();
@@ -293,7 +345,8 @@
                     });
 
                     if (result && result.success) {
-                        _showToast('Position "' + name + '" created', 'success');
+                        var roleMsg = requiredRoleId ? ' (Role: ' + _getRoleById(requiredRoleId)?.name + ')' : '';
+                        _showToast('Position "' + name + '" created' + roleMsg, 'success');
                         _closeTopModal();
                         _processingStaffModal = false;
                         if (onSuccess) {
@@ -368,9 +421,12 @@
                 '</div>' +
                 '<div class="form-group" style="margin-bottom: 12px;">' +
                 '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Required Role</label>' +
-                '<select id="editPosRequiredRole" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                roleOptions +
-                '</select>' +
+                '<div style="display: flex; gap: 4px;">' +
+                '<input type="text" id="editPosRequiredRoleDisplay" value="' + (position.requiredRoleId ? _getRoleById(position.requiredRoleId)?.name || '' : '') + '" placeholder="Select a role..." readonly style="flex: 1; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem; cursor: pointer;">' +
+                '<input type="hidden" id="editPosRequiredRoleId" value="' + (position.requiredRoleId || '') + '">' +
+                '<button id="editPosSelectRoleBtn" class="btn small" style="padding: 4px 8px; font-size: 0.6rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer;">Select</button>' +
+                '<button id="editPosClearRoleBtn" class="btn small" style="padding: 4px 8px; font-size: 0.6rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Clear</button>' +
+                '</div>' +
                 '<small style="font-size: 0.55rem; color: var(--dim);">Optional: Link this position to a role</small>' +
                 '</div>' +
                 '<div class="form-group" style="margin-bottom: 12px;">' +
@@ -392,10 +448,45 @@
                 content: modalContent,
                 confirmText: 'Save Changes',
                 cancelText: 'Cancel',
+                onOpen: function() {
+                    // Select role button
+                    var selectBtn = document.getElementById('editPosSelectRoleBtn');
+                    var displayInput = document.getElementById('editPosRequiredRoleDisplay');
+                    var hiddenInput = document.getElementById('editPosRequiredRoleId');
+                    var clearBtn = document.getElementById('editPosClearRoleBtn');
+
+                    if (selectBtn) {
+                        selectBtn.onclick = function() {
+                            var currentId = hiddenInput.value || null;
+                            _openRoleSelector({
+                                title: 'Select Required Role',
+                                context: 'household',
+                                preselectedId: currentId,
+                                onSelect: function(role) {
+                                    if (role) {
+                                        displayInput.value = role.name;
+                                        hiddenInput.value = role.id;
+                                        _showToast('Selected role: ' + role.name, 'success');
+                                    }
+                                },
+                                onCancel: function() {
+                                    // Do nothing
+                                }
+                            });
+                        };
+                    }
+
+                    if (clearBtn) {
+                        clearBtn.onclick = function() {
+                            displayInput.value = '';
+                            hiddenInput.value = '';
+                        };
+                    }
+                },
                 onConfirm: function() {
                     var name = document.getElementById('editPosName').value.trim();
                     var departmentId = document.getElementById('editPosDepartment').value || null;
-                    var requiredRoleId = document.getElementById('editPosRequiredRole').value || null;
+                    var requiredRoleId = document.getElementById('editPosRequiredRoleId').value || null;
                     var minSkillLevel = parseInt(document.getElementById('editPosMinSkill').value) || 0;
                     var priority = parseInt(document.getElementById('editPosPriority').value) || 10;
                     var description = document.getElementById('editPosDescription').value.trim();
@@ -600,6 +691,7 @@
                         '<strong>' + _escapeHtml(c.name) + ' ' + _escapeHtml(c.surname || '') + '</strong>' +
                         '<span style="font-size: 0.5rem; color: var(--dim); margin-left: 6px;">' + genderSymbol + ' ' + age + 'y</span>' +
                         (position.requiredRoleId ? '<span style="font-size: 0.45rem; margin-left: 6px; color: ' + (hasRole ? 'var(--success)' : 'var(--warn)') + ';">' + roleStatus + '</span>' : '') +
+                        (skillLevel > 0 ? '<span style="font-size:0.45rem; color:var(--accent); margin-left:4px;">(Skill: ' + skillLevel + ')</span>' : '') +
                         '</div>' +
                         '<div style="font-size: 0.5rem; color: var(--dim);">' +
                         (c.professions && c.professions.length > 0 ? c.professions.map(function(p) { return p.name; }).join(', ') : 'No roles') +
@@ -631,6 +723,7 @@
                 '<input type="checkbox" id="assignAddRoleIfMissing" checked>' +
                 '<span>Add required role to character if missing</span>' +
                 '</label>' +
+                '<small style="font-size: 0.5rem; color: var(--dim);">If unchecked, character must already have the required role</small>' +
                 '</div>' +
                 '<div class="form-group" style="margin-bottom: 12px;">' +
                 '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Custom Title (optional)</label>' +
@@ -673,7 +766,8 @@
 
                     if (result && result.success) {
                         var char = _getCharacterById(selectedCharId);
-                        _showToast((char ? char.name : 'Character') + ' assigned as ' + title, 'success');
+                        var roleMsg = position.requiredRoleId ? ' (Role: ' + _getRoleById(position.requiredRoleId)?.name + ')' : '';
+                        _showToast((char ? char.name : 'Character') + ' assigned as ' + title + roleMsg, 'success');
                         _closeTopModal();
                         _processingStaffModal = false;
                         if (onSuccess) {
@@ -790,7 +884,7 @@
                         '<div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 6px;">' +
                         '<div>' +
                         '<strong>' + _escapeHtml(p.name) + '</strong>' +
-                        '<span style="font-size: 0.55rem; color: var(--dim); margin-left: 8px;">Role: ' + _escapeHtml(roleName) + '</span>' +
+                        '<span style="font-size: 0.55rem; color: var(--accent); margin-left: 8px;">Role: ' + _escapeHtml(roleName) + '</span>' +
                         (p.minSkillLevel > 0 ? '<span style="font-size: 0.55rem; color: var(--dim); margin-left: 4px;">(Min: ' + p.minSkillLevel + ')</span>' : '') +
                         '</div>' +
                         '<div style="font-size: 0.55rem; color: var(--accent);">' +
@@ -904,7 +998,7 @@
                         '<div>' +
                         '<strong>' + _escapeHtml(char ? char.name : 'Unknown') + '</strong>' +
                         '<span style="font-size: 0.55rem; color: var(--dim); margin-left: 6px;">' + _escapeHtml(a.title || (pos ? pos.name : 'Unknown')) + '</span>' +
-                        '<span style="font-size: 0.5rem; color: var(--dim); margin-left: 6px;">Role: ' + _escapeHtml(roleName) + '</span>' +
+                        '<span style="font-size: 0.5rem; color: var(--accent); margin-left: 6px;">Role: ' + _escapeHtml(roleName) + '</span>' +
                         (a.skillLevelAtAssignment ? '<span style="font-size: 0.5rem; color: var(--dim); margin-left: 4px;">(Skill: ' + a.skillLevelAtAssignment + ')</span>' : '') +
                         '</div>' +
                         '<div style="font-size: 0.5rem; color: var(--dim);">' +
@@ -1033,7 +1127,7 @@
                         '<div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; background: var(--bg2); border-radius: 4px; border-left: 3px solid ' + (activeAssignments.length > 0 ? 'var(--accent)' : 'var(--border)') + ';">' +
                         '<div>' +
                         '<strong>' + _escapeHtml(p.name) + '</strong>' +
-                        '<span style="font-size: 0.5rem; color: var(--dim); margin-left: 6px;">Role: ' + _escapeHtml(roleName) + '</span>' +
+                        '<span style="font-size: 0.5rem; color: var(--accent); margin-left: 6px;">Role: ' + _escapeHtml(roleName) + '</span>' +
                         (p.minSkillLevel > 0 ? '<span style="font-size: 0.5rem; color: var(--dim); margin-left: 4px;">(Min: ' + p.minSkillLevel + ')</span>' : '') +
                         (assignedChars ? '<div style="font-size: 0.45rem; color: var(--dim);">' + _escapeHtml(assignedChars) + '</div>' : '') +
                         '</div>' +

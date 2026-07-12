@@ -5,12 +5,14 @@
  * 
  * This file contains ALL write operations for education:
  * - Institution CRUD
- * - Teacher management
+ * - Teacher management (NO SKILL CHECKS)
  * - Student management
  * - Headmaster management
  * - Reputation management
  * - Institutions needing teachers
- * - TUITION MANAGEMENT (NEW)
+ * - Tuition management
+ * - SCHOOL OWNERSHIP AND FUNDING
+ * - GRADUATION WITH ROLE GRANTING (UPDATED)
  * 
  * DEPENDENCIES:
  *   - education-state.js (EducationState)
@@ -19,6 +21,9 @@
  *   - accessors.js (getCharacterById, getCharacters, getPlaceById)
  *   - ids.js (generateId)
  *   - time.js (getCurrentYearSafe)
+ *   - roles/role-state.js (RoleState)
+ *   - roles/role-queries.js (RoleQueries)
+ *   - roles/role-commands.js (RoleCommands)
  * 
  * =============================================================================
  */
@@ -51,8 +56,41 @@
     }
 
     function _getRoleById(id) {
+        if (typeof window.RoleState !== 'undefined' && window.RoleState.getRole) {
+            return window.RoleState.getRole(id);
+        }
         if (typeof window.getRoleById === 'function') {
             return window.getRoleById(id);
+        }
+        return null;
+    }
+
+    function _getRoles() {
+        if (typeof window.RoleState !== 'undefined' && window.RoleState.getAllRoles) {
+            return window.RoleState.getAllRoles();
+        }
+        if (typeof window.getRoles === 'function') {
+            return window.getRoles();
+        }
+        return [];
+    }
+
+    function _getCharactersWithRoleDetails(roleId) {
+        if (typeof window.RoleQueries !== 'undefined' && window.RoleQueries.getCharactersWithRoleDetails) {
+            return window.RoleQueries.getCharactersWithRoleDetails(roleId);
+        }
+        if (typeof window.getCharactersWithRoleDetails === 'function') {
+            return window.getCharactersWithRoleDetails(roleId);
+        }
+        return [];
+    }
+
+    function _assignRoleToCharacter(characterId, roleId, options) {
+        if (typeof window.RoleCommands !== 'undefined' && window.RoleCommands.assignRoleToCharacter) {
+            return window.RoleCommands.assignRoleToCharacter(characterId, roleId, options);
+        }
+        if (typeof window.assignRoleToCharacter === 'function') {
+            return window.assignRoleToCharacter(characterId, roleId, options);
         }
         return null;
     }
@@ -97,9 +135,9 @@
         }
     }
 
-    function _recordTeacherHired(institutionId, teacherId, subjectId, year, skill, notes) {
+    function _recordTeacherHired(institutionId, teacherId, subjectId, year, notes) {
         if (typeof window.recordTeacherHired === 'function') {
-            return window.recordTeacherHired(institutionId, teacherId, subjectId, year, skill, notes);
+            return window.recordTeacherHired(institutionId, teacherId, subjectId, year, notes);
         }
         return false;
     }
@@ -161,7 +199,7 @@
     }
 
     // =========================================================================
-    // 3. TUITION HELPERS (NEW)
+    // 3. TUITION HELPERS
     // =========================================================================
 
     function _getTuitionTypeMultiplier(typeId) {
@@ -171,7 +209,21 @@
     function _calculateTuitionAmount(institution, year) {
         if (!institution) return { success: false, reason: 'Institution not found' };
 
-        // Check for manual override
+        // PUBLIC SCHOOLS: tuition is always 0
+        if (institution.ownershipType === 'public') {
+            return {
+                success: true,
+                tuition: 0,
+                breakdown: {
+                    baseTuition: institution.tuitionPerYear || 10,
+                    reason: 'Public school - free tuition',
+                    ownershipType: 'public'
+                },
+                manualOverride: 0
+            };
+        }
+
+        // PRIVATE SCHOOLS: check for manual override
         if (institution.customTuition !== null && institution.customTuition !== undefined) {
             return {
                 success: true,
@@ -179,20 +231,22 @@
                 breakdown: {
                     baseTuition: institution.tuitionPerYear || 10,
                     customOverride: institution.customTuition,
-                    reason: 'Manual override applied'
+                    reason: 'Manual override applied',
+                    ownershipType: 'private'
                 },
                 manualOverride: institution.customTuition
             };
         }
 
-        // Check if tuition is waived
+        // Check if tuition is waived (only for private)
         if (institution.waiveTuition === true) {
             return {
                 success: true,
                 tuition: 0,
                 breakdown: {
                     baseTuition: institution.tuitionPerYear || 10,
-                    reason: 'Tuition waived'
+                    reason: 'Tuition waived',
+                    ownershipType: 'private'
                 },
                 manualOverride: 0
             };
@@ -214,7 +268,6 @@
         }
         repModifier = Math.min(maxMod, Math.max(minMod, repModifier));
 
-        // Type multiplier
         var typeMultiplier = _getTuitionTypeMultiplier(institution.type);
 
         var tuition = baseTuition * repModifier * typeMultiplier;
@@ -228,7 +281,8 @@
                 reputation: reputation,
                 repModifier: Math.round(repModifier * 100) / 100,
                 typeMultiplier: typeMultiplier,
-                customOverride: null
+                customOverride: null,
+                ownershipType: 'private'
             },
             manualOverride: null
         };
@@ -277,7 +331,33 @@
     }
 
     // =========================================================================
-    // 4. INSTITUTION MANAGEMENT
+    // 4. SETTLEMENT HELPERS
+    // =========================================================================
+
+    function _getSettlementData(locationId) {
+        if (typeof window.SettlementState !== 'undefined' && window.SettlementState.getSettlementData) {
+            return window.SettlementState.getSettlementData(locationId);
+        }
+        return null;
+    }
+
+    function _updateSettlementWealth(locationId, delta, reason) {
+        if (typeof window.SettlementCommands !== 'undefined' && window.SettlementCommands.updateWealth) {
+            return window.SettlementCommands.updateWealth(locationId, delta, reason);
+        }
+        return false;
+    }
+
+    function _getSettlementProsperity(locationId) {
+        if (typeof window.SettlementQueries !== 'undefined' && window.SettlementQueries.getSettlementSummary) {
+            var summary = window.SettlementQueries.getSettlementSummary(locationId);
+            return summary ? summary.prosperity || 50 : 50;
+        }
+        return 50;
+    }
+
+    // =========================================================================
+    // 5. INSTITUTION MANAGEMENT
     // =========================================================================
 
     function createInstitution(name, typeId, locationId, options) {
@@ -314,13 +394,52 @@
                 { type: 'subject', id: 'basic_math', name: 'Basic Mathematics', icon: '⌇', baseLearnRate: 10 }
             ];
 
-            // ================================================================
-            // NEW: Tuition fields
-            // ================================================================
+            // Tuition fields
             var tuitionPerYear = options.tuitionPerYear;
             if (tuitionPerYear === undefined || tuitionPerYear === null) {
                 tuitionPerYear = window.DEFAULT_TUITION_BY_TYPE?.[type.id] || window.DEFAULT_TUITION || 10;
             }
+
+            // Ownership fields
+            var ownershipType = options.ownershipType || 'public';
+            var ownerId = options.ownerId || null;
+            var ownerType = options.ownerType || null;
+            var ownerName = options.ownerName || null;
+
+            // If private, owner is required
+            if (ownershipType === 'private' && !ownerId) {
+                _showToast('Private schools must have an owner', 'error');
+                return null;
+            }
+
+            // Validate owner exists
+            if (ownerId) {
+                if (ownerType === 'character') {
+                    var char = _getCharacterById(ownerId);
+                    if (!char) {
+                        _showToast('Owner character not found', 'error');
+                        return null;
+                    }
+                    if (!ownerName) ownerName = char.name + (char.surname ? ' ' + char.surname : '');
+                } else if (ownerType === 'household') {
+                    var household = _getHousehold(ownerId);
+                    if (!household) {
+                        _showToast('Owner household not found', 'error');
+                        return null;
+                    }
+                    if (!ownerName) ownerName = household.name;
+                } else {
+                    _showToast('Invalid owner type', 'error');
+                    return null;
+                }
+            }
+
+            // ================================================================
+            // NEW: Specialization fields
+            // ================================================================
+            var specializationCategory = options.specializationCategory || null;
+            var taughtRoles = options.taughtRoles || [];
+            var isSpecialized = !!specializationCategory && taughtRoles.length > 0;
 
             var institution = {
                 id: _generateId('edu'),
@@ -335,34 +454,48 @@
                 teachers: [],
                 foundedYear: options.foundedYear || currentYear,
                 curriculum: curriculum,
-                taughtRoles: options.taughtRoles || [],
-                isSpecialized: options.isSpecialized || false,
+                taughtRoles: taughtRoles,
+                isSpecialized: isSpecialized,
+                specializationCategory: specializationCategory,
                 costPerYear: type.costPerYear,
                 reputation: options.reputation !== undefined ? options.reputation : type.baseReputation,
                 maxStudents: options.maxStudents || type.maxStudents,
                 description: options.description || type.description,
                 requiredYears: options.requiredYears || type.requiredYears,
                 skillGainPerYear: options.skillGainPerYear || type.skillGainPerYear,
-                requiredTeacherSkill: type.requiredTeacherSkill,
                 notes: options.notes || '',
                 headmaster: options.headmaster || null,
                 headmasterHistory: options.headmasterHistory || [],
                 history: options.history || [],
-                // NEW tuition fields
+                // Tuition fields
                 tuitionPerYear: Math.max(0, tuitionPerYear),
                 customTuition: null,
                 tuitionHistory: [],
-                waiveTuition: options.waiveTuition || false
+                waiveTuition: options.waiveTuition || false,
+                // Ownership and funding fields
+                ownershipType: ownershipType,
+                ownerId: ownerId,
+                ownerType: ownerType,
+                ownerName: ownerName,
+                governmentFunding: 0,
+                governmentFundingHistory: [],
+                annualIncome: 0,
+                annualExpenses: 0,
+                netProfit: 0,
+                profitHistory: [],
+                studentCount: 0
             };
 
             var result = EducationState._addInstitution(institution);
 
+            var ownershipMsg = ownershipType === 'public' ? ' (Public)' : ' (Private, owner: ' + ownerName + ')';
+            var specializationMsg = isSpecialized ? ' · Specialized: ' + specializationCategory : '';
+            _showToast('Created institution: ' + institution.name + ownershipMsg + specializationMsg, 'success');
+
             _logEvent('education', 'Institution Founded',
-                institution.name + ' (' + type.name + ') founded in ' + location.displayName,
+                institution.name + ' (' + type.name + ') founded in ' + location.displayName + ownershipMsg + specializationMsg,
                 []);
 
-            var tuitionMsg = institution.tuitionPerYear > 0 ? ' (Tuition: ' + institution.tuitionPerYear + ' gold/year)' : '';
-            _showToast('Created institution: ' + institution.name + tuitionMsg, 'success');
             return result;
 
         } finally {
@@ -405,8 +538,30 @@
             }
 
             // ================================================================
-            // NEW: Tuition update handling
+            // NEW: Specialization updates
             // ================================================================
+            if (updates.specializationCategory !== undefined) {
+                updates.isSpecialized = !!updates.specializationCategory && 
+                    (updates.taughtRoles || institution.taughtRoles || []).length > 0;
+            }
+
+            if (updates.taughtRoles !== undefined) {
+                var taughtRoles = updates.taughtRoles || [];
+                if (institution.specializationCategory) {
+                    // Validate that all taught roles belong to the category
+                    var validRoles = taughtRoles.filter(function(roleId) {
+                        var role = _getRoleById(roleId);
+                        return role && role.category === institution.specializationCategory;
+                    });
+                    if (validRoles.length !== taughtRoles.length) {
+                        _showToast('Some roles do not belong to the specialization category', 'warning');
+                        updates.taughtRoles = validRoles;
+                    }
+                }
+                updates.isSpecialized = !!institution.specializationCategory && taughtRoles.length > 0;
+            }
+
+            // Tuition update handling
             if (updates.tuitionPerYear !== undefined && updates.tuitionPerYear !== institution.tuitionPerYear) {
                 var oldTuition = institution.tuitionPerYear;
                 var newTuition = Math.max(0, updates.tuitionPerYear);
@@ -430,6 +585,64 @@
 
             if (updates.waiveTuition !== undefined) {
                 updates.waiveTuition = !!updates.waiveTuition;
+            }
+
+            // Ownership update handling
+            if (updates.ownershipType !== undefined && updates.ownershipType !== institution.ownershipType) {
+                if (updates.ownershipType === 'private') {
+                    var ownerId = updates.ownerId || institution.ownerId;
+                    var ownerType = updates.ownerType || institution.ownerType;
+                    if (!ownerId) {
+                        _showToast('Private schools must have an owner', 'error');
+                        return false;
+                    }
+                    if (ownerType === 'character') {
+                        var char = _getCharacterById(ownerId);
+                        if (!char) {
+                            _showToast('Owner character not found', 'error');
+                            return false;
+                        }
+                        updates.ownerName = char.name + (char.surname ? ' ' + char.surname : '');
+                    } else if (ownerType === 'household') {
+                        var household = _getHousehold(ownerId);
+                        if (!household) {
+                            _showToast('Owner household not found', 'error');
+                            return false;
+                        }
+                        updates.ownerName = household.name;
+                    }
+                } else if (updates.ownershipType === 'public') {
+                    updates.ownerId = null;
+                    updates.ownerType = null;
+                    updates.ownerName = null;
+                }
+            }
+
+            // Handle owner updates for private schools
+            if (institution.ownershipType === 'private') {
+                if (updates.ownerId !== undefined && updates.ownerId !== institution.ownerId) {
+                    var ownerId = updates.ownerId;
+                    var ownerType = updates.ownerType || institution.ownerType || 'character';
+                    if (!ownerId) {
+                        _showToast('Owner ID is required', 'error');
+                        return false;
+                    }
+                    if (ownerType === 'character') {
+                        var char = _getCharacterById(ownerId);
+                        if (!char) {
+                            _showToast('Owner character not found', 'error');
+                            return false;
+                        }
+                        updates.ownerName = char.name + (char.surname ? ' ' + char.surname : '');
+                    } else if (ownerType === 'household') {
+                        var household = _getHousehold(ownerId);
+                        if (!household) {
+                            _showToast('Owner household not found', 'error');
+                            return false;
+                        }
+                        updates.ownerName = household.name;
+                    }
+                }
             }
 
             var result = EducationState._updateInstitution(institutionId, updates);
@@ -516,7 +729,7 @@
     }
 
     // =========================================================================
-    // 5. TUITION MANAGEMENT (NEW)
+    // 6. TUITION MANAGEMENT
     // =========================================================================
 
     function calculateTuition(institutionId, year) {
@@ -553,9 +766,13 @@
                 return { success: false, reason: 'Institution not found' };
             }
 
+            if (institution.ownershipType === 'public') {
+                _showToast('Public schools have free tuition (0 gold)', 'warning');
+                return { success: false, reason: 'Public schools cannot charge tuition' };
+            }
+
             var boundedTuition = newTuition !== null ? Math.max(0, newTuition) : null;
 
-            // If null, remove custom override (use calculated)
             if (boundedTuition === null) {
                 institution.customTuition = null;
                 EducationState._updateInstitution(institutionId, { customTuition: null });
@@ -563,7 +780,6 @@
                 return { success: true, tuition: null, mode: 'calculated' };
             }
 
-            // Manual override
             var oldTuition = institution.customTuition !== null ? institution.customTuition : institution.tuitionPerYear;
             institution.customTuition = boundedTuition;
 
@@ -607,6 +823,11 @@
             var institution = EducationState.getInstitution(institutionId);
             if (!institution) {
                 return { success: false, reason: 'Institution not found' };
+            }
+
+            if (institution.ownershipType === 'public') {
+                _showToast('Public schools already have free tuition', 'info');
+                return { success: false, reason: 'Public schools already have free tuition' };
             }
 
             waiveTuition = !!waiveTuition;
@@ -659,10 +880,516 @@
     }
 
     // =========================================================================
-    // 6. TEACHER MANAGEMENT
+    // 7. SCHOOL OWNERSHIP MANAGEMENT
     // =========================================================================
 
-    function hireTeacher(institutionId, teacherId, subjectId, skill) {
+    function setSchoolOwnership(institutionId, ownershipType, ownerId, ownerType) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Already processing' };
+        }
+        _processingCommand = true;
+
+        try {
+            var institution = EducationState.getInstitution(institutionId);
+            if (!institution) {
+                return { success: false, reason: 'Institution not found' };
+            }
+
+            var updates = {
+                ownershipType: ownershipType
+            };
+
+            if (ownershipType === 'public') {
+                updates.ownerId = null;
+                updates.ownerType = null;
+                updates.ownerName = null;
+                updates.waiveTuition = false;
+                updates.customTuition = null;
+            } else if (ownershipType === 'private') {
+                if (!ownerId) {
+                    return { success: false, reason: 'Owner ID is required for private schools' };
+                }
+
+                var ownerName = '';
+                if (ownerType === 'character') {
+                    var char = _getCharacterById(ownerId);
+                    if (!char) {
+                        return { success: false, reason: 'Owner character not found' };
+                    }
+                    ownerName = char.name + (char.surname ? ' ' + char.surname : '');
+                } else if (ownerType === 'household') {
+                    var household = _getHousehold(ownerId);
+                    if (!household) {
+                        return { success: false, reason: 'Owner household not found' };
+                    }
+                    ownerName = household.name;
+                } else {
+                    return { success: false, reason: 'Invalid owner type. Use "character" or "household"' };
+                }
+
+                updates.ownerId = ownerId;
+                updates.ownerType = ownerType;
+                updates.ownerName = ownerName;
+            }
+
+            var result = EducationState._updateInstitution(institutionId, updates);
+
+            if (result) {
+                var msg = 'School ownership updated to ' + ownershipType;
+                if (ownershipType === 'private') {
+                    msg += ' (Owner: ' + ownerName + ')';
+                } else {
+                    msg += ' - Free tuition enabled';
+                }
+                _showToast(msg, 'success');
+                _logEvent('education', 'School Ownership Changed',
+                    institution.name + ' changed to ' + ownershipType + (ownershipType === 'private' ? ' (Owner: ' + ownerName + ')' : ''),
+                    []);
+                return { success: true, institution: result };
+            }
+
+            return { success: false, reason: 'Failed to update ownership' };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    function setSchoolOwner(institutionId, ownerId, ownerType) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Already processing' };
+        }
+        _processingCommand = true;
+
+        try {
+            var institution = EducationState.getInstitution(institutionId);
+            if (!institution) {
+                return { success: false, reason: 'Institution not found' };
+            }
+
+            if (institution.ownershipType !== 'private') {
+                return { success: false, reason: 'Only private schools can have owners' };
+            }
+
+            if (!ownerId) {
+                return { success: false, reason: 'Owner ID is required' };
+            }
+
+            var ownerName = '';
+            if (ownerType === 'character') {
+                var char = _getCharacterById(ownerId);
+                if (!char) {
+                    return { success: false, reason: 'Owner character not found' };
+                }
+                ownerName = char.name + (char.surname ? ' ' + char.surname : '');
+            } else if (ownerType === 'household') {
+                var household = _getHousehold(ownerId);
+                if (!household) {
+                    return { success: false, reason: 'Owner household not found' };
+                }
+                ownerName = household.name;
+            } else {
+                return { success: false, reason: 'Invalid owner type. Use "character" or "household"' };
+            }
+
+            var result = EducationState._updateInstitution(institutionId, {
+                ownerId: ownerId,
+                ownerType: ownerType,
+                ownerName: ownerName
+            });
+
+            if (result) {
+                _showToast('School owner updated to ' + ownerName, 'success');
+                _logEvent('education', 'School Owner Changed',
+                    institution.name + ' owner changed to ' + ownerName,
+                    []);
+                return { success: true, institution: result };
+            }
+
+            return { success: false, reason: 'Failed to update owner' };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    // =========================================================================
+    // 8. SCHOOL FUNDING AND PROFIT
+    // =========================================================================
+
+    function calculatePublicSchoolFunding(institutionId, year) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Already processing' };
+        }
+        _processingCommand = true;
+
+        try {
+            var institution = EducationState.getInstitution(institutionId);
+            if (!institution) {
+                return { success: false, reason: 'Institution not found' };
+            }
+
+            if (institution.ownershipType !== 'public') {
+                return { success: false, reason: 'Only public schools receive government funding' };
+            }
+
+            var currentYear = year || _getCurrentYear();
+            var studentCount = institution.students ? institution.students.filter(function(s) { return !s.graduated; }).length : 0;
+
+            var costPerStudent = 10;
+            if (institution.type === 'university') costPerStudent = 20;
+            else if (institution.type === 'military_academy') costPerStudent = 15;
+            else if (institution.type === 'cathedral_school') costPerStudent = 12;
+            else if (institution.type === 'guild_hall') costPerStudent = 12;
+            else if (institution.type === 'court_tutor') costPerStudent = 25;
+            else if (institution.type === 'specialized_school') costPerStudent = 14;
+            else if (institution.type === 'village_school') costPerStudent = 5;
+
+            var prosperity = _getSettlementProsperity(institution.locationId);
+            var prosperityModifier = 0.8 + (prosperity / 100) * 0.4;
+
+            var funding = Math.round(studentCount * costPerStudent * prosperityModifier);
+
+            return {
+                success: true,
+                funding: funding,
+                studentCount: studentCount,
+                costPerStudent: costPerStudent,
+                prosperityModifier: prosperityModifier,
+                breakdown: {
+                    students: studentCount,
+                    costPerStudent: costPerStudent,
+                    prosperity: prosperity,
+                    prosperityModifier: prosperityModifier
+                }
+            };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    function applyGovernmentFunding(institutionId, year) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Already processing' };
+        }
+        _processingCommand = true;
+
+        try {
+            var institution = EducationState.getInstitution(institutionId);
+            if (!institution) {
+                return { success: false, reason: 'Institution not found' };
+            }
+
+            if (institution.ownershipType !== 'public') {
+                return { success: false, reason: 'Only public schools receive government funding' };
+            }
+
+            var currentYear = year || _getCurrentYear();
+            var fundingResult = calculatePublicSchoolFunding(institutionId, currentYear);
+
+            if (!fundingResult.success) {
+                return fundingResult;
+            }
+
+            var funding = fundingResult.funding;
+
+            institution.governmentFunding = funding;
+            if (!institution.governmentFundingHistory) {
+                institution.governmentFundingHistory = [];
+            }
+            institution.governmentFundingHistory.push({
+                year: currentYear,
+                amount: funding,
+                students: fundingResult.studentCount
+            });
+            if (institution.governmentFundingHistory.length > 20) {
+                institution.governmentFundingHistory = institution.governmentFundingHistory.slice(-20);
+            }
+
+            _updateSettlementWealth(
+                institution.locationId,
+                -funding,
+                'Education funding for ' + institution.name + ' (' + fundingResult.studentCount + ' students)'
+            );
+
+            EducationState._updateInstitution(institutionId, {
+                governmentFunding: funding,
+                governmentFundingHistory: institution.governmentFundingHistory
+            });
+
+            _logEvent('education', 'Government Funding',
+                institution.name + ' received ' + funding + ' gold funding for ' + fundingResult.studentCount + ' students',
+                []);
+
+            return {
+                success: true,
+                funding: funding,
+                studentCount: fundingResult.studentCount,
+                year: currentYear
+            };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    function calculatePrivateSchoolProfit(institutionId, year) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Already processing' };
+        }
+        _processingCommand = true;
+
+        try {
+            var institution = EducationState.getInstitution(institutionId);
+            if (!institution) {
+                return { success: false, reason: 'Institution not found' };
+            }
+
+            if (institution.ownershipType !== 'private') {
+                return { success: false, reason: 'Only private schools have profit' };
+            }
+
+            var currentYear = year || _getCurrentYear();
+
+            var tuitionResult = _calculateTuitionAmount(institution, currentYear);
+            var tuition = tuitionResult.success ? tuitionResult.tuition : 0;
+
+            var students = institution.students ? institution.students.filter(function(s) { return !s.graduated; }).length : 0;
+            var income = tuition * students;
+
+            var teacherCount = institution.teachers ? institution.teachers.length : 0;
+            var avgTeacherSalary = 15;
+            var teacherCost = teacherCount * avgTeacherSalary;
+
+            var maintenance = Math.round(students * 2);
+
+            var expenses = teacherCost + maintenance;
+
+            if (institution.isSpecialized) {
+                expenses += Math.round(students * 1);
+            }
+
+            var profit = income - expenses;
+
+            return {
+                success: true,
+                profit: profit,
+                income: income,
+                expenses: expenses,
+                tuition: tuition,
+                studentCount: students,
+                teacherCount: teacherCount,
+                breakdown: {
+                    tuition: tuition,
+                    students: students,
+                    teacherCost: teacherCost,
+                    maintenance: maintenance,
+                    specializationBonus: institution.isSpecialized ? Math.round(students * 1) : 0
+                }
+            };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    function processPrivateSchoolProfit(institutionId, year) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Already processing' };
+        }
+        _processingCommand = true;
+
+        try {
+            var institution = EducationState.getInstitution(institutionId);
+            if (!institution) {
+                return { success: false, reason: 'Institution not found' };
+            }
+
+            if (institution.ownershipType !== 'private') {
+                return { success: false, reason: 'Only private schools have profit' };
+            }
+
+            if (!institution.ownerId) {
+                return { success: false, reason: 'Private school has no owner' };
+            }
+
+            var currentYear = year || _getCurrentYear();
+            var profitResult = calculatePrivateSchoolProfit(institutionId, currentYear);
+
+            if (!profitResult.success) {
+                return profitResult;
+            }
+
+            var profit = profitResult.profit;
+
+            institution.annualIncome = profitResult.income;
+            institution.annualExpenses = profitResult.expenses;
+            institution.netProfit = profit;
+
+            if (!institution.profitHistory) {
+                institution.profitHistory = [];
+            }
+            institution.profitHistory.push({
+                year: currentYear,
+                profit: profit,
+                income: profitResult.income,
+                expenses: profitResult.expenses,
+                students: profitResult.studentCount
+            });
+            if (institution.profitHistory.length > 20) {
+                institution.profitHistory = institution.profitHistory.slice(-20);
+            }
+
+            EducationState._updateInstitution(institutionId, {
+                annualIncome: profitResult.income,
+                annualExpenses: profitResult.expenses,
+                netProfit: profit,
+                profitHistory: institution.profitHistory
+            });
+
+            if (institution.ownerType === 'character') {
+                var owner = _getCharacterById(institution.ownerId);
+                if (owner) {
+                    var household = _getCharacterHousehold(owner.id);
+                    if (household) {
+                        _updateHouseholdWealth(household.id, profit, 'Profit from ' + institution.name);
+                        _logEvent('education', 'Private School Profit',
+                            institution.name + ' sent ' + profit + ' gold profit to ' + owner.name,
+                            [owner]);
+                    }
+                }
+            } else if (institution.ownerType === 'household') {
+                var household = _getHousehold(institution.ownerId);
+                if (household) {
+                    _updateHouseholdWealth(institution.ownerId, profit, 'Profit from ' + institution.name);
+                    _logEvent('education', 'Private School Profit',
+                        institution.name + ' sent ' + profit + ' gold profit to household ' + household.name,
+                        []);
+                }
+            }
+
+            var profitMsg = profit >= 0 ? 'Profit of ' + profit + ' gold' : 'Loss of ' + Math.abs(profit) + ' gold';
+            _showToast(institution.name + ': ' + profitMsg, profit >= 0 ? 'success' : 'warning');
+
+            return {
+                success: true,
+                profit: profit,
+                income: profitResult.income,
+                expenses: profitResult.expenses,
+                year: currentYear,
+                ownerId: institution.ownerId,
+                ownerType: institution.ownerType,
+                studentCount: profitResult.studentCount
+            };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    function processAllSchoolFinances(year) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Already processing' };
+        }
+        _processingCommand = true;
+
+        try {
+            var currentYear = year || _getCurrentYear();
+            var institutions = EducationState.getAllInstitutions();
+            var results = {
+                year: currentYear,
+                publicFunding: [],
+                privateProfits: [],
+                errors: []
+            };
+
+            for (var i = 0; i < institutions.length; i++) {
+                var inst = institutions[i];
+                try {
+                    if (inst.ownershipType === 'public') {
+                        var fundingResult = applyGovernmentFunding(inst.id, currentYear);
+                        if (fundingResult.success) {
+                            results.publicFunding.push({
+                                institutionId: inst.id,
+                                institutionName: inst.name,
+                                funding: fundingResult.funding,
+                                students: fundingResult.studentCount
+                            });
+                        } else {
+                            results.errors.push({
+                                institutionId: inst.id,
+                                institutionName: inst.name,
+                                error: fundingResult.reason || 'Unknown error'
+                            });
+                        }
+                    } else if (inst.ownershipType === 'private') {
+                        var profitResult = processPrivateSchoolProfit(inst.id, currentYear);
+                        if (profitResult.success) {
+                            results.privateProfits.push({
+                                institutionId: inst.id,
+                                institutionName: inst.name,
+                                profit: profitResult.profit,
+                                income: profitResult.income,
+                                expenses: profitResult.expenses,
+                                ownerId: profitResult.ownerId,
+                                ownerType: profitResult.ownerType
+                            });
+                        } else {
+                            results.errors.push({
+                                institutionId: inst.id,
+                                institutionName: inst.name,
+                                error: profitResult.reason || 'Unknown error'
+                            });
+                        }
+                    }
+                } catch (e) {
+                    results.errors.push({
+                        institutionId: inst.id,
+                        institutionName: inst.name,
+                        error: e.message || 'Unknown error'
+                    });
+                }
+            }
+
+            var totalFunding = 0;
+            for (var i = 0; i < results.publicFunding.length; i++) {
+                totalFunding += results.publicFunding[i].funding;
+            }
+
+            var totalProfit = 0;
+            for (var i = 0; i < results.privateProfits.length; i++) {
+                totalProfit += results.privateProfits[i].profit;
+            }
+
+            _logEvent('education', 'School Finances Processed',
+                'Processed school finances for ' + institutions.length + ' schools. ' +
+                'Public funding: ' + totalFunding + ' gold, Private profit: ' + totalProfit + ' gold',
+                []);
+
+            if (results.errors.length === 0) {
+                _showToast('Processed ' + institutions.length + ' school finances', 'success');
+            } else {
+                _showToast('Processed school finances with ' + results.errors.length + ' errors', 'warning');
+            }
+
+            return {
+                success: true,
+                results: results,
+                totalFunding: totalFunding,
+                totalProfit: totalProfit
+            };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    // =========================================================================
+    // 9. TEACHER MANAGEMENT (UPDATED - NO SKILL)
+    // =========================================================================
+
+    function hireTeacher(institutionId, teacherId, subjectId) {
         if (_processingCommand) {
             return false;
         }
@@ -671,7 +1398,6 @@
         try {
             var institution = EducationState.getInstitution(institutionId);
             var teacher = _getCharacterById(teacherId);
-            var types = _getInstitutionTypes();
 
             if (!institution || !teacher) {
                 _showToast('Institution or teacher not found', 'error');
@@ -698,31 +1424,32 @@
                 return false;
             }
 
-            var requiredSkill = institution.requiredTeacherSkill || 51;
-            var teacherSkill = skill || 50;
-
+            // ================================================================
+            // ROLE CHECK - Use RoleQueries
+            // ================================================================
             if (curriculumItem.type === 'role') {
-                var hasProfession = false;
-                if (teacher.professions) {
-                    for (var i = 0; i < teacher.professions.length; i++) {
-                        if (teacher.professions[i].id === subjectId) {
-                            hasProfession = true;
-                            teacherSkill = teacher.professions[i].skillLevel || 0;
-                            break;
-                        }
-                    }
-                }
-
-                if (!hasProfession) {
-                    _showToast(teacher.name + ' does not have the profession "' + curriculumItem.name + '"', 'error');
+                var roleId = subjectId;
+                var role = _getRoleById(roleId);
+                if (!role) {
+                    _showToast('Role "' + subjectId + '" not found', 'error');
                     return false;
                 }
 
-                if (teacherSkill < requiredSkill) {
-                    _showToast(teacher.name + ' has only ' + teacherSkill + ' skill in ' + curriculumItem.name + '. Need ' + requiredSkill + '+', 'error');
+                // Use RoleQueries to check if teacher has this role
+                var roleDetails = _getCharactersWithRoleDetails(roleId);
+                var hasRole = roleDetails.some(function(d) {
+                    return d.character && d.character.id === teacherId;
+                });
+
+                if (!hasRole) {
+                    _showToast(teacher.name + ' does not have the required role "' + role.name + '"', 'error');
                     return false;
                 }
             }
+
+            // ================================================================
+            // NO SKILL CHECK - removed
+            // ================================================================
 
             if (!institution.teachers) institution.teachers = [];
 
@@ -732,7 +1459,6 @@
                 subjectId: subjectId,
                 subjectName: curriculumItem.name,
                 subjectType: curriculumItem.type,
-                skill: Math.min(100, Math.max(0, teacherSkill)),
                 hiredYear: _getCurrentYear()
             };
 
@@ -743,7 +1469,7 @@
                 teacher.name + ' hired as ' + curriculumItem.name + ' teacher at ' + institution.name,
                 [teacher]);
 
-            _recordTeacherHired(institutionId, teacherId, subjectId, _getCurrentYear(), teacherSkill);
+            _recordTeacherHired(institutionId, teacherId, subjectId, _getCurrentYear(), 'Hired as teacher');
 
             _showToast(teacher.name + ' hired as ' + curriculumItem.name + ' teacher', 'success');
             return true;
@@ -788,7 +1514,7 @@
                 teacherEntry.teacherName + ' fired from ' + institution.name,
                 []);
 
-            _recordTeacherLeft(institutionId, teacherId, _getCurrentYear(), reason || 'Fired');
+            _recordTeacherLeft(institutionId, teacherId, _getCurrentYear(), reason || 'Fired', '');
 
             _showToast(teacherEntry.teacherName + ' fired from ' + institution.name, 'info');
             return true;
@@ -799,7 +1525,7 @@
     }
 
     // =========================================================================
-    // 7. STUDENT MANAGEMENT
+    // 10. STUDENT MANAGEMENT
     // =========================================================================
 
     function enrollStudent(institutionId, studentId, startYear) {
@@ -832,10 +1558,9 @@
                 return false;
             }
 
-            // ================================================================
-            // NEW: Tuition check
-            // ================================================================
-            if (!institution.waiveTuition) {
+            // Tuition check - only for private schools
+            var tuitionPaid = 0;
+            if (institution.ownershipType === 'private' && !institution.waiveTuition) {
                 var tuitionResult = _calculateTuitionAmount(institution, startYear || _getCurrentYear());
                 if (tuitionResult.success && tuitionResult.tuition > 0) {
                     var household = _getCharacterHousehold(studentId);
@@ -845,27 +1570,19 @@
                             _showToast('Household cannot afford tuition (' + tuitionResult.tuition + ' gold)', 'error');
                             return false;
                         }
-                        // Deduct tuition from household wealth
                         _updateHouseholdWealth(household.id, -tuitionResult.tuition,
                             'Tuition for ' + institution.name + ' - ' + student.name);
-                        // Track tuition expense
                         _trackTuitionExpense(household.id, tuitionResult.tuition, institutionId, studentId);
+                        tuitionPaid = tuitionResult.tuition;
                     }
                 }
+            } else if (institution.ownershipType === 'public') {
+                tuitionPaid = 0;
             }
 
             if (!institution.students) institution.students = [];
 
             var enrollmentYear = startYear || _getCurrentYear();
-
-            // Calculate tuition for record
-            var tuitionPaid = 0;
-            if (!institution.waiveTuition) {
-                var tuitionCalc = _calculateTuitionAmount(institution, enrollmentYear);
-                if (tuitionCalc.success) {
-                    tuitionPaid = tuitionCalc.tuition;
-                }
-            }
 
             institution.students.push({
                 studentId: studentId,
@@ -876,13 +1593,17 @@
                 graduationYear: null,
                 attendance: 100,
                 notes: '',
-                // NEW tuition fields
                 tuitionPaid: tuitionPaid,
                 tuitionYear: enrollmentYear,
-                tuitionWaived: institution.waiveTuition
+                tuitionWaived: institution.waiveTuition || institution.ownershipType === 'public'
             });
 
-            EducationState._updateInstitution(institutionId, { students: institution.students });
+            institution.studentCount = institution.students.filter(function(s) { return !s.graduated; }).length;
+
+            EducationState._updateInstitution(institutionId, {
+                students: institution.students,
+                studentCount: institution.studentCount
+            });
 
             if (typeof window._initCharacterEducationFields === 'function') {
                 window._initCharacterEducationFields(student);
@@ -898,12 +1619,15 @@
             }
 
             _logEvent('education', 'Student Enrolled',
-                student.name + ' enrolled at ' + institution.name + (tuitionPaid > 0 ? ' (Tuition: ' + tuitionPaid + ' gold)' : ''),
+                student.name + ' enrolled at ' + institution.name +
+                (institution.ownershipType === 'public' ? ' (Public - Free)' : ' (Private - Tuition: ' + tuitionPaid + ' gold)'),
                 [student]);
 
-            _recordStudentEnrolled(institutionId, studentId, enrollmentYear);
+            _recordStudentEnrolled(institutionId, studentId, enrollmentYear, 'Enrolled');
 
-            var tuitionMsg = tuitionPaid > 0 ? ' (Tuition: ' + tuitionPaid + ' gold)' : ' (Tuition waived)';
+            var tuitionMsg = institution.ownershipType === 'public' ?
+                ' (Free - Public school)' :
+                (tuitionPaid > 0 ? ' (Tuition: ' + tuitionPaid + ' gold)' : ' (Tuition waived)');
             _showToast(student.name + ' enrolled' + tuitionMsg, 'success');
             return true;
 
@@ -912,7 +1636,11 @@
         }
     }
 
-    function graduateStudent(institutionId, studentId, graduationYear) {
+    // =========================================================================
+    // 11. GRADUATION WITH ROLE GRANTING (UPDATED)
+    // =========================================================================
+
+    function graduateStudent(institutionId, studentId, graduationYear, selectedRoleId) {
         if (_processingCommand) {
             return false;
         }
@@ -947,56 +1675,99 @@
 
             var gradYear = graduationYear || _getCurrentYear();
 
+            // ================================================================
+            // ROLE GRANTING
+            // ================================================================
+            var taughtRoles = institution.taughtRoles || [];
+            var roleToGrant = null;
+
+            if (taughtRoles.length === 0) {
+                // No roles to grant - just graduate
+                _showToast('No roles to grant for this institution', 'warning');
+            } else if (taughtRoles.length === 1) {
+                // Auto-grant the only role
+                roleToGrant = taughtRoles[0];
+            } else if (selectedRoleId) {
+                // User selected a role
+                if (taughtRoles.indexOf(selectedRoleId) !== -1) {
+                    roleToGrant = selectedRoleId;
+                } else {
+                    _showToast('Selected role is not taught by this institution', 'error');
+                    return false;
+                }
+            } else {
+                // Multiple roles, but no selection - return the list for UI to handle
+                _showToast('Please select a role to grant', 'error');
+                return { success: false, reason: 'Role selection required', availableRoles: taughtRoles };
+            }
+
+            if (roleToGrant) {
+                var role = _getRoleById(roleToGrant);
+                if (role) {
+                    var result = _assignRoleToCharacter(studentId, roleToGrant, {
+                        skillLevel: 100,
+                        primary: false,
+                        startYear: studentRecord.enrollmentYear,
+                        notes: 'Graduated from ' + institution.name + ' as ' + role.name,
+                        learnedVia: 'institution',
+                        institutionId: institutionId
+                    });
+
+                    if (result && result.success) {
+                        _showToast('Granted role "' + role.name + '" to ' + studentRecord.studentName, 'success');
+                    } else {
+                        _showToast('Failed to grant role: ' + (result?.reason || 'Unknown error'), 'error');
+                    }
+                }
+            }
+
+            // ================================================================
+            // GRADUATION RECORD
+            // ================================================================
             studentRecord.graduated = true;
             studentRecord.graduationYear = gradYear;
+            studentRecord.grantedRole = roleToGrant;
 
             if (!institution.graduates) institution.graduates = [];
             institution.graduates.push({
                 studentId: studentId,
                 studentName: studentRecord.studentName,
-                graduationYear: gradYear
+                graduationYear: gradYear,
+                grantedRole: roleToGrant
             });
 
             institution.students.splice(index, 1);
 
+            institution.studentCount = institution.students.filter(function(s) { return !s.graduated; }).length;
+
             EducationState._updateInstitution(institutionId, {
                 students: institution.students,
-                graduates: institution.graduates
+                graduates: institution.graduates,
+                studentCount: institution.studentCount
             });
 
+            // Update character record
             var student = _getCharacterById(studentId);
             if (student && student.education && student.education[institutionId]) {
                 student.education[institutionId].graduated = true;
                 student.education[institutionId].graduationYear = gradYear;
+                student.education[institutionId].grantedRole = roleToGrant;
 
-                if (institution.isSpecialized && institution.taughtRoles && institution.taughtRoles.length > 0) {
-                    for (var i = 0; i < institution.taughtRoles.length; i++) {
-                        var roleId = institution.taughtRoles[i];
-                        var existingProf = null;
-                        if (student.professions) {
-                            for (var j = 0; j < student.professions.length; j++) {
-                                if (student.professions[j].id === roleId) {
-                                    existingProf = student.professions[j];
-                                    break;
-                                }
-                            }
-                        }
+                // Record in education history
+                if (!student.educationHistory) student.educationHistory = [];
+                student.educationHistory.push({
+                    institutionId: institutionId,
+                    institutionName: institution.name,
+                    institutionType: institution.type,
+                    enrolledYear: studentRecord.enrollmentYear,
+                    graduationYear: gradYear,
+                    grantedRole: roleToGrant,
+                    taughtRoles: institution.taughtRoles || [],
+                    curriculum: institution.curriculum ? institution.curriculum.map(function(c) { return c.name; }) : []
+                });
 
-                        if (!existingProf && typeof window.addProfession === 'function') {
-                            window.addProfession(studentId, roleId, {
-                                skillLevel: 100,
-                                startYear: studentRecord.enrollmentYear,
-                                learnedVia: 'institution',
-                                institutionId: institutionId,
-                                notes: 'Graduated from ' + institution.name
-                            });
-                        } else if (existingProf && typeof window.updateProfessionSkill === 'function') {
-                            window.updateProfessionSkill(studentId, roleId, 100);
-                        }
-                    }
-                }
-
-                if (institution.curriculum && student.subjectProgress) {
+                // Update subject progress to 100 for all curriculum items
+                if (student.subjectProgress && institution.curriculum) {
                     for (var i = 0; i < institution.curriculum.length; i++) {
                         var item = institution.curriculum[i];
                         var key = item.type === 'role' ? 'role_' + item.id : item.id;
@@ -1005,27 +1776,20 @@
                         }
                     }
                 }
-
-                if (!student.educationHistory) student.educationHistory = [];
-                student.educationHistory.push({
-                    institutionId: institutionId,
-                    institutionName: institution.name,
-                    institutionType: institution.type,
-                    enrolledYear: studentRecord.enrollmentYear,
-                    graduationYear: gradYear,
-                    curriculum: institution.curriculum ? institution.curriculum.map(function(c) { return c.name; }) : []
-                });
             }
 
             updateReputation(institutionId, 2);
 
             _logEvent('education', 'Student Graduated',
-                studentRecord.studentName + ' graduated from ' + institution.name,
+                studentRecord.studentName + ' graduated from ' + institution.name +
+                (roleToGrant ? ' with role: ' + (_getRoleById(roleToGrant)?.name || roleToGrant) : ''),
                 [student]);
 
-            _recordStudentGraduated(institutionId, studentId, gradYear);
+            _recordStudentGraduated(institutionId, studentId, gradYear, 
+                'Graduated' + (roleToGrant ? ' as ' + (_getRoleById(roleToGrant)?.name || roleToGrant) : ''));
 
-            _showToast(studentRecord.studentName + ' graduated!', 'success');
+            var roleMsg = roleToGrant ? ' with role: ' + (_getRoleById(roleToGrant)?.name || roleToGrant) : '';
+            _showToast(studentRecord.studentName + ' graduated' + roleMsg, 'success');
             return true;
 
         } finally {
@@ -1062,7 +1826,13 @@
             }
 
             institution.students.splice(index, 1);
-            EducationState._updateInstitution(institutionId, { students: institution.students });
+
+            institution.studentCount = institution.students.filter(function(s) { return !s.graduated; }).length;
+
+            EducationState._updateInstitution(institutionId, {
+                students: institution.students,
+                studentCount: institution.studentCount
+            });
 
             var student = _getCharacterById(studentId);
             if (student && student.education && student.education[institutionId]) {
@@ -1073,7 +1843,7 @@
 
             updateReputation(institutionId, -1);
 
-            _recordStudentWithdrew(institutionId, studentId, _getCurrentYear(), reason || 'Withdrew');
+            _recordStudentWithdrew(institutionId, studentId, _getCurrentYear(), reason || 'Withdrew', '');
 
             _showToast((student ? student.name : 'Student') + ' withdrew', 'info');
             return true;
@@ -1084,7 +1854,7 @@
     }
 
     // =========================================================================
-    // 8. HEADMASTER MANAGEMENT
+    // 12. HEADMASTER MANAGEMENT
     // =========================================================================
 
     function setHeadmaster(institutionId, characterId, title, startYear) {
@@ -1132,7 +1902,7 @@
                 character.name + ' appointed as ' + (title || 'Headmaster') + ' of ' + institution.name,
                 [character]);
 
-            _recordHeadmasterAppointed(institutionId, characterId, title || 'Headmaster', appointmentYear);
+            _recordHeadmasterAppointed(institutionId, characterId, title || 'Headmaster', appointmentYear, '');
 
             _showToast(character.name + ' appointed as ' + (title || 'Headmaster'), 'success');
             return true;
@@ -1180,7 +1950,7 @@
                 formerHeadmaster.name + ' ended their term as ' + formerHeadmaster.title + ' of ' + institution.name,
                 []);
 
-            _recordHeadmasterEnded(institutionId, formerHeadmaster.characterId, endYearValue, reason || 'Term ended');
+            _recordHeadmasterEnded(institutionId, formerHeadmaster.characterId, endYearValue, reason || 'Term ended', '');
 
             _showToast(formerHeadmaster.name + "'s term ended", 'info');
             return true;
@@ -1191,7 +1961,7 @@
     }
 
     // =========================================================================
-    // 9. INSTITUTIONS NEEDING TEACHERS
+    // 13. INSTITUTIONS NEEDING TEACHERS
     // =========================================================================
 
     function getInstitutionsNeedingTeachers(maxReputation, minStudents) {
@@ -1251,42 +2021,48 @@
     }
 
     // =========================================================================
-    // 10. TEACHER SKILL LEVEL NAME
-    // =========================================================================
-
-    function _getTeacherSkillLevelName(level) {
-        if (level >= 91) return 'Master';
-        if (level >= 76) return 'Expert';
-        if (level >= 51) return 'Journeyman';
-        if (level >= 26) return 'Apprentice';
-        if (level >= 1) return 'Novice';
-        return 'Untrained';
-    }
-
-    // =========================================================================
-    // 11. EXPORTS
+    // 14. EXPORTS
     // =========================================================================
 
     window.EducationCommands = {
+        // Institution CRUD
         createInstitution: createInstitution,
         updateInstitution: updateInstitution,
         deleteInstitution: deleteInstitution,
         updateReputation: updateReputation,
+
+        // Teacher management
         hireTeacher: hireTeacher,
         fireTeacher: fireTeacher,
+
+        // Student management
         enrollStudent: enrollStudent,
         graduateStudent: graduateStudent,
         withdrawStudent: withdrawStudent,
+
+        // Headmaster management
         setHeadmaster: setHeadmaster,
         endHeadmasterTerm: endHeadmasterTerm,
-        getInstitutionsNeedingTeachers: getInstitutionsNeedingTeachers,
-        _getTeacherSkillLevelName: _getTeacherSkillLevelName,
 
-        // NEW tuition functions
+        // Institutions needing teachers
+        getInstitutionsNeedingTeachers: getInstitutionsNeedingTeachers,
+
+        // Tuition functions
         calculateTuition: calculateTuition,
         updateTuition: updateTuition,
         updateTuitionWaiver: updateTuitionWaiver,
-        getTuitionHistory: getTuitionHistory
+        getTuitionHistory: getTuitionHistory,
+
+        // School ownership functions
+        setSchoolOwnership: setSchoolOwnership,
+        setSchoolOwner: setSchoolOwner,
+
+        // School funding and profit functions
+        calculatePublicSchoolFunding: calculatePublicSchoolFunding,
+        applyGovernmentFunding: applyGovernmentFunding,
+        calculatePrivateSchoolProfit: calculatePrivateSchoolProfit,
+        processPrivateSchoolProfit: processPrivateSchoolProfit,
+        processAllSchoolFinances: processAllSchoolFinances
     };
 
     // Legacy aliases
@@ -1302,13 +2078,17 @@
     window._setHeadmaster = setHeadmaster;
     window._endHeadmasterTerm = endHeadmasterTerm;
     window._getInstitutionsNeedingTeachers = getInstitutionsNeedingTeachers;
-    window._getTeacherSkillLevelName = _getTeacherSkillLevelName;
-
-    // NEW legacy aliases
     window._calculateTuition = calculateTuition;
     window._updateTuition = updateTuition;
     window._updateTuitionWaiver = updateTuitionWaiver;
     window._getTuitionHistory = getTuitionHistory;
+    window._setSchoolOwnership = setSchoolOwnership;
+    window._setSchoolOwner = setSchoolOwner;
+    window._calculatePublicSchoolFunding = calculatePublicSchoolFunding;
+    window._applyGovernmentFunding = applyGovernmentFunding;
+    window._calculatePrivateSchoolProfit = calculatePrivateSchoolProfit;
+    window._processPrivateSchoolProfit = processPrivateSchoolProfit;
+    window._processAllSchoolFinances = processAllSchoolFinances;
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
@@ -1324,11 +2104,17 @@
             setHeadmaster: setHeadmaster,
             endHeadmasterTerm: endHeadmasterTerm,
             getInstitutionsNeedingTeachers: getInstitutionsNeedingTeachers,
-            _getTeacherSkillLevelName: _getTeacherSkillLevelName,
             calculateTuition: calculateTuition,
             updateTuition: updateTuition,
             updateTuitionWaiver: updateTuitionWaiver,
-            getTuitionHistory: getTuitionHistory
+            getTuitionHistory: getTuitionHistory,
+            setSchoolOwnership: setSchoolOwnership,
+            setSchoolOwner: setSchoolOwner,
+            calculatePublicSchoolFunding: calculatePublicSchoolFunding,
+            applyGovernmentFunding: applyGovernmentFunding,
+            calculatePrivateSchoolProfit: calculatePrivateSchoolProfit,
+            processPrivateSchoolProfit: processPrivateSchoolProfit,
+            processAllSchoolFinances: processAllSchoolFinances
         };
     }
 

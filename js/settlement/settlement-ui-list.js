@@ -9,6 +9,7 @@
  * - Render settlement tables
  * - Render feature lists
  * - Handle selection and sorting
+ * - RENDER SETTLEMENT ROLES (NEW)
  * 
  * DEPENDENCIES:
  *   - settlement-state.js (SettlementState)
@@ -66,6 +67,13 @@
 
     function _getSettlementRanks() {
         return SettlementState._getAllRanks();
+    }
+
+    function _getSettlementRoleStats(locationId) {
+        if (typeof SettlementQueries !== 'undefined' && SettlementQueries.getSettlementRoleStats) {
+            return SettlementQueries.getSettlementRoleStats(locationId);
+        }
+        return null;
     }
 
     // =========================================================================
@@ -463,14 +471,250 @@
     }
 
     // =========================================================================
-    // 7. EXPORTS
+    // 7. RENDER SETTLEMENT ROLES (NEW)
+    // =========================================================================
+
+    /**
+     * Renders settlement role distribution
+     * @param {string} containerId - Container element ID
+     * @param {string} locationId - Settlement location ID
+     * @param {Object} options - Options
+     * @param {number} options.limit - Max roles to show (default: 10)
+     * @param {boolean} options.showMasters - Show master count (default: true)
+     * @param {Function} options.onRoleClick - Callback when role clicked
+     * @returns {boolean} True if rendered
+     */
+    function renderSettlementRoles(containerId, locationId, options) {
+        if (_rendering) {
+            return false;
+        }
+        _rendering = true;
+
+        try {
+            var container = document.getElementById(containerId);
+            if (!container) return false;
+
+            options = options || {};
+            var limit = options.limit || 10;
+            var showMasters = options.showMasters !== undefined ? options.showMasters : true;
+            var onRoleClick = options.onRoleClick || null;
+
+            var stats = _getSettlementRoleStats(locationId);
+
+            if (!stats) {
+                container.innerHTML = '<div style="color: var(--dim); text-align: center; padding: 20px; font-size: 0.6rem;">No role data available</div>';
+                return true;
+            }
+
+            var personIcon = _getIcon('PERSON');
+            var locationIcon = _getIcon('LOCATION');
+
+            var html = '<div class="settlement-roles">';
+
+            // Header
+            html += '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 4px;">';
+            html += '<div style="font-size: 0.6rem; color: var(--dim);">' +
+                personIcon + ' ' + stats.totalProfessions + ' professions · ' + stats.uniqueRoles + ' unique roles</div>';
+            html += '<button class="view-all-roles-btn" data-location-id="' + locationId + '" style="font-size: 0.5rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 4px; padding: 2px 8px; cursor: pointer;">View All</button>';
+            html += '</div>';
+
+            if (stats.topRoles.length === 0) {
+                html += '<div style="color: var(--dim); text-align: center; padding: 10px; font-size: 0.55rem;">No roles found in this settlement</div>';
+            } else {
+                html += '<div style="display: flex; flex-direction: column; gap: 4px;">';
+
+                for (var i = 0; i < Math.min(limit, stats.topRoles.length); i++) {
+                    var role = stats.topRoles[i];
+                    var barWidth = Math.max(5, role.percentage || 5);
+
+                    html +=
+                        '<div class="settlement-role-item" data-role-id="' + role.id + '" data-location-id="' + locationId + '" style="' +
+                        'display: flex; align-items: center; gap: 8px; font-size: 0.6rem;' +
+                        'padding: 4px 6px;' +
+                        'border-radius: 4px;' +
+                        'cursor: ' + (onRoleClick ? 'pointer' : 'default') + ';' +
+                        'transition: background 0.1s;' +
+                        '">' +
+                        '<span style="min-width: 80px; color: var(--text);">' + _escapeHtml(role.name) + '</span>' +
+                        '<div style="flex: 1; height: 6px; background: var(--bg3); border-radius: 3px; overflow: hidden;">' +
+                        '<div style="width: ' + barWidth + '%; height: 100%; background: var(--accent); border-radius: 3px;"></div>' +
+                        '</div>' +
+                        '<span style="min-width: 30px; text-align: right; color: var(--dim);">' + role.count + '</span>' +
+                        '</div>';
+                }
+
+                if (stats.topRoles.length > limit) {
+                    html += '<div style="font-size: 0.5rem; color: var(--dim); text-align: center; padding: 4px;">+' +
+                        (stats.topRoles.length - limit) + ' more roles</div>';
+                }
+            }
+
+            html += '</div>';
+
+            container.innerHTML = html;
+
+            // Attach event handlers
+            var roleItems = container.querySelectorAll('.settlement-role-item');
+            for (var i = 0; i < roleItems.length; i++) {
+                (function(item) {
+                    if (onRoleClick) {
+                        item.addEventListener('click', function() {
+                            var roleId = this.dataset.roleId;
+                            var locId = this.dataset.locationId;
+                            onRoleClick(roleId, locId);
+                        });
+                        item.addEventListener('mouseenter', function() {
+                            this.style.background = 'var(--bg2)';
+                        });
+                        item.addEventListener('mouseleave', function() {
+                            this.style.background = 'transparent';
+                        });
+                    }
+                })(roleItems[i]);
+            }
+
+            // View All button
+            var viewAllBtn = container.querySelector('.view-all-roles-btn');
+            if (viewAllBtn) {
+                viewAllBtn.addEventListener('click', function() {
+                    var locId = this.dataset.locationId;
+                    if (typeof window.openSettlementRolesModal === 'function') {
+                        window.openSettlementRolesModal(locId);
+                    }
+                });
+            }
+
+            return true;
+
+        } finally {
+            _rendering = false;
+        }
+    }
+
+    // =========================================================================
+    // 8. RENDER SETTLEMENT MASTER LIST (NEW)
+    // =========================================================================
+
+    /**
+     * Renders masters at a settlement
+     * @param {string} containerId - Container element ID
+     * @param {string} locationId - Settlement location ID
+     * @param {Object} options - Options
+     * @param {string} options.roleId - Filter by role ID
+     * @param {number} options.limit - Max masters to show (default: 20)
+     * @param {Function} options.onSelect - Callback when master selected
+     * @returns {boolean} True if rendered
+     */
+    function renderSettlementMasters(containerId, locationId, options) {
+        if (_rendering) {
+            return false;
+        }
+        _rendering = true;
+
+        try {
+            var container = document.getElementById(containerId);
+            if (!container) return false;
+
+            options = options || {};
+            var roleId = options.roleId || null;
+            var limit = options.limit || 20;
+            var onSelect = options.onSelect || null;
+
+            var stats = typeof SettlementQueries !== 'undefined' ?
+                SettlementQueries.getSettlementMasterStats(locationId, roleId) : null;
+
+            if (!stats) {
+                container.innerHTML = '<div style="color: var(--dim); text-align: center; padding: 20px; font-size: 0.6rem;">No master data available</div>';
+                return true;
+            }
+
+            var personIcon = _getIcon('PERSON');
+            var crownIcon = _getIcon('CROWN');
+
+            var html = '<div class="settlement-masters">';
+
+            // Header
+            html += '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 4px;">';
+            html += '<div style="font-size: 0.6rem; color: var(--accent);">' +
+                crownIcon + ' ' + stats.totalMasters + ' Masters · ' + stats.uniqueMasterRoles + ' roles</div>';
+            html += '</div>';
+
+            if (stats.totalMasters === 0) {
+                html += '<div style="color: var(--dim); text-align: center; padding: 10px; font-size: 0.55rem;">No masters found in this settlement</div>';
+            } else {
+                // Show by role
+                var roleIds = Object.keys(stats.byRole);
+                for (var i = 0; i < Math.min(5, roleIds.length); i++) {
+                    var rId = roleIds[i];
+                    var roleData = stats.byRole[rId];
+
+                    html += '<div style="margin-bottom: 6px;">';
+                    html += '<div style="font-size: 0.55rem; color: var(--dim); margin-bottom: 2px;">' +
+                        _escapeHtml(roleData.name) + ' (' + roleData.count + ' masters)</div>';
+
+                    var masters = roleData.masters || [];
+                    for (var j = 0; j < Math.min(limit / roleIds.length, masters.length); j++) {
+                        var m = masters[j];
+                        html +=
+                            '<div class="master-item" data-character-id="' + m.id + '" style="' +
+                            'font-size: 0.55rem; padding: 2px 6px; ' +
+                            'border-radius: 3px; ' +
+                            'cursor: ' + (onSelect ? 'pointer' : 'default') + '; ' +
+                            'transition: background 0.1s;' +
+                            '">' +
+                            personIcon + ' ' + _escapeHtml(m.name) + ' (Skill: ' + m.skillLevel + ')' +
+                            '</div>';
+                    }
+                    html += '</div>';
+                }
+
+                if (roleIds.length > 5) {
+                    html += '<div style="font-size: 0.5rem; color: var(--dim); text-align: center; padding: 4px;">+' +
+                        (roleIds.length - 5) + ' more master roles</div>';
+                }
+            }
+
+            html += '</div>';
+            container.innerHTML = html;
+
+            // Attach event handlers
+            var masterItems = container.querySelectorAll('.master-item');
+            for (var i = 0; i < masterItems.length; i++) {
+                (function(item) {
+                    if (onSelect) {
+                        item.addEventListener('click', function() {
+                            var charId = this.dataset.characterId;
+                            onSelect(charId);
+                        });
+                        item.addEventListener('mouseenter', function() {
+                            this.style.background = 'var(--bg2)';
+                        });
+                        item.addEventListener('mouseleave', function() {
+                            this.style.background = 'transparent';
+                        });
+                    }
+                })(masterItems[i]);
+            }
+
+            return true;
+
+        } finally {
+            _rendering = false;
+        }
+    }
+
+    // =========================================================================
+    // 9. EXPORTS
     // =========================================================================
 
     window.SettlementUI = {
         renderSettlementList: renderSettlementList,
         renderSettlementCard: renderSettlementCard,
         renderSettlementTable: renderSettlementTable,
-        renderFeatureList: renderFeatureList
+        renderFeatureList: renderFeatureList,
+        // NEW: Role-settlement UI
+        renderSettlementRoles: renderSettlementRoles,
+        renderSettlementMasters: renderSettlementMasters
     };
 
 })();

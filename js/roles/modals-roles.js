@@ -11,7 +11,8 @@
  * 
  * ICON POLICY: NO EMOJIS - Use SVG icons from icons.js via _getIcon()
  * 
- * UPDATED: Added salary and literacy fields to create/edit modals
+ * UPDATED: Removed SUGGESTED_ROLES references
+ * UPDATED: Removed household/government role suggestions
  * 
  * DEPENDENCIES:
  *   - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
@@ -437,7 +438,7 @@
     }
 
     // =========================================================================
-    // 9. GET SALARY OPTIONS (NEW)
+    // 9. GET SALARY OPTIONS
     // =========================================================================
 
     function _getBaseSalaryByCategory(category) {
@@ -459,7 +460,7 @@
     }
 
     // =========================================================================
-    // 10. CREATE ROLE MODAL (UPDATED with salary and literacy)
+    // 10. CREATE ROLE MODAL
     // =========================================================================
 
     function openCreateRoleModal(onSuccess) {
@@ -513,18 +514,12 @@
                 '<small style="font-size: 0.55rem; color: var(--dim);">Single character (◉, ⌇, ⚔, ⌆)</small>' +
                 '</div>' +
 
-                '<!-- ============================================================ -->' +
-                '<!-- NEW: Salary Field -->' +
-                '<!-- ============================================================ -->' +
                 '<div class="form-group" style="margin-bottom: 12px;">' +
                 '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Base Salary (gold per year)</label>' +
                 '<input type="number" id="newRoleSalary" value="10" min="0" max="200" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
                 '<small style="font-size: 0.55rem; color: var(--dim);">0 means no salary. This can be overridden per character.</small>' +
                 '</div>' +
 
-                '<!-- ============================================================ -->' +
-                '<!-- NEW: Literacy Requirement Field -->' +
-                '<!-- ============================================================ -->' +
                 '<div class="form-group" style="margin-bottom: 12px;">' +
                 '<label style="display: flex; align-items: center; gap: 8px; font-size: 0.65rem; cursor: pointer;">' +
                 '<input type="checkbox" id="newRoleRequiresLiteracy" style="cursor: pointer;">' +
@@ -560,7 +555,6 @@
                 confirmText: 'Create Role',
                 cancelText: 'Cancel',
                 onOpen: function() {
-                    // Literacy checkbox toggle
                     var checkbox = document.getElementById('newRoleRequiresLiteracy');
                     var container = document.getElementById('newRoleLiteracyContainer');
                     if (checkbox && container) {
@@ -573,7 +567,6 @@
                         setTimeout(function() { nameInput.focus(); }, 100);
                     }
 
-                    // Auto-fill salary based on category
                     var categorySelect = document.getElementById('newRoleCategory');
                     var salaryInput = document.getElementById('newRoleSalary');
                     if (categorySelect && salaryInput) {
@@ -625,7 +618,7 @@
     }
 
     // =========================================================================
-    // 11. EDIT ROLE MODAL (UPDATED with salary and literacy)
+    // 11. EDIT ROLE MODAL
     // =========================================================================
 
     function openEditRoleModal(roleId, onSuccess) {
@@ -684,18 +677,12 @@
                 '<input type="text" id="editRoleIcon" value="' + (role.icon || '◉') + '" maxlength="2" style="width: 60px; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
                 '</div>' +
 
-                '<!-- ============================================================ -->' +
-                '<!-- NEW: Salary Field -->' +
-                '<!-- ============================================================ -->' +
                 '<div class="form-group" style="margin-bottom: 12px;">' +
                 '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Base Salary (gold per year)</label>' +
                 '<input type="number" id="editRoleSalary" value="' + (role.baseSalary || 0) + '" min="0" max="200" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
                 '<small style="font-size: 0.55rem; color: var(--dim);">0 means no salary. Can be overridden per character.</small>' +
                 '</div>' +
 
-                '<!-- ============================================================ -->' +
-                '<!-- NEW: Literacy Requirement Field -->' +
-                '<!-- ============================================================ -->' +
                 '<div class="form-group" style="margin-bottom: 12px;">' +
                 '<label style="display: flex; align-items: center; gap: 8px; font-size: 0.65rem; cursor: pointer;">' +
                 '<input type="checkbox" id="editRoleRequiresLiteracy" ' + (role.requiresLiteracy ? 'checked' : '') + ' style="cursor: pointer;">' +
@@ -742,7 +729,6 @@
                 confirmText: 'Save Changes',
                 cancelText: 'Cancel',
                 onOpen: function() {
-                    // Literacy checkbox toggle
                     var checkbox = document.getElementById('editRoleRequiresLiteracy');
                     var container = document.getElementById('editRoleLiteracyContainer');
                     if (checkbox && container) {
@@ -756,7 +742,6 @@
                         setTimeout(function() { nameInput.focus(); }, 100);
                     }
 
-                    // Auto-fill salary based on category
                     var categorySelect = document.getElementById('editRoleCategory');
                     var salaryInput = document.getElementById('editRoleSalary');
                     if (categorySelect && salaryInput) {
@@ -766,7 +751,6 @@
                         };
                     }
 
-                    // Specialization add/remove handlers
                     var addSpecBtn = document.getElementById('addSpecBtn');
                     var newSpecInput = document.getElementById('newSpec');
                     var specsList = document.getElementById('specsList');
@@ -805,7 +789,6 @@
                         });
                     }
 
-                    // Remove spec handlers for existing items
                     var removeBtns = specsList.querySelectorAll('.remove-spec');
                     for (var i = 0; i < removeBtns.length; i++) {
                         var btn = removeBtns[i];
@@ -866,7 +849,7 @@
     }
 
     // =========================================================================
-    // 12. DELETE ROLE MODAL (unchanged)
+    // 12. DELETE ROLE MODAL
     // =========================================================================
 
     function openDeleteRoleModal(roleId, onSuccess) {
@@ -937,7 +920,7 @@
     }
 
     // =========================================================================
-    // 13. ASSIGN ROLE MODAL (unchanged but uses salary fields)
+    // 13. ASSIGN ROLE MODAL
     // =========================================================================
 
     function openAssignRoleModal(roleId, onSuccess) {
@@ -1062,7 +1045,6 @@
                 });
             }
 
-            // Build literacy warning if role requires it
             var literacyWarning = '';
             if (role.requiresLiteracy && role.literacyLevel) {
                 var levelName = window.LITERACY_LEVEL_NAMES?.[role.literacyLevel] || role.literacyLevel;
@@ -1195,7 +1177,842 @@
     }
 
     // =========================================================================
-    // 14. EXPORTS
+    // 14. BULK ASSIGN ROLE MODAL
+    // =========================================================================
+
+    function openBulkAssignRoleModal(roleId, onSuccess) {
+        if (_processingModal) {
+            return;
+        }
+        _processingModal = true;
+
+        try {
+            var role = _getRole(roleId);
+            if (!role) {
+                _showToast('Role not found', 'error');
+                return;
+            }
+
+            var allChars = _getCharacters();
+            var selectedCharIds = [];
+            var searchTerm = '';
+            var genderFilter = 'all';
+            var locationFilter = 'all';
+
+            var personIcon = _getIcon('PERSON');
+            var locationIcon = _getIcon('LOCATION');
+            var checkIcon = _getIcon('CHECK_SIMPLE');
+            var infoIcon = _getIcon('CIRCLE_DOT');
+
+            var allLocations = new Set();
+            for (var i = 0; i < allChars.length; i++) {
+                var char = allChars[i];
+                if (!char.isDeceased) {
+                    var loc = _getCurrentLocation(char);
+                    if (loc && loc !== 'Unknown') allLocations.add(loc);
+                }
+            }
+            var locationOptions = Array.from(allLocations).sort();
+
+            function getEligibleCharacters() {
+                var eligible = allChars.filter(function(c) {
+                    if (c.isDeceased) return false;
+
+                    if (role.genderRestriction === 'male' && c.gender !== 'male') return false;
+                    if (role.genderRestriction === 'female' && c.gender !== 'female') return false;
+
+                    var hasRole = c.professions && c.professions.some(function(p) { return p.id === roleId; });
+                    return !hasRole;
+                });
+
+                if (searchTerm) {
+                    var searchLower = searchTerm.toLowerCase();
+                    eligible = eligible.filter(function(c) {
+                        return c.name.toLowerCase().indexOf(searchLower) !== -1 ||
+                            (c.surname && c.surname.toLowerCase().indexOf(searchLower) !== -1);
+                    });
+                }
+
+                if (genderFilter !== 'all') {
+                    eligible = eligible.filter(function(c) { return c.gender === genderFilter; });
+                }
+
+                if (locationFilter !== 'all') {
+                    eligible = eligible.filter(function(c) { return _getCurrentLocation(c) === locationFilter; });
+                }
+
+                eligible.sort(function(a, b) { return (a.birthYear || 9999) - (b.birthYear || 9999); });
+
+                return eligible;
+            }
+
+            function renderCharacterList() {
+                var eligible = getEligibleCharacters();
+
+                if (eligible.length === 0) {
+                    return '<div class="empty-state" style="text-align:center; padding:20px; color:var(--dim);">No characters match your filters</div>';
+                }
+
+                return eligible.map(function(c) {
+                    var age = _calculateAge(c.birthYear, false, null);
+                    var isSelected = selectedCharIds.indexOf(c.id) !== -1;
+                    var genderIcon = c.gender === 'male' ? '♂' : (c.gender === 'female' ? '♀' : '⚥');
+                    var location = _getCurrentLocation(c);
+                    var currentSkills = c.professions?.length || 0;
+
+                    return '<div class="character-card" data-character-id="' + c.id + '" style="' +
+                        'padding: 10px; ' +
+                        'margin-bottom: 8px; ' +
+                        'background: ' + (isSelected ? 'rgba(var(--accent-rgb), 0.2)' : 'var(--bg3)') + '; ' +
+                        'border: 1px solid ' + (isSelected ? 'var(--accent)' : 'var(--border)') + '; ' +
+                        'border-radius: 6px; ' +
+                        'cursor: pointer;' +
+                        '">' +
+                        '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">' +
+                        '<div style="display: flex; align-items: center; gap: 8px;">' +
+                        '<input type="checkbox" class="char-checkbox" ' + (isSelected ? 'checked' : '') + ' style="cursor: pointer;">' +
+                        '<strong>' + _escapeHtml(c.name) + ' ' + _escapeHtml(c.surname || '') + '</strong>' +
+                        '<span style="font-size: 0.6rem; color: var(--dim); margin-left: 6px;">' + genderIcon + ' ' + age + ' years</span>' +
+                        '</div>' +
+                        '<div style="font-size: 0.55rem; color: var(--accent);">' +
+                        locationIcon + ' ' + _escapeHtml(location) + ' · ' + currentSkills + ' role(s)' +
+                        '</div>' +
+                        '</div>' +
+                        '</div>';
+                }).join('');
+            }
+
+            function refreshCharacterList() {
+                var container = document.getElementById('characterListContainer');
+                if (container) container.innerHTML = renderCharacterList();
+
+                document.querySelectorAll('.character-card').forEach(function(card) {
+                    var checkbox = card.querySelector('.char-checkbox');
+                    if (checkbox) {
+                        checkbox.addEventListener('change', function(e) {
+                            e.stopPropagation();
+                            var charId = this.closest('.character-card').dataset.characterId;
+                            var idx = selectedCharIds.indexOf(charId);
+                            if (this.checked) {
+                                if (idx === -1) selectedCharIds.push(charId);
+                                card.style.background = 'rgba(var(--accent-rgb), 0.2)';
+                                card.style.borderColor = 'var(--accent)';
+                            } else {
+                                if (idx !== -1) selectedCharIds.splice(idx, 1);
+                                card.style.background = 'var(--bg3)';
+                                card.style.borderColor = 'var(--border)';
+                            }
+                            var countEl = document.getElementById('bulkSelectedCount');
+                            if (countEl) countEl.textContent = selectedCharIds.length;
+                        });
+                    }
+
+                    card.addEventListener('click', function(e) {
+                        if (e.target.type === 'checkbox') return;
+                        var checkbox = this.querySelector('.char-checkbox');
+                        if (checkbox) {
+                            checkbox.checked = !checkbox.checked;
+                            var event = new Event('change');
+                            checkbox.dispatchEvent(event);
+                        }
+                    });
+                });
+            }
+
+            var literacyWarning = '';
+            if (role.requiresLiteracy && role.literacyLevel) {
+                var levelName = window.LITERACY_LEVEL_NAMES?.[role.literacyLevel] || role.literacyLevel;
+                literacyWarning = '<div style="padding: 8px; background: rgba(200, 112, 64, 0.15); border: 1px solid var(--warn); border-radius: 6px; margin-bottom: 12px; font-size: 0.6rem;">' +
+                    'This role requires <strong>' + levelName + '</strong>. Characters without this literacy level will not be able to perform this role effectively.' +
+                    '</div>';
+            }
+
+            var modalContent =
+                '<div style="margin-bottom: 16px; background: var(--bg2); padding: 12px; border-radius: 8px;">' +
+                '<strong>Bulk Assign: ' + _escapeHtml(role.name) + '</strong>' +
+                '<div style="font-size: 0.65rem; color: var(--dim); margin-top: 4px;">' +
+                    'Select multiple characters to assign this role.' +
+                    (role.genderRestriction !== 'both' ? ' (Restricted to: ' + role.genderRestriction + ')' : '') +
+                    (role.baseSalary > 0 ? ' · Base Salary: ' + role.baseSalary + ' gold/year' : ' · No salary') +
+                '</div>' +
+                '</div>' +
+
+                literacyWarning +
+
+                '<div style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;">' +
+                '<select id="genderFilter" style="flex:1; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.65rem;">' +
+                '<option value="all">All Genders</option>' +
+                '<option value="male">Male</option>' +
+                '<option value="female">Female</option>' +
+                '</select>' +
+
+                '<select id="locationFilter" style="flex:1; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.65rem;">' +
+                '<option value="all">' + locationIcon + ' All Locations</option>' +
+                locationOptions.map(function(loc) { return '<option value="' + _escapeHtml(loc) + '">' + locationIcon + ' ' + _escapeHtml(loc) + '</option>'; }).join('') +
+                '</select>' +
+                '</div>' +
+
+                '<div class="form-group" style="margin-bottom: 12px;">' +
+                '<input type="text" id="characterSearch" placeholder="' + _getIcon('SEARCH') + ' Search characters..." style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
+                '</div>' +
+
+                '<div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;">' +
+                '<button id="bulkSelectAllBtn" class="btn small" style="padding: 4px 12px; font-size: 0.55rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer;">Select All</button>' +
+                '<button id="bulkSelectNoneBtn" class="btn small" style="padding: 4px 12px; font-size: 0.55rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Select None</button>' +
+                '<span style="font-size: 0.55rem; color: var(--dim); margin-left: auto;"><span id="bulkSelectedCount">0</span> selected</span>' +
+                '</div>' +
+
+                '<div id="characterListContainer" style="max-height: 300px; overflow-y: auto;">' +
+                renderCharacterList() +
+                '</div>' +
+
+                '<div class="form-group" style="margin-top: 12px;">' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Skill Level (0-100)</label>' +
+                '<input type="range" id="skillLevelSlider" min="0" max="100" value="10" step="1" style="width: 100%;">' +
+                '<div style="display: flex; justify-content: space-between; margin-top: 4px;">' +
+                '<span>0</span>' +
+                '<span id="skillLevelDisplay">10 (Novice)</span>' +
+                '<span>100</span>' +
+                '</div>' +
+                '</div>' +
+
+                '<div class="form-group" style="margin-bottom: 12px;">' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes (optional)</label>' +
+                '<textarea id="assignNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;" placeholder="How did they learn this role?"></textarea>' +
+                '</div>' +
+
+                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; margin-top: 8px;">' +
+                infoIcon + ' All selected characters will be assigned the same skill level and notes.' +
+                '</div>';
+
+            _openModal({
+                title: 'Bulk Assign ' + role.name,
+                content: modalContent,
+                confirmText: 'Assign to Selected',
+                cancelText: 'Cancel',
+                onConfirm: function() {
+                    if (selectedCharIds.length === 0) {
+                        _showToast('Please select at least one character', 'error');
+                        return false;
+                    }
+
+                    var skill = parseInt(document.getElementById('skillLevelSlider').value);
+                    var notes = document.getElementById('assignNotes')?.value || '';
+
+                    var results = _bulkAssignRole(selectedCharIds, roleId, {
+                        skillLevel: skill,
+                        startYear: _getCurrentYear(),
+                        notes: notes || 'Assigned ' + role.name
+                    });
+
+                    if (results && results.success > 0) {
+                        _showToast('Assigned ' + role.name + ' to ' + results.success + ' characters', 'success');
+                        if (results.failed > 0) {
+                            _showToast(results.failed + ' assignments failed', 'warning');
+                        }
+                        if (onSuccess) onSuccess(results);
+                        _closeTopModal();
+                    } else {
+                        _showToast('Failed to assign role', 'error');
+                    }
+                    return true;
+                }
+            });
+
+            setTimeout(function() {
+                var searchInput = document.getElementById('characterSearch');
+                if (searchInput) {
+                    searchInput.addEventListener('input', function(e) {
+                        searchTerm = e.target.value;
+                        refreshCharacterList();
+                    });
+                }
+
+                var genderSelect = document.getElementById('genderFilter');
+                if (genderSelect) {
+                    genderSelect.addEventListener('change', function(e) {
+                        genderFilter = e.target.value;
+                        refreshCharacterList();
+                    });
+                }
+
+                var locationSelect = document.getElementById('locationFilter');
+                if (locationSelect) {
+                    locationSelect.addEventListener('change', function(e) {
+                        locationFilter = e.target.value;
+                        refreshCharacterList();
+                    });
+                }
+
+                var skillSlider = document.getElementById('skillLevelSlider');
+                var skillDisplay = document.getElementById('skillLevelDisplay');
+                if (skillSlider && skillDisplay) {
+                    skillSlider.addEventListener('input', function() {
+                        var val = parseInt(skillSlider.value);
+                        skillDisplay.textContent = val + ' (' + _getSkillLevelName(val) + ')';
+                    });
+                }
+
+                var selectAllBtn = document.getElementById('bulkSelectAllBtn');
+                if (selectAllBtn) {
+                    selectAllBtn.onclick = function() {
+                        var checkboxes = document.querySelectorAll('.char-checkbox');
+                        checkboxes.forEach(function(cb) {
+                            cb.checked = true;
+                            var event = new Event('change');
+                            cb.dispatchEvent(event);
+                        });
+                    };
+                }
+
+                var selectNoneBtn = document.getElementById('bulkSelectNoneBtn');
+                if (selectNoneBtn) {
+                    selectNoneBtn.onclick = function() {
+                        var checkboxes = document.querySelectorAll('.char-checkbox');
+                        checkboxes.forEach(function(cb) {
+                            cb.checked = false;
+                            var event = new Event('change');
+                            cb.dispatchEvent(event);
+                        });
+                    };
+                }
+
+                refreshCharacterList();
+            }, 50);
+
+        } finally {
+            _processingModal = false;
+        }
+    }
+
+    // =========================================================================
+    // 15. VIEW CHARACTERS WITH ROLE MODAL
+    // =========================================================================
+
+    function openViewCharactersWithRoleModal(roleId) {
+        if (_processingModal) {
+            return;
+        }
+        _processingModal = true;
+
+        try {
+            var role = _getRole(roleId);
+            if (!role) {
+                _showToast('Role not found', 'error');
+                return;
+            }
+
+            var charDetails = _getCharactersWithRoleDetails(roleId);
+            var personIcon = _getIcon('PERSON');
+            var locationIcon = _getIcon('LOCATION');
+            var infoIcon = _getIcon('CIRCLE_DOT');
+
+            var charHtml = '';
+            if (charDetails.length === 0) {
+                charHtml = '<div style="text-align: center; padding: 40px; color: var(--dim);">No characters have this role</div>';
+            } else {
+                charHtml = '<div style="max-height: 400px; overflow-y: auto;">' +
+                    '<table style="width: 100%; font-size: 0.6rem; border-collapse: collapse;">' +
+                    '<thead>' +
+                        '<tr style="background: var(--bg2);">' +
+                            '<th style="padding: 6px; text-align: left;">Name</th>' +
+                            '<th style="padding: 6px; text-align: center;">Skill</th>' +
+                            '<th style="padding: 6px; text-align: center;">Tier</th>' +
+                            '<th style="padding: 6px; text-align: center;">Can Teach</th>' +
+                            '<th style="padding: 6px; text-align: left;">Specializations</th>' +
+                            '<th style="padding: 6px; text-align: center;">Primary</th>' +
+                        '</tr>' +
+                    '</thead>' +
+                    '<tbody>';
+
+                for (var i = 0; i < charDetails.length; i++) {
+                    var cd = charDetails[i];
+                    var char = cd.character;
+
+                    charHtml +=
+                        '<tr style="border-top: 1px solid var(--border-light);">' +
+                            '<td style="padding: 4px 6px;">' + _escapeHtml(char.name) + ' ' + _escapeHtml(char.surname || '') + '</td>' +
+                            '<td style="padding: 4px 6px; text-align: center;">' + cd.skillLevel + '</td>' +
+                            '<td style="padding: 4px 6px; text-align: center;">' + cd.skillTier + '</td>' +
+                            '<td style="padding: 4px 6px; text-align: center;">' + (cd.canTeach ? '✓' : '') + '</td>' +
+                            '<td style="padding: 4px 6px;">' + (cd.specializations && cd.specializations.length > 0 ? cd.specializations.slice(0, 3).join(', ') + (cd.specializations.length > 3 ? '...' : '') : '') + '</td>' +
+                            '<td style="padding: 4px 6px; text-align: center;">' + (cd.isPrimary ? '✓' : '') + '</td>' +
+                        '</tr>';
+                }
+
+                charHtml += '</tbody></table></div>';
+            }
+
+            var modalContent =
+                '<div style="margin-bottom: 16px; padding: 12px; background: var(--bg2); border-radius: 8px;">' +
+                '<strong>' + personIcon + ' ' + _escapeHtml(role.name) + '</strong>' +
+                '<div style="font-size: 0.65rem; color: var(--dim); margin-top: 4px;">' + charDetails.length + ' characters have this role</div>' +
+                '</div>' +
+                charHtml +
+                '<div style="margin-top: 12px; padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
+                infoIcon + ' Characters with skill 51+ (Journeyman) can teach this role.' +
+                '</div>';
+
+            _openModal({
+                title: 'Characters with ' + role.name,
+                content: modalContent,
+                confirmText: 'Close',
+                cancelText: '',
+                onConfirm: function() {
+                    _closeTopModal();
+                    _processingModal = false;
+                }
+            });
+
+        } finally {
+            _processingModal = false;
+        }
+    }
+
+    // =========================================================================
+    // 16. EDIT ROLE SKILL MODAL
+    // =========================================================================
+
+    function openEditRoleSkillModal(roleId, characterId, onSuccess) {
+        if (_processingModal) {
+            return;
+        }
+        _processingModal = true;
+
+        try {
+            var role = _getRole(roleId);
+            var character = _getCharacterById(characterId);
+
+            if (!role || !character) {
+                _showToast('Role or character not found', 'error');
+                return;
+            }
+
+            var currentSkill = _getSkillLevel(characterId, roleId);
+            var skillLevel = currentSkill || 0;
+
+            var modalContent =
+                '<div style="margin-bottom: 16px; padding: 12px; background: var(--bg2); border-radius: 8px;">' +
+                '<strong>' + _escapeHtml(character.name) + ' ' + _escapeHtml(character.surname || '') + '</strong>' +
+                '<div style="font-size: 0.65rem; color: var(--dim); margin-top: 4px;">' + _escapeHtml(role.name) + ' · Current skill: ' + skillLevel + ' (' + _getSkillLevelName(skillLevel) + ')</div>' +
+                '</div>' +
+
+                '<div class="form-group" style="margin-bottom: 12px;">' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Skill Level (0-100)</label>' +
+                '<input type="range" id="skillSlider" min="0" max="100" value="' + skillLevel + '" step="1" style="width: 100%;">' +
+                '<div style="display: flex; justify-content: space-between; margin-top: 4px;">' +
+                '<span>0</span>' +
+                '<span id="skillDisplay">' + skillLevel + ' (' + _getSkillLevelName(skillLevel) + ')</span>' +
+                '<span>100</span>' +
+                '</div>' +
+                '</div>' +
+
+                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
+                'Skill level determines proficiency. 91+ = Master, 76+ = Expert, 51+ = Journeyman, 26+ = Apprentice.' +
+                '</div>';
+
+            _openModal({
+                title: 'Edit Skill: ' + character.name + ' (' + role.name + ')',
+                content: modalContent,
+                confirmText: 'Save',
+                cancelText: 'Cancel',
+                onOpen: function() {
+                    var slider = document.getElementById('skillSlider');
+                    var display = document.getElementById('skillDisplay');
+                    if (slider && display) {
+                        slider.addEventListener('input', function() {
+                            var val = parseInt(slider.value);
+                            display.textContent = val + ' (' + _getSkillLevelName(val) + ')';
+                        });
+                    }
+                },
+                onConfirm: function() {
+                    var newSkill = parseInt(document.getElementById('skillSlider').value);
+                    var result = _updateCharacterSkill(characterId, roleId, newSkill);
+
+                    if (result && result.success) {
+                        _showToast('Skill updated to ' + newSkill, 'success');
+                        if (onSuccess) onSuccess();
+                        _closeTopModal();
+                    } else {
+                        _showToast('Failed to update skill', 'error');
+                    }
+                    return true;
+                }
+            });
+
+        } finally {
+            _processingModal = false;
+        }
+    }
+
+    // =========================================================================
+    // 17. LIST ROLES MODAL
+    // =========================================================================
+
+    function openListRolesModal(onSelect) {
+        if (_processingModal) {
+            return;
+        }
+        _processingModal = true;
+
+        try {
+            var roles = _getAllRoles();
+            var categories = _getRoleCategories();
+            var searchTerm = '';
+            var categoryFilter = 'all';
+
+            var personIcon = _getIcon('PERSON');
+            var searchIcon = _getIcon('SEARCH');
+            var infoIcon = _getIcon('CIRCLE_DOT');
+
+            // Build category options
+            var categoryOptions = '<option value="all">All Categories</option>';
+            for (var catId in categories) {
+                if (categories.hasOwnProperty(catId)) {
+                    var cat = categories[catId];
+                    categoryOptions += '<option value="' + catId + '">' + (cat.icon || '⌇') + ' ' + cat.name + '</option>';
+                }
+            }
+
+            function renderRoleList() {
+                var filtered = roles.slice();
+
+                if (categoryFilter !== 'all') {
+                    filtered = filtered.filter(function(r) { return r.category === categoryFilter; });
+                }
+
+                if (searchTerm) {
+                    var searchLower = searchTerm.toLowerCase();
+                    filtered = filtered.filter(function(r) {
+                        return r.name.toLowerCase().indexOf(searchLower) !== -1 ||
+                            (r.notes && r.notes.toLowerCase().indexOf(searchLower) !== -1);
+                    });
+                }
+
+                filtered.sort(function(a, b) { return a.name.localeCompare(b.name); });
+
+                if (filtered.length === 0) {
+                    return '<div style="text-align: center; padding: 40px; color: var(--dim);">No roles found</div>';
+                }
+
+                return filtered.map(function(r) {
+                    var icon = r.icon || '◉';
+                    var catName = categories[r.category] ? categories[r.category].name : 'Uncategorized';
+                    var charCount = 0;
+                    var characters = _getCharacters();
+                    for (var i = 0; i < characters.length; i++) {
+                        var c = characters[i];
+                        if (c.professions && c.professions.some(function(p) { return p.id === r.id; })) {
+                            charCount++;
+                        }
+                    }
+
+                    return '<div class="role-item" data-role-id="' + r.id + '" style="' +
+                        'display: flex; justify-content: space-between; align-items: center; ' +
+                        'padding: 10px 12px; ' +
+                        'background: var(--bg2); ' +
+                        'border-radius: 6px; ' +
+                        'margin-bottom: 4px; ' +
+                        'cursor: pointer; ' +
+                        'transition: all 0.1s;' +
+                        '">' +
+                        '<div>' +
+                        '<span style="font-size: 0.85rem;">' + icon + ' <strong>' + _escapeHtml(r.name) + '</strong></span>' +
+                        '<span style="font-size: 0.55rem; color: var(--dim); margin-left: 8px;">' + _escapeHtml(catName) + '</span>' +
+                        (r.specializations && r.specializations.length > 0 ? ' <span style="font-size: 0.5rem; color: var(--accent);">(' + r.specializations.length + ' specs)</span>' : '') +
+                        '</div>' +
+                        '<div style="display: flex; align-items: center; gap: 8px;">' +
+                        '<span style="font-size: 0.55rem; color: var(--dim);">' + personIcon + ' ' + charCount + '</span>' +
+                        (onSelect ? '<button class="role-select-btn" data-role-id="' + r.id + '" style="padding: 2px 10px; font-size: 0.55rem; background: var(--accent); border: none; color: white; border-radius: 4px; cursor: pointer;">Select</button>' : '') +
+                        '<button class="role-view-btn" data-role-id="' + r.id + '" style="padding: 2px 8px; font-size: 0.5rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">View</button>' +
+                        '</div>' +
+                        '</div>';
+                }).join('');
+            }
+
+            var modalContent =
+                '<div style="margin-bottom: 16px;">' +
+                '<div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">' +
+                '<input type="text" id="roleListSearch" placeholder="' + searchIcon + ' Search roles..." style="flex: 1; min-width: 80px; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 0.65rem; color: var(--text);">' +
+                '<select id="roleListCategory" style="padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 0.65rem; color: var(--text);">' +
+                categoryOptions +
+                '</select>' +
+                '</div>' +
+                '<button id="roleListCreateBtn" class="btn primary" style="background: var(--accent); border: none; color: white; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 0.6rem;">Create New Role</button>' +
+                '</div>' +
+                '<div id="roleListContainer" style="max-height: 400px; overflow-y: auto;">' +
+                renderRoleList() +
+                '</div>' +
+                '<div style="margin-top: 12px; padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
+                infoIcon + ' Click "Select" to choose a role, or "View" to see details.' +
+                '</div>';
+
+            _openModal({
+                title: 'All Roles',
+                content: modalContent,
+                confirmText: 'Close',
+                cancelText: '',
+                onConfirm: function() {
+                    _closeTopModal();
+                    _processingModal = false;
+                }
+            });
+
+            setTimeout(function() {
+                var searchInput = document.getElementById('roleListSearch');
+                var categorySelect = document.getElementById('roleListCategory');
+                var container = document.getElementById('roleListContainer');
+
+                function filterRoles() {
+                    searchTerm = searchInput ? searchInput.value : '';
+                    categoryFilter = categorySelect ? categorySelect.value : 'all';
+                    if (container) container.innerHTML = renderRoleList();
+                    attachHandlers();
+                }
+
+                if (searchInput) {
+                    searchInput.addEventListener('input', filterRoles);
+                }
+
+                if (categorySelect) {
+                    categorySelect.addEventListener('change', filterRoles);
+                }
+
+                function attachHandlers() {
+                    // Select buttons
+                    var selectBtns = container.querySelectorAll('.role-select-btn');
+                    for (var i = 0; i < selectBtns.length; i++) {
+                        (function(btn) {
+                            btn.addEventListener('click', function(e) {
+                                e.stopPropagation();
+                                var roleId = this.dataset.roleId;
+                                var role = _getRole(roleId);
+                                if (role && onSelect) {
+                                    _closeTopModal();
+                                    _processingModal = false;
+                                    onSelect(role);
+                                }
+                            });
+                        })(selectBtns[i]);
+                    }
+
+                    // View buttons
+                    var viewBtns = container.querySelectorAll('.role-view-btn');
+                    for (var i = 0; i < viewBtns.length; i++) {
+                        (function(btn) {
+                            btn.addEventListener('click', function(e) {
+                                e.stopPropagation();
+                                var roleId = this.dataset.roleId;
+                                _closeTopModal();
+                                _processingModal = false;
+                                openViewCharactersWithRoleModal(roleId);
+                            });
+                        })(viewBtns[i]);
+                    }
+
+                    // Role item click
+                    var items = container.querySelectorAll('.role-item');
+                    for (var i = 0; i < items.length; i++) {
+                        (function(item) {
+                            item.addEventListener('click', function(e) {
+                                if (e.target.closest('button')) return;
+                                var roleId = this.dataset.roleId;
+                                var role = _getRole(roleId);
+                                if (role && onSelect) {
+                                    _closeTopModal();
+                                    _processingModal = false;
+                                    onSelect(role);
+                                }
+                            });
+                            item.addEventListener('mouseenter', function() {
+                                this.style.background = 'var(--bg3)';
+                            });
+                            item.addEventListener('mouseleave', function() {
+                                this.style.background = 'var(--bg2)';
+                            });
+                        })(items[i]);
+                    }
+                }
+
+                var createBtn = document.getElementById('roleListCreateBtn');
+                if (createBtn) {
+                    createBtn.onclick = function() {
+                        _closeTopModal();
+                        _processingModal = false;
+                        openCreateRoleModal(function() {
+                            setTimeout(function() {
+                                openListRolesModal(onSelect);
+                            }, 100);
+                        });
+                    };
+                }
+
+                attachHandlers();
+            }, 100);
+
+        } finally {
+            _processingModal = false;
+        }
+    }
+
+    // =========================================================================
+    // 18. CATEGORY MANAGER MODAL
+    // =========================================================================
+
+    function openCategoryManagerModal(onSuccess) {
+        if (_processingModal) {
+            return;
+        }
+        _processingModal = true;
+
+        try {
+            var categories = _getRoleCategories();
+            var infoIcon = _getIcon('CIRCLE_DOT');
+            var editIcon = _getIcon('EDIT');
+            var crossIcon = _getIcon('X_HEAVY');
+
+            var categoryHtml = '';
+            var catKeys = Object.keys(categories).sort();
+            for (var i = 0; i < catKeys.length; i++) {
+                var key = catKeys[i];
+                var cat = categories[key];
+                var roleCount = 0;
+                var roles = _getAllRoles();
+                for (var j = 0; j < roles.length; j++) {
+                    if (roles[j].category === key) roleCount++;
+                }
+
+                categoryHtml +=
+                    '<div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: var(--bg2); border-radius: 4px; margin-bottom: 4px;">' +
+                    '<div>' +
+                    '<span style="font-size: 0.7rem;">' + (cat.icon || '⌇') + ' <strong>' + _escapeHtml(cat.name) + '</strong></span>' +
+                    '<span style="font-size: 0.55rem; color: var(--dim); margin-left: 8px;">' + roleCount + ' roles</span>' +
+                    '</div>' +
+                    '<div style="display: flex; gap: 4px;">' +
+                    (key !== 'uncategorized' ? '<button class="cat-edit-btn" data-cat-id="' + key + '" style="padding: 2px 6px; font-size: 0.5rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 3px; cursor: pointer;">' + editIcon + '</button>' : '') +
+                    (key !== 'uncategorized' ? '<button class="cat-delete-btn" data-cat-id="' + key + '" style="padding: 2px 6px; font-size: 0.5rem; background: #8a3020; border: none; color: white; border-radius: 3px; cursor: pointer;">' + crossIcon + '</button>' : '') +
+                    '</div>' +
+                    '</div>';
+            }
+
+            var modalContent =
+                '<div style="margin-bottom: 16px;">' +
+                '<div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">' +
+                '<button id="catMgrAddBtn" class="btn primary" style="background: var(--accent); border: none; color: white; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 0.6rem;">Add Category</button>' +
+                '</div>' +
+                '</div>' +
+                '<div id="categoryList" style="max-height: 300px; overflow-y: auto;">' +
+                categoryHtml +
+                '</div>' +
+                '<div style="margin-top: 12px; padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
+                infoIcon + ' Categories help organize roles. The "Uncategorized" category cannot be deleted.' +
+                '</div>';
+
+            _openModal({
+                title: 'Manage Categories',
+                content: modalContent,
+                confirmText: 'Close',
+                cancelText: '',
+                onConfirm: function() {
+                    _closeTopModal();
+                    _processingModal = false;
+                    if (onSuccess) onSuccess();
+                }
+            });
+
+            setTimeout(function() {
+                var addBtn = document.getElementById('catMgrAddBtn');
+                if (addBtn) {
+                    addBtn.onclick = function() {
+                        var name = prompt('Enter category name:');
+                        if (name && name.trim()) {
+                            var id = name.toLowerCase().replace(/[^a-z0-9]/g, '_');
+                            if (_getRoleCategories()[id]) {
+                                _showToast('Category already exists', 'error');
+                                return;
+                            }
+                            if (typeof window.addCategory === 'function') {
+                                var result = window.addCategory(id, name.trim());
+                                if (result) {
+                                    _showToast('Category "' + name.trim() + '" created', 'success');
+                                    _closeTopModal();
+                                    _processingModal = false;
+                                    openCategoryManagerModal(onSuccess);
+                                }
+                            } else {
+                                _showToast('Category manager not available', 'error');
+                            }
+                        }
+                    };
+                }
+
+                var editBtns = document.querySelectorAll('.cat-edit-btn');
+                for (var i = 0; i < editBtns.length; i++) {
+                    (function(btn) {
+                        btn.addEventListener('click', function(e) {
+                            e.stopPropagation();
+                            var catId = this.dataset.catId;
+                            var cat = _getRoleCategories()[catId];
+                            if (cat) {
+                                var newName = prompt('Edit category name:', cat.name);
+                                if (newName !== null && newName.trim()) {
+                                    if (typeof window.updateCategory === 'function') {
+                                        var result = window.updateCategory(catId, { name: newName.trim() });
+                                        if (result) {
+                                            _showToast('Category updated', 'success');
+                                            _closeTopModal();
+                                            _processingModal = false;
+                                            openCategoryManagerModal(onSuccess);
+                                        }
+                                    } else {
+                                        _showToast('Category manager not available', 'error');
+                                    }
+                                }
+                            }
+                        });
+                    })(editBtns[i]);
+                }
+
+                var deleteBtns = document.querySelectorAll('.cat-delete-btn');
+                for (var i = 0; i < deleteBtns.length; i++) {
+                    (function(btn) {
+                        btn.addEventListener('click', function(e) {
+                            e.stopPropagation();
+                            var catId = this.dataset.catId;
+                            var cat = _getRoleCategories()[catId];
+                            if (cat) {
+                                var rolesInCategory = _getAllRoles().filter(function(r) { return r.category === catId; });
+                                var msg = 'Delete category "' + cat.name + '"?';
+                                if (rolesInCategory.length > 0) {
+                                    msg += '\n\n' + rolesInCategory.length + ' role(s) will be reassigned to "Uncategorized".';
+                                }
+                                if (confirm(msg)) {
+                                    if (typeof window.deleteCategory === 'function') {
+                                        var result = window.deleteCategory(catId);
+                                        if (result) {
+                                            _showToast('Category deleted', 'info');
+                                            _closeTopModal();
+                                            _processingModal = false;
+                                            openCategoryManagerModal(onSuccess);
+                                        }
+                                    } else {
+                                        _showToast('Category manager not available', 'error');
+                                    }
+                                }
+                            }
+                        });
+                    })(deleteBtns[i]);
+                }
+            }, 100);
+
+        } finally {
+            _processingModal = false;
+        }
+    }
+
+    // =========================================================================
+    // 19. EXPORTS
     // =========================================================================
 
     window.openCreateRoleModal = openCreateRoleModal;

@@ -18,15 +18,15 @@
  * 
  * EXPORTS:
  *   - openRoleSelector() - Select an existing role
- *   - openRoleSelectorWithCreate() - Select or create a role
  *   - openRolePickerForPosition() - Pick role for a position with filtering
- *   - openQuickRoleCreator() - Quick create a role
- *   - openRoleManagementModal() - Full role management
+ *   - openRoleManagementModal() - Full role management (view only, no create)
  * 
  * ICON POLICY:
  *   - All icons from icons.js via _getIcon()
  *   - NO emojis
  *   - NO icons in confirm/cancel buttons (plain text only)
+ * 
+ * UPDATED: Removed "Create Role" functionality - users must select from existing roles only
  * 
  * =============================================================================
  */
@@ -165,16 +165,6 @@
         return {};
     }
 
-    function _createRole(data) {
-        if (_roleCommands && typeof _roleCommands.createRole === 'function') {
-            return _roleCommands.createRole(data);
-        }
-        if (typeof window.createRole === 'function') {
-            return window.createRole(data);
-        }
-        return null;
-    }
-
     // =========================================================================
     // 5. ROLE SELECTOR MODAL
     // =========================================================================
@@ -188,7 +178,6 @@
      * @param {string} options.searchPlaceholder - Search placeholder
      * @param {Function} options.onSelect - Callback when role is selected
      * @param {Function} options.onCancel - Callback when cancelled
-     * @param {boolean} options.showCreate - Show create button (default: true)
      * @param {boolean} options.showStats - Show role statistics (default: false)
      * @param {string} options.emptyMessage - Message when no roles found
      * @param {Array} options.excludeIds - Role IDs to exclude
@@ -216,7 +205,6 @@
             var searchPlaceholder = options.searchPlaceholder || 'Search roles...';
             var onSelect = options.onSelect || function() {};
             var onCancel = options.onCancel || function() {};
-            var showCreate = options.showCreate !== false;
             var showStats = options.showStats || false;
             var emptyMessage = options.emptyMessage || 'No roles found';
             var excludeIds = options.excludeIds || [];
@@ -310,11 +298,7 @@
                 roleListHtml += '</div>';
             }
 
-            var createButtonHtml = '';
-            if (showCreate) {
-                createButtonHtml = 
-                    '<button id="roleSelectCreateBtn" class="btn primary" style="background: var(--accent); border: none; color: white; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 0.6rem;">Create New Role</button>';
-            }
+            // NOTE: Create button has been removed - users must select from existing roles only
 
             var modalContent =
                 '<div style="margin-bottom: 16px;">' +
@@ -323,9 +307,6 @@
                 '<select id="roleSelectCategory" style="padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 0.65rem; color: var(--text);">' +
                 categoryOptions +
                 '</select>' +
-                '</div>' +
-                '<div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">' +
-                createButtonHtml +
                 '</div>' +
                 '</div>' +
                 '<div id="roleSelectList" style="max-height: 350px; overflow-y: auto;">' +
@@ -442,21 +423,6 @@
                     })(items[i]);
                 }
 
-                // Create button
-                var createBtn = document.getElementById('roleSelectCreateBtn');
-                if (createBtn) {
-                    createBtn.onclick = function() {
-                        _closeTopModal();
-                        _roleSelectorOpen = false;
-                        _processingModal = false;
-                        openQuickRoleCreator(function(newRole) {
-                            if (newRole) {
-                                onSelect(newRole);
-                            }
-                        }, { context: context });
-                    };
-                }
-
                 // Filter roles with initial values
                 filterRoles();
 
@@ -473,30 +439,7 @@
     }
 
     // =========================================================================
-    // 6. ROLE SELECTOR WITH CREATE
-    // =========================================================================
-
-    /**
-     * Opens a role selector with create option
-     * @param {Object} options - Options
-     * @param {string} options.title - Modal title
-     * @param {string} options.preselectedId - Pre-selected role ID
-     * @param {string} options.categoryFilter - Filter by category
-     * @param {Function} options.onSelect - Callback when role is selected or created
-     * @param {Function} options.onCancel - Callback when cancelled
-     * @param {string} options.context - Context for logging
-     * @param {string} options.suggestedCategory - Suggested category for new role
-     * @param {string} options.suggestedName - Suggested name for new role
-     * @returns {Object|null} Modal reference or null
-     */
-    function openRoleSelectorWithCreate(options) {
-        options = options || {};
-        options.showCreate = true;
-        return openRoleSelector(options);
-    }
-
-    // =========================================================================
-    // 7. ROLE PICKER FOR POSITION
+    // 6. ROLE PICKER FOR POSITION
     // =========================================================================
 
     /**
@@ -509,7 +452,6 @@
      * @param {Function} options.onCancel - Callback when cancelled
      * @param {boolean} options.allowNone - Allow "No role" option (default: true)
      * @param {string} options.preselectedId - Pre-selected role ID
-     * @param {string} options.suggestedCategory - Suggested category for new role
      * @returns {Object|null} Modal reference or null
      */
     function openRolePickerForPosition(options) {
@@ -529,7 +471,6 @@
             var onCancel = options.onCancel || function() {};
             var allowNone = options.allowNone !== false;
             var preselectedId = options.preselectedId || null;
-            var suggestedCategory = options.suggestedCategory || null;
 
             var allRoles = _getAllRoles();
             var categories = _getRoleCategories();
@@ -611,6 +552,8 @@
                 }
             }
 
+            // NOTE: Create button has been removed - users must select from existing roles only
+
             var modalContent =
                 '<div style="margin-bottom: 16px;">' +
                 '<div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">' +
@@ -619,7 +562,6 @@
                 categoryOptions +
                 '</select>' +
                 '</div>' +
-                '<button id="rolePickerCreateBtn" class="btn primary" style="background: var(--accent); border: none; color: white; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 0.6rem;">Create New Role</button>' +
                 '</div>' +
                 '<div id="rolePickerList" style="max-height: 300px; overflow-y: auto;">' +
                 roleListHtml +
@@ -747,23 +689,6 @@
                     })(items[i]);
                 }
 
-                // Create button
-                var createBtn = document.getElementById('rolePickerCreateBtn');
-                if (createBtn) {
-                    createBtn.onclick = function() {
-                        _closeTopModal();
-                        _processingModal = false;
-                        openQuickRoleCreator(function(newRole) {
-                            if (newRole) {
-                                onSelect(newRole);
-                            }
-                        }, {
-                            context: context,
-                            suggestedCategory: suggestedCategory
-                        });
-                    };
-                }
-
                 // Filter roles with initial values
                 filterRoles();
 
@@ -779,128 +704,11 @@
     }
 
     // =========================================================================
-    // 8. QUICK ROLE CREATOR
+    // 7. ROLE MANAGEMENT MODAL
     // =========================================================================
 
     /**
-     * Opens a quick role creation modal
-     * @param {Function} onSuccess - Callback with created role
-     * @param {Object} options - Options
-     * @param {string} options.context - Context for logging
-     * @param {string} options.suggestedCategory - Suggested category
-     * @param {string} options.suggestedName - Suggested name
-     * @param {string} options.suggestedIcon - Suggested icon
-     * @returns {Object|null} Modal reference or null
-     */
-    function openQuickRoleCreator(onSuccess, options) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return null;
-        }
-
-        _processingModal = true;
-
-        try {
-            options = options || {};
-            var context = options.context || '';
-            var suggestedCategory = options.suggestedCategory || 'admin';
-            var suggestedName = options.suggestedName || '';
-            var suggestedIcon = options.suggestedIcon || '◉';
-
-            var categories = _getRoleCategories();
-
-            var categoryOptions = '';
-            for (var catId in categories) {
-                if (categories.hasOwnProperty(catId)) {
-                    var cat = categories[catId];
-                    var selected = (catId === suggestedCategory) ? 'selected' : '';
-                    var icon = cat.icon || '⌇';
-                    categoryOptions += '<option value="' + catId + '" ' + selected + '>' + icon + ' ' + _escapeHtml(cat.name) + '</option>';
-                }
-            }
-
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Role Name *</label>' +
-                '<input type="text" id="quickRoleName" value="' + _escapeHtml(suggestedName) + '" placeholder="e.g., Servant, Government Worker" autofocus style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Category</label>' +
-                '<select id="quickRoleCategory" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                categoryOptions +
-                '</select>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Icon</label>' +
-                '<input type="text" id="quickRoleIcon" value="' + _escapeHtml(suggestedIcon) + '" maxlength="2" style="width: 60px; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '<small style="font-size: 0.55rem; color: var(--dim); margin-left: 8px;">Single character (◉, ⌇, ⚔, ⌆)</small>' +
-                '</div>' +
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
-                'Quick create a role that can be used across all systems (government, household, residence).' +
-                '</div>' +
-                '</div>';
-
-            var modal = _openModal({
-                title: 'Create New Role',
-                content: modalContent,
-                confirmText: 'Create Role',
-                cancelText: 'Cancel',
-                onOpen: function() {
-                    var nameInput = document.getElementById('quickRoleName');
-                    if (nameInput) {
-                        setTimeout(function() { nameInput.focus(); }, 100);
-                    }
-                },
-                onConfirm: function() {
-                    var name = document.getElementById('quickRoleName').value.trim();
-                    if (!name) {
-                        _showToast('Role name is required', 'error');
-                        return false;
-                    }
-
-                    var newRole = _createRole({
-                        name: name,
-                        category: document.getElementById('quickRoleCategory').value,
-                        icon: document.getElementById('quickRoleIcon').value || '◉',
-                        specializations: [],
-                        notes: 'Created via quick role creator' + (context ? ' for ' + context : ''),
-                        genderRestriction: 'both'
-                    });
-
-                    if (newRole) {
-                        _showToast('Role "' + name + '" created', 'success');
-                        _closeTopModal();
-                        _processingModal = false;
-                        if (onSuccess) {
-                            onSuccess(newRole);
-                        }
-                        return true;
-                    } else {
-                        _showToast('Failed to create role', 'error');
-                        return false;
-                    }
-                },
-                onCancel: function() {
-                    _processingModal = false;
-                }
-            });
-
-            return modal;
-
-        } catch (e) {
-            _processingModal = false;
-            _showToast('Error opening quick role creator', 'error');
-            return null;
-        }
-    }
-
-    // =========================================================================
-    // 9. ROLE MANAGEMENT MODAL
-    // =========================================================================
-
-    /**
-     * Opens a full role management modal
+     * Opens a full role management modal (view only, no create)
      * @param {Object} options - Options
      * @param {Function} options.onSelect - Callback when a role is selected
      * @param {Function} options.onComplete - Callback when modal is closed
@@ -980,7 +788,6 @@
                             '</div>' +
                             '<div style="display: flex; gap: 4px;">' +
                             '<button class="role-mgmt-select-btn" data-role-id="' + r.id + '" style="padding: 2px 8px; font-size: 0.45rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 3px; cursor: pointer;">Select</button>' +
-                            '<button class="role-mgmt-edit-btn" data-role-id="' + r.id + '" style="padding: 2px 8px; font-size: 0.45rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 3px; cursor: pointer;">Edit</button>' +
                             '</div>' +
                             '</div>';
                     }
@@ -989,21 +796,21 @@
                 }
             }
 
+            // NOTE: Create button has been removed - users must select from existing roles only
+
             var modalContent =
                 '<div style="margin-bottom: 16px;">' +
-                '<div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">' +
-                '<button id="roleMgmtCreateBtn" class="btn primary" style="background: var(--accent); border: none; color: white; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 0.6rem;">Create New Role</button>' +
-                '</div>' +
+                '<div style="font-size: 0.65rem; color: var(--dim); padding: 4px 0;">Select a role from the list below</div>' +
                 '</div>' +
                 '<div id="roleMgmtList" style="max-height: 400px; overflow-y: auto;">' +
                 roleListHtml +
                 '</div>' +
                 '<div style="margin-top: 12px; padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
-                'Click "Select" to choose a role, or "Edit" to modify it. Use the create button to add a new role.' +
+                'Click "Select" to choose a role. Roles can be created and managed in the Role Manager.' +
                 '</div>';
 
             var modal = _openModal({
-                title: 'Manage Roles',
+                title: 'Select Role',
                 content: modalContent,
                 confirmText: 'Close',
                 cancelText: '',
@@ -1034,44 +841,6 @@
                             }
                         });
                     })(selectBtns[i]);
-                }
-
-                // Edit buttons
-                var editBtns = document.querySelectorAll('.role-mgmt-edit-btn');
-                for (var i = 0; i < editBtns.length; i++) {
-                    (function(btn) {
-                        btn.addEventListener('click', function(e) {
-                            e.stopPropagation();
-                            var roleId = this.dataset.roleId;
-                            if (typeof window.openEditRoleModal === 'function') {
-                                _closeTopModal();
-                                _processingModal = false;
-                                window.openEditRoleModal(roleId, function() {
-                                    setTimeout(function() {
-                                        openRoleManagementModal(options);
-                                    }, 100);
-                                });
-                            } else {
-                                _showToast('Edit modal not available', 'error');
-                            }
-                        });
-                    })(editBtns[i]);
-                }
-
-                // Create button
-                var createBtn = document.getElementById('roleMgmtCreateBtn');
-                if (createBtn) {
-                    createBtn.onclick = function() {
-                        _closeTopModal();
-                        _processingModal = false;
-                        openQuickRoleCreator(function(newRole) {
-                            if (newRole) {
-                                setTimeout(function() {
-                                    openRoleManagementModal(options);
-                                }, 100);
-                            }
-                        }, { context: context });
-                    };
                 }
 
                 // Click on role item to select
@@ -1108,29 +877,23 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 8. EXPORTS
     // =========================================================================
 
     window.openRoleSelector = openRoleSelector;
-    window.openRoleSelectorWithCreate = openRoleSelectorWithCreate;
     window.openRolePickerForPosition = openRolePickerForPosition;
-    window.openQuickRoleCreator = openQuickRoleCreator;
     window.openRoleManagementModal = openRoleManagementModal;
 
     // Legacy aliases
     window._openRoleSelector = openRoleSelector;
-    window._openRoleSelectorWithCreate = openRoleSelectorWithCreate;
     window._openRolePickerForPosition = openRolePickerForPosition;
-    window._openQuickRoleCreator = openQuickRoleCreator;
     window._openRoleManagementModal = openRoleManagementModal;
 
     // ES Module exports
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
             openRoleSelector: openRoleSelector,
-            openRoleSelectorWithCreate: openRoleSelectorWithCreate,
             openRolePickerForPosition: openRolePickerForPosition,
-            openQuickRoleCreator: openQuickRoleCreator,
             openRoleManagementModal: openRoleManagementModal
         };
     }
