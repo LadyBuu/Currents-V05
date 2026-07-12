@@ -9,6 +9,8 @@
  * - UI state management
  * - NO business logic
  * 
+ * UPDATED: Added tuition fields to institution schema
+ * 
  * DEPENDENCIES:
  *   - accessors.js (getCharacters, getPlaces)
  *   - ids.js (generateId)
@@ -112,6 +114,39 @@
         _state.lastUpdated = Date.now();
     }
 
+    function _ensureInstitutionInitialized(institution) {
+        if (!institution) return;
+
+        // Existing fields
+        if (!institution.students) institution.students = [];
+        if (!institution.graduates) institution.graduates = [];
+        if (!institution.teachers) institution.teachers = [];
+        if (!institution.curriculum) institution.curriculum = [];
+        if (!institution.taughtRoles) institution.taughtRoles = [];
+        if (!institution.history) institution.history = [];
+        if (!institution.headmasterHistory) institution.headmasterHistory = [];
+
+        // ================================================================
+        // NEW: Tuition fields
+        // ================================================================
+        if (institution.tuitionPerYear === undefined || institution.tuitionPerYear === null) {
+            var typeTuition = window.DEFAULT_TUITION_BY_TYPE?.[institution.type];
+            institution.tuitionPerYear = typeTuition !== undefined ? typeTuition : window.DEFAULT_TUITION || 10;
+        }
+
+        if (institution.customTuition === undefined) {
+            institution.customTuition = null; // null = use calculated
+        }
+
+        if (!institution.tuitionHistory) {
+            institution.tuitionHistory = [];
+        }
+
+        if (institution.waiveTuition === undefined) {
+            institution.waiveTuition = false; // Scholarship/sponsorship flag
+        }
+    }
+
     function _rebuildCaches() {
         _state.cache.byId.clear();
         _state.cache.byLocation.clear();
@@ -120,6 +155,8 @@
         for (var i = 0; i < _state.institutions.length; i++) {
             var inst = _state.institutions[i];
             if (!inst) continue;
+
+            _ensureInstitutionInitialized(inst);
 
             _state.cache.byId.set(inst.id, inst);
 
@@ -192,25 +229,39 @@
 
     function getAllInstitutions() {
         _initializeState();
-        return _state.institutions.slice();
+        var result = _state.institutions.slice();
+        for (var i = 0; i < result.length; i++) {
+            _ensureInstitutionInitialized(result[i]);
+        }
+        return result;
     }
 
     function getInstitution(id) {
         _initializeState();
         if (!id || typeof id !== 'string') return null;
-        return _state.cache.byId.get(id) || null;
+        var inst = _state.cache.byId.get(id) || null;
+        if (inst) _ensureInstitutionInitialized(inst);
+        return inst;
     }
 
     function getInstitutionsByLocation(locationId) {
         _initializeState();
         if (!locationId) return [];
-        return _state.cache.byLocation.get(locationId) || [];
+        var result = _state.cache.byLocation.get(locationId) || [];
+        for (var i = 0; i < result.length; i++) {
+            _ensureInstitutionInitialized(result[i]);
+        }
+        return result;
     }
 
     function getInstitutionsByType(typeId) {
         _initializeState();
         if (!typeId) return [];
-        return _state.cache.byType.get(typeId) || [];
+        var result = _state.cache.byType.get(typeId) || [];
+        for (var i = 0; i < result.length; i++) {
+            _ensureInstitutionInitialized(result[i]);
+        }
+        return result;
     }
 
     function getUIState() {
@@ -234,6 +285,7 @@
 
     function _addInstitution(institution) {
         _initializeState();
+        _ensureInstitutionInitialized(institution);
         _state.institutions.push(institution);
         _rebuildCaches();
         _persistState();
@@ -251,6 +303,8 @@
                 institution[key] = updates[key];
             }
         }
+
+        _ensureInstitutionInitialized(institution);
 
         _rebuildCaches();
         _persistState();
@@ -305,6 +359,7 @@
         _rebuildCaches: _rebuildCaches,
         _persistState: _persistState,
         _initializeState: _initializeState,
+        _ensureInstitutionInitialized: _ensureInstitutionInitialized,
 
         _getState: function() { return _state; }
     };

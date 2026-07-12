@@ -10,11 +10,13 @@
  * - Financial reporting and analytics
  * - Efficiency scoring
  * - INDUSTRY TAX REVENUE integration
+ * - SALARY CALCULATION for government positions (used by commands)
  * 
  * DEPENDENCIES:
  *   - government-state.js (GovernmentState)
  *   - government-queries.js (GovernmentQueries)
  *   - accessors.js (getCharacterById, getPlaceById, getCurrentYear)
+ *   - household-state.js (HouseholdState) - for tax/salary integration
  * 
  * =============================================================================
  */
@@ -95,7 +97,7 @@
     };
 
     // =========================================================================
-    // 4. BUDGET CALCULATIONS (Existing)
+    // 4. BUDGET CALCULATIONS
     // =========================================================================
 
     function calculateDepartmentBudget(departmentId) {
@@ -317,7 +319,7 @@
     }
 
     // =========================================================================
-    // 7. FINANCIAL REPORTING (Existing)
+    // 7. FINANCIAL REPORTING
     // =========================================================================
 
     function getGovernmentFinancialReport(locationId, yearRange) {
@@ -381,7 +383,7 @@
     }
 
     // =========================================================================
-    // 8. SALARY MANAGEMENT (Existing)
+    // 8. SALARY MANAGEMENT
     // =========================================================================
 
     function updatePositionSalary(departmentId, positionId, newSalary) {

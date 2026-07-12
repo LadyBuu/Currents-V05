@@ -7,6 +7,8 @@
  *          no UI. Uses HouseholdState for data access and HouseholdCommands
  *          for write operations.
  * 
+ * UPDATED: Added salary and tuition tracking functions
+ * 
  * DEPENDS ON:
  *   - household-state.js (HouseholdState)
  *   - household-commands.js (HouseholdCommands)
@@ -27,8 +29,8 @@
  *   - modifyHouseholdDebt() - Modify debt
  *   - getHouseholdResources() - Get resources
  *   - updateHouseholdResources() - Modify resources
- *   - calculateAnnualIncome() - Calculate annual income
- *   - calculateAnnualExpenses() - Calculate annual expenses
+ *   - calculateAnnualIncome() - Calculate annual income (UPDATED with salaries)
+ *   - calculateAnnualExpenses() - Calculate annual expenses (UPDATED with tuition)
  *   - computeNetAnnualChange() - Net change
  *   - processAnnualEconomy() - Annual processing cycle
  *   - consumeAnnualFood() - Food consumption
@@ -39,6 +41,12 @@
  *   - processInheritance() - Wealth inheritance
  *   - isBankrupt() - Check bankruptcy
  *   - handleBankruptcy() - Handle bankruptcy
+ *   - receiveSalary() - NEW: Add salary to household
+ *   - trackTuitionExpense() - NEW: Track tuition payment
+ *   - getSalaryIncome() - NEW: Get salary income
+ *   - getTuitionExpenses() - NEW: Get tuition expenses
+ *   - resetAnnualSalaries() - NEW: Reset salary tracking for new year
+ *   - resetAnnualTuition() - NEW: Reset tuition tracking for new year
  *   - getEducationIncomeBonus() - Education bonus
  *   - getCrimeRiskModifier() - Crime risk
  *   - getHouseholdLoyaltyModifier() - Loyalty modifier
@@ -68,9 +76,6 @@
     // 1. CONSTANTS
     // =========================================================================
 
-    /**
-     * Economic tiers - wealth classification
-     */
     var ECONOMIC_TIERS = {
         DESTITUTE: { id: 'destitute', name: 'Destitute', minWealth: 0, maxWealth: 10, icon: '⌇', description: 'Struggling to survive' },
         POOR: { id: 'poor', name: 'Poor', minWealth: 11, maxWealth: 30, icon: '⌇', description: 'Barely making ends meet' },
@@ -82,9 +87,6 @@
         ROYAL: { id: 'royal', name: 'Royal', minWealth: 1001, maxWealth: Number.MAX_SAFE_INTEGER, icon: '◉', description: 'Royal or Imperial wealth' }
     };
 
-    /**
-     * Income sources
-     */
     var INCOME_SOURCES = {
         AGRICULTURE: { id: 'agriculture', name: 'Agriculture', icon: '⌇', baseIncome: 10 },
         LIVESTOCK: { id: 'livestock', name: 'Livestock', icon: '⌇', baseIncome: 8 },
@@ -98,9 +100,6 @@
         MINING: { id: 'mining', name: 'Mining', icon: '⌇', baseIncome: 18 }
     };
 
-    /**
-     * Expense categories
-     */
     var EXPENSE_CATEGORIES = {
         FOOD: { id: 'food', name: 'Food & Supplies', icon: '⌇', baseExpense: 8 },
         MAINTENANCE: { id: 'maintenance', name: 'Property Maintenance', icon: '⌇', baseExpense: 6 },
@@ -109,12 +108,11 @@
         LUXURY: { id: 'luxury', name: 'Luxury Goods', icon: '◉', baseExpense: 15 },
         DEBT: { id: 'debt', name: 'Debt Payments', icon: '⌇', baseExpense: 10 },
         TITHE: { id: 'tithe', name: 'Religious Tithe', icon: '⌆', baseExpense: 5 },
-        MEDICAL: { id: 'medical', name: 'Medical Expenses', icon: '⌇', baseExpense: 8 }
+        MEDICAL: { id: 'medical', name: 'Medical Expenses', icon: '⌇', baseExpense: 8 },
+        // NEW: Tuition expense category
+        TUITION: { id: 'tuition', name: 'Education Tuition', icon: '⌇', baseExpense: 0 }
     };
 
-    /**
-     * Economic event types
-     */
     var ECONOMIC_EVENT_TYPES = [
         { id: 'good_harvest', name: 'Good Harvest', wealthModifier: 0.2, minDelta: 5, maxDelta: 20, icon: '⌇' },
         { id: 'poor_harvest', name: 'Poor Harvest', wealthModifier: -0.15, minDelta: -15, maxDelta: -5, icon: '⌇' },
@@ -210,6 +208,37 @@
         return array[Math.floor(Math.random() * array.length)];
     }
 
+    function _getHousehold(householdId) {
+        if (typeof window.HouseholdState !== 'undefined' && window.HouseholdState.getHousehold) {
+            return window.HouseholdState.getHousehold(householdId);
+        }
+        return null;
+    }
+
+    function _getHouseholdEconomy(householdId) {
+        var household = _getHousehold(householdId);
+        if (!household) return null;
+        if (!household.economy) {
+            household.economy = {
+                wealth: 0,
+                debt: 0,
+                resources: { food: 0, livestock: 0, goods: 0 },
+                incomeSources: [],
+                expenses: [],
+                economicTierId: 'moderate',
+                lastProcessedYear: _getCurrentYear(),
+                salaryIncome: 0,
+                salaryIncomeHistory: [],
+                totalSalaries: 0,
+                salaryIncomeThisYear: 0,
+                tuitionExpenses: 0,
+                tuitionExpensesHistory: [],
+                tuitionExpensesThisYear: 0
+            };
+        }
+        return household.economy;
+    }
+
     // =========================================================================
     // 3. STATE REFERENCE
     // =========================================================================
@@ -237,7 +266,6 @@
         };
     }
 
-    // Listen for state changes to clear cache
     if (window.HouseholdState && typeof window.HouseholdState.subscribe === 'function') {
         window.HouseholdState.subscribe(function(event) {
             if (event.type === 'change' || event.type === 'refresh') {
@@ -250,11 +278,6 @@
     // 5. INITIALIZATION
     // =========================================================================
 
-    /**
-     * Initialize economy data for a household
-     * @param {Object} household - Household object
-     * @returns {Object} Household with economy data
-     */
     function initializeHouseholdEconomy(household) {
         if (!household) return null;
 
@@ -270,7 +293,14 @@
                 incomeSources: [],
                 expenses: [],
                 economicTierId: 'moderate',
-                lastProcessedYear: _getCurrentYear()
+                lastProcessedYear: _getCurrentYear(),
+                salaryIncome: 0,
+                salaryIncomeHistory: [],
+                totalSalaries: 0,
+                salaryIncomeThisYear: 0,
+                tuitionExpenses: 0,
+                tuitionExpensesHistory: [],
+                tuitionExpensesThisYear: 0
             };
         }
 
@@ -281,11 +311,6 @@
         return household;
     }
 
-    /**
-     * Estimate initial wealth for a household
-     * @param {Object} household - Household object
-     * @returns {number} Estimated wealth
-     */
     function estimateInitialWealth(household) {
         if (!household) return 50;
 
@@ -293,7 +318,6 @@
         var memberCount = household.members ? household.members.length : 1;
         wealth += memberCount * 5;
 
-        // Head rank bonus
         var head = _state ? _state.getHouseholdHead(household.id) : null;
         if (head && head.activeRankId) {
             var rank = typeof window.getRankById === 'function' ? window.getRankById(head.activeRankId) : null;
@@ -303,7 +327,6 @@
             }
         }
 
-        // Location modifier
         var location = household.locationId ? _getPlaceById(household.locationId) : null;
         if (location) {
             var isUrban = isUrbanLocation(location.id);
@@ -317,11 +340,6 @@
     // 6. ECONOMIC TIER FUNCTIONS
     // =========================================================================
 
-    /**
-     * Get economic tier based on wealth
-     * @param {number} wealth - Wealth amount
-     * @returns {Object} Economic tier object
-     */
     function getEconomicTier(wealth) {
         for (var key in ECONOMIC_TIERS) {
             var tier = ECONOMIC_TIERS[key];
@@ -332,11 +350,6 @@
         return ECONOMIC_TIERS.MODERATE;
     }
 
-    /**
-     * Get household's economic tier
-     * @param {string} householdId - Household ID
-     * @returns {Object} Economic tier object
-     */
     function getHouseholdEconomicTier(householdId) {
         if (_cachedCalculations.tier[householdId]) {
             return _cachedCalculations.tier[householdId];
@@ -356,24 +369,12 @@
     // 7. WEALTH MANAGEMENT
     // =========================================================================
 
-    /**
-     * Get household wealth
-     * @param {string} householdId - Household ID
-     * @returns {number} Wealth amount
-     */
     function getHouseholdWealth(householdId) {
         var household = _state ? _state.getHousehold(householdId) : null;
         if (!household || !household.economy) return 0;
         return household.economy.wealth || 0;
     }
 
-    /**
-     * Update household wealth
-     * @param {string} householdId - Household ID
-     * @param {number} delta - Change in wealth
-     * @param {string} reason - Reason for change
-     * @returns {number} New wealth value
-     */
     function updateHouseholdWealth(householdId, delta, reason) {
         if (_processingEconomy) {
             return 0;
@@ -388,7 +389,6 @@
             var newWealth = Math.max(0, oldWealth + delta);
             household.economy.wealth = newWealth;
 
-            // Update tier
             var oldTier = getEconomicTier(oldWealth);
             var newTier = getEconomicTier(newWealth);
 
@@ -399,14 +399,12 @@
                     []);
             }
 
-            // Save via state
             if (_state && typeof _state.updateHousehold === 'function') {
                 _state.updateHousehold(householdId, { economy: household.economy }, { recordHistory: false });
             } else {
                 _saveMasterData();
             }
 
-            // Clear cache
             _cachedCalculations.tier[householdId] = null;
 
             return newWealth;
@@ -419,23 +417,12 @@
     // 8. DEBT MANAGEMENT
     // =========================================================================
 
-    /**
-     * Get household debt
-     * @param {string} householdId - Household ID
-     * @returns {number} Debt amount
-     */
     function getHouseholdDebt(householdId) {
         var household = _state ? _state.getHousehold(householdId) : null;
         if (!household || !household.economy) return 0;
         return household.economy.debt || 0;
     }
 
-    /**
-     * Modify household debt
-     * @param {string} householdId - Household ID
-     * @param {number} delta - Change in debt
-     * @returns {number} New debt value
-     */
     function modifyHouseholdDebt(householdId, delta) {
         if (_processingEconomy) {
             return 0;
@@ -465,11 +452,6 @@
     // 9. RESOURCE MANAGEMENT
     // =========================================================================
 
-    /**
-     * Get household resources
-     * @param {string} householdId - Household ID
-     * @returns {Object} Resources object
-     */
     function getHouseholdResources(householdId) {
         var household = _state ? _state.getHousehold(householdId) : null;
         if (!household || !household.economy) {
@@ -478,13 +460,6 @@
         return household.economy.resources || { food: 0, livestock: 0, goods: 0 };
     }
 
-    /**
-     * Update household resources
-     * @param {string} householdId - Household ID
-     * @param {string} resourceType - Resource type (food, livestock, goods)
-     * @param {number} delta - Change in resource
-     * @returns {number} New resource value
-     */
     function updateHouseholdResources(householdId, resourceType, delta) {
         if (_processingEconomy) {
             return 0;
@@ -512,14 +487,207 @@
     }
 
     // =========================================================================
-    // 10. INCOME & EXPENSE CALCULATIONS
+    // 10. SALARY FUNCTIONS (NEW)
     // =========================================================================
 
-    /**
-     * Calculate annual income for a household
-     * @param {string} householdId - Household ID
-     * @returns {number} Annual income
-     */
+    function receiveSalary(householdId, characterId, roleId, salary, year) {
+        if (_processingEconomy) {
+            return false;
+        }
+        _processingEconomy = true;
+
+        try {
+            var household = _getHousehold(householdId);
+            if (!household) return false;
+
+            var economy = _getHouseholdEconomy(householdId);
+            if (!economy) return false;
+
+            var currentYear = year || _getCurrentYear();
+
+            // Update salary income tracking
+            economy.salaryIncome = (economy.salaryIncome || 0) + salary;
+            economy.salaryIncomeThisYear = (economy.salaryIncomeThisYear || 0) + salary;
+            economy.totalSalaries = (economy.totalSalaries || 0) + salary;
+
+            // Record salary history
+            if (!economy.salaryIncomeHistory) economy.salaryIncomeHistory = [];
+            economy.salaryIncomeHistory.push({
+                year: currentYear,
+                characterId: characterId,
+                roleId: roleId,
+                amount: salary
+            });
+
+            // Keep history manageable
+            if (economy.salaryIncomeHistory.length > 100) {
+                economy.salaryIncomeHistory = economy.salaryIncomeHistory.slice(-100);
+            }
+
+            // Update household wealth
+            updateHouseholdWealth(householdId, salary, 'Salary from ' + (roleId || 'Unknown role'));
+
+            // Save
+            if (_state && typeof _state.updateHousehold === 'function') {
+                _state.updateHousehold(householdId, { economy: economy }, { recordHistory: false });
+            } else {
+                _saveMasterData();
+            }
+
+            _logEvent('economy', 'Salary Received',
+                household.name + ' received ' + salary + ' gold salary for character ' + characterId,
+                []);
+
+            return true;
+
+        } finally {
+            _processingEconomy = false;
+        }
+    }
+
+    function trackTuitionExpense(householdId, tuition, institutionId, studentId, year) {
+        if (_processingEconomy) {
+            return false;
+        }
+        _processingEconomy = true;
+
+        try {
+            var household = _getHousehold(householdId);
+            if (!household) return false;
+
+            var economy = _getHouseholdEconomy(householdId);
+            if (!economy) return false;
+
+            var currentYear = year || _getCurrentYear();
+
+            // Update tuition tracking
+            economy.tuitionExpenses = (economy.tuitionExpenses || 0) + tuition;
+            economy.tuitionExpensesThisYear = (economy.tuitionExpensesThisYear || 0) + tuition;
+
+            // Record tuition history
+            if (!economy.tuitionExpensesHistory) economy.tuitionExpensesHistory = [];
+            economy.tuitionExpensesHistory.push({
+                year: currentYear,
+                institutionId: institutionId,
+                studentId: studentId,
+                amount: tuition
+            });
+
+            // Keep history manageable
+            if (economy.tuitionExpensesHistory.length > 100) {
+                economy.tuitionExpensesHistory = economy.tuitionExpensesHistory.slice(-100);
+            }
+
+            // Save
+            if (_state && typeof _state.updateHousehold === 'function') {
+                _state.updateHousehold(householdId, { economy: economy }, { recordHistory: false });
+            } else {
+                _saveMasterData();
+            }
+
+            _logEvent('economy', 'Tuition Paid',
+                household.name + ' paid ' + tuition + ' gold tuition to ' + institutionId + ' for student ' + studentId,
+                []);
+
+            return true;
+
+        } finally {
+            _processingEconomy = false;
+        }
+    }
+
+    function getSalaryIncome(householdId, year) {
+        var household = _getHousehold(householdId);
+        if (!household) return 0;
+
+        var economy = _getHouseholdEconomy(householdId);
+        if (!economy) return 0;
+
+        if (year) {
+            var total = 0;
+            if (economy.salaryIncomeHistory) {
+                for (var i = 0; i < economy.salaryIncomeHistory.length; i++) {
+                    if (economy.salaryIncomeHistory[i].year === year) {
+                        total += economy.salaryIncomeHistory[i].amount;
+                    }
+                }
+            }
+            return total;
+        }
+
+        return economy.salaryIncomeThisYear || economy.salaryIncome || 0;
+    }
+
+    function getTotalSalariesReceived(householdId) {
+        var household = _getHousehold(householdId);
+        if (!household) return 0;
+
+        var economy = _getHouseholdEconomy(householdId);
+        if (!economy) return 0;
+
+        return economy.totalSalaries || 0;
+    }
+
+    function getTuitionExpenses(householdId, year) {
+        var household = _getHousehold(householdId);
+        if (!household) return 0;
+
+        var economy = _getHouseholdEconomy(householdId);
+        if (!economy) return 0;
+
+        if (year) {
+            var total = 0;
+            if (economy.tuitionExpensesHistory) {
+                for (var i = 0; i < economy.tuitionExpensesHistory.length; i++) {
+                    if (economy.tuitionExpensesHistory[i].year === year) {
+                        total += economy.tuitionExpensesHistory[i].amount;
+                    }
+                }
+            }
+            return total;
+        }
+
+        return economy.tuitionExpensesThisYear || economy.tuitionExpenses || 0;
+    }
+
+    function resetAnnualSalaries(householdId) {
+        var household = _getHousehold(householdId);
+        if (!household) return false;
+
+        var economy = _getHouseholdEconomy(householdId);
+        if (!economy) return false;
+
+        economy.salaryIncomeThisYear = 0;
+        economy.salaryIncome = 0;
+
+        if (_state && typeof _state.updateHousehold === 'function') {
+            _state.updateHousehold(householdId, { economy: economy }, { recordHistory: false });
+        }
+
+        return true;
+    }
+
+    function resetAnnualTuition(householdId) {
+        var household = _getHousehold(householdId);
+        if (!household) return false;
+
+        var economy = _getHouseholdEconomy(householdId);
+        if (!economy) return false;
+
+        economy.tuitionExpensesThisYear = 0;
+        economy.tuitionExpenses = 0;
+
+        if (_state && typeof _state.updateHousehold === 'function') {
+            _state.updateHousehold(householdId, { economy: economy }, { recordHistory: false });
+        }
+
+        return true;
+    }
+
+    // =========================================================================
+    // 11. INCOME & EXPENSE CALCULATIONS (UPDATED)
+    // =========================================================================
+
     function calculateAnnualIncome(householdId) {
         if (_cachedCalculations.income[householdId] !== undefined) {
             return _cachedCalculations.income[householdId];
@@ -570,6 +738,12 @@
             }
         }
 
+        // ================================================================
+        // NEW: Add salary income
+        // ================================================================
+        var salaryIncome = getSalaryIncome(householdId);
+        income += salaryIncome;
+
         // Education bonus
         var educationBonus = getEducationIncomeBonus(householdId);
         income *= (1 + educationBonus);
@@ -579,11 +753,6 @@
         return result;
     }
 
-    /**
-     * Calculate annual expenses for a household
-     * @param {string} householdId - Household ID
-     * @returns {number} Annual expenses
-     */
     function calculateAnnualExpenses(householdId) {
         if (_cachedCalculations.expenses[householdId] !== undefined) {
             return _cachedCalculations.expenses[householdId];
@@ -615,16 +784,17 @@
             expenses += debtPayment;
         }
 
+        // ================================================================
+        // NEW: Add tuition expenses
+        // ================================================================
+        var tuitionExpenses = getTuitionExpenses(householdId);
+        expenses += tuitionExpenses;
+
         var result = Math.floor(expenses);
         _cachedCalculations.expenses[householdId] = result;
         return result;
     }
 
-    /**
-     * Compute net annual change (income - expenses)
-     * @param {string} householdId - Household ID
-     * @returns {number} Net change
-     */
     function computeNetAnnualChange(householdId) {
         if (_cachedCalculations.netChange[householdId] !== undefined) {
             return _cachedCalculations.netChange[householdId];
@@ -638,14 +808,9 @@
     }
 
     // =========================================================================
-    // 11. ANNUAL PROCESSING
+    // 12. ANNUAL PROCESSING
     // =========================================================================
 
-    /**
-     * Process annual economy for a household
-     * @param {string} householdId - Household ID
-     * @returns {Object} Result of annual processing
-     */
     function processAnnualEconomy(householdId) {
         if (_processingEconomy) {
             return { success: false, reason: 'Already processing' };
@@ -681,6 +846,10 @@
                 bankrupt = true;
             }
 
+            // Reset annual tracking for next year
+            resetAnnualSalaries(householdId);
+            resetAnnualTuition(householdId);
+
             // Save
             if (_state && typeof _state.updateHousehold === 'function') {
                 _state.updateHousehold(householdId, { economy: household.economy }, { recordHistory: false });
@@ -711,11 +880,6 @@
         }
     }
 
-    /**
-     * Consume annual food supply
-     * @param {string} householdId - Household ID
-     * @returns {boolean} True if enough food
-     */
     function consumeAnnualFood(householdId) {
         var household = _state ? _state.getHousehold(householdId) : null;
         if (!household || !household.economy || !household.economy.resources) return false;
@@ -736,18 +900,9 @@
     }
 
     // =========================================================================
-    // 12. TRADE SYSTEM
+    // 13. TRADE SYSTEM
     // =========================================================================
 
-    /**
-     * Execute a trade between two households
-     * @param {string} sourceId - Source household ID
-     * @param {string} targetId - Target household ID
-     * @param {Object} trade - Trade details
-     * @param {Object} trade.sourceGives - What source gives
-     * @param {Object} trade.targetGives - What target gives
-     * @returns {boolean} True if successful
-     */
     function executeTrade(sourceId, targetId, trade) {
         if (_processingTrade) {
             return false;
@@ -764,15 +919,12 @@
             var sourceGives = trade.sourceGives || {};
             var targetGives = trade.targetGives || {};
 
-            // Validate source has enough resources
             if (sourceGives.wealth && source.economy.wealth < sourceGives.wealth) return false;
             if (sourceGives.goods && (source.economy.resources?.goods || 0) < sourceGives.goods) return false;
 
-            // Validate target has enough resources
             if (targetGives.wealth && target.economy.wealth < targetGives.wealth) return false;
             if (targetGives.goods && (target.economy.resources?.goods || 0) < targetGives.goods) return false;
 
-            // Execute trade
             if (sourceGives.wealth) {
                 source.economy.wealth -= sourceGives.wealth;
                 target.economy.wealth += sourceGives.wealth;
@@ -790,7 +942,6 @@
                 source.economy.resources.goods = (source.economy.resources.goods || 0) + targetGives.goods;
             }
 
-            // Save
             if (_state && typeof _state.updateHousehold === 'function') {
                 _state.updateHousehold(sourceId, { economy: source.economy }, { recordHistory: false });
                 _state.updateHousehold(targetId, { economy: target.economy }, { recordHistory: false });
@@ -808,11 +959,6 @@
         }
     }
 
-    /**
-     * Get potential trade partners for a household
-     * @param {string} householdId - Household ID
-     * @returns {Array} Array of potential trade partners
-     */
     function getTradePartners(householdId) {
         var household = _state ? _state.getHousehold(householdId) : null;
         if (!household) return [];
@@ -831,15 +977,9 @@
     }
 
     // =========================================================================
-    // 13. ECONOMIC EVENTS
+    // 14. ECONOMIC EVENTS
     // =========================================================================
 
-    /**
-     * Trigger an economic event for a household
-     * @param {string} householdId - Household ID
-     * @param {string} eventTypeId - Event type ID
-     * @returns {Object} Event result
-     */
     function triggerEconomicEvent(householdId, eventTypeId) {
         var event = null;
         for (var i = 0; i < ECONOMIC_EVENT_TYPES.length; i++) {
@@ -865,11 +1005,6 @@
         };
     }
 
-    /**
-     * Apply a random economic event to a household
-     * @param {string} householdId - Household ID
-     * @returns {Object} Event result
-     */
     function applyRandomEconomicEvent(householdId) {
         if (!_chance(0.3)) {
             return { event: null, delta: 0 };
@@ -887,15 +1022,9 @@
     }
 
     // =========================================================================
-    // 14. INHERITANCE & BANKRUPTCY
+    // 15. INHERITANCE & BANKRUPTCY
     // =========================================================================
 
-    /**
-     * Process inheritance when a household head dies
-     * @param {string} householdId - Household ID
-     * @param {string} heirId - Heir character ID
-     * @returns {boolean} True if successful
-     */
     function processInheritance(householdId, heirId) {
         if (_processingEconomy) {
             return false;
@@ -930,11 +1059,6 @@
         }
     }
 
-    /**
-     * Check if household is bankrupt (wealth <= 0 and debt > wealth*2)
-     * @param {string} householdId - Household ID
-     * @returns {boolean} True if bankrupt
-     */
     function isBankrupt(householdId) {
         var household = _state ? _state.getHousehold(householdId) : null;
         if (!household || !household.economy) return false;
@@ -942,11 +1066,6 @@
         return household.economy.wealth <= 0 && household.economy.debt > 0;
     }
 
-    /**
-     * Handle bankruptcy for a household
-     * @param {string} householdId - Household ID
-     * @returns {boolean} True if handled
-     */
     function handleBankruptcy(householdId) {
         if (_processingEconomy) {
             return false;
@@ -978,14 +1097,9 @@
     }
 
     // =========================================================================
-    // 15. INTEGRATION FUNCTIONS
+    // 16. INTEGRATION FUNCTIONS
     // =========================================================================
 
-    /**
-     * Get education income bonus for a household
-     * @param {string} householdId - Household ID
-     * @returns {number} Bonus multiplier (0-0.5)
-     */
     function getEducationIncomeBonus(householdId) {
         var household = _state ? _state.getHousehold(householdId) : null;
         if (!household || !household.members) return 0;
@@ -1019,11 +1133,6 @@
         return Math.min(0.5, bonus);
     }
 
-    /**
-     * Get crime risk modifier for a household
-     * @param {string} householdId - Household ID
-     * @returns {number} Risk modifier (0-3)
-     */
     function getCrimeRiskModifier(householdId) {
         var household = _state ? _state.getHousehold(householdId) : null;
         if (!household || !household.economy) return 1;
@@ -1043,11 +1152,6 @@
         return Math.min(3, Math.max(0.3, risk));
     }
 
-    /**
-     * Get household loyalty modifier based on economic conditions
-     * @param {string} householdId - Household ID
-     * @returns {number} Loyalty modifier (-20 to 20)
-     */
     function getHouseholdLoyaltyModifier(householdId) {
         var household = _state ? _state.getHousehold(householdId) : null;
         if (!household || !household.economy) return 0;
@@ -1069,12 +1173,6 @@
         return modifier;
     }
 
-    /**
-     * Contribute to settlement economy
-     * @param {string} householdId - Household ID
-     * @param {number} amount - Contribution amount
-     * @returns {boolean} True if contributed
-     */
     function contributeToSettlement(householdId, amount) {
         var household = _state ? _state.getHousehold(householdId) : null;
         if (!household || !household.economy) return false;
@@ -1101,14 +1199,9 @@
     }
 
     // =========================================================================
-    // 16. LOCATION HELPERS
+    // 17. LOCATION HELPERS
     // =========================================================================
 
-    /**
-     * Check if location is rural
-     * @param {string} locationId - Location ID
-     * @returns {boolean} True if rural
-     */
     function isRuralLocation(locationId) {
         var place = _getPlaceById(locationId);
         if (!place) return true;
@@ -1119,24 +1212,14 @@
         return !type || type.priority > 3;
     }
 
-    /**
-     * Check if location is urban
-     * @param {string} locationId - Location ID
-     * @returns {boolean} True if urban
-     */
     function isUrbanLocation(locationId) {
         return !isRuralLocation(locationId);
     }
 
     // =========================================================================
-    // 17. HOUSEHOLD CRAFTSPEOPLE
+    // 18. HOUSEHOLD CRAFTSPEOPLE
     // =========================================================================
 
-    /**
-     * Get craftspeople in a household
-     * @param {string} householdId - Household ID
-     * @returns {Array} Array of craftsperson characters
-     */
     function getHouseholdCraftspeople(householdId) {
         var household = _state ? _state.getHousehold(householdId) : null;
         if (!household || !household.members) return [];
@@ -1164,27 +1247,22 @@
     }
 
     // =========================================================================
-    // 18. CACHE MANAGEMENT
+    // 19. CACHE MANAGEMENT
     // =========================================================================
 
-    /**
-     * Clear all cached calculations
-     */
     function clearCache() {
         _clearCache();
     }
 
     // =========================================================================
-    // 19. EXPORTS
+    // 20. EXPORTS
     // =========================================================================
 
-    // Constants
     window.ECONOMIC_TIERS = ECONOMIC_TIERS;
     window.INCOME_SOURCES = INCOME_SOURCES;
     window.EXPENSE_CATEGORIES = EXPENSE_CATEGORIES;
     window.ECONOMIC_EVENT_TYPES = ECONOMIC_EVENT_TYPES;
 
-    // Economy functions
     window.HouseholdEconomy = {
         // Initialization
         initializeHouseholdEconomy: initializeHouseholdEconomy,
@@ -1206,7 +1284,7 @@
         getHouseholdResources: getHouseholdResources,
         updateHouseholdResources: updateHouseholdResources,
 
-        // Income & Expenses
+        // Income & Expenses (UPDATED)
         calculateAnnualIncome: calculateAnnualIncome,
         calculateAnnualExpenses: calculateAnnualExpenses,
         computeNetAnnualChange: computeNetAnnualChange,
@@ -1228,6 +1306,17 @@
         isBankrupt: isBankrupt,
         handleBankruptcy: handleBankruptcy,
 
+        // NEW: Salary functions
+        receiveSalary: receiveSalary,
+        getSalaryIncome: getSalaryIncome,
+        getTotalSalariesReceived: getTotalSalariesReceived,
+        resetAnnualSalaries: resetAnnualSalaries,
+
+        // NEW: Tuition functions
+        trackTuitionExpense: trackTuitionExpense,
+        getTuitionExpenses: getTuitionExpenses,
+        resetAnnualTuition: resetAnnualTuition,
+
         // Integration
         getEducationIncomeBonus: getEducationIncomeBonus,
         getCrimeRiskModifier: getCrimeRiskModifier,
@@ -1245,7 +1334,7 @@
         clearCache: clearCache
     };
 
-    // Legacy aliases for backward compatibility
+    // Legacy aliases
     window.initializeHouseholdEconomy = initializeHouseholdEconomy;
     window.estimateInitialWealth = estimateInitialWealth;
     window.getEconomicTier = getEconomicTier;
@@ -1276,7 +1365,15 @@
     window.isUrbanLocation = isUrbanLocation;
     window.getHouseholdCraftspeople = getHouseholdCraftspeople;
 
-    // ES Module exports
+    // NEW legacy aliases
+    window.receiveSalary = receiveSalary;
+    window.getSalaryIncome = getSalaryIncome;
+    window.getTotalSalariesReceived = getTotalSalariesReceived;
+    window.resetAnnualSalaries = resetAnnualSalaries;
+    window.trackTuitionExpense = trackTuitionExpense;
+    window.getTuitionExpenses = getTuitionExpenses;
+    window.resetAnnualTuition = resetAnnualTuition;
+
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
             ECONOMIC_TIERS: ECONOMIC_TIERS,
@@ -1312,7 +1409,14 @@
             isRuralLocation: isRuralLocation,
             isUrbanLocation: isUrbanLocation,
             getHouseholdCraftspeople: getHouseholdCraftspeople,
-            clearCache: clearCache
+            clearCache: clearCache,
+            receiveSalary: receiveSalary,
+            getSalaryIncome: getSalaryIncome,
+            getTotalSalariesReceived: getTotalSalariesReceived,
+            resetAnnualSalaries: resetAnnualSalaries,
+            trackTuitionExpense: trackTuitionExpense,
+            getTuitionExpenses: getTuitionExpenses,
+            resetAnnualTuition: resetAnnualTuition
         };
     }
 

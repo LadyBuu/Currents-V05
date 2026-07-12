@@ -11,11 +11,17 @@
  * 
  * ICON POLICY: NO EMOJIS - Use SVG icons from icons.js via _getIcon()
  * 
- * UPDATED:
- * - Uses RoleCommands and RoleQueries for all operations
- * - NO emojis - uses SVG icons from icons.js
- * - Uses unified character selector from modals-char-select.js
- * - Uses AGE_GROUPS from constants.js
+ * UPDATED: Added salary and literacy fields to create/edit modals
+ * 
+ * DEPENDENCIES:
+ *   - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
+ *   - modals-char-select.js (openCharacterSelector)
+ *   - role-state.js (RoleState)
+ *   - role-commands.js (RoleCommands)
+ *   - role-queries.js (RoleQueries)
+ *   - role-constants.js (BASE_SALARY_BY_CATEGORY, LITERACY_LEVEL_NAMES)
+ *   - accessors.js (getCharacterById, getCharacters, getPlaceById, getPlaces)
+ *   - constants.js (AGE_GROUPS, AGE_GROUPS_MAP)
  * 
  * =============================================================================
  */
@@ -431,7 +437,29 @@
     }
 
     // =========================================================================
-    // 9. CREATE ROLE MODAL
+    // 9. GET SALARY OPTIONS (NEW)
+    // =========================================================================
+
+    function _getBaseSalaryByCategory(category) {
+        return window.BASE_SALARY_BY_CATEGORY?.[category] || window.DEFAULT_SALARY || 10;
+    }
+
+    function _getLiteracyLevelOptions(selected) {
+        var levels = [
+            { id: '', label: 'None' },
+            { id: 'basic', label: 'Basic Literacy' },
+            { id: 'literate', label: 'Literate' },
+            { id: 'educated', label: 'Educated' },
+            { id: 'scholar', label: 'Scholar' }
+        ];
+        return levels.map(function(l) {
+            var sel = (l.id === selected) ? 'selected' : '';
+            return '<option value="' + l.id + '" ' + sel + '>' + _escapeHtml(l.label) + '</option>';
+        }).join('');
+    }
+
+    // =========================================================================
+    // 10. CREATE ROLE MODAL (UPDATED with salary and literacy)
     // =========================================================================
 
     function openCreateRoleModal(onSuccess) {
@@ -445,66 +473,128 @@
             var plusIcon = _getIcon('PLUS');
             var infoIcon = _getIcon('CIRCLE_DOT');
 
+            // Build category options
+            var categoryOptions = Object.keys(categories).map(function(key) {
+                var cat = categories[key];
+                return '<option value="' + key + '">' + (cat.icon || '⌇') + ' ' + cat.name + '</option>';
+            }).join('');
+
+            var literacyOptions = _getLiteracyLevelOptions('');
+
             var modalContent =
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Role Name *</label>' +
-                    '<input type="text" id="newRoleName" placeholder="e.g., Blacksmith, Scribe, Alchemist" autofocus style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
+                '<div style="margin-bottom: 16px; padding: 8px; background: var(--bg2); border-radius: 6px; font-size: 0.65rem; color: var(--dim);">' +
+                'Create a new role. Roles define professions that characters can have.' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom: 12px;">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Category</label>' +
-                    '<select id="newRoleCategory" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
-                        Object.keys(categories).map(function(key) {
-                            var cat = categories[key];
-                            return '<option value="' + key + '">' + (cat.icon || '⌇') + ' ' + cat.name + '</option>';
-                        }).join('') +
-                    '</select>' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Role Name *</label>' +
+                '<input type="text" id="newRoleName" placeholder="e.g., Blacksmith, Scribe, Alchemist" autofocus style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom: 12px;">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Gender Restriction</label>' +
-                    '<select id="newRoleGender" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
-                        '<option value="both">Both Genders</option>' +
-                        '<option value="male">Male Only</option>' +
-                        '<option value="female">Female Only</option>' +
-                    '</select>' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Category</label>' +
+                '<select id="newRoleCategory" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
+                categoryOptions +
+                '</select>' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom: 12px;">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Icon (monochrome)</label>' +
-                    '<input type="text" id="newRoleIcon" value="◉" maxlength="2" style="width: 60px; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
-                    '<small style="font-size: 0.55rem; color: var(--dim);">Single character (◉, ⌇, ⚔, ⌆)</small>' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Gender Restriction</label>' +
+                '<select id="newRoleGender" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
+                '<option value="both">Both Genders</option>' +
+                '<option value="male">Male Only</option>' +
+                '<option value="female">Female Only</option>' +
+                '</select>' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom: 12px;">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Specializations (comma-separated)</label>' +
-                    '<input type="text" id="newRoleSpecs" placeholder="e.g., Surgery, Herbalism, Midwifery" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
-                    '<small style="font-size: 0.55rem; color: var(--dim);">These can be taught/learned during apprenticeship</small>' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Icon (monochrome)</label>' +
+                '<input type="text" id="newRoleIcon" value="◉" maxlength="2" style="width: 60px; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
+                '<small style="font-size: 0.55rem; color: var(--dim);">Single character (◉, ⌇, ⚔, ⌆)</small>' +
+                '</div>' +
+
+                '<!-- ============================================================ -->' +
+                '<!-- NEW: Salary Field -->' +
+                '<!-- ============================================================ -->' +
+                '<div class="form-group" style="margin-bottom: 12px;">' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Base Salary (gold per year)</label>' +
+                '<input type="number" id="newRoleSalary" value="10" min="0" max="200" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
+                '<small style="font-size: 0.55rem; color: var(--dim);">0 means no salary. This can be overridden per character.</small>' +
+                '</div>' +
+
+                '<!-- ============================================================ -->' +
+                '<!-- NEW: Literacy Requirement Field -->' +
+                '<!-- ============================================================ -->' +
+                '<div class="form-group" style="margin-bottom: 12px;">' +
+                '<label style="display: flex; align-items: center; gap: 8px; font-size: 0.65rem; cursor: pointer;">' +
+                '<input type="checkbox" id="newRoleRequiresLiteracy" style="cursor: pointer;">' +
+                '<span>Requires Literacy</span>' +
+                '</label>' +
+                '<div id="newRoleLiteracyContainer" style="margin-top: 6px; display: none;">' +
+                '<label style="display: block; font-size: 0.65rem; color: var(--accent); margin-bottom: 4px;">Required Literacy Level</label>' +
+                '<select id="newRoleLiteracyLevel" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
+                literacyOptions +
+                '</select>' +
+                '<small style="font-size: 0.55rem; color: var(--dim);">Characters must have at least this literacy level to hold this role.</small>' +
+                '</div>' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom: 12px;">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Description (optional)</label>' +
-                    '<textarea id="newRoleNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;"></textarea>' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Specializations (comma-separated)</label>' +
+                '<input type="text" id="newRoleSpecs" placeholder="e.g., Surgery, Herbalism, Midwifery" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
+                '<small style="font-size: 0.55rem; color: var(--dim);">These can be taught/learned during apprenticeship</small>' +
                 '</div>' +
 
-                '<div class="info-note" style="margin-top: 12px; padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.6rem;">' +
-                    infoIcon + ' Roles can be taught at educational institutions. Characters can have multiple roles.' +
+                '<div class="form-group" style="margin-bottom: 12px;">' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes</label>' +
+                '<textarea id="newRoleNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;"></textarea>' +
+                '</div>' +
+
+                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; margin-top: 8px;">' +
+                infoIcon + ' Roles can be taught at educational institutions. Characters can have multiple roles.' +
                 '</div>';
 
             _openModal({
-                title: plusIcon + ' Create New Role',
+                title: 'Create New Role',
                 content: modalContent,
                 confirmText: 'Create Role',
                 cancelText: 'Cancel',
+                onOpen: function() {
+                    // Literacy checkbox toggle
+                    var checkbox = document.getElementById('newRoleRequiresLiteracy');
+                    var container = document.getElementById('newRoleLiteracyContainer');
+                    if (checkbox && container) {
+                        checkbox.onchange = function() {
+                            container.style.display = this.checked ? 'block' : 'none';
+                        };
+                    }
+                    var nameInput = document.getElementById('newRoleName');
+                    if (nameInput) {
+                        setTimeout(function() { nameInput.focus(); }, 100);
+                    }
+
+                    // Auto-fill salary based on category
+                    var categorySelect = document.getElementById('newRoleCategory');
+                    var salaryInput = document.getElementById('newRoleSalary');
+                    if (categorySelect && salaryInput) {
+                        categorySelect.onchange = function() {
+                            var baseSalary = _getBaseSalaryByCategory(this.value);
+                            salaryInput.value = baseSalary;
+                        };
+                    }
+                },
                 onConfirm: function() {
                     var name = document.getElementById('newRoleName').value.trim();
                     if (!name) {
                         _showToast('Role name is required', 'error');
-                        return;
+                        return false;
                     }
 
                     var specsText = document.getElementById('newRoleSpecs').value;
                     var specializations = specsText ? specsText.split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s; }) : [];
+
+                    var requiresLiteracy = document.getElementById('newRoleRequiresLiteracy').checked;
+                    var literacyLevel = requiresLiteracy ? document.getElementById('newRoleLiteracyLevel').value : null;
 
                     var result = _createRole({
                         name: name,
@@ -512,21 +602,22 @@
                         icon: document.getElementById('newRoleIcon').value || '◉',
                         specializations: specializations,
                         notes: document.getElementById('newRoleNotes').value || '',
-                        genderRestriction: document.getElementById('newRoleGender').value
+                        genderRestriction: document.getElementById('newRoleGender').value,
+                        baseSalary: parseInt(document.getElementById('newRoleSalary').value) || 0,
+                        requiresLiteracy: requiresLiteracy,
+                        literacyLevel: literacyLevel
                     });
 
                     if (result) {
-                        _showToast('Role "' + name + '" created', 'success');
+                        var salaryMsg = result.baseSalary > 0 ? ' (Salary: ' + result.baseSalary + ' gold)' : '';
+                        var literacyMsg = requiresLiteracy ? ' (Requires: ' + (window.LITERACY_LEVEL_NAMES?.[literacyLevel] || literacyLevel) + ')' : '';
+                        _showToast('Role "' + name + '" created' + salaryMsg + literacyMsg, 'success');
                         if (onSuccess) onSuccess(result.id);
                         _closeTopModal();
                     }
+                    return true;
                 }
             });
-
-            setTimeout(function() {
-                var nameInput = document.getElementById('newRoleName');
-                if (nameInput) nameInput.focus();
-            }, 100);
 
         } finally {
             _processingModal = false;
@@ -534,7 +625,7 @@
     }
 
     // =========================================================================
-    // 10. EDIT ROLE MODAL
+    // 11. EDIT ROLE MODAL (UPDATED with salary and literacy)
     // =========================================================================
 
     function openEditRoleModal(roleId, onSuccess) {
@@ -553,72 +644,185 @@
             var categories = _getRoleCategories();
             var editIcon = _getIcon('EDIT');
             var infoIcon = _getIcon('CIRCLE_DOT');
-            var plusIcon = _getIcon('PLUS');
-            var crossIcon = _getIcon('X_HEAVY');
+
+            var categoryOptions = Object.keys(categories).map(function(key) {
+                var cat = categories[key];
+                var selected = (role.category === key) ? 'selected' : '';
+                return '<option value="' + key + '" ' + selected + '>' + (cat.icon || '⌇') + ' ' + cat.name + '</option>';
+            }).join('');
+
+            var literacyOptions = _getLiteracyLevelOptions(role.literacyLevel || '');
 
             var modalContent =
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Role Name</label>' +
-                    '<input type="text" id="editRoleName" value="' + _escapeHtml(role.name) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
+                '<div style="margin-bottom: 16px; padding: 8px; background: var(--bg2); border-radius: 6px; font-size: 0.65rem; color: var(--dim);">' +
+                'Editing role: <strong>' + _escapeHtml(role.name) + '</strong>' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom: 12px;">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Category</label>' +
-                    '<select id="editRoleCategory" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
-                        Object.keys(categories).map(function(key) {
-                            var cat = categories[key];
-                            var selected = (role.category === key) ? 'selected' : '';
-                            return '<option value="' + key + '" ' + selected + '>' + (cat.icon || '⌇') + ' ' + cat.name + '</option>';
-                        }).join('') +
-                    '</select>' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Role Name</label>' +
+                '<input type="text" id="editRoleName" value="' + _escapeHtml(role.name) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom: 12px;">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Gender Restriction</label>' +
-                    '<select id="editRoleGender" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
-                        '<option value="both" ' + (role.genderRestriction === 'both' ? 'selected' : '') + '>Both Genders</option>' +
-                        '<option value="male" ' + (role.genderRestriction === 'male' ? 'selected' : '') + '>Male Only</option>' +
-                        '<option value="female" ' + (role.genderRestriction === 'female' ? 'selected' : '') + '>Female Only</option>' +
-                    '</select>' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Category</label>' +
+                '<select id="editRoleCategory" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
+                categoryOptions +
+                '</select>' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom: 12px;">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Icon</label>' +
-                    '<input type="text" id="editRoleIcon" value="' + (role.icon || '◉') + '" maxlength="2" style="width: 60px; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Gender Restriction</label>' +
+                '<select id="editRoleGender" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
+                '<option value="both" ' + (role.genderRestriction === 'both' ? 'selected' : '') + '>Both Genders</option>' +
+                '<option value="male" ' + (role.genderRestriction === 'male' ? 'selected' : '') + '>Male Only</option>' +
+                '<option value="female" ' + (role.genderRestriction === 'female' ? 'selected' : '') + '>Female Only</option>' +
+                '</select>' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom: 12px;">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Specializations</label>' +
-                    '<div id="specsList" class="specs-list" style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px;">' +
-                        (role.specializations || []).map(function(spec, i) {
-                            return '<span class="spec-item" style="display: inline-flex; align-items: center; gap: 4px; background: var(--bg3); padding: 4px 8px; border-radius: 16px;">' +
-                                _escapeHtml(spec) +
-                                '<button type="button" class="remove-spec" data-index="' + i + '" style="background: none; border: none; cursor: pointer; color: var(--dim);">' + crossIcon + '</button>' +
-                            '</span>';
-                        }).join('') || '<span class="no-specs" style="font-size: 0.7rem; color: var(--dim);">No specializations</span>' +
-                    '</div>' +
-                    '<div class="add-spec-row" style="display: flex; gap: 8px; margin-top: 4px;">' +
-                        '<input type="text" id="newSpec" placeholder="New specialization..." style="flex: 1; padding: 6px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
-                        '<button type="button" id="addSpecBtn" class="btn small">' + plusIcon + ' Add</button>' +
-                    '</div>' +
-                    '<small style="font-size: 0.55rem; color: var(--dim);">Specializations can be taught during apprenticeship</small>' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Icon</label>' +
+                '<input type="text" id="editRoleIcon" value="' + (role.icon || '◉') + '" maxlength="2" style="width: 60px; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
+                '</div>' +
+
+                '<!-- ============================================================ -->' +
+                '<!-- NEW: Salary Field -->' +
+                '<!-- ============================================================ -->' +
+                '<div class="form-group" style="margin-bottom: 12px;">' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Base Salary (gold per year)</label>' +
+                '<input type="number" id="editRoleSalary" value="' + (role.baseSalary || 0) + '" min="0" max="200" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
+                '<small style="font-size: 0.55rem; color: var(--dim);">0 means no salary. Can be overridden per character.</small>' +
+                '</div>' +
+
+                '<!-- ============================================================ -->' +
+                '<!-- NEW: Literacy Requirement Field -->' +
+                '<!-- ============================================================ -->' +
+                '<div class="form-group" style="margin-bottom: 12px;">' +
+                '<label style="display: flex; align-items: center; gap: 8px; font-size: 0.65rem; cursor: pointer;">' +
+                '<input type="checkbox" id="editRoleRequiresLiteracy" ' + (role.requiresLiteracy ? 'checked' : '') + ' style="cursor: pointer;">' +
+                '<span>Requires Literacy</span>' +
+                '</label>' +
+                '<div id="editRoleLiteracyContainer" style="margin-top: 6px; ' + (role.requiresLiteracy ? '' : 'display: none;') + '">' +
+                '<label style="display: block; font-size: 0.65rem; color: var(--accent); margin-bottom: 4px;">Required Literacy Level</label>' +
+                '<select id="editRoleLiteracyLevel" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
+                literacyOptions +
+                '</select>' +
+                '<small style="font-size: 0.55rem; color: var(--dim);">Characters must have at least this literacy level to hold this role.</small>' +
+                '</div>' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom: 12px;">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Description</label>' +
-                    '<textarea id="editRoleNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' + _escapeHtml(role.notes || '') + '</textarea>' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Specializations</label>' +
+                '<div id="specsList" class="specs-list" style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px;">' +
+                (role.specializations || []).map(function(spec, i) {
+                    return '<span class="spec-item" style="display: inline-flex; align-items: center; gap: 4px; background: var(--bg3); padding: 4px 8px; border-radius: 16px; font-size: 0.6rem;">' +
+                        _escapeHtml(spec) +
+                        '<button type="button" class="remove-spec" data-index="' + i + '" style="background: none; border: none; cursor: pointer; color: var(--dim);">✖</button>' +
+                    '</span>';
+                }).join('') || '<span class="no-specs" style="font-size: 0.65rem; color: var(--dim);">No specializations</span>' +
+                '</div>' +
+                '<div class="add-spec-row" style="display: flex; gap: 8px; margin-top: 4px;">' +
+                '<input type="text" id="newSpec" placeholder="New specialization..." style="flex: 1; padding: 6px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
+                '<button type="button" id="addSpecBtn" class="btn small" style="padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; cursor: pointer;">Add</button>' +
+                '</div>' +
+                '<small style="font-size: 0.55rem; color: var(--dim);">Specializations can be taught during apprenticeship</small>' +
+                '</div>' +
+
+                '<div class="form-group" style="margin-bottom: 12px;">' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes</label>' +
+                '<textarea id="editRoleNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' + _escapeHtml(role.notes || '') + '</textarea>' +
+                '</div>' +
+
+                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; margin-top: 8px;">' +
+                infoIcon + ' Changes to salary and literacy requirements will apply to existing characters with this role.' +
                 '</div>';
 
             _openModal({
-                title: editIcon + ' Edit Role: ' + role.name,
+                title: 'Edit Role: ' + role.name,
                 content: modalContent,
                 confirmText: 'Save Changes',
                 cancelText: 'Cancel',
+                onOpen: function() {
+                    // Literacy checkbox toggle
+                    var checkbox = document.getElementById('editRoleRequiresLiteracy');
+                    var container = document.getElementById('editRoleLiteracyContainer');
+                    if (checkbox && container) {
+                        checkbox.onchange = function() {
+                            container.style.display = this.checked ? 'block' : 'none';
+                        };
+                    }
+
+                    var nameInput = document.getElementById('editRoleName');
+                    if (nameInput) {
+                        setTimeout(function() { nameInput.focus(); }, 100);
+                    }
+
+                    // Auto-fill salary based on category
+                    var categorySelect = document.getElementById('editRoleCategory');
+                    var salaryInput = document.getElementById('editRoleSalary');
+                    if (categorySelect && salaryInput) {
+                        categorySelect.onchange = function() {
+                            var baseSalary = _getBaseSalaryByCategory(this.value);
+                            salaryInput.value = baseSalary;
+                        };
+                    }
+
+                    // Specialization add/remove handlers
+                    var addSpecBtn = document.getElementById('addSpecBtn');
+                    var newSpecInput = document.getElementById('newSpec');
+                    var specsList = document.getElementById('specsList');
+
+                    if (addSpecBtn && newSpecInput && specsList) {
+                        addSpecBtn.onclick = function() {
+                            var spec = newSpecInput.value.trim();
+                            if (!spec) return;
+
+                            var noSpecsSpan = specsList.querySelector('.no-specs');
+                            if (noSpecsSpan) noSpecsSpan.remove();
+
+                            var index = specsList.querySelectorAll('.spec-item').length;
+                            var item = document.createElement('span');
+                            item.className = 'spec-item';
+                            item.style.cssText = 'display: inline-flex; align-items: center; gap: 4px; background: var(--bg3); padding: 4px 8px; border-radius: 16px; font-size: 0.6rem;';
+                            item.innerHTML = _escapeHtml(spec) +
+                                '<button type="button" class="remove-spec" data-index="' + index + '" style="background: none; border: none; cursor: pointer; color: var(--dim);">✖</button>';
+                            specsList.appendChild(item);
+
+                            item.querySelector('.remove-spec').addEventListener('click', function() {
+                                item.remove();
+                                if (specsList.querySelectorAll('.spec-item').length === 0) {
+                                    specsList.innerHTML = '<span class="no-specs" style="font-size: 0.65rem; color: var(--dim);">No specializations</span>';
+                                }
+                            });
+
+                            newSpecInput.value = '';
+                        };
+
+                        newSpecInput.addEventListener('keydown', function(e) {
+                            if (e.key === 'Enter') {
+                                e.preventDefault();
+                                addSpecBtn.click();
+                            }
+                        });
+                    }
+
+                    // Remove spec handlers for existing items
+                    var removeBtns = specsList.querySelectorAll('.remove-spec');
+                    for (var i = 0; i < removeBtns.length; i++) {
+                        var btn = removeBtns[i];
+                        btn.onclick = function() {
+                            var item = this.closest('.spec-item');
+                            if (item) item.remove();
+                            if (specsList.querySelectorAll('.spec-item').length === 0) {
+                                specsList.innerHTML = '<span class="no-specs" style="font-size: 0.65rem; color: var(--dim);">No specializations</span>';
+                            }
+                        };
+                    }
+                },
                 onConfirm: function() {
-                    var newName = document.getElementById('editRoleName').value.trim();
-                    if (!newName) {
+                    var name = document.getElementById('editRoleName').value.trim();
+                    if (!name) {
                         _showToast('Role name is required', 'error');
-                        return;
+                        return false;
                     }
 
                     var specItems = document.querySelectorAll('.spec-item');
@@ -628,59 +832,33 @@
                         if (text) specializations.push(text);
                     }
 
-                    var result = _updateRole(roleId, {
-                        name: newName,
+                    var requiresLiteracy = document.getElementById('editRoleRequiresLiteracy').checked;
+                    var literacyLevel = requiresLiteracy ? document.getElementById('editRoleLiteracyLevel').value : null;
+
+                    var updates = {
+                        name: name,
                         category: document.getElementById('editRoleCategory').value,
                         genderRestriction: document.getElementById('editRoleGender').value,
                         icon: document.getElementById('editRoleIcon').value || '◉',
                         specializations: specializations,
-                        notes: document.getElementById('editRoleNotes').value
-                    });
+                        notes: document.getElementById('editRoleNotes').value || '',
+                        baseSalary: parseInt(document.getElementById('editRoleSalary').value) || 0,
+                        requiresLiteracy: requiresLiteracy,
+                        literacyLevel: literacyLevel
+                    };
+
+                    var result = _updateRole(roleId, updates);
 
                     if (result) {
-                        _showToast('Updated role: ' + newName, 'success');
+                        var salaryMsg = result.baseSalary > 0 ? ' (Salary: ' + result.baseSalary + ' gold)' : '';
+                        var literacyMsg = requiresLiteracy ? ' (Requires: ' + (window.LITERACY_LEVEL_NAMES?.[literacyLevel] || literacyLevel) + ')' : '';
+                        _showToast('Role "' + name + '" updated' + salaryMsg + literacyMsg, 'success');
                         if (onSuccess) onSuccess();
                         _closeTopModal();
                     }
+                    return true;
                 }
             });
-
-            setTimeout(function() {
-                var removeBtns = document.querySelectorAll('.remove-spec');
-                for (var i = 0; i < removeBtns.length; i++) {
-                    var btn = removeBtns[i];
-                    btn.addEventListener('click', function() {
-                        var idx = parseInt(this.dataset.index);
-                        if (!isNaN(idx)) {
-                            var specItem = this.closest('.spec-item');
-                            if (specItem) specItem.remove();
-                        }
-                    });
-                }
-
-                var addSpecBtn = document.getElementById('addSpecBtn');
-                if (addSpecBtn) {
-                    addSpecBtn.addEventListener('click', function() {
-                        var newSpec = document.getElementById('newSpec')?.value.trim();
-                        if (newSpec) {
-                            var specsList = document.getElementById('specsList');
-                            var noSpecsSpan = specsList?.querySelector('.no-specs');
-                            if (noSpecsSpan) noSpecsSpan.remove();
-
-                            var specSpan = document.createElement('span');
-                            specSpan.className = 'spec-item';
-                            specSpan.style.cssText = 'display: inline-flex; align-items: center; gap: 4px; background: var(--bg3); padding: 4px 8px; border-radius: 16px;';
-                            specSpan.innerHTML = _escapeHtml(newSpec) + ' <button type="button" class="remove-spec" style="background: none; border: none; cursor: pointer; color: var(--dim);">' + crossIcon + '</button>';
-
-                            var removeBtn = specSpan.querySelector('.remove-spec');
-                            removeBtn.addEventListener('click', function() { specSpan.remove(); });
-
-                            specsList?.appendChild(specSpan);
-                            document.getElementById('newSpec').value = '';
-                        }
-                    });
-                }
-            }, 50);
 
         } finally {
             _processingModal = false;
@@ -688,7 +866,7 @@
     }
 
     // =========================================================================
-    // 11. DELETE ROLE MODAL
+    // 12. DELETE ROLE MODAL (unchanged)
     // =========================================================================
 
     function openDeleteRoleModal(roleId, onSuccess) {
@@ -715,21 +893,21 @@
 
             var modalContent =
                 '<div style="background:rgba(200,68,68,0.15);border:1px solid var(--warn);border-radius:8px;padding:12px;margin-bottom:16px;">' +
-                    '<strong>' + warningIcon + ' Warning: This action cannot be undone!</strong>' +
-                    '<div style="margin-top:8px;">You are about to delete the role "<strong>' + _escapeHtml(role.name) + '</strong>".</div>' +
-                    (charCount > 0 ? '<div style="margin-top:8px;">' + charCount + ' character(s) have this role</div>' : '') +
+                '<strong>' + warningIcon + ' Warning: This action cannot be undone!</strong>' +
+                '<div style="margin-top:8px;">You are about to delete the role "<strong>' + _escapeHtml(role.name) + '</strong>".</div>' +
+                (charCount > 0 ? '<div style="margin-top:8px;">' + charCount + ' character(s) have this role</div>' : '') +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
-                    '<label style="display:flex;align-items:center;gap:8px;">' +
-                        '<input type="checkbox" id="deleteRemoveFromCharacters" ' + (charCount > 0 ? 'checked' : '') + '>' +
-                        '<span style="font-size:0.65rem;">Remove role from all characters</span>' +
-                    '</label>' +
-                    '<small style="font-size:0.5rem;color:var(--dim);">If unchecked, characters will keep the role in their data</small>' +
+                '<label style="display:flex;align-items:center;gap:8px;">' +
+                '<input type="checkbox" id="deleteRemoveFromCharacters" ' + (charCount > 0 ? 'checked' : '') + '>' +
+                '<span style="font-size:0.65rem;">Remove role from all characters</span>' +
+                '</label>' +
+                '<small style="font-size:0.5rem;color:var(--dim);">If unchecked, characters will keep the role in their data</small>' +
                 '</div>' +
 
                 '<div style="margin-top:12px;padding:8px;background:rgba(200,68,68,0.1);border-radius:6px;font-size:0.55rem;color:#8a3020;">' +
-                    'This action cannot be undone. The role will be permanently removed.' +
+                'This action cannot be undone. The role will be permanently removed.' +
                 '</div>';
 
             _openModal({
@@ -749,6 +927,7 @@
                     } else {
                         _showToast('Failed to delete role', 'error');
                     }
+                    return true;
                 }
             });
 
@@ -758,7 +937,7 @@
     }
 
     // =========================================================================
-    // 12. ASSIGN ROLE MODAL
+    // 13. ASSIGN ROLE MODAL (unchanged but uses salary fields)
     // =========================================================================
 
     function openAssignRoleModal(roleId, onSuccess) {
@@ -855,18 +1034,18 @@
                         'border: 1px solid ' + (isSelected ? 'var(--accent)' : 'var(--border)') + '; ' +
                         'border-radius: 6px; ' +
                         'cursor: pointer;' +
-                    '">' +
+                        '">' +
                         '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">' +
-                            '<div>' +
-                                '<strong>' + _escapeHtml(c.name) + ' ' + _escapeHtml(c.surname || '') + '</strong>' +
-                                '<span style="font-size: 0.6rem; color: var(--dim); margin-left: 6px;">' + genderIcon + ' ' + age + ' years</span>' +
-                                professionsStr +
-                            '</div>' +
-                            '<div style="font-size: 0.55rem; color: var(--accent);">' +
-                                locationIcon + ' ' + _escapeHtml(location) + ' · ' + currentSkills + ' role(s)' +
-                            '</div>' +
+                        '<div>' +
+                        '<strong>' + _escapeHtml(c.name) + ' ' + _escapeHtml(c.surname || '') + '</strong>' +
+                        '<span style="font-size: 0.6rem; color: var(--dim); margin-left: 6px;">' + genderIcon + ' ' + age + ' years</span>' +
+                        professionsStr +
                         '</div>' +
-                    '</div>';
+                        '<div style="font-size: 0.55rem; color: var(--accent);">' +
+                        locationIcon + ' ' + _escapeHtml(location) + ' · ' + currentSkills + ' role(s)' +
+                        '</div>' +
+                        '</div>' +
+                        '</div>';
                 }).join('');
             }
 
@@ -883,49 +1062,61 @@
                 });
             }
 
+            // Build literacy warning if role requires it
+            var literacyWarning = '';
+            if (role.requiresLiteracy && role.literacyLevel) {
+                var levelName = window.LITERACY_LEVEL_NAMES?.[role.literacyLevel] || role.literacyLevel;
+                literacyWarning = '<div style="padding: 8px; background: rgba(200, 112, 64, 0.15); border: 1px solid var(--warn); border-radius: 6px; margin-bottom: 12px; font-size: 0.6rem;">' +
+                    'This role requires <strong>' + levelName + '</strong>. Characters without this literacy level will not be able to perform this role effectively.' +
+                    '</div>';
+            }
+
             var modalContent =
                 '<div style="margin-bottom: 16px; background: var(--bg2); padding: 12px; border-radius: 8px;">' +
-                    '<strong>Assign Role: ' + _escapeHtml(role.name) + '</strong>' +
-                    '<div style="font-size: 0.65rem; color: var(--dim); margin-top: 4px;">' +
-                        'Select a character to receive this profession.' +
-                        (role.genderRestriction !== 'both' ? ' (Restricted to: ' + role.genderRestriction + ')' : '') +
-                    '</div>' +
+                '<strong>Assign Role: ' + _escapeHtml(role.name) + '</strong>' +
+                '<div style="font-size: 0.65rem; color: var(--dim); margin-top: 4px;">' +
+                    'Select a character to receive this profession.' +
+                    (role.genderRestriction !== 'both' ? ' (Restricted to: ' + role.genderRestriction + ')' : '') +
+                    (role.baseSalary > 0 ? ' · Base Salary: ' + role.baseSalary + ' gold/year' : ' · No salary') +
+                '</div>' +
                 '</div>' +
 
-                '<div style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;">' +
-                    '<select id="genderFilter" style="flex:1; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.65rem;">' +
-                        '<option value="all">All Genders</option>' +
-                        '<option value="male">Male</option>' +
-                        '<option value="female">Female</option>' +
-                    '</select>' +
+                literacyWarning +
 
-                    '<select id="locationFilter" style="flex:1; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.65rem;">' +
-                        '<option value="all">' + locationIcon + ' All Locations</option>' +
-                        locationOptions.map(function(loc) { return '<option value="' + _escapeHtml(loc) + '">' + locationIcon + ' ' + _escapeHtml(loc) + '</option>'; }).join('') +
-                    '</select>' +
+                '<div style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;">' +
+                '<select id="genderFilter" style="flex:1; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.65rem;">' +
+                '<option value="all">All Genders</option>' +
+                '<option value="male">Male</option>' +
+                '<option value="female">Female</option>' +
+                '</select>' +
+
+                '<select id="locationFilter" style="flex:1; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.65rem;">' +
+                '<option value="all">' + locationIcon + ' All Locations</option>' +
+                locationOptions.map(function(loc) { return '<option value="' + _escapeHtml(loc) + '">' + locationIcon + ' ' + _escapeHtml(loc) + '</option>'; }).join('') +
+                '</select>' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom: 12px;">' +
-                    '<input type="text" id="characterSearch" placeholder="' + _getIcon('SEARCH') + ' Search characters..." style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
+                '<input type="text" id="characterSearch" placeholder="' + _getIcon('SEARCH') + ' Search characters..." style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
                 '</div>' +
 
                 '<div id="characterListContainer" style="max-height: 300px; overflow-y: auto;">' +
-                    renderCharacterList() +
+                renderCharacterList() +
                 '</div>' +
 
                 '<div class="form-group" style="margin-top: 12px;">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Skill Level (0-100)</label>' +
-                    '<input type="range" id="skillLevelSlider" min="0" max="100" value="10" step="1" style="width: 100%;">' +
-                    '<div style="display: flex; justify-content: space-between; margin-top: 4px;">' +
-                        '<span>0</span>' +
-                        '<span id="skillLevelDisplay">10 (Novice)</span>' +
-                        '<span>100</span>' +
-                    '</div>' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Skill Level (0-100)</label>' +
+                '<input type="range" id="skillLevelSlider" min="0" max="100" value="10" step="1" style="width: 100%;">' +
+                '<div style="display: flex; justify-content: space-between; margin-top: 4px;">' +
+                '<span>0</span>' +
+                '<span id="skillLevelDisplay">10 (Novice)</span>' +
+                '<span>100</span>' +
+                '</div>' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom: 12px;">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes (optional)</label>' +
-                    '<textarea id="assignNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;" placeholder="How did they learn this role?"></textarea>' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes (optional)</label>' +
+                '<textarea id="assignNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;" placeholder="How did they learn this role?"></textarea>' +
                 '</div>';
 
             _openModal({
@@ -936,7 +1127,7 @@
                 onConfirm: function() {
                     if (!selectedCharacterId) {
                         _showToast('Please select a character', 'error');
-                        return;
+                        return false;
                     }
 
                     var skill = parseInt(document.getElementById('skillLevelSlider').value);
@@ -950,12 +1141,14 @@
                     });
 
                     if (result && result.success) {
-                        _showToast((character?.name || 'Character') + ' now has ' + role.name + ' (' + skill + ')', 'success');
+                        var salaryMsg = role.baseSalary > 0 ? ' (Salary: ' + role.baseSalary + ' gold/year)' : '';
+                        _showToast((character?.name || 'Character') + ' now has ' + role.name + ' (' + skill + ')' + salaryMsg, 'success');
                         if (onSuccess) onSuccess();
                         _closeTopModal();
                     } else {
                         _showToast('Failed to assign role: ' + (result?.reason || 'Unknown error'), 'error');
                     }
+                    return true;
                 }
             });
 
@@ -1002,733 +1195,7 @@
     }
 
     // =========================================================================
-    // 13. BULK ASSIGN ROLE MODAL
-    // =========================================================================
-
-    function openBulkAssignRoleModal(roleId, onSuccess) {
-        if (_processingModal) {
-            return;
-        }
-        _processingModal = true;
-
-        try {
-            var role = _getRole(roleId);
-            if (!role) {
-                _showToast('Role not found', 'error');
-                return;
-            }
-
-            var allChars = _getCharacters();
-            var selectedCharacterIds = new Set();
-            var searchTerm = '';
-            var locationFilter = 'all';
-
-            var infoIcon = _getIcon('CIRCLE_DOT');
-            var checkIcon = _getIcon('CHECK_SIMPLE');
-            var crossIcon = _getIcon('X_HEAVY');
-            var locationIcon = _getIcon('LOCATION');
-
-            var eligibleChars = allChars.filter(function(c) {
-                if (c.isDeceased) return false;
-
-                if (role.genderRestriction === 'male' && c.gender !== 'male') return false;
-                if (role.genderRestriction === 'female' && c.gender !== 'female') return false;
-
-                return !(c.professions && c.professions.some(function(p) { return p.id === roleId; }));
-            });
-
-            function renderCharacterList() {
-                var filtered = eligibleChars.slice();
-
-                if (searchTerm) {
-                    var searchLower = searchTerm.toLowerCase();
-                    filtered = filtered.filter(function(c) {
-                        return c.name.toLowerCase().indexOf(searchLower) !== -1 ||
-                            (c.surname && c.surname.toLowerCase().indexOf(searchLower) !== -1);
-                    });
-                }
-
-                if (locationFilter !== 'all') {
-                    filtered = filtered.filter(function(c) { return _getCurrentLocation(c) === locationFilter; });
-                }
-
-                filtered.sort(function(a, b) { return (a.birthYear || 9999) - (b.birthYear || 9999); });
-
-                if (filtered.length === 0) {
-                    return '<div style="text-align:center; padding:40px; color:var(--dim);">No eligible characters</div>';
-                }
-
-                return filtered.map(function(c) {
-                    var isSelected = selectedCharacterIds.has(c.id);
-                    var location = _getCurrentLocation(c);
-
-                    return '<div class="bulk-character-item" data-char-id="' + c.id + '" style="' +
-                        'background: ' + (isSelected ? 'rgba(var(--accent-rgb), 0.2)' : 'var(--bg3)') + ';' +
-                        'border: 1px solid ' + (isSelected ? 'var(--accent)' : 'var(--border)') + ';' +
-                        'border-radius: 6px;' +
-                        'padding: 8px 12px;' +
-                        'margin-bottom: 6px;' +
-                        'cursor: pointer;' +
-                        'display: flex;' +
-                        'align-items: center;' +
-                        'gap: 12px;' +
-                    '">' +
-                        '<input type="checkbox" class="bulk-checkbox" data-char-id="' + c.id + '" ' + (isSelected ? 'checked' : '') + ' style="width: 16px; height: 16px; cursor: pointer;">' +
-                        '<div style="flex: 1;">' +
-                            '<strong>' + _escapeHtml(c.name) + ' ' + _escapeHtml(c.surname || '') + '</strong>' +
-                            '<span style="font-size: 0.55rem; color: var(--dim); margin-left: 8px;">' + locationIcon + ' ' + _escapeHtml(location) + '</span>' +
-                        '</div>' +
-                    '</div>';
-                }).join('');
-            }
-
-            function refreshCharacterList() {
-                var container = document.getElementById('bulkCharacterList');
-                if (container) container.innerHTML = renderCharacterList();
-
-                document.querySelectorAll('.bulk-character-item').forEach(function(item) {
-                    var checkbox = item.querySelector('.bulk-checkbox');
-                    var charId = item.dataset.charId;
-
-                    item.addEventListener('click', function(e) {
-                        if (e.target.type !== 'checkbox') {
-                            checkbox.checked = !checkbox.checked;
-                        }
-                        if (checkbox.checked) {
-                            selectedCharacterIds.add(charId);
-                        } else {
-                            selectedCharacterIds.delete(charId);
-                        }
-                        refreshCharacterList();
-                        var infoNote = document.querySelector('.selected-count');
-                        if (infoNote) infoNote.textContent = '⌇ ' + selectedCharacterIds.size + ' character(s) selected';
-                    });
-
-                    if (checkbox) {
-                        checkbox.addEventListener('change', function() {
-                            if (checkbox.checked) {
-                                selectedCharacterIds.add(charId);
-                            } else {
-                                selectedCharacterIds.delete(charId);
-                            }
-                            refreshCharacterList();
-                            var infoNote = document.querySelector('.selected-count');
-                            if (infoNote) infoNote.textContent = '⌇ ' + selectedCharacterIds.size + ' character(s) selected';
-                        });
-                    }
-                });
-            }
-
-            var locationOptions = ['all'];
-            for (var i = 0; i < eligibleChars.length; i++) {
-                var loc = _getCurrentLocation(eligibleChars[i]);
-                if (loc && loc !== 'Unknown' && locationOptions.indexOf(loc) === -1) {
-                    locationOptions.push(loc);
-                }
-            }
-
-            var modalContent =
-                '<div style="margin-bottom: 16px; background: var(--bg2); padding: 12px; border-radius: 8px;">' +
-                    '<strong>Bulk Assign: ' + _escapeHtml(role.name) + '</strong>' +
-                    '<div style="font-size: 0.65rem; color: var(--dim); margin-top: 4px;">' +
-                        'Select multiple characters to assign this role. ' + eligibleChars.length + ' characters eligible.' +
-                    '</div>' +
-                '</div>' +
-
-                '<div style="display: flex; gap: 8px; margin-bottom: 12px;">' +
-                    '<input type="text" id="bulkSearch" placeholder="' + _getIcon('SEARCH') + ' Search..." style="flex: 2; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
-                    '<select id="bulkLocationFilter" style="flex: 1; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
-                        locationOptions.map(function(loc) { return '<option value="' + loc + '">' + locationIcon + ' ' + (loc === 'all' ? 'All Locations' : _escapeHtml(loc)) + '</option>'; }).join('') +
-                    '</select>' +
-                '</div>' +
-
-                '<div class="action-buttons" style="margin-bottom: 12px; display: flex; gap: 8px;">' +
-                    '<button id="selectAllBtn" class="btn small">' + checkIcon + ' Select All</button>' +
-                    '<button id="selectNoneBtn" class="btn small">' + crossIcon + ' Select None</button>' +
-                '</div>' +
-
-                '<div id="bulkCharacterList" style="max-height: 350px; overflow-y: auto;">' +
-                    renderCharacterList() +
-                '</div>' +
-
-                '<div class="form-group" style="margin-top: 12px;">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Skill Level (0-100)</label>' +
-                    '<input type="range" id="bulkSkillLevel" min="0" max="100" value="10" step="1" style="width: 100%;">' +
-                    '<div id="bulkSkillDisplay" style="text-align: center; font-size: 0.6rem; margin-top: 4px;">10 (Novice)</div>' +
-                '</div>' +
-
-                '<div class="info-note selected-count" style="margin-top: 12px; padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.6rem;">' +
-                    infoIcon + ' 0 character(s) selected' +
-                '</div>';
-
-            _openModal({
-                title: 'Bulk Assign ' + role.name,
-                content: modalContent,
-                confirmText: 'Assign to Selected',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    if (selectedCharacterIds.size === 0) {
-                        _showToast('No characters selected', 'error');
-                        return;
-                    }
-
-                    var skill = parseInt(document.getElementById('bulkSkillLevel').value);
-                    var currentYear = _getCurrentYear();
-
-                    var charIds = Array.from(selectedCharacterIds);
-                    var result = _bulkAssignRole(charIds, roleId, {
-                        skillLevel: skill,
-                        startYear: currentYear,
-                        notes: 'Bulk assigned ' + role.name
-                    });
-
-                    if (result.success > 0) {
-                        _showToast('Assigned ' + role.name + ' to ' + result.success + ' character(s)', 'success');
-                        if (onSuccess) onSuccess();
-                        _closeTopModal();
-                    } else {
-                        _showToast('Failed to assign roles', 'error');
-                    }
-                }
-            });
-
-            setTimeout(function() {
-                var searchInput = document.getElementById('bulkSearch');
-                if (searchInput) {
-                    searchInput.addEventListener('input', function(e) {
-                        searchTerm = e.target.value;
-                        refreshCharacterList();
-                    });
-                }
-
-                var locationSelect = document.getElementById('bulkLocationFilter');
-                if (locationSelect) {
-                    locationSelect.addEventListener('change', function(e) {
-                        locationFilter = e.target.value;
-                        refreshCharacterList();
-                    });
-                }
-
-                var selectAllBtn = document.getElementById('selectAllBtn');
-                if (selectAllBtn) {
-                    selectAllBtn.onclick = function() {
-                        eligibleChars.forEach(function(c) { selectedCharacterIds.add(c.id); });
-                        refreshCharacterList();
-                        var infoNote = document.querySelector('.selected-count');
-                        if (infoNote) infoNote.textContent = '⌇ ' + selectedCharacterIds.size + ' character(s) selected';
-                    };
-                }
-
-                var selectNoneBtn = document.getElementById('selectNoneBtn');
-                if (selectNoneBtn) {
-                    selectNoneBtn.onclick = function() {
-                        selectedCharacterIds.clear();
-                        refreshCharacterList();
-                        var infoNote = document.querySelector('.selected-count');
-                        if (infoNote) infoNote.textContent = '⌇ 0 character(s) selected';
-                    };
-                }
-
-                var skillSlider = document.getElementById('bulkSkillLevel');
-                var skillDisplay = document.getElementById('bulkSkillDisplay');
-                if (skillSlider && skillDisplay) {
-                    skillSlider.oninput = function() {
-                        var val = parseInt(skillSlider.value);
-                        skillDisplay.textContent = val + ' (' + _getSkillLevelName(val) + ')';
-                    };
-                }
-
-                refreshCharacterList();
-            }, 50);
-
-        } finally {
-            _processingModal = false;
-        }
-    }
-
-    // =========================================================================
-    // 14. VIEW CHARACTERS WITH ROLE MODAL
-    // =========================================================================
-
-    function openViewCharactersWithRoleModal(roleId, onRefresh) {
-        if (_processingModal) {
-            return;
-        }
-        _processingModal = true;
-
-        try {
-            var role = _getRole(roleId);
-            if (!role) {
-                _showToast('Role not found', 'error');
-                return;
-            }
-
-            var charDetails = _getCharactersWithRoleDetails(roleId);
-
-            var personIcon = _getIcon('PERSON');
-            var locationIcon = _getIcon('LOCATION');
-            var editIcon = _getIcon('EDIT');
-
-            if (charDetails.length === 0) {
-                _showToast('No characters have the role "' + role.name + '"', 'info');
-                return;
-            }
-
-            var charsHtml =
-                '<div style="max-height: 500px; overflow-y: auto;">' +
-                    '<div style="margin-bottom: 12px; background: var(--bg2); padding: 10px; border-radius: 8px;">' +
-                        '<strong>' + (role.icon || '◉') + ' ' + _escapeHtml(role.name) + '</strong>' +
-                        '<span style="font-size: 0.6rem; color: var(--dim); margin-left: 8px;">' + charDetails.length + ' character(s)</span>' +
-                        '<div style="font-size: 0.55rem; color: var(--accent); margin-top: 4px;">Click Edit Skill to modify skill level</div>' +
-                    '</div>';
-
-            for (var i = 0; i < charDetails.length; i++) {
-                var cd = charDetails[i];
-                var location = _getCurrentLocation(cd.character);
-                charsHtml +=
-                    '<div style="background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">' +
-                        '<div>' +
-                            '<strong>' + personIcon + ' ' + _escapeHtml(cd.character.name) + ' ' + _escapeHtml(cd.character.surname || '') + '</strong>' +
-                            '<span style="font-size: 0.55rem; color: var(--dim); margin-left: 8px;">' + (cd.character.gender === 'male' ? '♂' : '♀') + '</span>' +
-                            '<span style="font-size: 0.55rem; color: var(--dim); margin-left: 8px;">' + locationIcon + ' ' + _escapeHtml(location) + '</span>' +
-                        '</div>' +
-                        '<div>' +
-                            '<span style="background: var(--bg2); padding: 2px 8px; border-radius: 12px; font-size: 0.6rem;">' +
-                                cd.skillLevel + ' (' + cd.skillTier + ')' +
-                            '</span>' +
-                        '</div>' +
-                        '<div>' +
-                            '<button class="edit-skill-btn" data-char-id="' + cd.character.id + '" data-role-id="' + roleId + '" style="' +
-                                'background: var(--accent-dim);' +
-                                'border: none;' +
-                                'padding: 4px 12px;' +
-                                'border-radius: 6px;' +
-                                'cursor: pointer;' +
-                                'font-size: 0.6rem;' +
-                            '">' + editIcon + ' Edit Skill</button>' +
-                        '</div>' +
-                    '</div>';
-            }
-
-            charsHtml += '</div>';
-
-            _openModal({
-                title: 'Characters with ' + role.name,
-                content: charsHtml,
-                confirmText: 'Close',
-                cancelText: ''
-            });
-
-            setTimeout(function() {
-                document.querySelectorAll('.edit-skill-btn').forEach(function(btn) {
-                    btn.onclick = function() {
-                        var charId = this.dataset.charId;
-                        var roleIdParam = this.dataset.roleId;
-                        _closeTopModal();
-                        setTimeout(function() {
-                            openEditRoleSkillModal(roleIdParam, charId, function() {
-                                if (onRefresh) onRefresh();
-                                openViewCharactersWithRoleModal(roleIdParam, onRefresh);
-                            });
-                        }, 100);
-                    };
-                });
-            }, 100);
-
-        } finally {
-            _processingModal = false;
-        }
-    }
-
-    // =========================================================================
-    // 15. EDIT ROLE SKILL MODAL
-    // =========================================================================
-
-    function openEditRoleSkillModal(roleId, characterId, onSuccess) {
-        if (_processingModal) {
-            return;
-        }
-        _processingModal = true;
-
-        try {
-            var role = _getRole(roleId);
-            var character = _getCharacterById(characterId);
-
-            if (!role || !character) {
-                _showToast('Role or character not found', 'error');
-                return;
-            }
-
-            var currentSkill = _getSkillLevel(characterId, roleId);
-            var infoIcon = _getIcon('CIRCLE_DOT');
-            var editIcon = _getIcon('EDIT');
-
-            var modalContent =
-                '<div style="margin-bottom: 16px; background: var(--bg2); padding: 12px; border-radius: 8px;">' +
-                    '<div><strong>' + _escapeHtml(character.name) + ' ' + _escapeHtml(character.surname || '') + '</strong></div>' +
-                    '<div>Role: ' + _escapeHtml(role.name) + '</div>' +
-                    '<div>Current Skill: ' + currentSkill + ' (' + _getSkillLevelName(currentSkill) + ')</div>' +
-                '</div>' +
-
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Skill Level (0-100)</label>' +
-                    '<input type="range" id="skillLevelSlider" min="0" max="100" value="' + currentSkill + '" step="1" style="width: 100%;">' +
-                    '<div style="display: flex; justify-content: space-between; margin-top: 4px;">' +
-                        '<span>0</span>' +
-                        '<span id="skillLevelDisplay">' + currentSkill + ' (' + _getSkillLevelName(currentSkill) + ')</span>' +
-                        '<span>100</span>' +
-                    '</div>' +
-                '</div>' +
-
-                '<div class="action-buttons" style="display: flex; gap: 8px; margin-top: 16px;">' +
-                    '<button id="setMasterBtn" class="btn" style="background: #c8a844; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer;">Set Master (91+)</button>' +
-                    '<button id="setExpertBtn" class="btn" style="background: #4a9060; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer;">Set Expert (76)</button>' +
-                    '<button id="setJourneymanBtn" class="btn" style="background: #c87040; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer;">Set Journeyman (51)</button>' +
-                '</div>';
-
-            _openModal({
-                title: editIcon + ' Edit ' + role.name + ' Skill',
-                content: modalContent,
-                confirmText: 'Save',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var newSkill = parseInt(document.getElementById('skillLevelSlider').value);
-                    var result = _updateCharacterSkill(characterId, roleId, newSkill);
-
-                    if (result && result.success) {
-                        _showToast(character.name + '\'s ' + role.name + ' → ' + newSkill + ' (' + _getSkillLevelName(newSkill) + ')', 'success');
-                        if (onSuccess) onSuccess();
-                        _closeTopModal();
-                    } else {
-                        _showToast('Failed to update skill', 'error');
-                    }
-                }
-            });
-
-            setTimeout(function() {
-                var slider = document.getElementById('skillLevelSlider');
-                var display = document.getElementById('skillLevelDisplay');
-                if (slider && display) {
-                    slider.oninput = function() {
-                        var val = parseInt(slider.value);
-                        display.textContent = val + ' (' + _getSkillLevelName(val) + ')';
-                    };
-                }
-
-                var masterBtn = document.getElementById('setMasterBtn');
-                if (masterBtn) {
-                    masterBtn.onclick = function() {
-                        slider.value = 91;
-                        display.textContent = '91 (' + _getSkillLevelName(91) + ')';
-                    };
-                }
-
-                var expertBtn = document.getElementById('setExpertBtn');
-                if (expertBtn) {
-                    expertBtn.onclick = function() {
-                        slider.value = 76;
-                        display.textContent = '76 (' + _getSkillLevelName(76) + ')';
-                    };
-                }
-
-                var journeymanBtn = document.getElementById('setJourneymanBtn');
-                if (journeymanBtn) {
-                    journeymanBtn.onclick = function() {
-                        slider.value = 51;
-                        display.textContent = '51 (' + _getSkillLevelName(51) + ')';
-                    };
-                }
-            }, 50);
-
-        } finally {
-            _processingModal = false;
-        }
-    }
-
-    // =========================================================================
-    // 16. LIST ROLES MODAL
-    // =========================================================================
-
-    function openListRolesModal(onSelectRole) {
-        if (_processingModal) {
-            return;
-        }
-        _processingModal = true;
-
-        try {
-            var allRoles = _getAllRoles();
-            var searchTerm = '';
-            var categoryFilter = 'all';
-
-            var searchIcon = _getIcon('SEARCH');
-            var infoIcon = _getIcon('CIRCLE_DOT');
-            var personIcon = _getIcon('PERSON');
-            var plusIcon = _getIcon('PLUS');
-
-            var categories = _getRoleCategoryList();
-
-            function getFilteredRoles() {
-                var filtered = allRoles.slice();
-
-                if (searchTerm) {
-                    var searchLower = searchTerm.toLowerCase();
-                    filtered = filtered.filter(function(r) {
-                        return r.name.toLowerCase().indexOf(searchLower) !== -1;
-                    });
-                }
-
-                if (categoryFilter !== 'all') {
-                    filtered = filtered.filter(function(r) { return r.category === categoryFilter; });
-                }
-
-                filtered.sort(function(a, b) { return a.name.localeCompare(b.name); });
-                return filtered;
-            }
-
-            function renderRoleList() {
-                var filtered = getFilteredRoles();
-
-                if (filtered.length === 0) {
-                    return '<div style="text-align:center; padding:40px; color:var(--dim);">No roles found</div>';
-                }
-
-                return filtered.map(function(role) {
-                    var charCount = 0;
-                    var characters = _getCharacters();
-                    for (var i = 0; i < characters.length; i++) {
-                        var char = characters[i];
-                        if (char.professions && char.professions.some(function(p) { return p.id === role.id; })) {
-                            charCount++;
-                        }
-                    }
-
-                    return '<div class="role-item" data-role-id="' + role.id + '" style="' +
-                        'background: var(--bg3);' +
-                        'border: 1px solid var(--border);' +
-                        'border-radius: 8px;' +
-                        'padding: 10px 12px;' +
-                        'margin-bottom: 8px;' +
-                        'cursor: pointer;' +
-                        'transition: all 0.2s;' +
-                    '">' +
-                        '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">' +
-                            '<div>' +
-                                '<strong>' + (role.icon || '◉') + ' ' + _escapeHtml(role.name) + '</strong>' +
-                                '<span style="font-size: 0.55rem; color: var(--dim); margin-left: 8px;">' + (role.category || 'uncategorized') + '</span>' +
-                            '</div>' +
-                            '<div style="font-size: 0.6rem; color: var(--accent);">' +
-                                personIcon + ' ' + charCount + ' character(s)' +
-                            '</div>' +
-                        '</div>' +
-                        (role.notes ? '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 6px;">⌇ ' + _escapeHtml(role.notes) + '</div>' : '') +
-                    '</div>';
-                }).join('');
-            }
-
-            function refreshRoleList() {
-                var container = document.getElementById('roleListContainer');
-                if (container) container.innerHTML = renderRoleList();
-
-                document.querySelectorAll('.role-item').forEach(function(item) {
-                    item.addEventListener('click', function() {
-                        var roleId = this.dataset.roleId;
-                        if (onSelectRole) {
-                            onSelectRole(roleId);
-                            _closeTopModal();
-                        }
-                    });
-                });
-            }
-
-            var categoryOptions = '<option value="all">All Categories</option>' +
-                categories.map(function(cat) {
-                    return '<option value="' + cat.id + '" ' + (categoryFilter === cat.id ? 'selected' : '') + '>' + (cat.icon || '⌇') + ' ' + cat.name + '</option>';
-                }).join('');
-
-            var modalContent =
-                '<div style="margin-bottom: 12px;">' +
-                    '<input type="text" id="roleSearch" placeholder="' + searchIcon + ' Search roles..." style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
-                '</div>' +
-
-                '<div style="margin-bottom: 12px;">' +
-                    '<select id="categoryFilter" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
-                        categoryOptions +
-                    '</select>' +
-                '</div>' +
-
-                '<div id="roleListContainer" style="max-height: 400px; overflow-y: auto;">' +
-                    renderRoleList() +
-                '</div>' +
-
-                '<div class="action-buttons" style="margin-top: 16px; display: flex; gap: 8px;">' +
-                    '<button id="createNewRoleBtn" class="btn primary" style="flex: 1;">' + plusIcon + ' Create New Role</button>' +
-                '</div>';
-
-            _openModal({
-                title: 'Browse Roles',
-                content: modalContent,
-                confirmText: 'Close',
-                cancelText: ''
-            });
-
-            setTimeout(function() {
-                var searchInput = document.getElementById('roleSearch');
-                if (searchInput) {
-                    searchInput.addEventListener('input', function(e) {
-                        searchTerm = e.target.value;
-                        refreshRoleList();
-                    });
-                }
-
-                var categorySelect = document.getElementById('categoryFilter');
-                if (categorySelect) {
-                    categorySelect.addEventListener('change', function(e) {
-                        categoryFilter = e.target.value;
-                        refreshRoleList();
-                    });
-                }
-
-                var createBtn = document.getElementById('createNewRoleBtn');
-                if (createBtn) {
-                    createBtn.onclick = function() {
-                        _closeTopModal();
-                        setTimeout(function() {
-                            openCreateRoleModal(function(newRoleId) {
-                                if (onSelectRole) onSelectRole(newRoleId);
-                            });
-                        }, 100);
-                    };
-                }
-
-                refreshRoleList();
-            }, 50);
-
-        } finally {
-            _processingModal = false;
-        }
-    }
-
-    // =========================================================================
-    // 17. CATEGORY MANAGER MODAL
-    // =========================================================================
-
-    function openCategoryManagerModal(onComplete) {
-        if (_processingModal) {
-            return;
-        }
-        _processingModal = true;
-
-        try {
-            var categories = _getRoleCategories();
-            var infoIcon = _getIcon('CIRCLE_DOT');
-            var editIcon = _getIcon('EDIT');
-            var crossIcon = _getIcon('X_HEAVY');
-            var plusIcon = _getIcon('PLUS');
-
-            var modalContent =
-                '<div class="category-manager">' +
-                    '<div style="margin-bottom: 16px;">' +
-                        '<button id="addCategoryBtn" class="btn small">' + plusIcon + ' Add Category</button>' +
-                    '</div>' +
-                    '<div id="categoriesList" style="max-height: 400px; overflow-y: auto;">' +
-                        Object.keys(categories).filter(function(key) { return key !== 'uncategorized'; }).map(function(key) {
-                            var cat = categories[key];
-                            return '<div class="category-item" style="display: flex; justify-content: space-between; align-items: center; padding: 8px; border-bottom: 1px solid var(--border);">' +
-                                '<div>' +
-                                    '<span style="font-size: 1.2rem;">' + (cat.icon || '⌇') + '</span>' +
-                                    '<strong>' + _escapeHtml(cat.name) + '</strong>' +
-                                    '<span style="font-size: 0.7rem; color: var(--dim);">(' + key + ')</span>' +
-                                '</div>' +
-                                '<div>' +
-                                    '<button class="btn small edit-category-btn" data-category-id="' + key + '">' + editIcon + '</button>' +
-                                    '<button class="btn small danger delete-category-btn" data-category-id="' + key + '">' + crossIcon + '</button>' +
-                                '</div>' +
-                            '</div>';
-                        }).join('') +
-                    '</div>' +
-                    '<div class="info-note" style="margin-top: 16px; font-size: 0.6rem; color: var(--dim);">' +
-                        infoIcon + ' Categories help organize roles. Deleting a category moves roles to "Uncategorized".' +
-                    '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Manage Role Categories',
-                content: modalContent,
-                confirmText: 'Close',
-                onConfirm: function() {
-                    if (onComplete) onComplete();
-                }
-            });
-
-            setTimeout(function() {
-                var addBtn = document.getElementById('addCategoryBtn');
-                if (addBtn) {
-                    addBtn.addEventListener('click', function() {
-                        var newId = prompt('Category ID (e.g., "agriculture"):');
-                        if (!newId) return;
-                        var newName = prompt('Category Display Name:');
-                        if (!newName) return;
-                        var newIcon = prompt('Category Icon (monochrome):', '⌇');
-
-                        if (typeof window.addCategory === 'function') {
-                            window.addCategory(newId, newName, newIcon || '⌇');
-                        } else if (typeof window.RoleCommands !== 'undefined') {
-                            window.RoleCommands.addCategory(newId, newName, newIcon || '⌇');
-                        }
-                        _closeTopModal();
-                        setTimeout(function() { openCategoryManagerModal(onComplete); }, 100);
-                    });
-                }
-
-                var editBtns = document.querySelectorAll('.edit-category-btn');
-                for (var i = 0; i < editBtns.length; i++) {
-                    var btn = editBtns[i];
-                    btn.addEventListener('click', function() {
-                        var catId = this.dataset.categoryId;
-                        var cat = categories[catId];
-                        if (!cat) return;
-                        var newName = prompt('New category name:', cat.name);
-                        if (newName && typeof window.updateCategory === 'function') {
-                            window.updateCategory(catId, { name: newName });
-                        } else if (newName && typeof window.RoleCommands !== 'undefined') {
-                            window.RoleCommands.updateCategory(catId, { name: newName });
-                        }
-                        var newIcon = prompt('New icon (monochrome):', cat.icon || '⌇');
-                        if (newIcon && typeof window.updateCategory === 'function') {
-                            window.updateCategory(catId, { icon: newIcon });
-                        } else if (newIcon && typeof window.RoleCommands !== 'undefined') {
-                            window.RoleCommands.updateCategory(catId, { icon: newIcon });
-                        }
-                        _closeTopModal();
-                        setTimeout(function() { openCategoryManagerModal(onComplete); }, 100);
-                    });
-                }
-
-                var deleteBtns = document.querySelectorAll('.delete-category-btn');
-                for (var i = 0; i < deleteBtns.length; i++) {
-                    var btn = deleteBtns[i];
-                    btn.addEventListener('click', function() {
-                        var catId = this.dataset.categoryId;
-                        if (catId && confirm('Delete category "' + categories[catId]?.name + '"? Roles will become "Uncategorized".')) {
-                            if (typeof window.deleteCategory === 'function') {
-                                window.deleteCategory(catId);
-                            } else if (typeof window.RoleCommands !== 'undefined') {
-                                window.RoleCommands.deleteCategory(catId);
-                            }
-                            _closeTopModal();
-                            setTimeout(function() { openCategoryManagerModal(onComplete); }, 100);
-                        }
-                    });
-                }
-            }, 100);
-
-        } finally {
-            _processingModal = false;
-        }
-    }
-
-    // =========================================================================
-    // 18. EXPORTS
+    // 14. EXPORTS
     // =========================================================================
 
     window.openCreateRoleModal = openCreateRoleModal;

@@ -10,6 +10,7 @@
  * - Headmaster management
  * - Reputation management
  * - Institutions needing teachers
+ * - TUITION MANAGEMENT (NEW)
  * 
  * DEPENDENCIES:
  *   - education-state.js (EducationState)
@@ -160,7 +161,123 @@
     }
 
     // =========================================================================
-    // 3. INSTITUTION MANAGEMENT
+    // 3. TUITION HELPERS (NEW)
+    // =========================================================================
+
+    function _getTuitionTypeMultiplier(typeId) {
+        return window.TUITION_TYPE_MULTIPLIERS?.[typeId] || 1.0;
+    }
+
+    function _calculateTuitionAmount(institution, year) {
+        if (!institution) return { success: false, reason: 'Institution not found' };
+
+        // Check for manual override
+        if (institution.customTuition !== null && institution.customTuition !== undefined) {
+            return {
+                success: true,
+                tuition: Math.max(0, institution.customTuition),
+                breakdown: {
+                    baseTuition: institution.tuitionPerYear || 10,
+                    customOverride: institution.customTuition,
+                    reason: 'Manual override applied'
+                },
+                manualOverride: institution.customTuition
+            };
+        }
+
+        // Check if tuition is waived
+        if (institution.waiveTuition === true) {
+            return {
+                success: true,
+                tuition: 0,
+                breakdown: {
+                    baseTuition: institution.tuitionPerYear || 10,
+                    reason: 'Tuition waived'
+                },
+                manualOverride: 0
+            };
+        }
+
+        var baseTuition = institution.tuitionPerYear || window.DEFAULT_TUITION || 10;
+
+        // Reputation modifier: 0.75 to 1.25 based on reputation (0-100)
+        var reputation = institution.reputation || 50;
+        var neutral = window.TUITION_REPUTATION_NEUTRAL || 50;
+        var minMod = window.TUITION_REPUTATION_MODIFIER_MIN || 0.75;
+        var maxMod = window.TUITION_REPUTATION_MODIFIER_MAX || 1.25;
+
+        var repModifier;
+        if (reputation <= neutral) {
+            repModifier = minMod + (reputation / neutral) * (1.0 - minMod);
+        } else {
+            repModifier = 1.0 + ((reputation - neutral) / (100 - neutral)) * (maxMod - 1.0);
+        }
+        repModifier = Math.min(maxMod, Math.max(minMod, repModifier));
+
+        // Type multiplier
+        var typeMultiplier = _getTuitionTypeMultiplier(institution.type);
+
+        var tuition = baseTuition * repModifier * typeMultiplier;
+        tuition = Math.max(0, Math.round(tuition));
+
+        return {
+            success: true,
+            tuition: tuition,
+            breakdown: {
+                baseTuition: baseTuition,
+                reputation: reputation,
+                repModifier: Math.round(repModifier * 100) / 100,
+                typeMultiplier: typeMultiplier,
+                customOverride: null
+            },
+            manualOverride: null
+        };
+    }
+
+    function _getCharacterHousehold(characterId) {
+        if (typeof window.getCharacterHousehold === 'function') {
+            return window.getCharacterHousehold(characterId);
+        }
+        if (typeof window.HouseholdState !== 'undefined' && window.HouseholdState.getCharacterHousehold) {
+            return window.HouseholdState.getCharacterHousehold(characterId);
+        }
+        return null;
+    }
+
+    function _getHouseholdWealth(householdId) {
+        if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.getHouseholdWealth) {
+            return window.HouseholdEconomy.getHouseholdWealth(householdId);
+        }
+        var household = _getHousehold(householdId);
+        return household ? household.wealth || 0 : 0;
+    }
+
+    function _getHousehold(householdId) {
+        if (typeof window.HouseholdState !== 'undefined' && window.HouseholdState.getHousehold) {
+            return window.HouseholdState.getHousehold(householdId);
+        }
+        return null;
+    }
+
+    function _updateHouseholdWealth(householdId, delta, reason) {
+        if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.updateHouseholdWealth) {
+            return window.HouseholdEconomy.updateHouseholdWealth(householdId, delta, reason);
+        }
+        if (typeof window.updateHouseholdWealth === 'function') {
+            return window.updateHouseholdWealth(householdId, delta, reason);
+        }
+        return 0;
+    }
+
+    function _trackTuitionExpense(householdId, tuition, institutionId, studentId) {
+        if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.trackTuitionExpense) {
+            return window.HouseholdEconomy.trackTuitionExpense(householdId, tuition, institutionId, studentId);
+        }
+        return false;
+    }
+
+    // =========================================================================
+    // 4. INSTITUTION MANAGEMENT
     // =========================================================================
 
     function createInstitution(name, typeId, locationId, options) {
@@ -197,6 +314,14 @@
                 { type: 'subject', id: 'basic_math', name: 'Basic Mathematics', icon: '⌇', baseLearnRate: 10 }
             ];
 
+            // ================================================================
+            // NEW: Tuition fields
+            // ================================================================
+            var tuitionPerYear = options.tuitionPerYear;
+            if (tuitionPerYear === undefined || tuitionPerYear === null) {
+                tuitionPerYear = window.DEFAULT_TUITION_BY_TYPE?.[type.id] || window.DEFAULT_TUITION || 10;
+            }
+
             var institution = {
                 id: _generateId('edu'),
                 name: name.trim(),
@@ -222,7 +347,12 @@
                 notes: options.notes || '',
                 headmaster: options.headmaster || null,
                 headmasterHistory: options.headmasterHistory || [],
-                history: options.history || []
+                history: options.history || [],
+                // NEW tuition fields
+                tuitionPerYear: Math.max(0, tuitionPerYear),
+                customTuition: null,
+                tuitionHistory: [],
+                waiveTuition: options.waiveTuition || false
             };
 
             var result = EducationState._addInstitution(institution);
@@ -231,7 +361,8 @@
                 institution.name + ' (' + type.name + ') founded in ' + location.displayName,
                 []);
 
-            _showToast('Created institution: ' + institution.name, 'success');
+            var tuitionMsg = institution.tuitionPerYear > 0 ? ' (Tuition: ' + institution.tuitionPerYear + ' gold/year)' : '';
+            _showToast('Created institution: ' + institution.name + tuitionMsg, 'success');
             return result;
 
         } finally {
@@ -271,6 +402,34 @@
                     updates.typeName = type.name;
                     updates.icon = type.icon;
                 }
+            }
+
+            // ================================================================
+            // NEW: Tuition update handling
+            // ================================================================
+            if (updates.tuitionPerYear !== undefined && updates.tuitionPerYear !== institution.tuitionPerYear) {
+                var oldTuition = institution.tuitionPerYear;
+                var newTuition = Math.max(0, updates.tuitionPerYear);
+                updates.tuitionPerYear = newTuition;
+
+                if (!institution.tuitionHistory) institution.tuitionHistory = [];
+                institution.tuitionHistory.push({
+                    year: _getCurrentYear(),
+                    oldAmount: oldTuition,
+                    newAmount: newTuition,
+                    reason: updates.tuitionReason || 'Updated'
+                });
+                if (institution.tuitionHistory.length > 20) {
+                    institution.tuitionHistory = institution.tuitionHistory.slice(-20);
+                }
+            }
+
+            if (updates.customTuition !== undefined) {
+                updates.customTuition = updates.customTuition !== null ? Math.max(0, updates.customTuition) : null;
+            }
+
+            if (updates.waiveTuition !== undefined) {
+                updates.waiveTuition = !!updates.waiveTuition;
             }
 
             var result = EducationState._updateInstitution(institutionId, updates);
@@ -357,7 +516,150 @@
     }
 
     // =========================================================================
-    // 4. TEACHER MANAGEMENT
+    // 5. TUITION MANAGEMENT (NEW)
+    // =========================================================================
+
+    function calculateTuition(institutionId, year) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Already processing' };
+        }
+        _processingCommand = true;
+
+        try {
+            var institution = EducationState.getInstitution(institutionId);
+            if (!institution) {
+                return { success: false, reason: 'Institution not found' };
+            }
+
+            var calcYear = year || _getCurrentYear();
+            var result = _calculateTuitionAmount(institution, calcYear);
+
+            return result;
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    function updateTuition(institutionId, newTuition, reason) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Already processing' };
+        }
+        _processingCommand = true;
+
+        try {
+            var institution = EducationState.getInstitution(institutionId);
+            if (!institution) {
+                return { success: false, reason: 'Institution not found' };
+            }
+
+            var boundedTuition = newTuition !== null ? Math.max(0, newTuition) : null;
+
+            // If null, remove custom override (use calculated)
+            if (boundedTuition === null) {
+                institution.customTuition = null;
+                EducationState._updateInstitution(institutionId, { customTuition: null });
+                _showToast('Tuition now uses calculated value', 'info');
+                return { success: true, tuition: null, mode: 'calculated' };
+            }
+
+            // Manual override
+            var oldTuition = institution.customTuition !== null ? institution.customTuition : institution.tuitionPerYear;
+            institution.customTuition = boundedTuition;
+
+            if (!institution.tuitionHistory) institution.tuitionHistory = [];
+            institution.tuitionHistory.push({
+                year: _getCurrentYear(),
+                oldAmount: oldTuition,
+                newAmount: boundedTuition,
+                reason: reason || 'Manual override'
+            });
+            if (institution.tuitionHistory.length > 20) {
+                institution.tuitionHistory = institution.tuitionHistory.slice(-20);
+            }
+
+            EducationState._updateInstitution(institutionId, {
+                customTuition: boundedTuition,
+                tuitionHistory: institution.tuitionHistory
+            });
+
+            var reasonMsg = reason ? ' (' + reason + ')' : '';
+            _showToast('Tuition set to ' + boundedTuition + ' gold/year' + reasonMsg, 'success');
+
+            return {
+                success: true,
+                tuition: boundedTuition,
+                mode: 'manual'
+            };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    function updateTuitionWaiver(institutionId, waiveTuition, reason) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Already processing' };
+        }
+        _processingCommand = true;
+
+        try {
+            var institution = EducationState.getInstitution(institutionId);
+            if (!institution) {
+                return { success: false, reason: 'Institution not found' };
+            }
+
+            waiveTuition = !!waiveTuition;
+            institution.waiveTuition = waiveTuition;
+
+            EducationState._updateInstitution(institutionId, { waiveTuition: waiveTuition });
+
+            var statusMsg = waiveTuition ? 'Tuition waived for ' + institution.name : 'Tuition no longer waived for ' + institution.name;
+            var reasonMsg = reason ? ' (' + reason + ')' : '';
+            _showToast(statusMsg + reasonMsg, 'success');
+
+            return {
+                success: true,
+                waiveTuition: waiveTuition,
+                institutionId: institutionId,
+                institutionName: institution.name
+            };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    function getTuitionHistory(institutionId, limit) {
+        if (_processingCommand) {
+            return [];
+        }
+        _processingCommand = true;
+
+        try {
+            var institution = EducationState.getInstitution(institutionId);
+            if (!institution || !institution.tuitionHistory) {
+                return [];
+            }
+
+            var history = institution.tuitionHistory.slice();
+            history.sort(function(a, b) {
+                return (b.year || 0) - (a.year || 0);
+            });
+
+            if (limit && limit > 0) {
+                history = history.slice(0, limit);
+            }
+
+            return history;
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    // =========================================================================
+    // 6. TEACHER MANAGEMENT
     // =========================================================================
 
     function hireTeacher(institutionId, teacherId, subjectId, skill) {
@@ -497,7 +799,7 @@
     }
 
     // =========================================================================
-    // 5. STUDENT MANAGEMENT
+    // 7. STUDENT MANAGEMENT
     // =========================================================================
 
     function enrollStudent(institutionId, studentId, startYear) {
@@ -530,9 +832,40 @@
                 return false;
             }
 
+            // ================================================================
+            // NEW: Tuition check
+            // ================================================================
+            if (!institution.waiveTuition) {
+                var tuitionResult = _calculateTuitionAmount(institution, startYear || _getCurrentYear());
+                if (tuitionResult.success && tuitionResult.tuition > 0) {
+                    var household = _getCharacterHousehold(studentId);
+                    if (household) {
+                        var wealth = _getHouseholdWealth(household.id);
+                        if (wealth < tuitionResult.tuition) {
+                            _showToast('Household cannot afford tuition (' + tuitionResult.tuition + ' gold)', 'error');
+                            return false;
+                        }
+                        // Deduct tuition from household wealth
+                        _updateHouseholdWealth(household.id, -tuitionResult.tuition,
+                            'Tuition for ' + institution.name + ' - ' + student.name);
+                        // Track tuition expense
+                        _trackTuitionExpense(household.id, tuitionResult.tuition, institutionId, studentId);
+                    }
+                }
+            }
+
             if (!institution.students) institution.students = [];
 
             var enrollmentYear = startYear || _getCurrentYear();
+
+            // Calculate tuition for record
+            var tuitionPaid = 0;
+            if (!institution.waiveTuition) {
+                var tuitionCalc = _calculateTuitionAmount(institution, enrollmentYear);
+                if (tuitionCalc.success) {
+                    tuitionPaid = tuitionCalc.tuition;
+                }
+            }
 
             institution.students.push({
                 studentId: studentId,
@@ -542,7 +875,11 @@
                 graduated: false,
                 graduationYear: null,
                 attendance: 100,
-                notes: ''
+                notes: '',
+                // NEW tuition fields
+                tuitionPaid: tuitionPaid,
+                tuitionYear: enrollmentYear,
+                tuitionWaived: institution.waiveTuition
             });
 
             EducationState._updateInstitution(institutionId, { students: institution.students });
@@ -561,12 +898,13 @@
             }
 
             _logEvent('education', 'Student Enrolled',
-                student.name + ' enrolled at ' + institution.name,
+                student.name + ' enrolled at ' + institution.name + (tuitionPaid > 0 ? ' (Tuition: ' + tuitionPaid + ' gold)' : ''),
                 [student]);
 
             _recordStudentEnrolled(institutionId, studentId, enrollmentYear);
 
-            _showToast(student.name + ' enrolled', 'success');
+            var tuitionMsg = tuitionPaid > 0 ? ' (Tuition: ' + tuitionPaid + ' gold)' : ' (Tuition waived)';
+            _showToast(student.name + ' enrolled' + tuitionMsg, 'success');
             return true;
 
         } finally {
@@ -746,7 +1084,7 @@
     }
 
     // =========================================================================
-    // 6. HEADMASTER MANAGEMENT
+    // 8. HEADMASTER MANAGEMENT
     // =========================================================================
 
     function setHeadmaster(institutionId, characterId, title, startYear) {
@@ -853,7 +1191,7 @@
     }
 
     // =========================================================================
-    // 7. INSTITUTIONS NEEDING TEACHERS
+    // 9. INSTITUTIONS NEEDING TEACHERS
     // =========================================================================
 
     function getInstitutionsNeedingTeachers(maxReputation, minStudents) {
@@ -913,7 +1251,7 @@
     }
 
     // =========================================================================
-    // 8. TEACHER SKILL LEVEL NAME
+    // 10. TEACHER SKILL LEVEL NAME
     // =========================================================================
 
     function _getTeacherSkillLevelName(level) {
@@ -926,7 +1264,7 @@
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 11. EXPORTS
     // =========================================================================
 
     window.EducationCommands = {
@@ -942,7 +1280,13 @@
         setHeadmaster: setHeadmaster,
         endHeadmasterTerm: endHeadmasterTerm,
         getInstitutionsNeedingTeachers: getInstitutionsNeedingTeachers,
-        _getTeacherSkillLevelName: _getTeacherSkillLevelName
+        _getTeacherSkillLevelName: _getTeacherSkillLevelName,
+
+        // NEW tuition functions
+        calculateTuition: calculateTuition,
+        updateTuition: updateTuition,
+        updateTuitionWaiver: updateTuitionWaiver,
+        getTuitionHistory: getTuitionHistory
     };
 
     // Legacy aliases
@@ -960,6 +1304,12 @@
     window._getInstitutionsNeedingTeachers = getInstitutionsNeedingTeachers;
     window._getTeacherSkillLevelName = _getTeacherSkillLevelName;
 
+    // NEW legacy aliases
+    window._calculateTuition = calculateTuition;
+    window._updateTuition = updateTuition;
+    window._updateTuitionWaiver = updateTuitionWaiver;
+    window._getTuitionHistory = getTuitionHistory;
+
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
             createInstitution: createInstitution,
@@ -974,7 +1324,11 @@
             setHeadmaster: setHeadmaster,
             endHeadmasterTerm: endHeadmasterTerm,
             getInstitutionsNeedingTeachers: getInstitutionsNeedingTeachers,
-            _getTeacherSkillLevelName: _getTeacherSkillLevelName
+            _getTeacherSkillLevelName: _getTeacherSkillLevelName,
+            calculateTuition: calculateTuition,
+            updateTuition: updateTuition,
+            updateTuitionWaiver: updateTuitionWaiver,
+            getTuitionHistory: getTuitionHistory
         };
     }
 

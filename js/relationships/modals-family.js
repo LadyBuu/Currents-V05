@@ -1260,7 +1260,7 @@ function openAdoptionSearchModal(onSelect, options) {
 }
 
 // =============================================================================
-// 11. LEGITIMIZE CHILD MODAL
+// 11. LEGITIMIZE CHILD MODAL (UPDATED - no marriage references)
 // =============================================================================
 
 function openLegitimizationModal(child, father, mother, onSuccess) {
@@ -1278,22 +1278,22 @@ function openLegitimizationModal(child, father, mother, onSuccess) {
     var childAge = _getAge(child);
     var childName = (child.name + ' ' + (child.surname || '')).trim();
     
-    var parentsMarried = false;
-    var marriageYear = null;
+    // Check if parents are in a relationship (any romantic type)
+    var parentsAreTogether = false;
+    var relationshipStartYear = null;
     
     if (father && mother) {
-        var relationship = _getRelationshipDescription(father.id, mother.id);
-        if (relationship && relationship === 'Spouse') {
-            parentsMarried = true;
-            var rel = _getRelationshipBetween(father.id, mother.id);
-            if (rel && rel.startYear) {
-                marriageYear = rel.startYear;
+        var rel = _getRelationshipBetween(father.id, mother.id);
+        if (rel && (rel.type === 'committed' || rel.type === 'casual_dating') && rel.status === 'ongoing') {
+            parentsAreTogether = true;
+            if (rel.startYear) {
+                relationshipStartYear = rel.startYear;
             }
         }
     }
     
     var birthYear = child.birthYear || (currentYear - childAge);
-    var isBornBeforeMarriage = marriageYear && birthYear < marriageYear;
+    var isBornBeforeRelationship = relationshipStartYear && birthYear < relationshipStartYear;
     
     var personIcon = _getIcon('PERSON');
     var infoIcon = _getIcon('CIRCLE_DOT');
@@ -1312,11 +1312,11 @@ function openLegitimizationModal(child, father, mother, onSuccess) {
         (father ? '<div><strong>Father:</strong> ' + _escapeHtml(father.name) + ' ' + _escapeHtml(father.surname || '') + '</div>' : '') +
         (mother ? '<div><strong>Mother:</strong> ' + _escapeHtml(mother.name) + ' ' + _escapeHtml(mother.surname || '') + '</div>' : '') +
         (father && mother ? '<div style="margin-top: 8px; padding: 6px; background: var(--bg2); border-radius: 6px;">' + 
-            (parentsMarried ? 
-                '<span style="color: var(--success);">' + checkIcon + ' Parents are married' + (marriageYear ? ' (since ' + marriageYear + ')' : '') + '</span>' : 
-                '<span style="color: var(--warn);">' + warningIcon + ' Parents are not yet married</span>') + 
+            (parentsAreTogether ? 
+                '<span style="color: var(--success);">' + checkIcon + ' Parents are together' + (relationshipStartYear ? ' (since ' + relationshipStartYear + ')' : '') + '</span>' : 
+                '<span style="color: var(--warn);">' + warningIcon + ' Parents are not together</span>') + 
         '</div>' : '') +
-        (isBornBeforeMarriage ? '<div style="margin-top: 8px; padding: 6px; background: rgba(200, 112, 64, 0.15); border-radius: 6px;">' + warningIcon + ' ' + childName + ' was born before parents married (' + birthYear + ' vs ' + marriageYear + ')</div>' : '') +
+        (isBornBeforeRelationship ? '<div style="margin-top: 8px; padding: 6px; background: rgba(200, 112, 64, 0.15); border-radius: 6px;">' + warningIcon + ' ' + childName + ' was born before parents were together (' + birthYear + ' vs ' + relationshipStartYear + ')</div>' : '') +
     '</div>' +
     
     '<div class="form-group" style="margin-bottom: 12px;">' +
@@ -1356,12 +1356,12 @@ function openLegitimizationModal(child, father, mother, onSuccess) {
     
     '<div class="form-group" style="margin-bottom: 12px;">' +
         '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes (optional)</label>' +
-        '<textarea id="legitimizationNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);" placeholder="e.g., Child born before marriage, now legitimized"></textarea>' +
+        '<textarea id="legitimizationNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);" placeholder="e.g., Child born before parents were together, now legitimized"></textarea>' +
     '</div>' +
     
     '<div class="info-note" style="margin-top: 12px; padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
         'Legitimization declares a child as legitimate heir, often granting inheritance and succession rights.' +
-        (!parentsMarried ? ' Parents should marry first for full legitimization.' : '') +
+        (!parentsAreTogether ? ' Parents should be together for full legitimization.' : '') +
     '</div>';
     
     _openModal({
@@ -1404,7 +1404,7 @@ function openLegitimizationModal(child, father, mother, onSuccess) {
             if (father && mother) {
                 legitimizationRecord.fatherId = father.id;
                 legitimizationRecord.motherId = mother.id;
-                legitimizationRecord.parentsMarried = parentsMarried;
+                legitimizationRecord.parentsTogether = parentsAreTogether;
             } else if (father) {
                 legitimizationRecord.fatherId = father.id;
             } else if (mother) {

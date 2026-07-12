@@ -5,7 +5,8 @@
  * 
  * FIXED: Added residence fields, crime fields, economy fields, and name period management
  * UPDATED: Added household positions (like government positions)
- *          Added position assignments with role tracking
+ * UPDATED: Added position assignments with role tracking
+ * UPDATED: Added salary and tuition tracking to economy schema
  * 
  * =============================================================================
  */
@@ -443,7 +444,9 @@
         if (household.residenceUnitNumber === undefined) household.residenceUnitNumber = null;
         if (household.residenceNotes === undefined) household.residenceNotes = null;
 
-        // Economy fields
+        // ================================================================
+        // ECONOMY FIELDS (UPDATED with salary/tuition tracking)
+        // ================================================================
         if (!household.economy) {
             household.economy = {
                 wealth: household.wealth || 0,
@@ -452,7 +455,16 @@
                 incomeSources: [],
                 expenses: [],
                 economicTierId: 'moderate',
-                lastProcessedYear: _getCurrentYear()
+                lastProcessedYear: _getCurrentYear(),
+                // NEW salary tracking
+                salaryIncome: 0,
+                salaryIncomeHistory: [],
+                totalSalaries: 0,
+                salaryIncomeThisYear: 0,
+                // NEW tuition tracking
+                tuitionExpenses: 0,
+                tuitionExpensesHistory: [],
+                tuitionExpensesThisYear: 0
             };
         }
         if (household.economy.wealth === undefined) household.economy.wealth = household.wealth || 0;
@@ -462,6 +474,17 @@
         if (!household.economy.expenses) household.economy.expenses = [];
         if (!household.economy.economicTierId) household.economy.economicTierId = 'moderate';
         if (household.economy.lastProcessedYear === undefined) household.economy.lastProcessedYear = _getCurrentYear();
+
+        // NEW salary tracking fields
+        if (household.economy.salaryIncome === undefined) household.economy.salaryIncome = 0;
+        if (!household.economy.salaryIncomeHistory) household.economy.salaryIncomeHistory = [];
+        if (household.economy.totalSalaries === undefined) household.economy.totalSalaries = 0;
+        if (household.economy.salaryIncomeThisYear === undefined) household.economy.salaryIncomeThisYear = 0;
+
+        // NEW tuition tracking fields
+        if (household.economy.tuitionExpenses === undefined) household.economy.tuitionExpenses = 0;
+        if (!household.economy.tuitionExpensesHistory) household.economy.tuitionExpensesHistory = [];
+        if (household.economy.tuitionExpensesThisYear === undefined) household.economy.tuitionExpensesThisYear = 0;
 
         // Crime fields
         if (household.prestige === undefined) household.prestige = 50;
@@ -1065,7 +1088,9 @@
             residenceUnitNumber: null,
             residenceNotes: null,
 
-            // Economy
+            // ================================================================
+            // Economy (UPDATED with salary/tuition tracking)
+            // ================================================================
             economy: {
                 wealth: options.wealth !== undefined ? options.wealth : 0,
                 debt: 0,
@@ -1073,7 +1098,16 @@
                 incomeSources: [],
                 expenses: [],
                 economicTierId: 'moderate',
-                lastProcessedYear: currentYear
+                lastProcessedYear: currentYear,
+                // NEW salary tracking
+                salaryIncome: 0,
+                salaryIncomeHistory: [],
+                totalSalaries: 0,
+                salaryIncomeThisYear: 0,
+                // NEW tuition tracking
+                tuitionExpenses: 0,
+                tuitionExpensesHistory: [],
+                tuitionExpensesThisYear: 0
             },
 
             // Crime fields
@@ -1200,6 +1234,17 @@
             }
         }
 
+        // Handle economy updates
+        if (updates.economy) {
+            if (!updated.economy) updated.economy = {};
+            for (var key in updates.economy) {
+                if (updates.economy.hasOwnProperty(key)) {
+                    updated.economy[key] = updates.economy[key];
+                }
+            }
+            changed = true;
+        }
+
         if (nameChanged && recordHistory) {
             if (!updated.nameHistory) {
                 updated.nameHistory = [];
@@ -1224,10 +1269,6 @@
             updated.previousName = oldName;
         } else if (nameChanged && !recordHistory) {
             updated.previousName = oldName;
-        }
-
-        if (updates.wealth !== undefined && updated.economy) {
-            updated.economy.wealth = updates.wealth;
         }
 
         updated.updatedAt = Date.now();
@@ -1269,7 +1310,7 @@
     }
 
     // =========================================================================
-    // 11. HOUSEHOLD POSITION FUNCTIONS (NEW - Like Government)
+    // 11. HOUSEHOLD POSITION FUNCTIONS
     // =========================================================================
 
     function createHouseholdPosition(data) {
@@ -1284,7 +1325,6 @@
             var household = getHousehold(data.householdId);
             if (!household) return null;
             
-            // Validate role if provided
             if (data.requiredRoleId) {
                 var role = _getRoleById(data.requiredRoleId);
                 if (!role) return null;
@@ -1353,7 +1393,6 @@
             var pos = getHouseholdPosition(positionId);
             if (!pos) return false;
             
-            // Remove assignments if requested
             if (options.removeAssignments !== false) {
                 var assignments = getAssignmentsForPosition(positionId);
                 for (var i = 0; i < assignments.length; i++) {
@@ -1420,7 +1459,7 @@
     }
 
     // =========================================================================
-    // 12. HOUSEHOLD ASSIGNMENT FUNCTIONS (NEW - Like Government)
+    // 12. HOUSEHOLD ASSIGNMENT FUNCTIONS
     // =========================================================================
 
     function assignCharacterToHouseholdPosition(positionId, characterId, options) {
@@ -1440,7 +1479,6 @@
             var household = getHousehold(position.householdId);
             if (!household) return null;
             
-            // Check if already assigned to this position
             var existing = getAssignmentsForPosition(positionId);
             for (var i = 0; i < existing.length; i++) {
                 if (existing[i].characterId === characterId && !existing[i].endYear) {
@@ -1448,7 +1486,6 @@
                 }
             }
             
-            // Handle role requirement
             var roleId = position.requiredRoleId;
             var skillLevel = 0;
             
@@ -1464,7 +1501,6 @@
                 }
                 
                 if (!profession) {
-                    // Optionally add the role
                     if (options.addRoleIfMissing !== false) {
                         var defaultSkill = options.defaultSkillLevel || 10;
                         if (!character.professions) character.professions = [];
@@ -1484,7 +1520,6 @@
                 }
             }
             
-            // Check skill level requirement
             if (position.minSkillLevel && skillLevel < position.minSkillLevel) {
                 return null;
             }
@@ -1642,7 +1677,7 @@
     }
 
     // =========================================================================
-    // 13. HOUSEHOLD POSITION STATISTICS (NEW)
+    // 13. HOUSEHOLD POSITION STATISTICS
     // =========================================================================
 
     function getHouseholdPositionStats(householdId) {
@@ -1702,7 +1737,7 @@
     }
 
     // =========================================================================
-    // 15. EXPORTS (UPDATED)
+    // 15. EXPORTS
     // =========================================================================
 
     _initialize();
@@ -1741,7 +1776,7 @@
         updateHousehold: updateHousehold,
         deleteHousehold: deleteHousehold,
 
-        // NEW: Household positions
+        // Household positions
         createHouseholdPosition: createHouseholdPosition,
         updateHouseholdPosition: updateHouseholdPosition,
         deleteHouseholdPosition: deleteHouseholdPosition,
@@ -1751,7 +1786,7 @@
         getHouseholdPositionsByDepartment: getHouseholdPositionsByDepartment,
         getHouseholdPositionStats: getHouseholdPositionStats,
 
-        // NEW: Household assignments
+        // Household assignments
         assignCharacterToHouseholdPosition: assignCharacterToHouseholdPosition,
         endHouseholdAssignment: endHouseholdAssignment,
         deleteHouseholdAssignment: deleteHouseholdAssignment,

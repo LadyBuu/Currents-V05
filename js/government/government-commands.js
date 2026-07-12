@@ -8,6 +8,9 @@
  * UPDATED: Added role integration (requiredRoleId, minSkillLevel)
  *          Added settlement integration for leader assignment
  *          Added justice commands with crime integration
+ *          ADDED: Salary payment to household economy on assignment
+ *          ADDED: Annual salary processing for all active assignments
+ *          ADDED: Tax collection from households
  * 
  * DEPENDENCIES:
  *   - government-state.js (GovernmentState)
@@ -15,6 +18,8 @@
  *   - eventLogger.js (logEvent)
  *   - storage.js (saveMasterData)
  *   - location-state.js (LocationState - for place data)
+ *   - household-state.js (HouseholdState) - for salary/tax integration
+ *   - household-economy.js (HouseholdEconomy) - for wealth updates
  * 
  * =============================================================================
  */
@@ -99,6 +104,60 @@
             return window.getOrCreateSettlementData(locationId);
         }
         return null;
+    }
+
+    // =========================================================================
+    // 2.5 HOUSEHOLD ECONOMY WRAPPERS (for salary/tax integration)
+    // =========================================================================
+
+    function _getHouseholdForCharacter(characterId) {
+        if (typeof window.HouseholdState !== 'undefined' && 
+            typeof window.HouseholdState.getCharacterHousehold === 'function') {
+            return window.HouseholdState.getCharacterHousehold(characterId);
+        }
+        return null;
+    }
+
+    function _updateHouseholdWealth(householdId, delta, reason) {
+        if (typeof window.HouseholdEconomy !== 'undefined' && 
+            typeof window.HouseholdEconomy.updateHouseholdWealth === 'function') {
+            return window.HouseholdEconomy.updateHouseholdWealth(householdId, delta, reason);
+        }
+        // Fallback: try direct household update
+        if (typeof window.HouseholdState !== 'undefined' && 
+            typeof window.HouseholdState.updateHousehold === 'function') {
+            var household = window.HouseholdState.getHousehold(householdId);
+            if (household && household.economy) {
+                household.economy.wealth = Math.max(0, (household.economy.wealth || 0) + delta);
+                window.HouseholdState.updateHousehold(householdId, { 
+                    economy: household.economy 
+                }, { recordHistory: false });
+                return household.economy.wealth;
+            }
+        }
+        return 0;
+    }
+
+    function _getHouseholdsByLocation(locationId) {
+        if (typeof window.HouseholdState !== 'undefined' && 
+            typeof window.HouseholdState.getHouseholdsByLocation === 'function') {
+            return window.HouseholdState.getHouseholdsByLocation(locationId);
+        }
+        return [];
+    }
+
+    function _getHouseholdWealth(householdId) {
+        if (typeof window.HouseholdEconomy !== 'undefined' && 
+            typeof window.HouseholdEconomy.getHouseholdWealth === 'function') {
+            return window.HouseholdEconomy.getHouseholdWealth(householdId);
+        }
+        var household = window.HouseholdState ? window.HouseholdState.getHousehold(householdId) : null;
+        return household && household.economy ? household.economy.wealth || 0 : 0;
+    }
+
+    function _getHouseholdName(householdId) {
+        var household = window.HouseholdState ? window.HouseholdState.getHousehold(householdId) : null;
+        return household ? household.name : 'Unknown Household';
     }
 
     // =========================================================================
@@ -304,6 +363,51 @@
         }
 
         return { valid: true };
+    }
+
+    // =========================================================================
+    // 3.5 SALARY PAYMENT HELPER
+    // =========================================================================
+
+    /**
+     * Pays salary to a character's household
+     * @param {string} characterId - Character ID
+     * @param {number} salary - Salary amount
+     * @param {string} positionName - Name of the position (for logging)
+     * @param {string} departmentName - Name of the department (for logging)
+     * @returns {Object} Result with payment details
+     */
+    function _payGovernmentSalary(characterId, salary, positionName, departmentName) {
+        if (salary <= 0) {
+            return { success: false, reason: 'Salary is zero or negative' };
+        }
+
+        var household = _getHouseholdForCharacter(characterId);
+        if (!household) {
+            return { success: false, reason: 'Character has no household' };
+        }
+
+        var character = _getCharacterById(characterId);
+        var oldWealth = _getHouseholdWealth(household.id);
+        var reason = 'Government salary: ' + positionName + ' (' + (departmentName || 'Unknown Department') + ')';
+        var newWealth = _updateHouseholdWealth(household.id, salary, reason);
+
+        _logEvent('economy', 'government_salary_paid',
+            (character ? character.name : 'Unknown') + ' received ' + salary + ' gold as ' + positionName + ' (household: ' + household.name + ')',
+            character ? [character] : []);
+
+        return {
+            success: true,
+            characterId: characterId,
+            characterName: character ? character.name : 'Unknown',
+            householdId: household.id,
+            householdName: household.name,
+            salary: salary,
+            oldWealth: oldWealth,
+            newWealth: newWealth,
+            positionName: positionName,
+            departmentName: departmentName
+        };
     }
 
     // =========================================================================
@@ -561,7 +665,7 @@
     }
 
     // =========================================================================
-    // 6. ASSIGNMENT COMMANDS
+    // 6. ASSIGNMENT COMMANDS (UPDATED with Salary Payment)
     // =========================================================================
 
     function assignCharacterToPosition(departmentId, positionId, characterId, options) {
@@ -672,7 +776,28 @@
                 [character]);
 
             var endMsg = options.endYear ? ' until ' + options.endYear : '';
-            _showToast(character.name + ' assigned to ' + position.name + endMsg, 'success');
+
+            // =====================================================================
+            // INTEGRATION: Pay salary to character's household on assignment
+            // =====================================================================
+            var salaryResult = null;
+            if (typeof window.GovernmentEconomy !== 'undefined' && 
+                typeof window.GovernmentEconomy.calculatePositionSalary === 'function') {
+                var salary = window.GovernmentEconomy.calculatePositionSalary(positionId, dept);
+                if (salary > 0) {
+                    salaryResult = _payGovernmentSalary(characterId, salary, position.name, dept.name);
+                    if (salaryResult && salaryResult.success) {
+                        _showToast(character.name + ' assigned to ' + position.name + endMsg + ' (Salary: ' + salary + ' gold/year)', 'success');
+                    } else {
+                        _showToast(character.name + ' assigned to ' + position.name + endMsg, 'success');
+                    }
+                } else {
+                    _showToast(character.name + ' assigned to ' + position.name + endMsg, 'success');
+                }
+            } else {
+                _showToast(character.name + ' assigned to ' + position.name + endMsg, 'success');
+            }
+
             return assignment;
 
         } finally {
@@ -717,6 +842,16 @@
 
             var character = _getCharacterById(assignment.characterId);
 
+            // =====================================================================
+            // INTEGRATION: Log salary ended (no further payments)
+            // =====================================================================
+            var position = GovernmentState.getPositionById(departmentId, assignment.positionId);
+            if (position && character) {
+                _logEvent('economy', 'government_salary_ended',
+                    character.name + ' ended ' + position.name + ' salary (ended ' + endYearValue + ')',
+                    [character]);
+            }
+
             _logEvent('government', 'assignment_ended',
                 (character ? character.name : 'Character') + ' ended assignment at "' + dept.name + '"' +
                 (reason ? ' (' + reason + ')' : ''),
@@ -759,6 +894,390 @@
 
             _showToast('Assignment removed', 'info');
             return result;
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    // =========================================================================
+    // 6.5 ANNUAL SALARY PROCESSING (NEW)
+    // =========================================================================
+
+    /**
+     * Processes all active government salaries for a given year
+     * Called during annual processing
+     * @param {number} year - The year to process salaries for
+     * @param {Object} options - Processing options
+     * @param {boolean} options.showToast - Whether to show toast notifications
+     * @param {number} options.dryRun - If true, only calculate without applying
+     * @returns {Object} Results of salary processing
+     */
+    function processGovernmentSalaries(year, options) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Command already processing', paid: 0, failed: 0, total: 0 };
+        }
+        _processingCommand = true;
+
+        try {
+            options = options || {};
+            var showToast = options.showToast !== false;
+            var dryRun = options.dryRun || false;
+            var processYear = year || _getCurrentYear();
+
+            var departments = GovernmentState.getAllDepartments({ includeDeprecated: false });
+            var results = {
+                total: 0,
+                paid: 0,
+                failed: 0,
+                totalSalaryPaid: 0,
+                details: [],
+                errors: [],
+                year: processYear
+            };
+
+            for (var d = 0; d < departments.length; d++) {
+                var dept = departments[d];
+                var assignments = GovernmentState.getAssignmentsForDepartment(dept.id, true);
+
+                for (var a = 0; a < assignments.length; a++) {
+                    var assignment = assignments[a];
+                    results.total++;
+
+                    try {
+                        var character = _getCharacterById(assignment.characterId);
+                        if (!character) {
+                            results.failed++;
+                            results.errors.push({
+                                assignmentId: assignment.id,
+                                characterId: assignment.characterId,
+                                reason: 'Character not found'
+                            });
+                            continue;
+                        }
+
+                        if (character.isDeceased) {
+                            results.failed++;
+                            results.errors.push({
+                                assignmentId: assignment.id,
+                                characterId: assignment.characterId,
+                                reason: 'Character is deceased'
+                            });
+                            continue;
+                        }
+
+                        // Calculate salary for this position
+                        var salary = 0;
+                        if (typeof window.GovernmentEconomy !== 'undefined' && 
+                            typeof window.GovernmentEconomy.calculatePositionSalary === 'function') {
+                            salary = window.GovernmentEconomy.calculatePositionSalary(assignment.positionId, dept);
+                        }
+
+                        if (salary <= 0) {
+                            results.failed++;
+                            results.errors.push({
+                                assignmentId: assignment.id,
+                                characterId: assignment.characterId,
+                                reason: 'Salary is zero or negative'
+                            });
+                            continue;
+                        }
+
+                        // Find or update the character's position name
+                        var position = GovernmentState.getPositionById(dept.id, assignment.positionId);
+                        var positionName = position ? position.name : assignment.positionId;
+
+                        if (!dryRun) {
+                            // Pay the salary
+                            var salaryResult = _payGovernmentSalary(
+                                assignment.characterId,
+                                salary,
+                                positionName,
+                                dept.name
+                            );
+
+                            if (salaryResult && salaryResult.success) {
+                                results.paid++;
+                                results.totalSalaryPaid += salary;
+                                results.details.push({
+                                    assignmentId: assignment.id,
+                                    characterId: assignment.characterId,
+                                    characterName: character.name,
+                                    householdId: salaryResult.householdId,
+                                    householdName: salaryResult.householdName,
+                                    salary: salary,
+                                    positionName: positionName,
+                                    departmentName: dept.name
+                                });
+                            } else {
+                                results.failed++;
+                                results.errors.push({
+                                    assignmentId: assignment.id,
+                                    characterId: assignment.characterId,
+                                    reason: salaryResult ? salaryResult.reason : 'Failed to pay salary'
+                                });
+                            }
+                        } else {
+                            // Dry run - just record
+                            results.paid++;
+                            results.totalSalaryPaid += salary;
+                            results.details.push({
+                                assignmentId: assignment.id,
+                                characterId: assignment.characterId,
+                                characterName: character.name,
+                                salary: salary,
+                                positionName: positionName,
+                                departmentName: dept.name,
+                                dryRun: true
+                            });
+                        }
+
+                    } catch (err) {
+                        results.failed++;
+                        results.errors.push({
+                            assignmentId: assignment.id,
+                            characterId: assignment.characterId,
+                            reason: err.message || 'Unknown error'
+                        });
+                    }
+                }
+            }
+
+            if (showToast && !dryRun) {
+                var msg = 'Paid ' + results.paid + ' government salaries (' + results.totalSalaryPaid + ' gold total)';
+                if (results.failed > 0) {
+                    msg += '; ' + results.failed + ' failed';
+                }
+                _showToast(msg, results.failed > 0 ? 'warning' : 'success');
+            }
+
+            if (results.paid > 0) {
+                _logEvent('economy', 'government_salaries_processed',
+                    'Processed ' + results.paid + ' government salaries totaling ' + results.totalSalaryPaid + ' gold for year ' + processYear,
+                    []);
+            }
+
+            return results;
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    // =========================================================================
+    // 6.6 TAX COLLECTION (NEW)
+    // =========================================================================
+
+    /**
+     * Collects taxes from all households in a location
+     * @param {string} locationId - Location ID
+     * @param {number} year - Tax year
+     * @param {Object} options - Collection options
+     * @param {number} options.taxRate - Override tax rate (default: from settlement)
+     * @param {boolean} options.showToast - Show toast notifications
+     * @param {boolean} options.dryRun - Calculate without applying
+     * @returns {Object} Tax collection results
+     */
+    function collectHouseholdTaxes(locationId, year, options) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Command already processing', collected: 0, failed: 0, total: 0 };
+        }
+        _processingCommand = true;
+
+        try {
+            options = options || {};
+            var showToast = options.showToast !== false;
+            var dryRun = options.dryRun || false;
+            var taxYear = year || _getCurrentYear();
+
+            var place = _getPlaceById(locationId);
+            if (!place) {
+                return { success: false, reason: 'Location not found', collected: 0, failed: 0, total: 0 };
+            }
+
+            // Get tax rate from settlement or use default
+            var taxRate = options.taxRate;
+            if (taxRate === undefined) {
+                var settlement = _getSettlementData(locationId);
+                taxRate = settlement ? (settlement.taxRate || 10) / 100 : 0.05;
+            } else {
+                taxRate = taxRate / 100; // Convert percentage to decimal
+            }
+
+            var households = _getHouseholdsByLocation(locationId);
+            var results = {
+                total: households.length,
+                collected: 0,
+                failed: 0,
+                totalTaxCollected: 0,
+                details: [],
+                errors: [],
+                year: taxYear,
+                locationId: locationId,
+                locationName: place.displayName,
+                taxRate: taxRate
+            };
+
+            for (var h = 0; h < households.length; h++) {
+                var household = households[h];
+                try {
+                    var wealth = _getHouseholdWealth(household.id);
+                    if (wealth <= 0) {
+                        results.details.push({
+                            householdId: household.id,
+                            householdName: household.name,
+                            wealth: wealth,
+                            tax: 0,
+                            reason: 'No wealth to tax'
+                        });
+                        continue;
+                    }
+
+                    // Calculate tax (minimum 1 gold if any wealth)
+                    var tax = Math.max(1, Math.floor(wealth * taxRate));
+
+                    if (!dryRun) {
+                        var newWealth = _updateHouseholdWealth(household.id, -tax, 'Tax payment to ' + place.displayName);
+                        results.collected++;
+                        results.totalTaxCollected += tax;
+                        results.details.push({
+                            householdId: household.id,
+                            householdName: household.name,
+                            wealth: wealth,
+                            tax: tax,
+                            newWealth: newWealth,
+                            status: 'collected'
+                        });
+
+                        _logEvent('economy', 'tax_collected',
+                            household.name + ' paid ' + tax + ' gold in taxes to ' + place.displayName + ' (' + taxYear + ')',
+                            []);
+                    } else {
+                        results.collected++;
+                        results.totalTaxCollected += tax;
+                        results.details.push({
+                            householdId: household.id,
+                            householdName: household.name,
+                            wealth: wealth,
+                            tax: tax,
+                            dryRun: true,
+                            status: 'dry_run'
+                        });
+                    }
+
+                } catch (err) {
+                    results.failed++;
+                    results.errors.push({
+                        householdId: household.id,
+                        householdName: household.name,
+                        reason: err.message || 'Unknown error'
+                    });
+                }
+            }
+
+            // Add to settlement treasury if not dry run
+            if (!dryRun && results.totalTaxCollected > 0) {
+                var settlement = _getSettlementData(locationId);
+                if (settlement) {
+                    settlement.treasury = (settlement.treasury || 0) + results.totalTaxCollected;
+                    if (typeof SettlementState !== 'undefined' && 
+                        typeof SettlementState._updateSettlementData === 'function') {
+                        SettlementState._updateSettlementData(locationId, { 
+                            treasury: settlement.treasury 
+                        });
+                    }
+                    _logEvent('economy', 'tax_added_to_treasury',
+                        'Added ' + results.totalTaxCollected + ' gold to ' + place.displayName + ' treasury',
+                        []);
+                }
+            }
+
+            if (showToast && !dryRun) {
+                var msg = 'Collected ' + results.totalTaxCollected + ' gold in taxes from ' + 
+                         results.collected + ' households';
+                if (results.failed > 0) {
+                    msg += '; ' + results.failed + ' failed';
+                }
+                _showToast(msg, results.failed > 0 ? 'warning' : 'success');
+            }
+
+            return results;
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    /**
+     * Collects taxes from all households in all locations
+     * @param {number} year - Tax year
+     * @param {Object} options - Collection options
+     * @returns {Object} Aggregated results
+     */
+    function collectAllHouseholdTaxes(year, options) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Command already processing', totalCollected: 0, locations: [] };
+        }
+        _processingCommand = true;
+
+        try {
+            options = options || {};
+            var taxYear = year || _getCurrentYear();
+
+            var places = _getPlaces();
+            var results = {
+                totalCollected: 0,
+                locations: [],
+                totalHouseholds: 0,
+                year: taxYear,
+                errors: []
+            };
+
+            for (var i = 0; i < places.length; i++) {
+                var place = places[i];
+                try {
+                    var locationResult = collectHouseholdTaxes(place.id, taxYear, {
+                        showToast: false,
+                        dryRun: options.dryRun || false
+                    });
+
+                    if (locationResult && locationResult.success !== false) {
+                        results.locations.push({
+                            locationId: place.id,
+                            locationName: place.displayName,
+                            collected: locationResult.collected || 0,
+                            total: locationResult.total || 0,
+                            totalTaxCollected: locationResult.totalTaxCollected || 0
+                        });
+                        results.totalCollected += locationResult.totalTaxCollected || 0;
+                        results.totalHouseholds += locationResult.total || 0;
+                    } else {
+                        results.errors.push({
+                            locationId: place.id,
+                            locationName: place.displayName,
+                            reason: locationResult ? locationResult.reason : 'Unknown error'
+                        });
+                    }
+                } catch (err) {
+                    results.errors.push({
+                        locationId: place.id,
+                        locationName: place.displayName,
+                        reason: err.message || 'Unknown error'
+                    });
+                }
+            }
+
+            if (options.showToast !== false && !options.dryRun) {
+                _showToast('Collected ' + results.totalCollected + ' gold in taxes from ' + 
+                         results.totalHouseholds + ' households across ' + results.locations.length + ' locations', 
+                         'success');
+            }
+
+            _logEvent('economy', 'all_taxes_collected',
+                'Collected ' + results.totalCollected + ' gold in taxes from ' + results.totalHouseholds + ' households for year ' + taxYear,
+                []);
+
+            return results;
 
         } finally {
             _processingCommand = false;
@@ -1183,7 +1702,7 @@
     }
 
     // =========================================================================
-    // 11. EXPORTS
+    // 11. EXPORTS (UPDATED with Salary and Tax functions)
     // =========================================================================
 
     window.GovernmentCommands = {
@@ -1197,7 +1716,7 @@
         updatePosition: updatePosition,
         deletePosition: deletePosition,
 
-        // Assignment commands
+        // Assignment commands (UPDATED with salary payment)
         assignCharacterToPosition: assignCharacterToPosition,
         endAssignment: endAssignment,
         removeAssignment: removeAssignment,
@@ -1217,6 +1736,14 @@
         // Justice commands (INTEGRATED)
         updateJusticeSeverity: updateJusticeSeverity,
         updateWatch: updateWatch,
+
+        // NEW: Salary processing
+        processGovernmentSalaries: processGovernmentSalaries,
+        _payGovernmentSalary: _payGovernmentSalary,
+
+        // NEW: Tax collection
+        collectHouseholdTaxes: collectHouseholdTaxes,
+        collectAllHouseholdTaxes: collectAllHouseholdTaxes,
 
         // Validation (exposed for UI)
         validateDepartment: _validateDepartment,
@@ -1260,5 +1787,10 @@
     window.bulkAssignCharacters = bulkAssignCharacters;
     window.assignLeader = assignLeader;
     window.endLeaderTerm = endLeaderTerm;
+
+    // Legacy aliases for new functions
+    window.processGovernmentSalaries = processGovernmentSalaries;
+    window.collectHouseholdTaxes = collectHouseholdTaxes;
+    window.collectAllHouseholdTaxes = collectAllHouseholdTaxes;
 
 })();

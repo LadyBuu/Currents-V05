@@ -1,77 +1,12 @@
-# STILL WATERS - CHARACTER SYSTEM COMPLETE DOCUMENTATION
+# CHARACTER SYSTEM - COMPLETE DOCUMENTATION
 
-## Version 2.0 | Generated: 2026-07-11
-
----
-
-# TABLE OF CONTENTS
-
-1. [SYSTEM OVERVIEW](#1-system-overview)
-2. [FILE STRUCTURE](#2-file-structure)
-3. [CHARACTER-STATE.JS](#3-character-statejs)
-4. [CHARACTER-COMMANDS.JS](#4-character-commandsjs)
-5. [CHARACTER-QUERIES.JS](#5-character-queriesjs)
-6. [CHARACTER-LIFECYCLE.JS](#6-character-lifecyclejs)
-7. [CHARACTER-UI-LIST.JS](#7-character-ui-listjs)
-8. [MODALS-CHARACTER.JS](#8-modals-characterjs)
-9. [DEPENDENCY MAP](#9-dependency-map)
-10. [RECURSION GUARDS](#10-recursion-guards)
-11. [ICON POLICY](#11-icon-policy)
-12. [LEGACY ALIASES](#12-legacy-aliases)
-13. [CHARACTER DATA SCHEMA](#13-character-data-schema)
-14. [COMPLETE FUNCTION LIST](#14-complete-function-list)
-15. [MIGRATION NOTES](#15-migration-notes)
-
----
-
-# 1. SYSTEM OVERVIEW
-
-## Purpose
+## SYSTEM OVERVIEW
 
 The Character System is the foundation of the Still Waters simulation. It manages all character data, lifecycle events, and provides a clean API for other systems to interact with characters.
 
-## Key Principles
-
-| Principle | Description |
-|-----------|-------------|
-| **Single Source of Truth** | `character-state.js` holds all character data |
-| **Command-Query Separation** | Commands (writes) vs Queries (reads) separated |
-| **Separation of Concerns** | State, commands, queries, lifecycle, UI all separate |
-| **Recursion Guards** | All public functions protected from infinite loops |
-| **Change Notifications** | Subscriptions for reactive updates |
-| **No Direct masterData Access** | All access through the state layer |
-
-## Architecture Diagram
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         CHARACTER SYSTEM                                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────────────┐ │
-│  │  CHARACTER-     │    │  CHARACTER-     │    │  CHARACTER-             │ │
-│  │  STATE.JS       │◄───│  COMMANDS.JS    │    │  QUERIES.JS             │ │
-│  │  (Data Layer)   │    │  (Write Layer)  │    │  (Read Layer)           │ │
-│  └─────────────────┘    └─────────────────┘    └─────────────────────────┘ │
-│           │                      │                         │                │
-│           ▼                      ▼                         ▼                │
-│  ┌─────────────────────────────────────────────────────────────────────────┐│
-│  │                    masterData.characters                               ││
-│  └─────────────────────────────────────────────────────────────────────────┘│
-│                                                                             │
-│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────────────┐ │
-│  │  CHARACTER-     │    │  CHARACTER-     │    │  MODALS-                │ │
-│  │  LIFECYCLE.JS   │    │  UI-LIST.JS     │    │  CHARACTER.JS           │ │
-│  │  (Business      │    │  (UI Rendering) │    │  (UI Dialogs)           │ │
-│  │   Logic)        │    │                 │    │                         │ │
-│  └─────────────────┘    └─────────────────┘    └─────────────────────────┘ │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
 ---
 
-# 2. FILE STRUCTURE
+## FILE STRUCTURE
 
 ```
 js/core/character/
@@ -85,24 +20,32 @@ js/core/character/
 
 ---
 
-# 3. CHARACTER-STATE.JS
+## KEY PRINCIPLES
 
-## Purpose
+| Principle | Description |
+|-----------|-------------|
+| **Single Source of Truth** | `character-state.js` holds all character data |
+| **Command-Query Separation** | Commands (writes) vs Queries (reads) separated |
+| **Separation of Concerns** | State, commands, queries, lifecycle, UI all separate |
+| **Recursion Guards** | All public functions protected from infinite loops |
+| **Change Notifications** | Subscriptions for reactive updates |
+| **No Direct masterData Access** | All access through the state layer |
 
-Single source of truth for all character data. Manages caching, subscriptions, and data loading.
+---
 
-## Dependencies
+# 1. CHARACTER-STATE.JS
 
-| Module | Functions Used |
-|--------|----------------|
-| `storage.js` | `masterData`, `saveMasterData` |
-| `ids.js` | `generateId` |
+**PURPOSE:** Single source of truth for all character data. Manages caching, subscriptions, and data loading.
 
-## Functions
+**DEPENDENCIES:**
+- `storage.js` - `masterData`, `saveMasterData`
+- `ids.js` - `generateId`
 
-### Data Access
+---
 
-#### `CharacterState.getCharacter(id)`
+## Data Access Functions
+
+### `CharacterState.getCharacter(id)`
 
 | Property | Value |
 |----------|-------|
@@ -110,14 +53,14 @@ Single source of truth for all character data. Manages caching, subscriptions, a
 | **Parameters** | `id` (string) - Character ID |
 | **Returns** | `Object|null` - Character object or null |
 
-#### `CharacterState.getAllCharacters()`
+### `CharacterState.getAllCharacters()`
 
 | Property | Value |
 |----------|-------|
 | **Description** | Gets all characters |
 | **Returns** | `Array` - Array of character objects |
 
-#### `CharacterState.getCharactersByLocation(locationId)`
+### `CharacterState.getCharactersByLocation(locationId)`
 
 | Property | Value |
 |----------|-------|
@@ -125,7 +68,7 @@ Single source of truth for all character data. Manages caching, subscriptions, a
 | **Parameters** | `locationId` (string) - Location ID |
 | **Returns** | `Array` - Array of character objects |
 
-#### `CharacterState.getCharactersByHousehold(householdId)`
+### `CharacterState.getCharactersByHousehold(householdId)`
 
 | Property | Value |
 |----------|-------|
@@ -133,7 +76,7 @@ Single source of truth for all character data. Manages caching, subscriptions, a
 | **Parameters** | `householdId` (string) - Household ID |
 | **Returns** | `Array` - Array of character objects |
 
-#### `CharacterState.getCharactersByStatus(status)`
+### `CharacterState.getCharactersByStatus(status)`
 
 | Property | Value |
 |----------|-------|
@@ -141,21 +84,21 @@ Single source of truth for all character data. Manages caching, subscriptions, a
 | **Parameters** | `status` (string) - 'living' or 'deceased' |
 | **Returns** | `Array` - Array of character objects |
 
-#### `CharacterState.getLivingCharacters()`
+### `CharacterState.getLivingCharacters()`
 
 | Property | Value |
 |----------|-------|
 | **Description** | Gets all living characters |
 | **Returns** | `Array` - Array of character objects |
 
-#### `CharacterState.getDeceasedCharacters()`
+### `CharacterState.getDeceasedCharacters()`
 
 | Property | Value |
 |----------|-------|
 | **Description** | Gets all deceased characters |
 | **Returns** | `Array` - Array of character objects |
 
-#### `CharacterState.searchByName(query)`
+### `CharacterState.searchByName(query)`
 
 | Property | Value |
 |----------|-------|
@@ -163,24 +106,28 @@ Single source of truth for all character data. Manages caching, subscriptions, a
 | **Parameters** | `query` (string) - Search term |
 | **Returns** | `Array` - Array of matching character objects |
 
-#### `CharacterState.getTotalCharacterCount()`
+### `CharacterState.getTotalCharacterCount()`
 
 | Property | Value |
 |----------|-------|
 | **Description** | Gets total character count |
 | **Returns** | `number` - Total count |
 
-### Cache Management
+---
 
-#### `CharacterState.invalidateCache()`
+## Cache Management
+
+### `CharacterState.invalidateCache()`
 
 | Property | Value |
 |----------|-------|
 | **Description** | Invalidates all caches and rebuilds them |
 
-### Subscriptions
+---
 
-#### `CharacterState.subscribe(callback)`
+## Subscriptions
+
+### `CharacterState.subscribe(callback)`
 
 | Property | Value |
 |----------|-------|
@@ -188,22 +135,24 @@ Single source of truth for all character data. Manages caching, subscriptions, a
 | **Parameters** | `callback` (function) - Receives event object |
 | **Returns** | `function` - Unsubscribe function |
 
-### Internal Methods
+---
 
-#### `CharacterState._setCharacters(characters)`
+## Internal Methods
+
+### `CharacterState._setCharacters(characters)`
 
 | Property | Value |
 |----------|-------|
 | **Description** | INTERNAL: Sets the characters array and triggers updates |
 | **Parameters** | `characters` (Array) - New characters array |
 
-#### `CharacterState._loadData()`
+### `CharacterState._loadData()`
 
 | Property | Value |
 |----------|-------|
 | **Description** | INTERNAL: Loads data from masterData |
 
-#### `CharacterState.isProcessing()`
+### `CharacterState.isProcessing()`
 
 | Property | Value |
 |----------|-------|
@@ -212,29 +161,24 @@ Single source of truth for all character data. Manages caching, subscriptions, a
 
 ---
 
-# 4. CHARACTER-COMMANDS.JS
+# 2. CHARACTER-COMMANDS.JS
 
-## Purpose
+**PURPOSE:** All write operations for character management including create, update, delete, soft delete, bulk operations, random generation, and profession management.
 
-All write operations for character management including create, update, delete, soft delete, bulk operations, random generation, and profession management.
+**DEPENDENCIES:**
+- `character-state.js` - `CharacterState`
+- `character-lifecycle.js` - `CharacterLifecycle`
+- `accessors.js` - `getCharacterById`, `getCharacters`, `getPlaces`, `getPlaceById`, `getRoles`, `getRoleById`, `getNameLists`
+- `ids.js` - `generateId`
+- `time.js` - `getCurrentYearSafe`
+- `names.js` - `getRandomNameFromCountry`, `getRandomSurnameFromCountry`
+- `world.js` - `getLocationTypePriority`, `getLocationTypeById`
 
-## Dependencies
+---
 
-| Module | Functions Used |
-|--------|----------------|
-| `character-state.js` | `CharacterState` |
-| `character-lifecycle.js` | `CharacterLifecycle` |
-| `accessors.js` | `getCharacterById`, `getCharacters`, `getPlaces`, `getPlaceById`, `getRoles`, `getRoleById`, `getNameLists` |
-| `ids.js` | `generateId` |
-| `time.js` | `getCurrentYearSafe` |
-| `names.js` | `getRandomNameFromCountry`, `getRandomSurnameFromCountry` |
-| `world.js` | `getLocationTypePriority`, `getLocationTypeById` |
+## Creation Functions
 
-## Functions
-
-### Creation
-
-#### `CharacterCommands.createCharacter(data)`
+### `CharacterCommands.createCharacter(data)`
 
 | Property | Value |
 |----------|-------|
@@ -270,7 +214,7 @@ All write operations for character management including create, update, delete, 
 | `appearance` | object | No | {} | Appearance data |
 | `epithet` | string | No | '' | Epithet/nickname |
 
-#### `CharacterCommands.createRandomCharacter(options)`
+### `CharacterCommands.createRandomCharacter(options)`
 
 | Property | Value |
 |----------|-------|
@@ -292,7 +236,7 @@ All write operations for character management including create, update, delete, 
 2. Cultural surname from country
 3. NO SURNAME (empty string)
 
-#### `CharacterCommands.bulkCreateCharacters(dataArray)`
+### `CharacterCommands.bulkCreateCharacters(dataArray)`
 
 | Property | Value |
 |----------|-------|
@@ -300,9 +244,11 @@ All write operations for character management including create, update, delete, 
 | **Parameters** | `dataArray` (Array) - Array of character data objects |
 | **Returns** | `{ success: boolean, count: number, data: Array, errors: Array }` |
 
-### Update
+---
 
-#### `CharacterCommands.updateCharacter(id, updates)`
+## Update Functions
+
+### `CharacterCommands.updateCharacter(id, updates)`
 
 | Property | Value |
 |----------|-------|
@@ -313,7 +259,7 @@ All write operations for character management including create, update, delete, 
 **Allowed Update Fields:**
 `name`, `surname`, `surnameSource`, `surnameRules`, `gender`, `attraction`, `birthYear`, `isDeceased`, `deathYear`, `deathCause`, `birthplaceId`, `currentLocationId`, `moves`, `household`, `rankAssignments`, `activeRankId`, `activeRankNumber`, `professions`, `motherId`, `fatherId`, `children`, `adoptedParents`, `apprentices`, `masterId`, `isMaster`, `masterProfessionId`, `apprenticeshipDetails`, `friendshipDetails`, `epithet`, `notes`, `appearance`, `householdHistory`, `surnameHistory`, `relationships`, `friends`
 
-#### `CharacterCommands.bulkUpdateCharacters(updates)`
+### `CharacterCommands.bulkUpdateCharacters(updates)`
 
 | Property | Value |
 |----------|-------|
@@ -321,9 +267,11 @@ All write operations for character management including create, update, delete, 
 | **Parameters** | `updates` (Object) - Object mapping character IDs to updates |
 | **Returns** | `{ success: boolean, count: number, data: Array, errors: Array }` |
 
-### Delete
+---
 
-#### `CharacterCommands.deleteCharacter(id)`
+## Delete Functions
+
+### `CharacterCommands.deleteCharacter(id)`
 
 | Property | Value |
 |----------|-------|
@@ -331,7 +279,7 @@ All write operations for character management including create, update, delete, 
 | **Parameters** | `id` (string) - Character ID |
 | **Returns** | `{ success: boolean, reason: string }` |
 
-#### `CharacterCommands.softDeleteCharacter(id)`
+### `CharacterCommands.softDeleteCharacter(id)`
 
 | Property | Value |
 |----------|-------|
@@ -339,7 +287,7 @@ All write operations for character management including create, update, delete, 
 | **Parameters** | `id` (string) - Character ID |
 | **Returns** | `{ success: boolean, data: Object, reason: string }` |
 
-#### `CharacterCommands.restoreSoftDeletedCharacter(id)`
+### `CharacterCommands.restoreSoftDeletedCharacter(id)`
 
 | Property | Value |
 |----------|-------|
@@ -347,21 +295,21 @@ All write operations for character management including create, update, delete, 
 | **Parameters** | `id` (string) - Character ID |
 | **Returns** | `{ success: boolean, data: Object, reason: string }` |
 
-#### `CharacterCommands.getSoftDeletedCharacters()`
+### `CharacterCommands.getSoftDeletedCharacters()`
 
 | Property | Value |
 |----------|-------|
 | **Description** | Gets all soft-deleted characters |
 | **Returns** | `Array` - Array of soft-deleted character objects |
 
-#### `CharacterCommands.purgeSoftDeletedCharacters()`
+### `CharacterCommands.purgeSoftDeletedCharacters()`
 
 | Property | Value |
 |----------|-------|
 | **Description** | Permanently removes all soft-deleted characters |
 | **Returns** | `{ success: boolean, count: number, reason: string }` |
 
-#### `CharacterCommands.bulkDeleteCharacters(ids, softDelete)`
+### `CharacterCommands.bulkDeleteCharacters(ids, softDelete)`
 
 | Property | Value |
 |----------|-------|
@@ -369,9 +317,11 @@ All write operations for character management including create, update, delete, 
 | **Parameters** | `ids` (Array) - Array of character IDs, `softDelete` (boolean) - Whether to soft delete |
 | **Returns** | `{ success: boolean, count: number, errors: Array }` |
 
-### Profession Management
+---
 
-#### `CharacterCommands.addProfession(characterId, roleId, options)`
+## Profession Management
+
+### `CharacterCommands.addProfession(characterId, roleId, options)`
 
 | Property | Value |
 |----------|-------|
@@ -389,7 +339,7 @@ All write operations for character management including create, update, delete, 
 | `specializations` | array | [] | Specializations |
 | `notes` | string | '' | Notes |
 
-#### `CharacterCommands.removeProfession(characterId, roleId)`
+### `CharacterCommands.removeProfession(characterId, roleId)`
 
 | Property | Value |
 |----------|-------|
@@ -397,7 +347,7 @@ All write operations for character management including create, update, delete, 
 | **Parameters** | `characterId` (string), `roleId` (string) |
 | **Returns** | `{ success: boolean, reason: string }` |
 
-#### `CharacterCommands.updateProfessionSkill(characterId, roleId, newSkillLevel)`
+### `CharacterCommands.updateProfessionSkill(characterId, roleId, newSkillLevel)`
 
 | Property | Value |
 |----------|-------|
@@ -405,7 +355,7 @@ All write operations for character management including create, update, delete, 
 | **Parameters** | `characterId` (string), `roleId` (string), `newSkillLevel` (number 0-100) |
 | **Returns** | `{ success: boolean, profession: Object, oldLevel: number, newLevel: number, increased: number }` |
 
-#### `CharacterCommands.setPrimaryProfession(characterId, roleId)`
+### `CharacterCommands.setPrimaryProfession(characterId, roleId)`
 
 | Property | Value |
 |----------|-------|
@@ -413,7 +363,7 @@ All write operations for character management including create, update, delete, 
 | **Parameters** | `characterId` (string), `roleId` (string) |
 | **Returns** | `{ success: boolean, reason: string }` |
 
-#### `CharacterCommands.addProfessionSpecialization(characterId, roleId, specialization)`
+### `CharacterCommands.addProfessionSpecialization(characterId, roleId, specialization)`
 
 | Property | Value |
 |----------|-------|
@@ -421,7 +371,7 @@ All write operations for character management including create, update, delete, 
 | **Parameters** | `characterId` (string), `roleId` (string), `specialization` (string) |
 | **Returns** | `{ success: boolean, specialization: string, reason: string }` |
 
-#### `CharacterCommands.removeProfessionSpecialization(characterId, roleId, specialization)`
+### `CharacterCommands.removeProfessionSpecialization(characterId, roleId, specialization)`
 
 | Property | Value |
 |----------|-------|
@@ -429,9 +379,11 @@ All write operations for character management including create, update, delete, 
 | **Parameters** | `characterId` (string), `roleId` (string), `specialization` (string) |
 | **Returns** | `{ success: boolean, reason: string }` |
 
-### Surname History
+---
 
-#### `CharacterCommands.getCharacterSurnameHistory(id)`
+## Surname History
+
+### `CharacterCommands.getCharacterSurnameHistory(id)`
 
 | Property | Value |
 |----------|-------|
@@ -439,7 +391,7 @@ All write operations for character management including create, update, delete, 
 | **Parameters** | `id` (string) - Character ID |
 | **Returns** | `{ birthSurname: string, entries: Array, lastUpdated: number }` |
 
-#### `CharacterCommands.getCharacterBirthSurname(id)`
+### `CharacterCommands.getCharacterBirthSurname(id)`
 
 | Property | Value |
 |----------|-------|
@@ -447,7 +399,7 @@ All write operations for character management including create, update, delete, 
 | **Parameters** | `id` (string) - Character ID |
 | **Returns** | `string` - Birth surname |
 
-#### `CharacterCommands.getCharacterSurnameChanges(id)`
+### `CharacterCommands.getCharacterSurnameChanges(id)`
 
 | Property | Value |
 |----------|-------|
@@ -455,7 +407,7 @@ All write operations for character management including create, update, delete, 
 | **Parameters** | `id` (string) - Character ID |
 | **Returns** | `Array` - Array of surname change entries |
 
-#### `CharacterCommands.recordCharacterSurnameChange(id, newSurname, year, reason, options)`
+### `CharacterCommands.recordCharacterSurnameChange(id, newSurname, year, reason, options)`
 
 | Property | Value |
 |----------|-------|
@@ -469,7 +421,7 @@ All write operations for character management including create, update, delete, 
 - `surnameSource` (string) - Surname source
 - `surnameRules` (object) - Surname rules
 
-#### `CharacterCommands.revertCharacterSurnameChange(id)`
+### `CharacterCommands.revertCharacterSurnameChange(id)`
 
 | Property | Value |
 |----------|-------|
@@ -479,26 +431,21 @@ All write operations for character management including create, update, delete, 
 
 ---
 
-# 5. CHARACTER-QUERIES.JS
+# 3. CHARACTER-QUERIES.JS
 
-## Purpose
+**PURPOSE:** All read-only queries for character data. No side effects, no mutations.
 
-All read-only queries for character data. No side effects, no mutations.
+**DEPENDENCIES:**
+- `character-state.js` - `CharacterState`
+- `accessors.js` - `getCharacterById`, `getCharacters`, `getPlaceById`, `getPlaces`
+- `time.js` - `calculateAge`, `getCurrentYearSafe`
+- `world.js` - `getCurrentLocation`, `getActiveRankDisplay`
 
-## Dependencies
+---
 
-| Module | Functions Used |
-|--------|----------------|
-| `character-state.js` | `CharacterState` |
-| `accessors.js` | `getCharacterById`, `getCharacters`, `getPlaceById`, `getPlaces` |
-| `time.js` | `calculateAge`, `getCurrentYearSafe` |
-| `world.js` | `getCurrentLocation`, `getActiveRankDisplay` |
+## Core Queries
 
-## Functions
-
-### Core Queries
-
-#### `CharacterQueries.getCharacter(id)`
+### `CharacterQueries.getCharacter(id)`
 
 | Property | Value |
 |----------|-------|
@@ -506,30 +453,32 @@ All read-only queries for character data. No side effects, no mutations.
 | **Parameters** | `id` (string) - Character ID |
 | **Returns** | `Object|null` - Character object or null |
 
-#### `CharacterQueries.getAllCharacters()`
+### `CharacterQueries.getAllCharacters()`
 
 | Property | Value |
 |----------|-------|
 | **Description** | Gets all characters |
 | **Returns** | `Array` - Array of character objects |
 
-#### `CharacterQueries.getLivingCharacters()`
+### `CharacterQueries.getLivingCharacters()`
 
 | Property | Value |
 |----------|-------|
 | **Description** | Gets all living characters |
 | **Returns** | `Array` - Array of character objects |
 
-#### `CharacterQueries.getDeceasedCharacters()`
+### `CharacterQueries.getDeceasedCharacters()`
 
 | Property | Value |
 |----------|-------|
 | **Description** | Gets all deceased characters |
 | **Returns** | `Array` - Array of character objects |
 
-### Filter Queries
+---
 
-#### `CharacterQueries.getCharactersByGender(gender)`
+## Filter Queries
+
+### `CharacterQueries.getCharactersByGender(gender)`
 
 | Property | Value |
 |----------|-------|
@@ -537,7 +486,7 @@ All read-only queries for character data. No side effects, no mutations.
 | **Parameters** | `gender` (string) - 'male', 'female', or 'unknown' |
 | **Returns** | `Array` - Array of character objects |
 
-#### `CharacterQueries.getCharactersByLocation(locationId)`
+### `CharacterQueries.getCharactersByLocation(locationId)`
 
 | Property | Value |
 |----------|-------|
@@ -545,7 +494,7 @@ All read-only queries for character data. No side effects, no mutations.
 | **Parameters** | `locationId` (string) - Location ID |
 | **Returns** | `Array` - Array of character objects |
 
-#### `CharacterQueries.getCharactersByHousehold(householdId)`
+### `CharacterQueries.getCharactersByHousehold(householdId)`
 
 | Property | Value |
 |----------|-------|
@@ -553,7 +502,7 @@ All read-only queries for character data. No side effects, no mutations.
 | **Parameters** | `householdId` (string) - Household ID |
 | **Returns** | `Array` - Array of character objects |
 
-#### `CharacterQueries.getCharactersByAgeRange(minAge, maxAge, asOfYear)`
+### `CharacterQueries.getCharactersByAgeRange(minAge, maxAge, asOfYear)`
 
 | Property | Value |
 |----------|-------|
@@ -561,7 +510,7 @@ All read-only queries for character data. No side effects, no mutations.
 | **Parameters** | `minAge` (number), `maxAge` (number), `asOfYear` (number, optional) |
 | **Returns** | `Array` - Array of character objects |
 
-#### `CharacterQueries.getCharactersByProfession(roleId)`
+### `CharacterQueries.getCharactersByProfession(roleId)`
 
 | Property | Value |
 |----------|-------|
@@ -569,7 +518,7 @@ All read-only queries for character data. No side effects, no mutations.
 | **Parameters** | `roleId` (string) - Role/profession ID |
 | **Returns** | `Array` - Array of character objects |
 
-#### `CharacterQueries.getCharactersByProfessionSkill(roleId, minSkill)`
+### `CharacterQueries.getCharactersByProfessionSkill(roleId, minSkill)`
 
 | Property | Value |
 |----------|-------|
@@ -577,7 +526,7 @@ All read-only queries for character data. No side effects, no mutations.
 | **Parameters** | `roleId` (string), `minSkill` (number) |
 | **Returns** | `Array` - Array of character objects |
 
-#### `CharacterQueries.getCharactersByRank(rankId)`
+### `CharacterQueries.getCharactersByRank(rankId)`
 
 | Property | Value |
 |----------|-------|
@@ -585,7 +534,7 @@ All read-only queries for character data. No side effects, no mutations.
 | **Parameters** | `rankId` (string) - Rank ID |
 | **Returns** | `Array` - Array of character objects |
 
-#### `CharacterQueries.getMasterCharacters(roleId)`
+### `CharacterQueries.getMasterCharacters(roleId)`
 
 | Property | Value |
 |----------|-------|
@@ -593,9 +542,11 @@ All read-only queries for character data. No side effects, no mutations.
 | **Parameters** | `roleId` (string, optional) - Filter by role |
 | **Returns** | `Array` - Array of character objects |
 
-### Search Queries
+---
 
-#### `CharacterQueries.searchCharacters(query)`
+## Search Queries
+
+### `CharacterQueries.searchCharacters(query)`
 
 | Property | Value |
 |----------|-------|
@@ -603,9 +554,11 @@ All read-only queries for character data. No side effects, no mutations.
 | **Parameters** | `query` (string) - Search term |
 | **Returns** | `Array` - Array of matching character objects |
 
-### Summary Queries
+---
 
-#### `CharacterQueries.getCharacterSummary(id)`
+## Summary Queries
+
+### `CharacterQueries.getCharacterSummary(id)`
 
 | Property | Value |
 |----------|-------|
@@ -635,7 +588,7 @@ All read-only queries for character data. No side effects, no mutations.
 | `notes` | string | Notes |
 | `epithet` | string | Epithet |
 
-#### `CharacterQueries.getCharacterProfessions(id)`
+### `CharacterQueries.getCharacterProfessions(id)`
 
 | Property | Value |
 |----------|-------|
@@ -643,7 +596,7 @@ All read-only queries for character data. No side effects, no mutations.
 | **Parameters** | `id` (string) - Character ID |
 | **Returns** | `Array` - Array of profession objects |
 
-#### `CharacterQueries.getPrimaryProfession(id)`
+### `CharacterQueries.getPrimaryProfession(id)`
 
 | Property | Value |
 |----------|-------|
@@ -651,7 +604,7 @@ All read-only queries for character data. No side effects, no mutations.
 | **Parameters** | `id` (string) - Character ID |
 | **Returns** | `Object|null` - Profession object or null |
 
-#### `CharacterQueries.getCharacterSurnameHistory(id)`
+### `CharacterQueries.getCharacterSurnameHistory(id)`
 
 | Property | Value |
 |----------|-------|
@@ -659,7 +612,7 @@ All read-only queries for character data. No side effects, no mutations.
 | **Parameters** | `id` (string) - Character ID |
 | **Returns** | `Object` - Surname history |
 
-#### `CharacterQueries.getCharacterStatistics()`
+### `CharacterQueries.getCharacterStatistics()`
 
 | Property | Value |
 |----------|-------|
@@ -688,9 +641,11 @@ All read-only queries for character data. No side effects, no mutations.
 | `literacyRate` | number | Literacy rate (%) |
 | `byEducationLevel` | object | Count by education level |
 
-### Education Queries
+---
 
-#### `CharacterQueries.getCharactersByEducationStatus(status, institutionId)`
+## Education Queries
+
+### `CharacterQueries.getCharactersByEducationStatus(status, institutionId)`
 
 | Property | Value |
 |----------|-------|
@@ -698,7 +653,7 @@ All read-only queries for character data. No side effects, no mutations.
 | **Parameters** | `status` (string) - 'enrolled', 'graduated', 'withdrawn', 'never_attended' |
 | **Returns** | `Array` - Array of character objects |
 
-#### `CharacterQueries.getCharactersNotInEducation(minAge, maxAge)`
+### `CharacterQueries.getCharactersNotInEducation(minAge, maxAge)`
 
 | Property | Value |
 |----------|-------|
@@ -708,22 +663,19 @@ All read-only queries for character data. No side effects, no mutations.
 
 ---
 
-# 6. CHARACTER-LIFECYCLE.JS
+# 4. CHARACTER-LIFECYCLE.JS
 
-## Purpose
+**PURPOSE:** Business logic for character lifecycle (birth, aging, death, inheritance).
 
-Business logic for character lifecycle (birth, aging, death, inheritance).
+**DEPENDENCIES:**
+- `character-state.js` - `CharacterState`
+- `character-commands.js` - `CharacterCommands`
+- `character-queries.js` - `CharacterQueries`
+- `time.js` - `calculateAge`, `getCurrentYearSafe`
+- `constants.js` - `AGE_GROUPS`, `LIFE_STAGES`, `DEATH_CAUSES`
+- `randomness.js` - `chance`, `pickRandom`, `random`
 
-## Dependencies
-
-| Module | Functions Used |
-|--------|----------------|
-| `character-state.js` | `CharacterState` |
-| `character-commands.js` | `CharacterCommands` |
-| `character-queries.js` | `CharacterQueries` |
-| `time.js` | `calculateAge`, `getCurrentYearSafe` |
-| `constants.js` | `AGE_GROUPS`, `LIFE_STAGES`, `DEATH_CAUSES` |
-| `randomness.js` | `chance`, `pickRandom`, `random` |
+---
 
 ## Constants
 
@@ -768,11 +720,11 @@ Business logic for character lifecycle (birth, aging, death, inheritance).
 | Accident | 5 | - | - |
 | Childbed fever | 4 | 14 | 45 |
 
-## Functions
+---
 
-### Life Stages
+## Life Stages Functions
 
-#### `CharacterLifecycle.getLifeStage(charOrAge)`
+### `CharacterLifecycle.getLifeStage(charOrAge)`
 
 | Property | Value |
 |----------|-------|
@@ -780,7 +732,7 @@ Business logic for character lifecycle (birth, aging, death, inheritance).
 | **Parameters** | `charOrAge` (Object|number) - Character or age |
 | **Returns** | `{ key, min, max, name, group }` - Life stage |
 
-#### `CharacterLifecycle.getLifeStageName(charOrAge)`
+### `CharacterLifecycle.getLifeStageName(charOrAge)`
 
 | Property | Value |
 |----------|-------|
@@ -788,7 +740,7 @@ Business logic for character lifecycle (birth, aging, death, inheritance).
 | **Parameters** | `charOrAge` (Object|number) - Character or age |
 | **Returns** | `string` - Life stage name |
 
-#### `CharacterLifecycle.isElderly(charOrAge)`
+### `CharacterLifecycle.isElderly(charOrAge)`
 
 | Property | Value |
 |----------|-------|
@@ -796,7 +748,7 @@ Business logic for character lifecycle (birth, aging, death, inheritance).
 | **Parameters** | `charOrAge` (Object|number) - Character or age |
 | **Returns** | `boolean` - True if elderly |
 
-#### `CharacterLifecycle.getAgeGroup(charOrAge)`
+### `CharacterLifecycle.getAgeGroup(charOrAge)`
 
 | Property | Value |
 |----------|-------|
@@ -804,7 +756,7 @@ Business logic for character lifecycle (birth, aging, death, inheritance).
 | **Parameters** | `charOrAge` (Object|number) - Character or age |
 | **Returns** | `string` - Age group key |
 
-#### `CharacterLifecycle.getAgeGroupIcon(group)`
+### `CharacterLifecycle.getAgeGroupIcon(group)`
 
 | Property | Value |
 |----------|-------|
@@ -812,14 +764,14 @@ Business logic for character lifecycle (birth, aging, death, inheritance).
 | **Parameters** | `group` (string) - Age group key |
 | **Returns** | `string` - SVG icon HTML |
 
-#### `CharacterLifecycle.getAllAgeGroups()`
+### `CharacterLifecycle.getAllAgeGroups()`
 
 | Property | Value |
 |----------|-------|
 | **Description** | Gets all age groups |
 | **Returns** | `Array` - Age group keys |
 
-#### `CharacterLifecycle.groupCharactersByAgeGroup(characters, excludeDeceased)`
+### `CharacterLifecycle.groupCharactersByAgeGroup(characters, excludeDeceased)`
 
 | Property | Value |
 |----------|-------|
@@ -827,9 +779,11 @@ Business logic for character lifecycle (birth, aging, death, inheritance).
 | **Parameters** | `characters` (Array), `excludeDeceased` (boolean, default true) |
 | **Returns** | `Object` - Groups object |
 
-### Death Causes
+---
 
-#### `CharacterLifecycle.getRandomDeathCause(age, gender)`
+## Death Causes
+
+### `CharacterLifecycle.getRandomDeathCause(age, gender)`
 
 | Property | Value |
 |----------|-------|
@@ -837,9 +791,11 @@ Business logic for character lifecycle (birth, aging, death, inheritance).
 | **Parameters** | `age` (number), `gender` (string) |
 | **Returns** | `string` - Death cause text |
 
-### Death Execution
+---
 
-#### `CharacterLifecycle.killCharacter(character, deathYear, deathCause, options)`
+## Death Execution
+
+### `CharacterLifecycle.killCharacter(character, deathYear, deathCause, options)`
 
 | Property | Value |
 |----------|-------|
@@ -851,7 +807,7 @@ Business logic for character lifecycle (birth, aging, death, inheritance).
 - `notes` (string) - Additional notes
 - `skipInheritance` (boolean) - Skip inheritance processing
 
-#### `CharacterLifecycle.killCharacterRandomCause(character, deathYear)`
+### `CharacterLifecycle.killCharacterRandomCause(character, deathYear)`
 
 | Property | Value |
 |----------|-------|
@@ -859,7 +815,7 @@ Business logic for character lifecycle (birth, aging, death, inheritance).
 | **Parameters** | `character` (Object), `deathYear` (number) |
 | **Returns** | `{ success: boolean, character: Object, deathYear: number, deathCause: string }` |
 
-#### `CharacterLifecycle.applyAgingMortality(character, yearsAdvanced)`
+### `CharacterLifecycle.applyAgingMortality(character, yearsAdvanced)`
 
 | Property | Value |
 |----------|-------|
@@ -879,9 +835,11 @@ Business logic for character lifecycle (birth, aging, death, inheritance).
 | 60-75 | 5% |
 | 75+ | 10% |
 
-### Lifespan
+---
 
-#### `CharacterLifecycle.predictLifespan(character)`
+## Lifespan
+
+### `CharacterLifecycle.predictLifespan(character)`
 
 | Property | Value |
 |----------|-------|
@@ -895,7 +853,7 @@ Business logic for character lifecycle (birth, aging, death, inheritance).
 - Rank priority 1-2: +10 years
 - Rank priority 3: +5 years
 
-#### `CharacterLifecycle.getExpectedRemainingYears(character)`
+### `CharacterLifecycle.getExpectedRemainingYears(character)`
 
 | Property | Value |
 |----------|-------|
@@ -903,9 +861,11 @@ Business logic for character lifecycle (birth, aging, death, inheritance).
 | **Parameters** | `character` (Object) |
 | **Returns** | `number` - Expected remaining years |
 
-### Death Event Wrappers
+---
 
-#### `CharacterLifecycle.triggerNaturalDeath(character, deathYear, options)`
+## Death Event Wrappers
+
+### `CharacterLifecycle.triggerNaturalDeath(character, deathYear, options)`
 
 | Property | Value |
 |----------|-------|
@@ -913,7 +873,7 @@ Business logic for character lifecycle (birth, aging, death, inheritance).
 | **Parameters** | `character` (Object), `deathYear` (number, optional), `options` (Object) |
 | **Returns** | `{ success: boolean, character: Object }` |
 
-#### `CharacterLifecycle.triggerAccidentalDeath(character, deathYear, accidentType, options)`
+### `CharacterLifecycle.triggerAccidentalDeath(character, deathYear, accidentType, options)`
 
 | Property | Value |
 |----------|-------|
@@ -924,9 +884,11 @@ Business logic for character lifecycle (birth, aging, death, inheritance).
 **Accident Types:**
 Fell from a height, Drowning, Fire, Hunting accident, Crushed by falling object, Animal attack, Cart accident, Building collapse, Tools accident, Poisoning accident
 
-### Inheritance
+---
 
-#### `CharacterLifecycle.processHouseholdInheritance(characterId)`
+## Inheritance
+
+### `CharacterLifecycle.processHouseholdInheritance(characterId)`
 
 | Property | Value |
 |----------|-------|
@@ -934,7 +896,7 @@ Fell from a height, Drowning, Fire, Hunting accident, Crushed by falling object,
 | **Parameters** | `characterId` (string) - Character ID |
 | **Returns** | `Array` - Results for each household affected |
 
-#### `CharacterLifecycle.processAllPendingInheritance(showNotifications)`
+### `CharacterLifecycle.processAllPendingInheritance(showNotifications)`
 
 | Property | Value |
 |----------|-------|
@@ -942,7 +904,7 @@ Fell from a height, Drowning, Fire, Hunting accident, Crushed by falling object,
 | **Parameters** | `showNotifications` (boolean, default true) |
 | **Returns** | `Array` - Results for each household |
 
-#### `CharacterLifecycle.hasPendingInheritance(characterId)`
+### `CharacterLifecycle.hasPendingInheritance(characterId)`
 
 | Property | Value |
 |----------|-------|
@@ -952,23 +914,18 @@ Fell from a height, Drowning, Fire, Hunting accident, Crushed by falling object,
 
 ---
 
-# 7. CHARACTER-UI-LIST.JS
+# 5. CHARACTER-UI-LIST.JS
 
-## Purpose
+**PURPOSE:** UI rendering for character lists and cards.
 
-UI rendering for character lists and cards.
+**DEPENDENCIES:**
+- `character-queries.js` - `CharacterQueries`
+- `formatting.js` - `escapeHtml`
+- `icons.js` - `Icons`
 
-## Dependencies
+---
 
-| Module | Functions Used |
-|--------|----------------|
-| `character-queries.js` | `CharacterQueries` |
-| `formatting.js` | `escapeHtml` |
-| `icons.js` | `Icons` |
-
-## Functions
-
-#### `CharacterUI.renderCharacterList(containerId, options)`
+### `CharacterUI.renderCharacterList(containerId, options)`
 
 | Property | Value |
 |----------|-------|
@@ -988,7 +945,7 @@ UI rendering for character lists and cards.
 | `showAge` | boolean | true | Show age |
 | `rowClass` | string | 'character-row' | CSS class for rows |
 
-#### `CharacterUI.renderCharacterCard(character)`
+### `CharacterUI.renderCharacterCard(character)`
 
 | Property | Value |
 |----------|-------|
@@ -998,52 +955,269 @@ UI rendering for character lists and cards.
 
 ---
 
-# 8. MODALS-CHARACTER.JS
+# 6. MODALS-CHARACTER.JS
 
-## Purpose
+**PURPOSE:** UI modals for character management (CRUD, details, deletion).
 
-UI modals for character management (CRUD, details, deletion).
+**DEPENDENCIES:**
+- `modals-core.js` - `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon`
+- `modals-char-select.js` - `openCharacterSelector`
+- `character-state.js` - `CharacterState`
+- `character-commands.js` - `CharacterCommands`
+- `character-queries.js` - `CharacterQueries`
+- `character-lifecycle.js` - `CharacterLifecycle`
 
-## Dependencies
+---
 
-| Module | Functions Used |
-|--------|----------------|
-| `modals-core.js` | `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon` |
-| `modals-char-select.js` | `openCharacterSelector` |
-| `character-state.js` | `CharacterState` |
-| `character-commands.js` | `CharacterCommands` |
-| `character-queries.js` | `CharacterQueries` |
-| `character-lifecycle.js` | `CharacterLifecycle` |
-
-## Functions
-
-#### `openCreateCharacterModal(onSuccess)`
+### `openCreateCharacterModal(onSuccess)`
 
 | Property | Value |
 |----------|-------|
 | **Description** | Opens modal to create a new character |
 | **Parameters** | `onSuccess` (function) - Callback with created character |
 
-#### `openEditCharacterModal(characterId, onSuccess)`
+### `openEditCharacterModal(characterId, onSuccess)`
 
 | Property | Value |
 |----------|-------|
 | **Description** | Opens modal to edit a character |
 | **Parameters** | `characterId` (string), `onSuccess` (function) |
 
-#### `openDeleteCharacterModal(characterId, onSuccess)`
+### `openDeleteCharacterModal(characterId, onSuccess)`
 
 | Property | Value |
 |----------|-------|
 | **Description** | Opens modal to delete a character |
 | **Parameters** | `characterId` (string), `onSuccess` (function) |
 
-#### `openCharacterDetailsModal(characterId, onSuccess)`
+### `openCharacterDetailsModal(characterId, onSuccess)`
 
 | Property | Value |
 |----------|-------|
 | **Description** | Opens modal with character details and actions (Edit, Kill, Delete) |
 | **Parameters** | `characterId` (string), `onSuccess` (function) |
+
+---
+
+# 7. CHARACTER DATA SCHEMA
+
+## Complete Character Object Schema
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique identifier |
+| `name` | string | First name |
+| `surname` | string | Last name |
+| `surnameSource` | string | 'country' or 'rank' |
+| `surnameRules` | object | Surname generation rules |
+| `gender` | string | 'male', 'female', 'unknown' |
+| `attraction` | string | 'both', 'men', 'women', 'neither' |
+| `birthYear` | number | Year of birth |
+| `isDeceased` | boolean | Deceased flag |
+| `deathYear` | number | Year of death (if deceased) |
+| `deathCause` | string | Cause of death (if deceased) |
+| `relationships` | array | Array of relationship objects |
+| `friends` | array | Array of friend character IDs |
+| `birthplaceId` | string | Birthplace location ID |
+| `currentLocationId` | string | Current location ID |
+| `moves` | array | Array of move objects |
+| `household` | string | Household ID (or null) |
+| `rankAssignments` | array | Array of rank assignment objects |
+| `activeRankId` | string | Currently active rank ID |
+| `activeRankNumber` | number | Active rank number (regnal) |
+| `professions` | array | Array of profession objects |
+| `motherId` | string | Mother character ID (or null) |
+| `fatherId` | string | Father character ID (or null) |
+| `children` | array | Array of child character IDs |
+| `adoptedParents` | array | Array of adoption records |
+| `apprentices` | array | Array of apprentice IDs |
+| `masterId` | string | Master character ID (or null) |
+| `isMaster` | boolean | Master flag |
+| `masterProfessionId` | string | Master profession ID |
+| `apprenticeshipDetails` | object | Apprenticeship details |
+| `friendshipDetails` | object | Friendship details |
+| `epithet` | string | Epithet/nickname |
+| `notes` | string | Notes |
+| `appearance` | object | Appearance data |
+| `householdHistory` | array | Household membership history |
+| `surnameHistory` | object | Surname change history |
+| `isDeleted` | boolean | Soft delete flag |
+| `deletedAt` | number | Soft delete timestamp |
+| `createdAt` | number | Creation timestamp |
+| `updatedAt` | number | Last update timestamp |
+
+---
+
+## Profession Object Schema
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Role/profession ID |
+| `name` | string | Role/profession name |
+| `primary` | boolean | Is this the primary profession |
+| `skillLevel` | number | Skill level (0-100) |
+| `startYear` | number | Year started |
+| `specs` | array | Specializations |
+| `notes` | string | Notes |
+
+---
+
+## Move Object Schema
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `year` | number | Year of move |
+| `locationId` | string | Destination location ID |
+| `locationName` | string | Destination location name |
+| `note` | string | Note/reason for move |
+| `fromLocationId` | string | Origin location ID |
+| `fromLocationName` | string | Origin location name |
+| `isBirthMove` | boolean | Is this the birth move |
+| `timestamp` | number | Creation timestamp |
+
+---
+
+## Surname History Schema
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `birthSurname` | string | Surname at birth |
+| `entries` | array | Array of surname change events |
+| `lastUpdated` | number | Year of last update |
+
+---
+
+## Surname Change Event Schema
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `surname` | string | New surname |
+| `year` | number | Year of change |
+| `reason` | string | Reason for change |
+| `previousSurname` | string | Previous surname |
+| `spouseId` | string | Spouse ID (if marriage change) |
+| `notes` | string | Additional notes |
+
+---
+
+# 8. COMPLETE FUNCTION LIST
+
+## character-state.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `getCharacter(id)` | Query | Get character by ID |
+| `getAllCharacters()` | Query | Get all characters |
+| `getCharactersByLocation(locationId)` | Query | Filter by location |
+| `getCharactersByHousehold(householdId)` | Query | Filter by household |
+| `getCharactersByStatus(status)` | Query | Filter by status |
+| `getLivingCharacters()` | Query | Get living only |
+| `getDeceasedCharacters()` | Query | Get deceased only |
+| `searchByName(query)` | Query | Search by name |
+| `invalidateCache()` | Command | Clear all caches |
+| `subscribe(callback)` | Command | Subscribe to changes |
+| `getTotalCharacterCount()` | Query | Get total count |
+
+---
+
+## character-commands.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `createCharacter(data)` | Command | Create character |
+| `createRandomCharacter(options)` | Command | Generate random character |
+| `bulkCreateCharacters(dataArray)` | Command | Create multiple |
+| `updateCharacter(id, updates)` | Command | Update character |
+| `bulkUpdateCharacters(updates)` | Command | Update multiple |
+| `deleteCharacter(id)` | Command | Hard delete |
+| `softDeleteCharacter(id)` | Command | Soft delete |
+| `restoreSoftDeletedCharacter(id)` | Command | Restore soft-deleted |
+| `getSoftDeletedCharacters()` | Query | Get soft-deleted |
+| `purgeSoftDeletedCharacters()` | Command | Permanently remove |
+| `bulkDeleteCharacters(ids, softDelete)` | Command | Delete multiple |
+| `addProfession(ch, role, opts)` | Command | Add profession |
+| `removeProfession(ch, role)` | Command | Remove profession |
+| `updateProfessionSkill(ch, role, level)` | Command | Update skill |
+| `setPrimaryProfession(ch, role)` | Command | Set primary |
+| `addProfessionSpecialization(ch, role, spec)` | Command | Add specialization |
+| `removeProfessionSpecialization(ch, role, spec)` | Command | Remove specialization |
+| `getCharacterSurnameHistory(id)` | Query | Get surname history |
+| `getCharacterBirthSurname(id)` | Query | Get birth surname |
+| `getCharacterSurnameChanges(id)` | Query | Get surname changes |
+| `recordCharacterSurnameChange(id, surname, year, reason, opts)` | Command | Record surname change |
+| `revertCharacterSurnameChange(id)` | Command | Revert surname change |
+
+---
+
+## character-queries.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `getCharacter(id)` | Query | Get character by ID |
+| `getAllCharacters()` | Query | Get all characters |
+| `getLivingCharacters()` | Query | Get living only |
+| `getDeceasedCharacters()` | Query | Get deceased only |
+| `getCharactersByGender(gender)` | Query | Filter by gender |
+| `getCharactersByLocation(locationId)` | Query | Filter by location |
+| `getCharactersByHousehold(householdId)` | Query | Filter by household |
+| `getCharactersByAgeRange(min, max, year)` | Query | Filter by age |
+| `getCharactersByProfession(roleId)` | Query | Filter by profession |
+| `getCharactersByProfessionSkill(roleId, minSkill)` | Query | Filter by skill |
+| `getCharactersByRank(rankId)` | Query | Filter by rank |
+| `getMasterCharacters(roleId)` | Query | Get masters |
+| `searchCharacters(query)` | Query | Search by name |
+| `getCharacterSummary(id)` | Query | Get summary |
+| `getCharacterProfessions(id)` | Query | Get professions |
+| `getPrimaryProfession(id)` | Query | Get primary profession |
+| `getCharacterSurnameHistory(id)` | Query | Get surname history |
+| `getCharacterStatistics()` | Query | Get statistics |
+| `getCharactersByEducationStatus(status, instId)` | Query | Filter by education |
+| `getCharactersNotInEducation(min, max)` | Query | Get not enrolled |
+
+---
+
+## character-lifecycle.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `getLifeStage(charOrAge)` | Query | Get life stage |
+| `getLifeStageName(charOrAge)` | Query | Get life stage name |
+| `isElderly(charOrAge)` | Query | Check if elderly |
+| `getAgeGroup(charOrAge)` | Query | Get age group |
+| `getAgeGroupIcon(group)` | Query | Get age group icon |
+| `getAllAgeGroups()` | Query | Get all age groups |
+| `groupCharactersByAgeGroup(chars, excludeDeceased)` | Query | Group by age |
+| `getRandomDeathCause(age, gender)` | Query | Get random death cause |
+| `killCharacter(character, year, cause, opts)` | Command | Kill character |
+| `killCharacterRandomCause(character, year)` | Command | Kill with random cause |
+| `applyAgingMortality(character, years)` | Command | Apply aging risk |
+| `predictLifespan(character)` | Query | Predict lifespan |
+| `getExpectedRemainingYears(character)` | Query | Get remaining years |
+| `triggerNaturalDeath(character, year, opts)` | Command | Natural death |
+| `triggerAccidentalDeath(character, year, type, opts)` | Command | Accidental death |
+| `processHouseholdInheritance(characterId)` | Command | Process inheritance |
+| `processAllPendingInheritance(showNotifications)` | Command | Process all pending |
+| `hasPendingInheritance(characterId)` | Query | Check pending |
+
+---
+
+## character-ui-list.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `renderCharacterList(containerId, options)` | UI | Render character list |
+| `renderCharacterCard(character)` | UI | Render character card |
+
+---
+
+## modals-character.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `openCreateCharacterModal(onSuccess)` | UI | Create character modal |
+| `openEditCharacterModal(characterId, onSuccess)` | UI | Edit character modal |
+| `openDeleteCharacterModal(characterId, onSuccess)` | UI | Delete character modal |
+| `openCharacterDetailsModal(characterId, onSuccess)` | UI | Character details modal |
 
 ---
 
@@ -1065,7 +1239,7 @@ UI modals for character management (CRUD, details, deletion).
 │  ├── _getCurrentYear()                                                   │ │
 │  └── _getCharacterById()                                                 │ │
 │                                                                             │
-│  modals-char-select.js ─────────────────────────────────────────────────┐ │
+│  modals-char-select.js ──────────────────────────────────────────────────┐ │
 │  └── openCharacterSelector()                                             │ │
 │                                                                             │
 │  accessors.js ──────────────────────────────────────────────────────────┐ │
@@ -1120,7 +1294,7 @@ UI modals for character management (CRUD, details, deletion).
 │                    CHARACTER SYSTEM DEPENDENCIES                           │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  character-state.js ────────────────────────────────────────────────────┐ │
+│  character-state.js ─────────────────────────────────────────────────────┐ │
 │  ├── storage.js                                                          │ │
 │  └── ids.js                                                              │ │
 │                                                                             │
@@ -1231,211 +1405,7 @@ For backward compatibility, legacy aliases are provided:
 
 ---
 
-# 13. CHARACTER DATA SCHEMA
-
-## Complete Character Object Schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Unique identifier |
-| `name` | string | First name |
-| `surname` | string | Last name |
-| `surnameSource` | string | 'country' or 'rank' |
-| `surnameRules` | object | Surname generation rules |
-| `gender` | string | 'male', 'female', 'unknown' |
-| `attraction` | string | 'both', 'men', 'women', 'neither' |
-| `birthYear` | number | Year of birth |
-| `isDeceased` | boolean | Deceased flag |
-| `deathYear` | number | Year of death (if deceased) |
-| `deathCause` | string | Cause of death (if deceased) |
-| `relationships` | array | Array of relationship objects |
-| `friends` | array | Array of friend character IDs |
-| `birthplaceId` | string | Birthplace location ID |
-| `currentLocationId` | string | Current location ID |
-| `moves` | array | Array of move objects |
-| `household` | string | Household ID (or null) |
-| `rankAssignments` | array | Array of rank assignment objects |
-| `activeRankId` | string | Currently active rank ID |
-| `activeRankNumber` | number | Active rank number (regnal) |
-| `professions` | array | Array of profession objects |
-| `motherId` | string | Mother character ID (or null) |
-| `fatherId` | string | Father character ID (or null) |
-| `children` | array | Array of child character IDs |
-| `adoptedParents` | array | Array of adoption records |
-| `apprentices` | array | Array of apprentice IDs |
-| `masterId` | string | Master character ID (or null) |
-| `isMaster` | boolean | Master flag |
-| `masterProfessionId` | string | Master profession ID |
-| `apprenticeshipDetails` | object | Apprenticeship details |
-| `friendshipDetails` | object | Friendship details |
-| `epithet` | string | Epithet/nickname |
-| `notes` | string | Notes |
-| `appearance` | object | Appearance data |
-| `householdHistory` | array | Household membership history |
-| `surnameHistory` | object | Surname change history |
-| `isDeleted` | boolean | Soft delete flag |
-| `deletedAt` | number | Soft delete timestamp |
-| `createdAt` | number | Creation timestamp |
-| `updatedAt` | number | Last update timestamp |
-
-## Profession Object Schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Role/profession ID |
-| `name` | string | Role/profession name |
-| `primary` | boolean | Is this the primary profession |
-| `skillLevel` | number | Skill level (0-100) |
-| `startYear` | number | Year started |
-| `specs` | array | Specializations |
-| `notes` | string | Notes |
-
-## Move Object Schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `year` | number | Year of move |
-| `locationId` | string | Destination location ID |
-| `locationName` | string | Destination location name |
-| `note` | string | Note/reason for move |
-| `fromLocationId` | string | Origin location ID |
-| `fromLocationName` | string | Origin location name |
-| `isBirthMove` | boolean | Is this the birth move |
-| `timestamp` | number | Creation timestamp |
-
-## Surname History Schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `birthSurname` | string | Surname at birth |
-| `entries` | array | Array of surname change events |
-| `lastUpdated` | number | Year of last update |
-
-## Surname Change Event Schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `surname` | string | New surname |
-| `year` | number | Year of change |
-| `reason` | string | Reason for change |
-| `previousSurname` | string | Previous surname |
-| `spouseId` | string | Spouse ID (if marriage change) |
-| `notes` | string | Additional notes |
-
----
-
-# 14. COMPLETE FUNCTION LIST
-
-## character-state.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `getCharacter(id)` | Query | Get character by ID |
-| `getAllCharacters()` | Query | Get all characters |
-| `getCharactersByLocation(locationId)` | Query | Filter by location |
-| `getCharactersByHousehold(householdId)` | Query | Filter by household |
-| `getCharactersByStatus(status)` | Query | Filter by status |
-| `getLivingCharacters()` | Query | Get living only |
-| `getDeceasedCharacters()` | Query | Get deceased only |
-| `searchByName(query)` | Query | Search by name |
-| `invalidateCache()` | Command | Clear all caches |
-| `subscribe(callback)` | Command | Subscribe to changes |
-| `getTotalCharacterCount()` | Query | Get total count |
-
-## character-commands.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `createCharacter(data)` | Command | Create character |
-| `createRandomCharacter(options)` | Command | Generate random character |
-| `bulkCreateCharacters(dataArray)` | Command | Create multiple |
-| `updateCharacter(id, updates)` | Command | Update character |
-| `bulkUpdateCharacters(updates)` | Command | Update multiple |
-| `deleteCharacter(id)` | Command | Hard delete |
-| `softDeleteCharacter(id)` | Command | Soft delete |
-| `restoreSoftDeletedCharacter(id)` | Command | Restore soft-deleted |
-| `getSoftDeletedCharacters()` | Query | Get soft-deleted |
-| `purgeSoftDeletedCharacters()` | Command | Permanently remove |
-| `bulkDeleteCharacters(ids, softDelete)` | Command | Delete multiple |
-| `addProfession(ch, role, opts)` | Command | Add profession |
-| `removeProfession(ch, role)` | Command | Remove profession |
-| `updateProfessionSkill(ch, role, level)` | Command | Update skill |
-| `setPrimaryProfession(ch, role)` | Command | Set primary |
-| `addProfessionSpecialization(ch, role, spec)` | Command | Add specialization |
-| `removeProfessionSpecialization(ch, role, spec)` | Command | Remove specialization |
-| `getCharacterSurnameHistory(id)` | Query | Get surname history |
-| `getCharacterBirthSurname(id)` | Query | Get birth surname |
-| `getCharacterSurnameChanges(id)` | Query | Get surname changes |
-| `recordCharacterSurnameChange(id, surname, year, reason, opts)` | Command | Record surname change |
-| `revertCharacterSurnameChange(id)` | Command | Revert surname change |
-
-## character-queries.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `getCharacter(id)` | Query | Get character by ID |
-| `getAllCharacters()` | Query | Get all characters |
-| `getLivingCharacters()` | Query | Get living only |
-| `getDeceasedCharacters()` | Query | Get deceased only |
-| `getCharactersByGender(gender)` | Query | Filter by gender |
-| `getCharactersByLocation(locationId)` | Query | Filter by location |
-| `getCharactersByHousehold(householdId)` | Query | Filter by household |
-| `getCharactersByAgeRange(min, max, year)` | Query | Filter by age |
-| `getCharactersByProfession(roleId)` | Query | Filter by profession |
-| `getCharactersByProfessionSkill(roleId, minSkill)` | Query | Filter by skill |
-| `getCharactersByRank(rankId)` | Query | Filter by rank |
-| `getMasterCharacters(roleId)` | Query | Get masters |
-| `searchCharacters(query)` | Query | Search by name |
-| `getCharacterSummary(id)` | Query | Get summary |
-| `getCharacterProfessions(id)` | Query | Get professions |
-| `getPrimaryProfession(id)` | Query | Get primary profession |
-| `getCharacterSurnameHistory(id)` | Query | Get surname history |
-| `getCharacterStatistics()` | Query | Get statistics |
-| `getCharactersByEducationStatus(status, instId)` | Query | Filter by education |
-| `getCharactersNotInEducation(min, max)` | Query | Get not enrolled |
-
-## character-lifecycle.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `getLifeStage(charOrAge)` | Query | Get life stage |
-| `getLifeStageName(charOrAge)` | Query | Get life stage name |
-| `isElderly(charOrAge)` | Query | Check if elderly |
-| `getAgeGroup(charOrAge)` | Query | Get age group |
-| `getAgeGroupIcon(group)` | Query | Get age group icon |
-| `getAllAgeGroups()` | Query | Get all age groups |
-| `groupCharactersByAgeGroup(chars, excludeDeceased)` | Query | Group by age |
-| `getRandomDeathCause(age, gender)` | Query | Get random death cause |
-| `killCharacter(character, year, cause, opts)` | Command | Kill character |
-| `killCharacterRandomCause(character, year)` | Command | Kill with random cause |
-| `applyAgingMortality(character, years)` | Command | Apply aging risk |
-| `predictLifespan(character)` | Query | Predict lifespan |
-| `getExpectedRemainingYears(character)` | Query | Get remaining years |
-| `triggerNaturalDeath(character, year, opts)` | Command | Natural death |
-| `triggerAccidentalDeath(character, year, type, opts)` | Command | Accidental death |
-| `processHouseholdInheritance(characterId)` | Command | Process inheritance |
-| `processAllPendingInheritance(showNotifications)` | Command | Process all pending |
-| `hasPendingInheritance(characterId)` | Query | Check pending |
-
-## character-ui-list.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `renderCharacterList(containerId, options)` | UI | Render character list |
-| `renderCharacterCard(character)` | UI | Render character card |
-
-## modals-character.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `openCreateCharacterModal(onSuccess)` | UI | Create character modal |
-| `openEditCharacterModal(characterId, onSuccess)` | UI | Edit character modal |
-| `openDeleteCharacterModal(characterId, onSuccess)` | UI | Delete character modal |
-| `openCharacterDetailsModal(characterId, onSuccess)` | UI | Character details modal |
-
----
-
-# 15. MIGRATION NOTES
+# 13. MIGRATION NOTES
 
 ## What Was Preserved
 
@@ -1472,8 +1442,32 @@ For backward compatibility, legacy aliases are provided:
 
 ---
 
+# 14. INTEGRATION WITH OTHER SYSTEMS
+
+## Character ↔ Household Integration
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Character → Household | `character.household` / `character.householdId` fields | ✅ Direct |
+| Character → Household | `character.householdHistory` array | ✅ Full history |
+| Household → Character | `household.members[]` array | ✅ Direct |
+| Character → Residence | Via `household.residenceId` (indirect) | ✅ Working |
+| Character → Residence Unit | Via `household.residenceUnitNumber` | ✅ Working |
+
+## Character ↔ Government Integration
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Character → Government Position | `character.professions[]` (role-based) | ✅ Working |
+| Government Position → Character | `government.assignments[]` with `characterId` | ✅ Working |
+| Character → Leader Role | `place.leaderAssignments[]` with `characterId` | ✅ Working |
+| Character → Government Department | Via assignment | ✅ Working |
+| Character → Government Type | Indirect via location | 🟡 Indirect |
+
+---
+
 # END OF DOCUMENTATION
 
-**Generated:** 2026-07-11
+**Generated:** 2026-07-12
 **Version:** 2.0
 **File Count:** 6 core modules + 2 supporting files

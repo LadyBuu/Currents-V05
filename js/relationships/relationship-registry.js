@@ -81,6 +81,7 @@ function _getRelationshipArchetypes() {
         AUNT_UNCLE: 'aunt_uncle',
         COUSIN: 'cousin',
         APPRENTICESHIP: 'apprenticeship',
+        MASTERSHIP: 'mastership',
         EMPLOYMENT: 'employment',
         GUILD_MEMBERSHIP: 'guild_membership'
     };
@@ -103,6 +104,7 @@ function _getRelationshipAttributes() {
         ENGAGED: 'engaged',
         COHABITING: 'cohabiting',
         CIVIL_UNION: 'civil_union',
+        HANDFASTED: 'handfasted',
         POLYAMOROUS: 'polyamorous',
         MONOGAMOUS: 'monogamous',
         ARRANGED: 'arranged',
@@ -112,7 +114,8 @@ function _getRelationshipAttributes() {
         PUBLIC: 'public',
         SCANDALOUS: 'scandalous',
         MORGANATIC: 'morganatic',
-        LEVITIC: 'levitic'
+        LEVITIC: 'levitic',
+        POSTHUMOUS: 'posthumous'
     };
 }
 
@@ -129,10 +132,10 @@ function _isValidRelationshipType(type) {
 // =============================================================================
 
 var _relationshipIndex = {
-    byId: new Map(),           // id -> relationship
-    byCharacter: new Map(),    // characterId -> Set of relationship ids
-    byType: new Map(),         // type -> Set of relationship ids
-    byParticipantPair: new Map() // participantA|participantB -> relationship id
+    byId: new Map(),
+    byCharacter: new Map(),
+    byType: new Map(),
+    byParticipantPair: new Map()
 };
 
 var _indexNeedsRebuild = true;
@@ -397,6 +400,50 @@ function reactivateRelationship(relationshipId) {
     return true;
 }
 
+function setRelationshipWidowed(relationshipId, endYear) {
+    ensureIndex();
+    
+    var relationship = _relationshipIndex.byId.get(relationshipId);
+    if (!relationship) return false;
+    
+    var STATUS = _getRelationshipStatus();
+    
+    if (relationship.status !== STATUS.ONGOING) return false;
+    
+    relationship.status = STATUS.WIDOWED;
+    relationship.endYear = endYear;
+    if (!relationship.metadata) relationship.metadata = {};
+    relationship.metadata.endReason = 'death of partner';
+    
+    var charA = _getCharacterById(relationship.participantA);
+    var charB = _getCharacterById(relationship.participantB);
+    
+    if (charA && charA.relationships) {
+        var rel = charA.relationships.find(function(r) { return r.id === relationshipId; });
+        if (rel) {
+            rel.status = STATUS.WIDOWED;
+            if (!rel.details) rel.details = {};
+            rel.details.endYear = endYear;
+            rel.details.endReason = 'death of partner';
+        }
+    }
+    
+    if (charB && charB.relationships) {
+        var rel = charB.relationships.find(function(r) { return r.id === relationshipId; });
+        if (rel) {
+            rel.status = STATUS.WIDOWED;
+            if (!rel.details) rel.details = {};
+            rel.details.endYear = endYear;
+            rel.details.endReason = 'death of partner';
+        }
+    }
+    
+    _saveMasterData();
+    markIndexDirty();
+    
+    return true;
+}
+
 // =============================================================================
 // 5. RELATIONSHIP QUERIES
 // =============================================================================
@@ -516,6 +563,11 @@ function getActiveRelationships(characterId) {
 
 function getCharacterRelationshipsByType(characterId, type) {
     return getRelationshipsForCharacter(characterId, { type: type });
+}
+
+function getAllRelationships() {
+    ensureIndex();
+    return Array.from(_relationshipIndex.byId.values());
 }
 
 // =============================================================================
@@ -671,16 +723,7 @@ function getRelationshipCountByType(characterId, type) {
 }
 
 // =============================================================================
-// 8. GET ALL RELATIONSHIPS (ADDED)
-// =============================================================================
-
-function getAllRelationships() {
-    ensureIndex();
-    return Array.from(_relationshipIndex.byId.values());
-}
-
-// =============================================================================
-// 9. VALIDATION
+// 8. VALIDATION
 // =============================================================================
 
 function validateRelationshipIntegrity() {
@@ -726,7 +769,7 @@ function validateRelationshipIntegrity() {
 }
 
 // =============================================================================
-// 10. EXPORTS
+// 9. EXPORTS
 // =============================================================================
 
 window.rebuildRelationshipIndex = rebuildRelationshipIndex;
@@ -738,6 +781,7 @@ window.createRelationship = createRelationship;
 window.deleteRelationship = deleteRelationship;
 window.endRelationship = endRelationship;
 window.reactivateRelationship = reactivateRelationship;
+window.setRelationshipWidowed = setRelationshipWidowed;
 
 window.getRelationshipById = getRelationshipById;
 window.getRelationshipBetween = getRelationshipBetween;
@@ -751,6 +795,7 @@ window.getRelationshipsByType = getRelationshipsByType;
 window.getRelationshipsByTypeAndStatus = getRelationshipsByTypeAndStatus;
 window.getActiveRelationships = getActiveRelationships;
 window.getCharacterRelationshipsByType = getCharacterRelationshipsByType;
+window.getAllRelationships = getAllRelationships;
 
 window.updateRelationship = updateRelationship;
 
@@ -761,6 +806,3 @@ window.getRelationshipCountByType = getRelationshipCountByType;
 window.getCanonicalPairKey = getCanonicalPairKey;
 
 window.validateRelationshipIntegrity = validateRelationshipIntegrity;
-
-// ADDED
-window.getAllRelationships = getAllRelationships;

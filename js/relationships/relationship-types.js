@@ -3,7 +3,7 @@
  * STILL WATERS - RELATIONSHIP TYPES REGISTRY
  * =============================================================================
  * 
- * This file contains ALL relationship type definitions.
+ * This file contains CENTRAL relationship type definitions.
  * All relationship logic should reference these definitions.
  * 
  * =============================================================================
@@ -34,7 +34,8 @@ window.RELATIONSHIP_ARCHETYPES = {
     // ---- PROFESSIONAL ----
     APPRENTICESHIP: 'apprenticeship',
     EMPLOYMENT: 'employment',
-    GUILD_MEMBERSHIP: 'guild_membership'
+    GUILD_MEMBERSHIP: 'guild_membership',
+    MASTERSHIP: 'mastership'
 };
 
 // =============================================================================
@@ -42,20 +43,31 @@ window.RELATIONSHIP_ARCHETYPES = {
 // =============================================================================
 
 window.RELATIONSHIP_ATTRIBUTES = {
+    // Legal status (committed only)
     MARRIED: 'married',
     ENGAGED: 'engaged',
     COHABITING: 'cohabiting',
     CIVIL_UNION: 'civil_union',
+    HANDFASTED: 'handfasted',
+    
+    // Structure
     POLYAMOROUS: 'polyamorous',
     MONOGAMOUS: 'monogamous',
+    
+    // Origin
     ARRANGED: 'arranged',
     LOVE_MATCH: 'love_match',
     DUTY_MATCH: 'duty_match',
+    
+    // Visibility
     SECRET: 'secret',
     PUBLIC: 'public',
     SCANDALOUS: 'scandalous',
+    
+    // Special
     MORGANATIC: 'morganatic',
-    LEVITIC: 'levitic'
+    LEVITIC: 'levitic',
+    POSTHUMOUS: 'posthumous'
 };
 
 // =============================================================================
@@ -157,6 +169,16 @@ window.RELATIONSHIP_ARCHETYPE_METADATA = {
         category: 'PROFESSIONAL',
         canHaveAttributes: false
     },
+    [window.RELATIONSHIP_ARCHETYPES.MASTERSHIP]: {
+        name: 'Mastership',
+        icon: 'CIRCLE_DOT',
+        color: '#2a6e40',
+        displayName: 'Master-Expert Relationship',
+        pastTense: 'was master to',
+        presentTense: 'is master to',
+        category: 'PROFESSIONAL',
+        canHaveAttributes: false
+    },
     [window.RELATIONSHIP_ARCHETYPES.EMPLOYMENT]: {
         name: 'Employment',
         icon: 'CIRCLE_DOT',
@@ -246,6 +268,14 @@ window.RELATIONSHIP_ATTRIBUTE_METADATA = {
         description: 'Legally and religiously married',
         group: 'LEGAL_STATUS',
         priority: 10
+    },
+    [window.RELATIONSHIP_ATTRIBUTES.HANDFASTED]: {
+        name: 'Handfasted',
+        icon: 'CIRCLE_DOT',
+        color: '#b08868',
+        description: 'Common-law marriage (year and a day)',
+        group: 'LEGAL_STATUS',
+        priority: 9
     },
     [window.RELATIONSHIP_ATTRIBUTES.ENGAGED]: {
         name: 'Engaged',
@@ -352,12 +382,28 @@ window.RELATIONSHIP_ATTRIBUTE_METADATA = {
         description: 'Marriage to brother\'s widow',
         group: 'SPECIAL',
         priority: 2
+    },
+    [window.RELATIONSHIP_ATTRIBUTES.POSTHUMOUS]: {
+        name: 'Posthumous',
+        icon: 'CIRCLE_DOT',
+        color: '#a0a0a0',
+        description: 'Marriage after one partner\'s death (for inheritance)',
+        group: 'SPECIAL',
+        priority: 1
     }
 };
 
 // =============================================================================
 // 6. VALIDATION RULES
 // =============================================================================
+
+window.DEFAULT_VALIDATION_RULES = {
+    minAge: 0,
+    maxAgeGap: null,
+    requireConsent: false,
+    requireWitness: false,
+    allowedStatuses: ['ongoing', 'ended']
+};
 
 window.RELATIONSHIP_VALIDATION_RULES = {
     [window.RELATIONSHIP_ARCHETYPES.CASUAL_DATING]: {
@@ -392,6 +438,10 @@ window.RELATIONSHIP_VALIDATION_RULES = {
         minAge: 7,
         requireMaster: true,
         allowedStatuses: ['ongoing', 'ended', 'completed']
+    },
+    [window.RELATIONSHIP_ARCHETYPES.MASTERSHIP]: {
+        minAge: 18,
+        allowedStatuses: ['ongoing', 'ended']
     },
     [window.RELATIONSHIP_ARCHETYPES.EMPLOYMENT]: {
         minAge: 12,
@@ -433,22 +483,27 @@ window.ATTRIBUTE_VALIDATION_RULES = {
         minAge: 16,
         requireConsent: true,
         requireWitness: true,
-        mutuallyExclusiveWith: ['engaged', 'cohabiting']
+        mutuallyExclusiveWith: ['handfasted', 'cohabiting']
+    },
+    [window.RELATIONSHIP_ATTRIBUTES.HANDFASTED]: {
+        minAge: 14,
+        requireConsent: true,
+        mutuallyExclusiveWith: ['married', 'engaged']
     },
     [window.RELATIONSHIP_ATTRIBUTES.ENGAGED]: {
         minAge: 12,
         requireConsent: true,
         maxDuration: 2,
-        mutuallyExclusiveWith: ['married', 'cohabiting']
+        mutuallyExclusiveWith: ['married', 'handfasted', 'cohabiting']
     },
     [window.RELATIONSHIP_ATTRIBUTES.COHABITING]: {
         minAge: 14,
-        mutuallyExclusiveWith: ['married', 'engaged']
+        mutuallyExclusiveWith: ['married', 'handfasted', 'engaged']
     },
     [window.RELATIONSHIP_ATTRIBUTES.CIVIL_UNION]: {
         minAge: 16,
         requireConsent: true,
-        mutuallyExclusiveWith: ['married']
+        mutuallyExclusiveWith: ['married', 'handfasted']
     },
     [window.RELATIONSHIP_ATTRIBUTES.POLYAMOROUS]: {
         requiresDisclosure: true,
@@ -460,6 +515,10 @@ window.ATTRIBUTE_VALIDATION_RULES = {
     [window.RELATIONSHIP_ATTRIBUTES.MORGANATIC]: {
         requires: ['married'],
         mutuallyExclusiveWith: ['polyamorous']
+    },
+    [window.RELATIONSHIP_ATTRIBUTES.LEVITIC]: {
+        requires: ['married'],
+        mutuallyExclusiveWith: ['love_match']
     }
 };
 
@@ -492,17 +551,44 @@ window.ATTRIBUTE_GROUPS = {
 };
 
 // =============================================================================
-// 7. HELPER FUNCTIONS
+// 7. DIRECTIONAL MAPPINGS
+// =============================================================================
+
+window.RELATIONSHIP_DIRECTIONAL_MAPPINGS = {
+    [window.RELATIONSHIP_ARCHETYPES.APPRENTICESHIP]: {
+        reverseType: window.RELATIONSHIP_ARCHETYPES.MASTERSHIP
+    },
+    [window.RELATIONSHIP_ARCHETYPES.MASTERSHIP]: {
+        reverseType: window.RELATIONSHIP_ARCHETYPES.APPRENTICESHIP
+    },
+    [window.RELATIONSHIP_ARCHETYPES.EMPLOYMENT]: {
+        reverseType: window.RELATIONSHIP_ARCHETYPES.EMPLOYMENT
+    },
+    [window.RELATIONSHIP_ARCHETYPES.PARENT_CHILD]: {
+        reverseType: window.RELATIONSHIP_ARCHETYPES.PARENT_CHILD
+    },
+    [window.RELATIONSHIP_ARCHETYPES.GRANDPARENT]: {
+        reverseType: window.RELATIONSHIP_ARCHETYPES.GRANDPARENT
+    },
+    [window.RELATIONSHIP_ARCHETYPES.AUNT_UNCLE]: {
+        reverseType: window.RELATIONSHIP_ARCHETYPES.AUNT_UNCLE
+    },
+    [window.RELATIONSHIP_ARCHETYPES.COUSIN]: {
+        reverseType: window.RELATIONSHIP_ARCHETYPES.COUSIN
+    }
+};
+
+// =============================================================================
+// 8. HELPER FUNCTIONS
 // =============================================================================
 
 window.getValidationRulesForArchetype = function(archetype) {
     var specific = window.RELATIONSHIP_VALIDATION_RULES[archetype] || {};
-    return Object.assign({
-        minAge: 0,
-        requireConsent: false,
-        requireWitness: false,
-        allowedStatuses: ['ongoing', 'ended']
-    }, specific);
+    return Object.assign({}, window.DEFAULT_VALIDATION_RULES, specific);
+};
+
+window.getDefaultValidationRules = function() {
+    return Object.assign({}, window.DEFAULT_VALIDATION_RULES);
 };
 
 window.isValidStatusTransition = function(fromStatus, toStatus) {
@@ -515,9 +601,16 @@ window.isValidAgeForArchetype = function(archetype, age) {
     return age >= rules.minAge;
 };
 
+window.isAgeGapValid = function(archetype, age1, age2) {
+    var rules = window.getValidationRulesForArchetype(archetype);
+    var maxAgeGap = rules.maxAgeGap;
+    if (maxAgeGap === null || maxAgeGap === undefined) return true;
+    return Math.abs(age1 - age2) <= maxAgeGap;
+};
+
 window.getArchetypeName = function(archetype) {
     var meta = window.RELATIONSHIP_ARCHETYPE_METADATA[archetype];
-    return meta ? meta.name : archetype;
+    return meta ? meta.name : (archetype ? archetype.charAt(0).toUpperCase() + archetype.slice(1) : archetype);
 };
 
 window.getArchetypeIcon = function(archetype) {
@@ -542,12 +635,17 @@ window.isAutoGeneratedOnly = function(archetype) {
 
 window.getAttributeName = function(attribute) {
     var meta = window.RELATIONSHIP_ATTRIBUTE_METADATA[attribute];
-    return meta ? meta.name : attribute;
+    return meta ? meta.name : (attribute ? attribute.charAt(0).toUpperCase() + attribute.slice(1) : attribute);
 };
 
 window.getAttributeIcon = function(attribute) {
     var meta = window.RELATIONSHIP_ATTRIBUTE_METADATA[attribute];
     return meta ? meta.icon : 'CIRCLE_DOT';
+};
+
+window.getAttributeColor = function(attribute) {
+    var meta = window.RELATIONSHIP_ATTRIBUTE_METADATA[attribute];
+    return meta ? meta.color : '#888888';
 };
 
 window.getAttributeGroup = function(attribute) {
@@ -594,14 +692,73 @@ window.areAttributesCompatible = function(attributes) {
     return { valid: conflicts.length === 0, conflicts: conflicts };
 };
 
+window.isAttributeValidForArchetype = function(archetype, attribute) {
+    if (archetype !== window.RELATIONSHIP_ARCHETYPES.COMMITTED) return false;
+    return !!window.RELATIONSHIP_ATTRIBUTE_METADATA[attribute];
+};
+
 window.getMarriageStatus = function(attributes) {
-    var marriageAttrs = ['married', 'engaged', 'cohabiting', 'civil_union'];
+    var marriageAttrs = ['married', 'handfasted', 'engaged', 'cohabiting', 'civil_union'];
     for (var i = 0; i < marriageAttrs.length; i++) {
-        if (attributes.indexOf(marriageAttrs[i]) !== -1) {
-            return marriageAttrs[i];
-        }
+        if (attributes.indexOf(marriageAttrs[i]) !== -1) return marriageAttrs[i];
     }
     return null;
+};
+
+window.getAllowedAttributes = function() {
+    var attrs = [];
+    for (var key in window.RELATIONSHIP_ATTRIBUTES) {
+        attrs.push(window.RELATIONSHIP_ATTRIBUTES[key]);
+    }
+    return attrs;
+};
+
+window.getRelationshipCategory = function(archetype) {
+    var meta = window.RELATIONSHIP_ARCHETYPE_METADATA[archetype];
+    return meta ? meta.category : null;
+};
+
+window.getArchetypesByCategory = function(category) {
+    var result = [];
+    for (var key in window.RELATIONSHIP_ARCHETYPE_METADATA) {
+        if (window.RELATIONSHIP_ARCHETYPE_METADATA[key].category === category) {
+            result.push(key);
+        }
+    }
+    return result;
+};
+
+window.getAllRelationshipCategories = function() {
+    var categories = {};
+    for (var key in window.RELATIONSHIP_ARCHETYPE_METADATA) {
+        var cat = window.RELATIONSHIP_ARCHETYPE_METADATA[key].category;
+        if (cat) categories[cat] = true;
+    }
+    return Object.keys(categories);
+};
+
+window.getRelationshipStatusName = function(status) {
+    var names = {
+        ongoing: 'Active',
+        ended: 'Ended',
+        widowed: 'Widowed',
+        pending: 'Pending',
+        proposed: 'Proposed',
+        declined: 'Declined'
+    };
+    return names[status] || status;
+};
+
+window.getRelationshipStatusIcon = function(status) {
+    var icons = {
+        ongoing: 'CIRCLE_DOT',
+        ended: 'X_HEAVY',
+        widowed: 'CIRCLE_DOT',
+        pending: 'CIRCLE_DOT',
+        proposed: 'CIRCLE_DOT',
+        declined: 'X_HEAVY'
+    };
+    return icons[status] || 'CIRCLE_DOT';
 };
 
 window.getAllArchetypes = function() {
@@ -634,35 +791,22 @@ window.getAllRelationshipStatuses = function() {
     return result;
 };
 
+window.getAttributeValidationRules = function(attribute) {
+    return window.ATTRIBUTE_VALIDATION_RULES[attribute] || null;
+};
+
 window.getAttributeGroups = function() {
     return Object.assign({}, window.ATTRIBUTE_GROUPS);
 };
 
-// =============================================================================
-// 8. DIRECTIONAL MAPPINGS
-// =============================================================================
-
-window.RELATIONSHIP_DIRECTIONAL_MAPPINGS = {
-    [window.RELATIONSHIP_ARCHETYPES.APPRENTICESHIP]: {
-        reverseType: window.RELATIONSHIP_ARCHETYPES.APPRENTICESHIP
-    },
-    [window.RELATIONSHIP_ARCHETYPES.PARENT_CHILD]: {
-        reverseType: window.RELATIONSHIP_ARCHETYPES.PARENT_CHILD
-    },
-    [window.RELATIONSHIP_ARCHETYPES.GRANDPARENT]: {
-        reverseType: window.RELATIONSHIP_ARCHETYPES.GRANDPARENT
-    },
-    [window.RELATIONSHIP_ARCHETYPES.AUNT_UNCLE]: {
-        reverseType: window.RELATIONSHIP_ARCHETYPES.AUNT_UNCLE
-    },
-    [window.RELATIONSHIP_ARCHETYPES.COUSIN]: {
-        reverseType: window.RELATIONSHIP_ARCHETYPES.COUSIN
-    }
+window.getMirroredRelationshipType = function(archetype) {
+    var mapping = window.RELATIONSHIP_DIRECTIONAL_MAPPINGS[archetype];
+    return mapping ? mapping.reverseType : archetype;
 };
 
-// =============================================================================
-// 9. LEGACY MIGRATION
-// =============================================================================
+window.isDirectionalRelationship = function(archetype) {
+    return !!window.RELATIONSHIP_DIRECTIONAL_MAPPINGS[archetype];
+};
 
 window.migrateLegacyRelationshipType = function(legacyType) {
     var attributes = [];
@@ -699,6 +843,9 @@ window.migrateLegacyRelationshipType = function(legacyType) {
             break;
         case 'apprenticeship':
             archetype = window.RELATIONSHIP_ARCHETYPES.APPRENTICESHIP;
+            break;
+        case 'mastership':
+            archetype = window.RELATIONSHIP_ARCHETYPES.MASTERSHIP;
             break;
         case 'employment':
             archetype = window.RELATIONSHIP_ARCHETYPES.EMPLOYMENT;

@@ -7,10 +7,15 @@
  *          units, vacancy management, name history, timeline, association
  *          history, rehabilitation, and recommendations.
  * 
+ * UPDATED: Added role integration for staff positions
+ *          Added staff assignment to residence units
+ *          Added role requirement for staff positions
+ * 
  * DEPENDS ON:
  *   - household-state.js (HouseholdState)
  *   - household-commands.js (HouseholdCommands)
  *   - household-queries.js (HouseholdQueries)
+ *   - role-state.js (RoleState) - for role integration
  *   - accessors.js (getCharacterById, getPlaceById, getPlaces, getCurrentYear)
  * 
  * SECTIONS:
@@ -36,8 +41,9 @@
  *   19. TYPE HELPERS
  *   20. CONDITION HELPERS
  *   21. UNIT STATS HELPERS
- *   22. CACHE MANAGEMENT
- *   23. EXPORTS
+ *   22. STAFF POSITION FUNCTIONS (NEW)
+ *   23. CACHE MANAGEMENT
+ *   24. EXPORTS
  * 
  * ICON POLICY:
  *   - All icons from icons.js via _getIcon()
@@ -185,6 +191,30 @@
         return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
+    function _getRoleById(id) {
+        if (typeof window.getRoleById === 'function') {
+            return window.getRoleById(id);
+        }
+        return null;
+    }
+
+    function _getAllRoles() {
+        if (typeof window.RoleState !== 'undefined' && window.RoleState.getAllRoles) {
+            return window.RoleState.getAllRoles();
+        }
+        if (typeof window.getRoles === 'function') {
+            return window.getRoles();
+        }
+        return [];
+    }
+
+    function _addProfession(characterId, roleId, options) {
+        if (typeof window.addProfession === 'function') {
+            return window.addProfession(characterId, roleId, options);
+        }
+        return { success: false };
+    }
+
     function _addHouseholdActivityLog(householdId, action, details, actorId) {
         if (typeof window.addHouseholdActivityLog === 'function') {
             return window.addHouseholdActivityLog(householdId, action, details, actorId);
@@ -215,8 +245,19 @@
         return Math.floor(Math.random() * (max - min + 1)) + min;
     }
 
+    function _getHousehold(householdId) {
+        if (window.HouseholdState && typeof window.HouseholdState.getHousehold === 'function') {
+            return window.HouseholdState.getHousehold(householdId);
+        }
+        return null;
+    }
+
+    function _getHouseholdCommands() {
+        return window.HouseholdCommands;
+    }
+
     // =========================================================================
-    // 3. STATE AND COMMANDS REFERENCE
+    // 3. STATE REFERENCE
     // =========================================================================
 
     var _state = window.HouseholdState;
@@ -242,18 +283,15 @@
     // 5. RESIDENCE DATA STORAGE
     // =========================================================================
 
-    // Use a simple variable for residence data
     if (typeof window._residencesData === 'undefined') {
         window._residencesData = [];
     }
 
     function _getResidencesData() {
-        // Check both the local variable and masterData
         if (window._residencesData && window._residencesData.length > 0) {
             return window._residencesData;
         }
 
-        // Try to get from masterData
         if (typeof window.masterData !== 'undefined' && window.masterData.data && window.masterData.data.residences) {
             window._residencesData = window.masterData.data.residences;
             return window._residencesData;
@@ -283,6 +321,8 @@
         if (!residence.associationHistory) residence.associationHistory = [];
         if (!residence.vacancyHistory) residence.vacancyHistory = [];
         if (!residence.features) residence.features = [];
+        if (!residence.staffPositions) residence.staffPositions = [];
+        if (!residence.staffAssignments) residence.staffAssignments = [];
         if (residence.foundedYear === undefined) residence.foundedYear = _getCurrentYear();
         if (residence.lastUpdated === undefined) residence.lastUpdated = _getCurrentYear();
     }
@@ -358,10 +398,11 @@
                 previousHouseholdId: null,
                 previousHouseholdName: null,
                 maxUnits: options.maxUnits || 20,
-                suppressVacancyAlerts: false
+                suppressVacancyAlerts: false,
+                staffPositions: options.staffPositions || [],
+                staffAssignments: options.staffAssignments || []
             };
 
-            // Initialize units based on type
             if (type.isMultiUnit) {
                 var unitCount = options.unitCount || Math.min(10, Math.floor(type.capacity / 3));
                 for (var i = 1; i <= unitCount; i++) {
@@ -375,7 +416,8 @@
                         assignedYear: null,
                         vacantYear: null,
                         notes: '',
-                        associationHistory: []
+                        associationHistory: [],
+                        staffAssignments: []
                     });
                 }
                 newResidence.unitCount = unitCount;
@@ -392,14 +434,14 @@
                     assignedYear: newResidence.assignedYear || null,
                     vacantYear: null,
                     notes: '',
-                    associationHistory: []
+                    associationHistory: [],
+                    staffAssignments: []
                 });
                 newResidence.unitCount = 1;
                 newResidence.vacantUnits = newResidence.householdId ? 0 : 1;
                 newResidence.occupiedUnits = newResidence.householdId ? 1 : 0;
             }
 
-            // Add timeline event
             newResidence.timeline.push({
                 year: currentYear,
                 type: 'built',
@@ -407,7 +449,6 @@
                 timestamp: Date.now()
             });
 
-            // Add name history
             newResidence.nameHistory.push({
                 oldName: null,
                 newName: newResidence.name,
@@ -956,7 +997,8 @@
                 assignedYear: options.assignedYear || null,
                 vacantYear: null,
                 notes: options.notes || '',
-                associationHistory: []
+                associationHistory: [],
+                staffAssignments: []
             };
 
             residence.units.push(newUnit);
@@ -1130,14 +1172,13 @@
                 return { success: false, reason: 'Unit has been demolished' };
             }
 
-            var household = _state ? _state.getHousehold(householdId) : null;
+            var household = _getHousehold(householdId);
             if (!household) {
                 return { success: false, reason: 'Household not found' };
             }
 
             var assignmentYear = year || _getCurrentYear();
 
-            // Remove household from any other units in this residence
             for (var i = 0; i < residence.units.length; i++) {
                 if (residence.units[i].householdId === householdId && residence.units[i].unitNumber !== unitNumber) {
                     residence.units[i].isVacant = true;
@@ -1150,7 +1191,6 @@
                 }
             }
 
-            // Update unit
             if (!unit.associationHistory) unit.associationHistory = [];
             if (unit.householdId) {
                 unit.associationHistory.push({
@@ -1169,7 +1209,6 @@
             unit.vacantYear = null;
             unit.notes = options.notes || '';
 
-            // Update residence
             residence.occupiedUnits = (residence.occupiedUnits || 0) + 1;
             residence.vacantUnits = Math.max(0, (residence.vacantUnits || 0) - 1);
             residence.householdId = householdId;
@@ -1189,7 +1228,6 @@
                 endedAt: null
             });
 
-            // Update household residence reference
             if (_state && typeof _state.updateHousehold === 'function') {
                 _state.updateHousehold(householdId, {
                     residenceId: residenceId,
@@ -1286,7 +1324,6 @@
             residence.vacantUnits = (residence.vacantUnits || 0) + 1;
             residence.lastUpdated = _getCurrentYear();
 
-            // Check if all units are vacant
             var anyOccupied = false;
             for (var i = 0; i < residence.units.length; i++) {
                 if (!residence.units[i].isVacant) {
@@ -1305,7 +1342,6 @@
                 residence.previousHouseholdName = householdName;
             }
 
-            // Update household residence reference
             if (_state && typeof _state.updateHousehold === 'function' && householdId) {
                 _state.updateHousehold(householdId, {
                     residenceId: null,
@@ -1475,7 +1511,6 @@
             residence.householdName = null;
             residence.assignedYear = null;
 
-            // Update all units
             for (var i = 0; i < residence.units.length; i++) {
                 var unit = residence.units[i];
                 if (!unit.isVacant && !unit.isDemolished) {
@@ -1577,7 +1612,7 @@
                 return { success: false, reason: 'Residence has been demolished' };
             }
 
-            var household = _state ? _state.getHousehold(householdId) : null;
+            var household = _getHousehold(householdId);
             if (!household) {
                 return { success: false, reason: 'Household not found' };
             }
@@ -1593,7 +1628,6 @@
                 newName = pattern.replace('{household}', household.name).replace('{suffix}', suffix).replace('{type}', typeName);
             }
 
-            // Update vacancy history
             if (residence.vacancyHistory && residence.vacancyHistory.length > 0) {
                 var lastVacancy = residence.vacancyHistory[residence.vacancyHistory.length - 1];
                 if (!lastVacancy.endedVacantYear) {
@@ -1622,7 +1656,6 @@
                 endedAt: null
             });
 
-            // Assign to first vacant unit
             var assignedUnit = null;
             for (var i = 0; i < residence.units.length; i++) {
                 if (residence.units[i].isVacant && !residence.units[i].isDemolished) {
@@ -1638,7 +1671,6 @@
                 }
             }
 
-            // Rename if requested
             var renamed = false;
             if (renameOnAssign && newName !== residence.name) {
                 var oldName = residence.name;
@@ -1656,7 +1688,6 @@
 
             residence.lastUpdated = _getCurrentYear();
 
-            // Update household residence reference
             if (_state && typeof _state.updateHousehold === 'function') {
                 _state.updateHousehold(householdId, {
                     residenceId: residenceId,
@@ -2080,7 +2111,7 @@
 
             for (var i = 0; i < assignments.length; i++) {
                 var assignment = assignments[i];
-                var household = _state ? _state.getHousehold(assignment.householdId) : null;
+                var household = _getHousehold(assignment.householdId);
                 if (!household) {
                     results.failed.push({
                         householdId: assignment.householdId,
@@ -2261,13 +2292,457 @@
     }
 
     // =========================================================================
-    // 23. CACHE MANAGEMENT
+    // 23. STAFF POSITION FUNCTIONS (NEW)
+    // =========================================================================
+
+    /**
+     * Adds a staff position to a residence
+     * @param {string} residenceId - Residence ID
+     * @param {Object} data - Position data
+     * @param {string} data.name - Position name (e.g., "Maid", "Cook")
+     * @param {string} data.unitNumber - Unit number (optional, for unit-specific staff)
+     * @param {string} data.requiredRoleId - Role ID (optional)
+     * @param {number} data.minSkillLevel - Minimum skill level (optional)
+     * @param {string} data.notes - Notes (optional)
+     * @returns {Object|null} Created position or null
+     */
+    function addResidenceStaffPosition(residenceId, data) {
+        if (_processingResidence) {
+            _showToast('Already processing a residence operation', 'warning');
+            return null;
+        }
+        _processingResidence = true;
+
+        try {
+            var residence = getResidenceById(residenceId);
+            if (!residence) {
+                _showToast('Residence not found', 'error');
+                return null;
+            }
+
+            if (!data.name || data.name.trim() === '') {
+                _showToast('Position name is required', 'error');
+                return null;
+            }
+
+            // Validate role if provided
+            if (data.requiredRoleId) {
+                var role = _getRoleById(data.requiredRoleId);
+                if (!role) {
+                    _showToast('Required role not found', 'error');
+                    return null;
+                }
+            }
+
+            // Validate unit if provided
+            if (data.unitNumber) {
+                var unit = getResidenceUnit(residenceId, data.unitNumber);
+                if (!unit) {
+                    _showToast('Unit ' + data.unitNumber + ' not found', 'error');
+                    return null;
+                }
+            }
+
+            if (!residence.staffPositions) residence.staffPositions = [];
+
+            var position = {
+                id: _generateId('rspos'),
+                name: data.name.trim(),
+                unitNumber: data.unitNumber || null,
+                requiredRoleId: data.requiredRoleId || null,
+                minSkillLevel: data.minSkillLevel || 0,
+                notes: data.notes || '',
+                createdAt: _getCurrentYear(),
+                updatedAt: _getCurrentYear()
+            };
+
+            residence.staffPositions.push(position);
+            residence.lastUpdated = _getCurrentYear();
+
+            addResidenceHistory(residenceId, 'staff_position_added', 'Added staff position: ' + position.name);
+            addResidenceTimelineEvent(residenceId, {
+                year: _getCurrentYear(),
+                type: 'staff_position_added',
+                details: 'Staff position "' + position.name + '" added' + (position.unitNumber ? ' (Unit ' + position.unitNumber + ')' : '')
+            });
+
+            _saveMasterData();
+            _invalidateAccessorCaches();
+
+            _showToast('Staff position "' + position.name + '" added to residence', 'success');
+            return position;
+
+        } finally {
+            _processingResidence = false;
+        }
+    }
+
+    /**
+     * Removes a staff position from a residence
+     * @param {string} residenceId - Residence ID
+     * @param {string} positionId - Position ID
+     * @param {Object} options - Options
+     * @param {boolean} options.removeAssignments - Remove assignments too (default: true)
+     * @returns {boolean} True if removed
+     */
+    function removeResidenceStaffPosition(residenceId, positionId, options) {
+        if (_processingResidence) {
+            _showToast('Already processing a residence operation', 'warning');
+            return false;
+        }
+        _processingResidence = true;
+
+        try {
+            options = options || {};
+            var residence = getResidenceById(residenceId);
+            if (!residence) {
+                _showToast('Residence not found', 'error');
+                return false;
+            }
+
+            if (!residence.staffPositions) return false;
+
+            var index = -1;
+            var position = null;
+            for (var i = 0; i < residence.staffPositions.length; i++) {
+                if (residence.staffPositions[i].id === positionId) {
+                    index = i;
+                    position = residence.staffPositions[i];
+                    break;
+                }
+            }
+
+            if (index === -1) {
+                _showToast('Position not found', 'error');
+                return false;
+            }
+
+            // Remove assignments if requested
+            if (options.removeAssignments !== false) {
+                if (!residence.staffAssignments) residence.staffAssignments = [];
+                residence.staffAssignments = residence.staffAssignments.filter(function(a) {
+                    return a.positionId !== positionId;
+                });
+            }
+
+            residence.staffPositions.splice(index, 1);
+            residence.lastUpdated = _getCurrentYear();
+
+            addResidenceHistory(residenceId, 'staff_position_removed', 'Removed staff position: ' + position.name);
+            addResidenceTimelineEvent(residenceId, {
+                year: _getCurrentYear(),
+                type: 'staff_position_removed',
+                details: 'Staff position "' + position.name + '" removed'
+            });
+
+            _saveMasterData();
+            _invalidateAccessorCaches();
+
+            _showToast('Staff position "' + position.name + '" removed', 'info');
+            return true;
+
+        } finally {
+            _processingResidence = false;
+        }
+    }
+
+    /**
+     * Gets staff positions for a residence
+     * @param {string} residenceId - Residence ID
+     * @param {Object} options - Options
+     * @param {number} options.unitNumber - Filter by unit number
+     * @param {string} options.requiredRoleId - Filter by required role
+     * @returns {Array} Array of staff positions
+     */
+    function getResidenceStaffPositions(residenceId, options) {
+        options = options || {};
+        var residence = getResidenceById(residenceId);
+        if (!residence || !residence.staffPositions) return [];
+
+        var positions = residence.staffPositions.slice();
+
+        if (options.unitNumber !== undefined) {
+            positions = positions.filter(function(p) { return p.unitNumber === options.unitNumber; });
+        }
+
+        if (options.requiredRoleId) {
+            positions = positions.filter(function(p) { return p.requiredRoleId === options.requiredRoleId; });
+        }
+
+        return positions;
+    }
+
+    /**
+     * Assigns a character to a residence staff position
+     * @param {string} residenceId - Residence ID
+     * @param {string} positionId - Position ID
+     * @param {string} characterId - Character ID
+     * @param {Object} options - Options
+     * @param {number} options.startYear - Start year (default: current)
+     * @param {number} options.endYear - End year (optional)
+     * @param {string} options.title - Custom title (default: position name)
+     * @param {string} options.notes - Notes
+     * @param {boolean} options.addRoleIfMissing - Add required role if missing (default: true)
+     * @param {number} options.defaultSkillLevel - Default skill level if adding role (default: 10)
+     * @returns {Object|null} Assignment or null
+     */
+    function assignCharacterToResidenceStaffPosition(residenceId, positionId, characterId, options) {
+        if (_processingAssignment) {
+            _showToast('Already processing an assignment', 'warning');
+            return null;
+        }
+        _processingAssignment = true;
+
+        try {
+            options = options || {};
+            var residence = getResidenceById(residenceId);
+            if (!residence) {
+                _showToast('Residence not found', 'error');
+                return null;
+            }
+
+            var position = null;
+            if (residence.staffPositions) {
+                for (var i = 0; i < residence.staffPositions.length; i++) {
+                    if (residence.staffPositions[i].id === positionId) {
+                        position = residence.staffPositions[i];
+                        break;
+                    }
+                }
+            }
+
+            if (!position) {
+                _showToast('Staff position not found', 'error');
+                return null;
+            }
+
+            var character = _getCharacterById(characterId);
+            if (!character) {
+                _showToast('Character not found', 'error');
+                return null;
+            }
+
+            if (character.isDeceased) {
+                _showToast('Character is deceased', 'error');
+                return null;
+            }
+
+            // Check if already assigned to this position
+            if (!residence.staffAssignments) residence.staffAssignments = [];
+            for (var i = 0; i < residence.staffAssignments.length; i++) {
+                if (residence.staffAssignments[i].positionId === positionId &&
+                    residence.staffAssignments[i].characterId === characterId &&
+                    !residence.staffAssignments[i].endYear) {
+                    _showToast('Character already assigned to this position', 'error');
+                    return null;
+                }
+            }
+
+            // Handle role requirement
+            var roleId = position.requiredRoleId;
+            var skillLevel = 0;
+            var hasRole = false;
+
+            if (roleId) {
+                if (character.professions) {
+                    for (var i = 0; i < character.professions.length; i++) {
+                        if (character.professions[i].id === roleId) {
+                            hasRole = true;
+                            skillLevel = character.professions[i].skillLevel || 0;
+                            break;
+                        }
+                    }
+                }
+
+                if (!hasRole) {
+                    if (options.addRoleIfMissing !== false) {
+                        var defaultSkill = options.defaultSkillLevel || 10;
+                        var result = _addProfession(characterId, roleId, {
+                            skillLevel: defaultSkill,
+                            startYear: options.startYear || _getCurrentYear()
+                        });
+                        if (result && result.success) {
+                            hasRole = true;
+                            skillLevel = defaultSkill;
+                        } else {
+                            _showToast('Failed to add required role to character', 'error');
+                            return null;
+                        }
+                    } else {
+                        _showToast('Character does not have required role: ' + (_getRoleById(roleId)?.name || roleId), 'error');
+                        return null;
+                    }
+                }
+
+                if (position.minSkillLevel && skillLevel < position.minSkillLevel) {
+                    _showToast('Character skill level (' + skillLevel + ') is below requirement (' + position.minSkillLevel + ')', 'error');
+                    return null;
+                }
+            }
+
+            var startYear = options.startYear || _getCurrentYear();
+
+            var assignment = {
+                id: _generateId('rsassign'),
+                positionId: positionId,
+                characterId: characterId,
+                characterName: character.name + (character.surname ? ' ' + character.surname : ''),
+                startYear: startYear,
+                endYear: options.endYear || null,
+                endReason: null,
+                title: options.title || position.name,
+                notes: options.notes || '',
+                roleIdAtAssignment: roleId,
+                skillLevelAtAssignment: skillLevel,
+                unitNumber: position.unitNumber || null
+            };
+
+            residence.staffAssignments.push(assignment);
+            residence.lastUpdated = _getCurrentYear();
+
+            addResidenceHistory(residenceId, 'staff_assigned',
+                character.name + ' assigned as ' + assignment.title + (position.unitNumber ? ' (Unit ' + position.unitNumber + ')' : ''));
+            addResidenceTimelineEvent(residenceId, {
+                year: startYear,
+                type: 'staff_assigned',
+                details: character.name + ' assigned as ' + assignment.title,
+                householdName: character.name,
+                unitNumber: position.unitNumber || null
+            });
+
+            _saveMasterData();
+            _invalidateAccessorCaches();
+
+            var roleName = roleId ? (_getRoleById(roleId)?.name || 'None') : 'None';
+            _logEvent('residence', 'Staff Assigned',
+                character.name + ' assigned to staff position "' + position.name + '" at ' + residence.name + ' (Role: ' + roleName + ')',
+                [character]);
+
+            _showToast(character.name + ' assigned to "' + position.name + '" at ' + residence.name, 'success');
+            return assignment;
+
+        } finally {
+            _processingAssignment = false;
+        }
+    }
+
+    /**
+     * Ends a residence staff assignment
+     * @param {string} residenceId - Residence ID
+     * @param {string} assignmentId - Assignment ID
+     * @param {number} endYear - End year (default: current)
+     * @param {string} reason - Reason for ending
+     * @returns {Object|null} Updated assignment or null
+     */
+    function endResidenceStaffAssignment(residenceId, assignmentId, endYear, reason) {
+        if (_processingResidence) {
+            _showToast('Already processing a residence operation', 'warning');
+            return null;
+        }
+        _processingResidence = true;
+
+        try {
+            var residence = getResidenceById(residenceId);
+            if (!residence) {
+                _showToast('Residence not found', 'error');
+                return null;
+            }
+
+            if (!residence.staffAssignments) return null;
+
+            var index = -1;
+            var assignment = null;
+            for (var i = 0; i < residence.staffAssignments.length; i++) {
+                if (residence.staffAssignments[i].id === assignmentId) {
+                    index = i;
+                    assignment = residence.staffAssignments[i];
+                    break;
+                }
+            }
+
+            if (index === -1) {
+                _showToast('Assignment not found', 'error');
+                return null;
+            }
+
+            if (assignment.endYear) {
+                _showToast('Assignment already ended', 'info');
+                return null;
+            }
+
+            var year = endYear || _getCurrentYear();
+            if (year <= assignment.startYear) {
+                _showToast('End year must be after start year (' + assignment.startYear + ')', 'error');
+                return null;
+            }
+
+            assignment.endYear = year;
+            assignment.endReason = reason || 'Term ended';
+            residence.lastUpdated = _getCurrentYear();
+
+            addResidenceHistory(residenceId, 'staff_assignment_ended',
+                assignment.characterName + ' ended assignment as ' + assignment.title + ' (' + reason + ')');
+            addResidenceTimelineEvent(residenceId, {
+                year: year,
+                type: 'staff_assignment_ended',
+                details: assignment.characterName + ' ended assignment as ' + assignment.title,
+                householdName: assignment.characterName,
+                unitNumber: assignment.unitNumber || null
+            });
+
+            _saveMasterData();
+            _invalidateAccessorCaches();
+
+            _showToast(assignment.characterName + ' ended assignment as ' + assignment.title, 'info');
+            return assignment;
+
+        } finally {
+            _processingResidence = false;
+        }
+    }
+
+    /**
+     * Gets staff assignments for a residence
+     * @param {string} residenceId - Residence ID
+     * @param {Object} options - Options
+     * @param {boolean} options.activeOnly - Only active assignments (default: true)
+     * @param {number} options.unitNumber - Filter by unit number
+     * @param {string} options.positionId - Filter by position ID
+     * @param {string} options.characterId - Filter by character ID
+     * @returns {Array} Array of staff assignments
+     */
+    function getResidenceStaffAssignments(residenceId, options) {
+        options = options || {};
+        var residence = getResidenceById(residenceId);
+        if (!residence || !residence.staffAssignments) return [];
+
+        var assignments = residence.staffAssignments.slice();
+
+        if (options.activeOnly !== false) {
+            assignments = assignments.filter(function(a) { return !a.endYear; });
+        }
+
+        if (options.unitNumber !== undefined) {
+            assignments = assignments.filter(function(a) { return a.unitNumber === options.unitNumber; });
+        }
+
+        if (options.positionId) {
+            assignments = assignments.filter(function(a) { return a.positionId === options.positionId; });
+        }
+
+        if (options.characterId) {
+            assignments = assignments.filter(function(a) { return a.characterId === options.characterId; });
+        }
+
+        return assignments;
+    }
+
+    // =========================================================================
+    // 24. CACHE MANAGEMENT
     // =========================================================================
 
     function clearCache() {
-        // Clear any internal caches
         if (typeof window._residencesData !== 'undefined') {
-            // Refresh from masterData
             if (typeof window.masterData !== 'undefined' && window.masterData.data && window.masterData.data.residences) {
                 window._residencesData = window.masterData.data.residences;
             }
@@ -2276,14 +2751,12 @@
     }
 
     // =========================================================================
-    // 24. EXPORTS
+    // 25. EXPORTS
     // =========================================================================
 
-    // Constants
     window.RESIDENCE_TYPES = RESIDENCE_TYPES;
     window.RESIDENCE_STATUS = RESIDENCE_STATUS;
 
-    // Residence System
     window.ResidenceSystem = {
         // Constants
         RESIDENCE_TYPES: RESIDENCE_TYPES,
@@ -2376,133 +2849,16 @@
         getUnitStats: getUnitStats,
         getLocationUnitStats: getLocationUnitStats,
 
+        // Staff Positions (NEW)
+        addResidenceStaffPosition: addResidenceStaffPosition,
+        removeResidenceStaffPosition: removeResidenceStaffPosition,
+        getResidenceStaffPositions: getResidenceStaffPositions,
+        assignCharacterToResidenceStaffPosition: assignCharacterToResidenceStaffPosition,
+        endResidenceStaffAssignment: endResidenceStaffAssignment,
+        getResidenceStaffAssignments: getResidenceStaffAssignments,
+
         // Cache
         clearCache: clearCache
     };
-
-    // Legacy aliases for backward compatibility
-    window.createResidence = createResidence;
-    window.getResidenceById = getResidenceById;
-    window.getResidences = getResidences;
-    window.getResidencesByLocation = getResidencesByLocation;
-    window.getResidencesByType = getResidencesByType;
-    window.getResidencesByStatus = getResidencesByStatus;
-    window.getResidencesByHousehold = getResidencesByHousehold;
-    window.updateResidence = updateResidence;
-    window.deleteResidence = deleteResidence;
-    window.addResidenceHistory = addResidenceHistory;
-    window.getResidenceHistory = getResidenceHistory;
-    window.getResidenceTimeline = getResidenceTimeline;
-    window.addResidenceTimelineEvent = addResidenceTimelineEvent;
-    window.getResidenceAssociationHistory = getResidenceAssociationHistory;
-    window.endResidenceAssociation = endResidenceAssociation;
-    window.getResidenceNameHistory = getResidenceNameHistory;
-    window.getResidenceCurrentNameInfo = getResidenceCurrentNameInfo;
-    window.getResidenceOriginalName = getResidenceOriginalName;
-    window.getResidenceNameChangeCount = getResidenceNameChangeCount;
-    window.updateResidenceNameWithHistory = updateResidenceNameWithHistory;
-    window.getFormattedResidenceNameHistory = getFormattedResidenceNameHistory;
-    window.addResidenceUnit = addResidenceUnit;
-    window.removeResidenceUnit = removeResidenceUnit;
-    window.getResidenceUnits = getResidenceUnits;
-    window.getResidenceUnit = getResidenceUnit;
-    window.getVacantUnits = getVacantUnits;
-    window.getOccupiedUnits = getOccupiedUnits;
-    window.assignHouseholdToUnit = assignHouseholdToUnit;
-    window.markUnitVacant = markUnitVacant;
-    window.demolishUnit = demolishUnit;
-    window.getVacantResidences = getVacantResidences;
-    window.markResidenceVacant = markResidenceVacant;
-    window.getResidenceVacancyDetails = getResidenceVacancyDetails;
-    window.assignHouseholdToVacantResidence = assignHouseholdToVacantResidence;
-    window.calculateRepairCost = calculateRepairCost;
-    window.rehabilitateResidence = rehabilitateResidence;
-    window.getResidenceRecommendations = getResidenceRecommendations;
-    window.getHouseholdUnits = getHouseholdUnits;
-    window.getHouseholdPrimaryResidence = getHouseholdPrimaryResidence;
-    window.getHouseholdUnitCount = getHouseholdUnitCount;
-    window.getResidenceHouseholds = getResidenceHouseholds;
-    window.getResidenceCapacity = getResidenceCapacity;
-    window.getAvailableCapacity = getAvailableCapacity;
-    window.hasAvailableUnits = hasAvailableUnits;
-    window.getRandomAvailableUnit = getRandomAvailableUnit;
-    window.getResidenceStatistics = getResidenceStatistics;
-    window.bulkAssignUnits = bulkAssignUnits;
-    window.householdHasResidence = householdHasResidence;
-    window.getResidenceLocation = getResidenceLocation;
-    window.getHouseholdResidencesByLocation = getHouseholdResidencesByLocation;
-    window.isMultiUnitResidence = isMultiUnitResidence;
-    window.getAllResidenceTypes = getAllResidenceTypes;
-    window.getResidenceType = getResidenceType;
-    window.getAllResidenceConditions = getAllResidenceConditions;
-    window.getResidenceCondition = getResidenceCondition;
-    window.getUnitStats = getUnitStats;
-    window.getLocationUnitStats = getLocationUnitStats;
-
-    // ES Module exports
-    if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            RESIDENCE_TYPES: RESIDENCE_TYPES,
-            RESIDENCE_STATUS: RESIDENCE_STATUS,
-            createResidence: createResidence,
-            getResidenceById: getResidenceById,
-            getResidences: getResidences,
-            getResidencesByLocation: getResidencesByLocation,
-            getResidencesByType: getResidencesByType,
-            getResidencesByStatus: getResidencesByStatus,
-            getResidencesByHousehold: getResidencesByHousehold,
-            updateResidence: updateResidence,
-            deleteResidence: deleteResidence,
-            addResidenceHistory: addResidenceHistory,
-            getResidenceHistory: getResidenceHistory,
-            getResidenceTimeline: getResidenceTimeline,
-            addResidenceTimelineEvent: addResidenceTimelineEvent,
-            getResidenceAssociationHistory: getResidenceAssociationHistory,
-            endResidenceAssociation: endResidenceAssociation,
-            getResidenceNameHistory: getResidenceNameHistory,
-            getResidenceCurrentNameInfo: getResidenceCurrentNameInfo,
-            getResidenceOriginalName: getResidenceOriginalName,
-            getResidenceNameChangeCount: getResidenceNameChangeCount,
-            updateResidenceNameWithHistory: updateResidenceNameWithHistory,
-            getFormattedResidenceNameHistory: getFormattedResidenceNameHistory,
-            addResidenceUnit: addResidenceUnit,
-            removeResidenceUnit: removeResidenceUnit,
-            getResidenceUnits: getResidenceUnits,
-            getResidenceUnit: getResidenceUnit,
-            getVacantUnits: getVacantUnits,
-            getOccupiedUnits: getOccupiedUnits,
-            assignHouseholdToUnit: assignHouseholdToUnit,
-            markUnitVacant: markUnitVacant,
-            demolishUnit: demolishUnit,
-            getVacantResidences: getVacantResidences,
-            markResidenceVacant: markResidenceVacant,
-            getResidenceVacancyDetails: getResidenceVacancyDetails,
-            assignHouseholdToVacantResidence: assignHouseholdToVacantResidence,
-            calculateRepairCost: calculateRepairCost,
-            rehabilitateResidence: rehabilitateResidence,
-            getResidenceRecommendations: getResidenceRecommendations,
-            getHouseholdUnits: getHouseholdUnits,
-            getHouseholdPrimaryResidence: getHouseholdPrimaryResidence,
-            getHouseholdUnitCount: getHouseholdUnitCount,
-            getResidenceHouseholds: getResidenceHouseholds,
-            getResidenceCapacity: getResidenceCapacity,
-            getAvailableCapacity: getAvailableCapacity,
-            hasAvailableUnits: hasAvailableUnits,
-            getRandomAvailableUnit: getRandomAvailableUnit,
-            getResidenceStatistics: getResidenceStatistics,
-            bulkAssignUnits: bulkAssignUnits,
-            householdHasResidence: householdHasResidence,
-            getResidenceLocation: getResidenceLocation,
-            getHouseholdResidencesByLocation: getHouseholdResidencesByLocation,
-            isMultiUnitResidence: isMultiUnitResidence,
-            getAllResidenceTypes: getAllResidenceTypes,
-            getResidenceType: getResidenceType,
-            getAllResidenceConditions: getAllResidenceConditions,
-            getResidenceCondition: getResidenceCondition,
-            getUnitStats: getUnitStats,
-            getLocationUnitStats: getLocationUnitStats,
-            clearCache: clearCache
-        };
-    }
 
 })();

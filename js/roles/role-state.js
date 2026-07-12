@@ -9,6 +9,8 @@
  * - UI state management
  * - NO business logic
  * 
+ * UPDATED: Added baseSalary, requiresLiteracy, literacyLevel to role schema
+ * 
  * DEPENDENCIES:
  *   - accessors.js (getCharacters, getRoles)
  *   - storage.js (saveMasterData)
@@ -98,7 +100,6 @@
     function _buildCategories() {
         var categories = {};
 
-        // Start with defaults
         var defaults = window.DEFAULT_ROLE_CATEGORIES || {};
         for (var key in defaults) {
             if (defaults.hasOwnProperty(key)) {
@@ -106,14 +107,12 @@
             }
         }
 
-        // Add uncategorized
         categories[window.UNCATEGORIZED_ID || 'uncategorized'] = {
             id: window.UNCATEGORIZED_ID || 'uncategorized',
             name: window.UNCATEGORIZED_NAME || 'Uncategorized',
             icon: window.UNCATEGORIZED_ICON || '⌇'
         };
 
-        // Try to load saved categories from masterData
         if (window.masterData?.data?.roleCategories) {
             var saved = window.masterData.data.roleCategories;
             if (typeof saved === 'object' && saved !== null) {
@@ -137,6 +136,8 @@
             var role = _state.roles[i];
             if (!role) continue;
 
+            _ensureRoleInitialized(role);
+
             _state.cache.byId.set(role.id, role);
 
             if (role.name) {
@@ -148,6 +149,30 @@
                 _state.cache.byCategory.set(category, []);
             }
             _state.cache.byCategory.get(category).push(role);
+        }
+    }
+
+    function _ensureRoleInitialized(role) {
+        if (!role) return;
+
+        if (!role.category) role.category = window.UNCATEGORIZED_ID || 'uncategorized';
+        if (!role.icon) role.icon = '◉';
+        if (!role.specializations) role.specializations = [];
+        if (!role.notes) role.notes = '';
+        if (!role.genderRestriction) role.genderRestriction = 'both';
+
+        // NEW: Salary fields
+        if (role.baseSalary === undefined || role.baseSalary === null) {
+            var categorySalary = window.BASE_SALARY_BY_CATEGORY?.[role.category];
+            role.baseSalary = categorySalary !== undefined ? categorySalary : window.DEFAULT_SALARY || 10;
+        }
+
+        // NEW: Literacy requirement fields
+        if (role.requiresLiteracy === undefined) {
+            role.requiresLiteracy = false;
+        }
+        if (role.literacyLevel === undefined) {
+            role.literacyLevel = null;
         }
     }
 
@@ -252,6 +277,7 @@
 
     function _addRole(role) {
         _initializeState();
+        _ensureRoleInitialized(role);
         _state.roles.push(role);
         _rebuildCaches();
         _persistState();
@@ -269,6 +295,8 @@
                 role[key] = updates[key];
             }
         }
+
+        _ensureRoleInitialized(role);
 
         _rebuildCaches();
         _persistState();
@@ -297,6 +325,9 @@
 
     function _setRoles(roles) {
         _initializeState();
+        for (var i = 0; i < roles.length; i++) {
+            _ensureRoleInitialized(roles[i]);
+        }
         _state.roles = roles;
         _rebuildCaches();
         _persistState();
@@ -325,6 +356,7 @@
         _rebuildCaches: _rebuildCaches,
         _persistState: _persistState,
         _initializeState: _initializeState,
+        _ensureRoleInitialized: _ensureRoleInitialized,
 
         _getState: function() { return _state; }
     };
