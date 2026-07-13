@@ -10,6 +10,8 @@
  * UPDATED: Added role integration for staff positions
  *          Added staff assignment to residence units
  *          Added role requirement for staff positions
+ *          Added demolishResidence(), getDemolishedResidences(),
+ *          getResidenceDamageHistory(), getResidenceDemolitionStats()
  * 
  * DEPENDS ON:
  *   - household-state.js (HouseholdState)
@@ -41,9 +43,10 @@
  *   19. TYPE HELPERS
  *   20. CONDITION HELPERS
  *   21. UNIT STATS HELPERS
- *   22. STAFF POSITION FUNCTIONS (NEW)
- *   23. CACHE MANAGEMENT
- *   24. EXPORTS
+ *   22. STAFF POSITION FUNCTIONS
+ *   23. DEMOLISH FUNCTIONS (NEW)
+ *   24. CACHE MANAGEMENT
+ *   25. EXPORTS
  * 
  * ICON POLICY:
  *   - All icons from icons.js via _getIcon()
@@ -325,6 +328,14 @@
         if (!residence.staffAssignments) residence.staffAssignments = [];
         if (residence.foundedYear === undefined) residence.foundedYear = _getCurrentYear();
         if (residence.lastUpdated === undefined) residence.lastUpdated = _getCurrentYear();
+        // DEMOLITION FIELDS
+        if (residence.isDemolished === undefined) residence.isDemolished = false;
+        if (residence.demolishedAt === undefined) residence.demolishedAt = null;
+        if (residence.demolishedReason === undefined) residence.demolishedReason = null;
+        if (residence.destroyedBy === undefined) residence.destroyedBy = null;
+        if (residence.disasterId === undefined) residence.disasterId = null;
+        if (residence.demolishedRecord === undefined) residence.demolishedRecord = null;
+        if (residence.damageHistory === undefined) residence.damageHistory = [];
     }
 
     // =========================================================================
@@ -393,6 +404,12 @@
                 assignedYear: options.assignedYear || null,
                 isVacant: !options.householdId,
                 isDemolished: false,
+                demolishedAt: null,
+                demolishedReason: null,
+                destroyedBy: null,
+                disasterId: null,
+                demolishedRecord: null,
+                damageHistory: [],
                 condition: options.condition || 'good',
                 estimatedValue: options.estimatedValue || Math.round(100 + Math.random() * 900),
                 previousHouseholdId: null,
@@ -569,7 +586,7 @@
                 return null;
             }
 
-            var allowedUpdates = ['name', 'locationId', 'notes', 'status', 'foundedYear', 'builtYear', 'condition', 'description', 'features', 'estimatedValue'];
+            var allowedUpdates = ['name', 'locationId', 'notes', 'status', 'foundedYear', 'builtYear', 'condition', 'description', 'features', 'estimatedValue', 'isDemolished', 'demolishedAt', 'demolishedReason', 'destroyedBy', 'disasterId', 'demolishedRecord', 'damageHistory'];
             for (var i = 0; i < allowedUpdates.length; i++) {
                 var key = allowedUpdates[i];
                 if (updates[key] !== undefined && updates[key] !== null) {
@@ -2292,20 +2309,9 @@
     }
 
     // =========================================================================
-    // 23. STAFF POSITION FUNCTIONS (NEW)
+    // 23. STAFF POSITION FUNCTIONS
     // =========================================================================
 
-    /**
-     * Adds a staff position to a residence
-     * @param {string} residenceId - Residence ID
-     * @param {Object} data - Position data
-     * @param {string} data.name - Position name (e.g., "Maid", "Cook")
-     * @param {string} data.unitNumber - Unit number (optional, for unit-specific staff)
-     * @param {string} data.requiredRoleId - Role ID (optional)
-     * @param {number} data.minSkillLevel - Minimum skill level (optional)
-     * @param {string} data.notes - Notes (optional)
-     * @returns {Object|null} Created position or null
-     */
     function addResidenceStaffPosition(residenceId, data) {
         if (_processingResidence) {
             _showToast('Already processing a residence operation', 'warning');
@@ -2325,7 +2331,6 @@
                 return null;
             }
 
-            // Validate role if provided
             if (data.requiredRoleId) {
                 var role = _getRoleById(data.requiredRoleId);
                 if (!role) {
@@ -2334,7 +2339,6 @@
                 }
             }
 
-            // Validate unit if provided
             if (data.unitNumber) {
                 var unit = getResidenceUnit(residenceId, data.unitNumber);
                 if (!unit) {
@@ -2377,14 +2381,6 @@
         }
     }
 
-    /**
-     * Removes a staff position from a residence
-     * @param {string} residenceId - Residence ID
-     * @param {string} positionId - Position ID
-     * @param {Object} options - Options
-     * @param {boolean} options.removeAssignments - Remove assignments too (default: true)
-     * @returns {boolean} True if removed
-     */
     function removeResidenceStaffPosition(residenceId, positionId, options) {
         if (_processingResidence) {
             _showToast('Already processing a residence operation', 'warning');
@@ -2417,7 +2413,6 @@
                 return false;
             }
 
-            // Remove assignments if requested
             if (options.removeAssignments !== false) {
                 if (!residence.staffAssignments) residence.staffAssignments = [];
                 residence.staffAssignments = residence.staffAssignments.filter(function(a) {
@@ -2446,14 +2441,6 @@
         }
     }
 
-    /**
-     * Gets staff positions for a residence
-     * @param {string} residenceId - Residence ID
-     * @param {Object} options - Options
-     * @param {number} options.unitNumber - Filter by unit number
-     * @param {string} options.requiredRoleId - Filter by required role
-     * @returns {Array} Array of staff positions
-     */
     function getResidenceStaffPositions(residenceId, options) {
         options = options || {};
         var residence = getResidenceById(residenceId);
@@ -2472,20 +2459,6 @@
         return positions;
     }
 
-    /**
-     * Assigns a character to a residence staff position
-     * @param {string} residenceId - Residence ID
-     * @param {string} positionId - Position ID
-     * @param {string} characterId - Character ID
-     * @param {Object} options - Options
-     * @param {number} options.startYear - Start year (default: current)
-     * @param {number} options.endYear - End year (optional)
-     * @param {string} options.title - Custom title (default: position name)
-     * @param {string} options.notes - Notes
-     * @param {boolean} options.addRoleIfMissing - Add required role if missing (default: true)
-     * @param {number} options.defaultSkillLevel - Default skill level if adding role (default: 10)
-     * @returns {Object|null} Assignment or null
-     */
     function assignCharacterToResidenceStaffPosition(residenceId, positionId, characterId, options) {
         if (_processingAssignment) {
             _showToast('Already processing an assignment', 'warning');
@@ -2527,7 +2500,6 @@
                 return null;
             }
 
-            // Check if already assigned to this position
             if (!residence.staffAssignments) residence.staffAssignments = [];
             for (var i = 0; i < residence.staffAssignments.length; i++) {
                 if (residence.staffAssignments[i].positionId === positionId &&
@@ -2538,7 +2510,6 @@
                 }
             }
 
-            // Handle role requirement
             var roleId = position.requiredRoleId;
             var skillLevel = 0;
             var hasRole = false;
@@ -2626,14 +2597,6 @@
         }
     }
 
-    /**
-     * Ends a residence staff assignment
-     * @param {string} residenceId - Residence ID
-     * @param {string} assignmentId - Assignment ID
-     * @param {number} endYear - End year (default: current)
-     * @param {string} reason - Reason for ending
-     * @returns {Object|null} Updated assignment or null
-     */
     function endResidenceStaffAssignment(residenceId, assignmentId, endYear, reason) {
         if (_processingResidence) {
             _showToast('Already processing a residence operation', 'warning');
@@ -2701,16 +2664,6 @@
         }
     }
 
-    /**
-     * Gets staff assignments for a residence
-     * @param {string} residenceId - Residence ID
-     * @param {Object} options - Options
-     * @param {boolean} options.activeOnly - Only active assignments (default: true)
-     * @param {number} options.unitNumber - Filter by unit number
-     * @param {string} options.positionId - Filter by position ID
-     * @param {string} options.characterId - Filter by character ID
-     * @returns {Array} Array of staff assignments
-     */
     function getResidenceStaffAssignments(residenceId, options) {
         options = options || {};
         var residence = getResidenceById(residenceId);
@@ -2738,7 +2691,279 @@
     }
 
     // =========================================================================
-    // 24. CACHE MANAGEMENT
+    // 24. DEMOLISH RESIDENCE (NEW - Full Implementation)
+    // =========================================================================
+
+    /**
+     * Demolishes a full residence (keeps record of destruction)
+     * @param {string} residenceId - The residence to demolish
+     * @param {string} reason - Why it was demolished
+     * @param {number} year - When it was demolished
+     * @param {Object} options
+     * @param {string} options.destroyedBy - 'disaster', 'war', 'decay', etc.
+     * @param {string} options.disasterId - ID of the disaster that caused this
+     * @param {boolean} options.silent - Suppress toast notifications
+     * @returns {Object} - Demolition result
+     */
+    function demolishResidence(residenceId, reason, year, options) {
+        if (_processingResidence) {
+            return { success: false, error: 'Operation already in progress' };
+        }
+        _processingResidence = true;
+
+        try {
+            var residence = getResidenceById(residenceId);
+            if (!residence) {
+                return { success: false, error: 'Residence not found' };
+            }
+
+            if (residence.isDemolished) {
+                return { success: false, error: 'Residence already demolished' };
+            }
+
+            options = options || {};
+            var demolishYear = year || _getCurrentYear();
+            var demolishReason = reason || 'Demolished';
+
+            // Create demolition record
+            var demolitionRecord = {
+                residenceId: residence.id,
+                residenceName: residence.name,
+                locationId: residence.locationId,
+                locationName: residence.locationName || 'Unknown',
+                typeId: residence.typeId,
+                typeName: residence.typeName || 'Unknown',
+                demolishedYear: demolishYear,
+                demolishedReason: demolishReason,
+                destroyedBy: options.destroyedBy || 'manual',
+                disasterId: options.disasterId || null,
+                previousHouseholdId: residence.householdId,
+                previousHouseholdName: residence.householdName,
+                unitCount: (residence.units || []).length,
+                occupiedUnits: residence.occupiedUnits || 0,
+                previousCondition: residence.condition || 'good',
+                previousStatus: residence.status || 'active',
+                timestamp: Date.now()
+            };
+
+            // Demolish all units first
+            var units = (residence.units || []).slice();
+            var unitsDemolished = 0;
+
+            for (var i = 0; i < units.length; i++) {
+                var unit = units[i];
+                try {
+                    var result = demolishUnit(
+                        residenceId,
+                        unit.unitNumber,
+                        'Part of residence demolition: ' + demolishReason,
+                        demolishYear
+                    );
+                    if (result && result.success) {
+                        unitsDemolished++;
+                    }
+                } catch (e) {
+                    // Continue with other units
+                }
+            }
+
+            // Demolish the residence itself
+            var updates = {
+                status: RESIDENCE_STATUS.DEMOLISHED,
+                isDemolished: true,
+                demolishedAt: demolishYear,
+                demolishedReason: demolishReason,
+                destroyedBy: options.destroyedBy || 'manual',
+                disasterId: options.disasterId || null,
+                demolishedRecord: demolitionRecord,
+                householdId: null,
+                householdName: null,
+                isVacant: true,
+                occupiedUnits: 0,
+                vacantUnits: 0,
+                condition: 'ruined',
+                lastUpdated: Date.now()
+            };
+
+            // Add to damage history
+            if (!residence.damageHistory) residence.damageHistory = [];
+            residence.damageHistory.push({
+                year: demolishYear,
+                type: 'demolished',
+                reason: demolishReason,
+                destroyedBy: options.destroyedBy || 'manual',
+                disasterId: options.disasterId || null,
+                record: demolitionRecord,
+                timestamp: Date.now()
+            });
+
+            updateResidence(residenceId, updates);
+
+            // Add history
+            addResidenceHistory(residenceId, 'demolished', demolishReason, null);
+            addResidenceTimelineEvent(residenceId, {
+                year: demolishYear,
+                type: 'demolished',
+                details: 'Residence demolished: ' + demolishReason + (options.destroyedBy ? ' (Cause: ' + options.destroyedBy + ')' : ''),
+                householdName: residence.householdName || null
+            });
+
+            // Save
+            _saveMasterData();
+            _invalidateAccessorCaches();
+
+            if (!options.silent) {
+                _showToast('Residence "' + residence.name + '" demolished', 'info');
+            }
+
+            return {
+                success: true,
+                demolitionRecord: demolitionRecord,
+                unitsDemolished: unitsDemolished,
+                demolishedAt: demolishYear,
+                reason: demolishReason
+            };
+
+        } finally {
+            _processingResidence = false;
+        }
+    }
+
+    // =========================================================================
+    // 25. DEMOLISHED RESIDENCE QUERIES (NEW)
+    // =========================================================================
+
+    /**
+     * Gets demolished residences
+     * @param {Object} options
+     * @param {string} options.locationId - Filter by location
+     * @param {string} options.destroyedBy - Filter by cause
+     * @param {boolean} options.includeRecords - Include demolition records
+     * @returns {Array} - Array of demolished residences
+     */
+    function getDemolishedResidences(options) {
+        try {
+            var residences = getResidences();
+
+            options = options || {};
+            var filtered = residences.filter(function(r) {
+                return r.isDemolished === true;
+            });
+
+            if (options.locationId) {
+                filtered = filtered.filter(function(r) {
+                    return r.locationId === options.locationId;
+                });
+            }
+
+            if (options.destroyedBy) {
+                filtered = filtered.filter(function(r) {
+                    return r.destroyedBy === options.destroyedBy;
+                });
+            }
+
+            if (!options.includeRecords) {
+                filtered = filtered.map(function(r) {
+                    var result = { ...r };
+                    delete result.demolishedRecord;
+                    return result;
+                });
+            }
+
+            return filtered;
+        } catch (e) {
+            return [];
+        }
+    }
+
+    /**
+     * Gets damage history for a residence
+     * @param {string} residenceId - The residence ID
+     * @param {number} limit - Max entries to return
+     * @returns {Array} - Damage history entries
+     */
+    function getResidenceDamageHistory(residenceId, limit) {
+        try {
+            var residence = getResidenceById(residenceId);
+            if (!residence) return [];
+
+            var history = residence.damageHistory || [];
+            if (limit) {
+                history = history.slice(-limit);
+            }
+            return history;
+        } catch (e) {
+            return [];
+        }
+    }
+
+    /**
+     * Gets demolition statistics for a location
+     * @param {string} locationId - Location ID
+     * @returns {Object} - Demolition statistics
+     */
+    function getResidenceDemolitionStats(locationId) {
+        var stats = {
+            totalDemolished: 0,
+            byDestroyedBy: {},
+            byType: {},
+            totalUnitsLost: 0,
+            recentDemolitions: []
+        };
+
+        try {
+            var demolished = getDemolishedResidences({
+                locationId: locationId,
+                includeRecords: true
+            });
+
+            stats.totalDemolished = demolished.length;
+
+            for (var i = 0; i < demolished.length; i++) {
+                var r = demolished[i];
+                var record = r.demolishedRecord;
+
+                var destroyedBy = r.destroyedBy || 'unknown';
+                if (!stats.byDestroyedBy[destroyedBy]) {
+                    stats.byDestroyedBy[destroyedBy] = 0;
+                }
+                stats.byDestroyedBy[destroyedBy]++;
+
+                var type = r.typeName || r.typeId || 'unknown';
+                if (!stats.byType[type]) {
+                    stats.byType[type] = 0;
+                }
+                stats.byType[type]++;
+
+                if (record && record.unitCount) {
+                    stats.totalUnitsLost += record.unitCount;
+                }
+
+                if (stats.recentDemolitions.length < 5) {
+                    stats.recentDemolitions.push({
+                        name: r.name,
+                        type: r.typeName || r.typeId,
+                        destroyedAt: r.demolishedAt,
+                        destroyedBy: r.destroyedBy,
+                        reason: r.demolishedReason,
+                        unitsLost: record ? record.unitCount : 0
+                    });
+                }
+            }
+
+            stats.recentDemolitions.sort(function(a, b) {
+                return (b.destroyedAt || 0) - (a.destroyedAt || 0);
+            });
+
+        } catch (e) {
+            // Error getting stats
+        }
+
+        return stats;
+    }
+
+    // =========================================================================
+    // 26. CACHE MANAGEMENT
     // =========================================================================
 
     function clearCache() {
@@ -2751,7 +2976,7 @@
     }
 
     // =========================================================================
-    // 25. EXPORTS
+    // 27. EXPORTS
     // =========================================================================
 
     window.RESIDENCE_TYPES = RESIDENCE_TYPES;
@@ -2849,13 +3074,19 @@
         getUnitStats: getUnitStats,
         getLocationUnitStats: getLocationUnitStats,
 
-        // Staff Positions (NEW)
+        // Staff Positions
         addResidenceStaffPosition: addResidenceStaffPosition,
         removeResidenceStaffPosition: removeResidenceStaffPosition,
         getResidenceStaffPositions: getResidenceStaffPositions,
         assignCharacterToResidenceStaffPosition: assignCharacterToResidenceStaffPosition,
         endResidenceStaffAssignment: endResidenceStaffAssignment,
         getResidenceStaffAssignments: getResidenceStaffAssignments,
+
+        // NEW: Demolish functions
+        demolishResidence: demolishResidence,
+        getDemolishedResidences: getDemolishedResidences,
+        getResidenceDamageHistory: getResidenceDamageHistory,
+        getResidenceDemolitionStats: getResidenceDemolitionStats,
 
         // Cache
         clearCache: clearCache

@@ -59,82 +59,40 @@ function _showToast(message, type) {
     }
 }
 
+// =============================================================================
+// 2. ICON HELPERS - FIXED: No recursion
+// =============================================================================
+
 function _getIcon(name) {
-    if (typeof window._getIcon === 'function') {
-        return window._getIcon(name);
-    }
+    // Direct access to Icons object - no recursion
     if (window.Icons && window.Icons[name]) {
         return window.Icons[name];
     }
+    // Fallback: try the global _getIcon if it exists and is not this function
+    if (typeof window._getIcon === 'function' && window._getIcon !== _getIcon) {
+        return window._getIcon(name);
+    }
     return '';
 }
-
-function _getCharacterById(id) {
-    if (typeof window.getCharacterById === 'function') {
-        return window.getCharacterById(id);
-    }
-    return null;
-}
-
-function _getCharacters() {
-    if (typeof window.getCharacters === 'function') {
-        return window.getCharacters();
-    }
-    return window.masterData?.data?.characters || [];
-}
-
-function _getPlaceById(id) {
-    if (typeof window.getPlaceById === 'function') {
-        return window.getPlaceById(id);
-    }
-    return null;
-}
-
-function _getPlaces() {
-    if (typeof window.getPlaces === 'function') {
-        return window.getPlaces();
-    }
-    return window.masterData?.data?.places || [];
-}
-
-function _getCurrentYear() {
-    if (typeof window._getCurrentYear === 'function') {
-        return window._getCurrentYear();
-    }
-    if (typeof window.getCurrentYearSafe === 'function') {
-        return window.getCurrentYearSafe();
-    }
-    if (typeof window.getCurrentYear === 'function') {
-        return window.getCurrentYear();
-    }
-    return 1250;
-}
-
-function _debounce(fn, delay) {
-    var timeoutId;
-    return function() {
-        var args = arguments;
-        var context = this;
-        clearTimeout(timeoutId);
-        timeoutId = setTimeout(function() { fn.apply(context, args); }, delay);
-    };
-}
-
-// =============================================================================
-// 2. STATE REFERENCE
-// =============================================================================
-
-var _state = window.HouseholdState;
-var _queries = window.HouseholdQueries;
-
-// =============================================================================
-// 3. ICON HELPERS
-// =============================================================================
 
 function _getIconSafe(name) {
     var icon = _getIcon(name);
     return icon || '';
 }
+
+function _getIconFallback(name) {
+    var icon = _getIcon(name);
+    if (icon) return icon;
+    // Return a simple SVG circle as fallback
+    return '<svg viewBox="0 0 20 20" width="1em" height="1em" style="display:inline-block;fill:currentColor;stroke:currentColor;vertical-align:middle;"><circle cx="10" cy="10" r="5.71" fill="currentColor"/></svg>';
+}
+
+// =============================================================================
+// 3. STATE REFERENCE
+// =============================================================================
+
+var _state = window.HouseholdState;
+var _queries = window.HouseholdQueries;
 
 // =============================================================================
 // 4. SELECTOR STATE
@@ -281,8 +239,59 @@ function _renderMemberIndicator(charId, targetId) {
 }
 
 // =============================================================================
-// 7. LOCATION HELPERS
+// 7. CHARACTER & LOCATION HELPERS
 // =============================================================================
+
+function _getCharacterById(id) {
+    if (typeof window.getCharacterById === 'function') {
+        return window.getCharacterById(id);
+    }
+    return null;
+}
+
+function _getCharacters() {
+    if (typeof window.getCharacters === 'function') {
+        return window.getCharacters();
+    }
+    return window.masterData?.data?.characters || [];
+}
+
+function _getPlaceById(id) {
+    if (typeof window.getPlaceById === 'function') {
+        return window.getPlaceById(id);
+    }
+    return null;
+}
+
+function _getPlaces() {
+    if (typeof window.getPlaces === 'function') {
+        return window.getPlaces();
+    }
+    return window.masterData?.data?.places || [];
+}
+
+function _getCurrentYear() {
+    if (typeof window._getCurrentYear === 'function') {
+        return window._getCurrentYear();
+    }
+    if (typeof window.getCurrentYearSafe === 'function') {
+        return window.getCurrentYearSafe();
+    }
+    if (typeof window.getCurrentYear === 'function') {
+        return window.getCurrentYear();
+    }
+    return 1250;
+}
+
+function _debounce(fn, delay) {
+    var timeoutId;
+    return function() {
+        var args = arguments;
+        var context = this;
+        clearTimeout(timeoutId);
+        timeoutId = setTimeout(function() { fn.apply(context, args); }, delay);
+    };
+}
 
 function _getAllLocations() {
     var places = _getPlaces();

@@ -19,6 +19,10 @@
  *   - DisasterQueries.getDisasterSeverityStats()
  *   - DisasterQueries.getMostRecentDisaster(locationId)
  *   - DisasterQueries.getDeadliestDisasters(limit)
+ *   - DisasterQueries.getLocationDisasterRisk(locationId)
+ *   - DisasterQueries.getDestructionStatistics(locationId) - NEW
+ *   - DisasterQueries.getDestroyedItems(disasterId, type) - NEW
+ *   - DisasterQueries.getLocationDestroyedItems(locationId, options) - NEW
  * 
  * DEPENDENCIES:
  *   - disaster-state.js: DisasterState
@@ -54,6 +58,16 @@
         }
         var place = _getPlaceById(id);
         return place ? place.displayName : 'Unknown';
+    }
+
+    function _getCurrentYear() {
+        if (typeof window.getCurrentYearSafe === 'function') {
+            return window.getCurrentYearSafe();
+        }
+        if (typeof window.getCurrentYear === 'function') {
+            return window.getCurrentYear();
+        }
+        return 1250;
     }
 
     // =========================================================================
@@ -273,7 +287,393 @@
     }
 
     // =========================================================================
-    // 4. EXPORTS
+    // 4. DESTRUCTION STATISTICS (NEW)
+    // =========================================================================
+
+    /**
+     * Gets destruction statistics for a location
+     * @param {string} locationId - The location ID
+     * @returns {Object} - Destruction statistics
+     */
+    function getDestructionStatistics(locationId) {
+        var stats = {
+            locationId: locationId,
+            totalDisasters: 0,
+            totalDestructions: {
+                features: 0,
+                schools: 0,
+                enterprises: 0,
+                residences: 0,
+                households: 0
+            },
+            totalLoss: 0,
+            byDisasterType: {},
+            recentDestructions: [],
+            worstDisaster: null
+        };
+
+        try {
+            var disasters = getDisastersByLocation(locationId);
+            if (!disasters || disasters.length === 0) return stats;
+
+            stats.totalDisasters = disasters.length;
+
+            var worstLoss = 0;
+
+            for (var i = 0; i < disasters.length; i++) {
+                var disaster = disasters[i];
+                var damage = disaster.structuralDamage;
+                if (!damage) continue;
+
+                // Accumulate totals
+                stats.totalDestructions.features += damage.featuresDestroyed || 0;
+                stats.totalDestructions.schools += damage.schoolsDestroyed || 0;
+                stats.totalDestructions.enterprises += damage.enterprisesDestroyed || 0;
+                stats.totalDestructions.residences += damage.residencesDemolished || 0;
+                stats.totalDestructions.households += damage.householdsDestroyed || 0;
+                stats.totalLoss += damage.totalLoss || 0;
+
+                // By disaster type
+                var type = disaster.disasterId || 'unknown';
+                if (!stats.byDisasterType[type]) {
+                    stats.byDisasterType[type] = {
+                        count: 0,
+                        totalLoss: 0,
+                        destructions: { features: 0, schools: 0, enterprises: 0, residences: 0, households: 0 }
+                    };
+                }
+                stats.byDisasterType[type].count++;
+                stats.byDisasterType[type].totalLoss += damage.totalLoss || 0;
+                stats.byDisasterType[type].destructions.features += damage.featuresDestroyed || 0;
+                stats.byDisasterType[type].destructions.schools += damage.schoolsDestroyed || 0;
+                stats.byDisasterType[type].destructions.enterprises += damage.enterprisesDestroyed || 0;
+                stats.byDisasterType[type].destructions.residences += damage.residencesDemolished || 0;
+                stats.byDisasterType[type].destructions.households += damage.householdsDestroyed || 0;
+
+                // Track worst disaster
+                if ((damage.totalLoss || 0) > worstLoss) {
+                    worstLoss = damage.totalLoss || 0;
+                    stats.worstDisaster = {
+                        id: disaster.id,
+                        type: disaster.disasterType,
+                        year: disaster.year,
+                        totalLoss: damage.totalLoss,
+                        featuresDestroyed: damage.featuresDestroyed || 0,
+                        schoolsDestroyed: damage.schoolsDestroyed || 0,
+                        enterprisesDestroyed: damage.enterprisesDestroyed || 0,
+                        residencesDemolished: damage.residencesDemolished || 0,
+                        householdsDestroyed: damage.householdsDestroyed || 0
+                    };
+                }
+
+                // Recent destructions (last 5)
+                if (stats.recentDestructions.length < 5) {
+                    stats.recentDestructions.push({
+                        disasterId: disaster.id,
+                        type: disaster.disasterType,
+                        year: disaster.year,
+                        totalLoss: damage.totalLoss || 0,
+                        destructions: {
+                            features: damage.featuresDestroyed || 0,
+                            schools: damage.schoolsDestroyed || 0,
+                            enterprises: damage.enterprisesDestroyed || 0,
+                            residences: damage.residencesDemolished || 0,
+                            households: damage.householdsDestroyed || 0
+                        }
+                    });
+                }
+            }
+
+            // Sort recent by year (newest first)
+            stats.recentDestructions.sort(function(a, b) {
+                return (b.year || 0) - (a.year || 0);
+            });
+
+        } catch (e) {
+            // Error getting stats
+        }
+
+        return stats;
+    }
+
+    /**
+     * Gets all destroyed items from a disaster
+     * @param {string} disasterId - The disaster ID
+     * @param {string} type - Optional: 'features', 'schools', 'enterprises', 'residences', 'households'
+     * @returns {Array} - List of destroyed items
+     */
+    function getDestroyedItems(disasterId, type) {
+        try {
+            var disaster = getDisaster(disasterId);
+            if (!disaster) return [];
+
+            var damage = disaster.structuralDamage;
+            if (!damage) return [];
+
+            if (type) {
+                return damage.destructionList ? damage.destructionList[type] || [] : [];
+            }
+
+            // Return all
+            var all = [];
+            var lists = damage.destructionList || {};
+            for (var key in lists) {
+                if (lists.hasOwnProperty(key)) {
+                    var items = lists[key] || [];
+                    for (var i = 0; i < items.length; i++) {
+                        all.push({ ...items[i], category: key });
+                    }
+                }
+            }
+            return all;
+        } catch (e) {
+            return [];
+        }
+    }
+
+    /**
+     * Gets all destroyed items for a location
+     * @param {string} locationId - Location ID
+     * @param {Object} options - Filter options
+     * @param {string} options.type - Filter by type
+     * @param {number} options.limit - Max items to return
+     * @returns {Array} - Array of destroyed items
+     */
+    function getLocationDestroyedItems(locationId, options) {
+        options = options || {};
+        var result = [];
+        var limit = options.limit || 50;
+
+        try {
+            var disasters = getDisastersByLocation(locationId);
+            if (!disasters || disasters.length === 0) return result;
+
+            // Collect from all disasters
+            for (var i = 0; i < disasters.length; i++) {
+                var disaster = disasters[i];
+                var damage = disaster.structuralDamage;
+                if (!damage) continue;
+
+                var lists = damage.destructionList || {};
+                for (var key in lists) {
+                    if (lists.hasOwnProperty(key)) {
+                        if (options.type && options.type !== key) continue;
+                        var items = lists[key] || [];
+                        for (var j = 0; j < items.length; j++) {
+                            result.push({
+                                ...items[j],
+                                category: key,
+                                disasterId: disaster.id,
+                                disasterType: disaster.disasterType,
+                                disasterYear: disaster.year
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Sort by year (most recent first)
+            result.sort(function(a, b) {
+                return (b.year || 0) - (a.year || 0);
+            });
+
+            // Apply limit
+            if (result.length > limit) {
+                result = result.slice(0, limit);
+            }
+
+        } catch (e) {
+            // Error getting items
+        }
+
+        return result;
+    }
+
+    /**
+     * Gets destruction statistics across all locations
+     * @returns {Object} - Global destruction statistics
+     */
+    function getGlobalDestructionStatistics() {
+        var stats = {
+            totalDisasters: 0,
+            totalDestructions: {
+                features: 0,
+                schools: 0,
+                enterprises: 0,
+                residences: 0,
+                households: 0
+            },
+            totalLoss: 0,
+            byDisasterType: {},
+            byLocation: {},
+            worstDisaster: null,
+            deadliestDisaster: null
+        };
+
+        try {
+            var disasters = getAllDisasters();
+            stats.totalDisasters = disasters.length;
+
+            var worstLoss = 0;
+            var maxDeaths = 0;
+
+            for (var i = 0; i < disasters.length; i++) {
+                var disaster = disasters[i];
+                var damage = disaster.structuralDamage;
+                if (!damage) continue;
+
+                // Accumulate totals
+                stats.totalDestructions.features += damage.featuresDestroyed || 0;
+                stats.totalDestructions.schools += damage.schoolsDestroyed || 0;
+                stats.totalDestructions.enterprises += damage.enterprisesDestroyed || 0;
+                stats.totalDestructions.residences += damage.residencesDemolished || 0;
+                stats.totalDestructions.households += damage.householdsDestroyed || 0;
+                stats.totalLoss += damage.totalLoss || 0;
+
+                // By disaster type
+                var type = disaster.disasterId || 'unknown';
+                if (!stats.byDisasterType[type]) {
+                    stats.byDisasterType[type] = {
+                        count: 0,
+                        totalLoss: 0,
+                        destructions: { features: 0, schools: 0, enterprises: 0, residences: 0, households: 0 }
+                    };
+                }
+                stats.byDisasterType[type].count++;
+                stats.byDisasterType[type].totalLoss += damage.totalLoss || 0;
+                stats.byDisasterType[type].destructions.features += damage.featuresDestroyed || 0;
+                stats.byDisasterType[type].destructions.schools += damage.schoolsDestroyed || 0;
+                stats.byDisasterType[type].destructions.enterprises += damage.enterprisesDestroyed || 0;
+                stats.byDisasterType[type].destructions.residences += damage.residencesDemolished || 0;
+                stats.byDisasterType[type].destructions.households += damage.householdsDestroyed || 0;
+
+                // By location
+                var locationKey = disaster.locationId || 'unknown';
+                if (!stats.byLocation[locationKey]) {
+                    stats.byLocation[locationKey] = {
+                        count: 0,
+                        totalLoss: 0,
+                        destructions: { features: 0, schools: 0, enterprises: 0, residences: 0, households: 0 }
+                    };
+                }
+                stats.byLocation[locationKey].count++;
+                stats.byLocation[locationKey].totalLoss += damage.totalLoss || 0;
+                stats.byLocation[locationKey].destructions.features += damage.featuresDestroyed || 0;
+                stats.byLocation[locationKey].destructions.schools += damage.schoolsDestroyed || 0;
+                stats.byLocation[locationKey].destructions.enterprises += damage.enterprisesDestroyed || 0;
+                stats.byLocation[locationKey].destructions.residences += damage.residencesDemolished || 0;
+                stats.byLocation[locationKey].destructions.households += damage.householdsDestroyed || 0;
+
+                // Track worst disaster
+                if ((damage.totalLoss || 0) > worstLoss) {
+                    worstLoss = damage.totalLoss || 0;
+                    stats.worstDisaster = {
+                        id: disaster.id,
+                        type: disaster.disasterType,
+                        year: disaster.year,
+                        location: disaster.locationName,
+                        totalLoss: damage.totalLoss,
+                        featuresDestroyed: damage.featuresDestroyed || 0,
+                        schoolsDestroyed: damage.schoolsDestroyed || 0,
+                        enterprisesDestroyed: damage.enterprisesDestroyed || 0,
+                        residencesDemolished: damage.residencesDemolished || 0,
+                        householdsDestroyed: damage.householdsDestroyed || 0
+                    };
+                }
+
+                // Track deadliest disaster
+                if ((disaster.deaths || 0) > maxDeaths) {
+                    maxDeaths = disaster.deaths || 0;
+                    stats.deadliestDisaster = {
+                        id: disaster.id,
+                        type: disaster.disasterType,
+                        year: disaster.year,
+                        location: disaster.locationName,
+                        deaths: disaster.deaths || 0,
+                        severity: disaster.severity || 0
+                    };
+                }
+            }
+
+        } catch (e) {
+            // Error getting stats
+        }
+
+        return stats;
+    }
+
+    /**
+     * Gets destruction statistics by disaster type
+     * @param {string} disasterId - The disaster type ID
+     * @returns {Object} - Destruction statistics for that type
+     */
+    function getDisasterTypeDestructionStats(disasterId) {
+        var stats = {
+            disasterId: disasterId,
+            count: 0,
+            totalLoss: 0,
+            destructions: {
+                features: 0,
+                schools: 0,
+                enterprises: 0,
+                residences: 0,
+                households: 0
+            },
+            averageLoss: 0,
+            locations: []
+        };
+
+        try {
+            var disasters = getAllDisasters();
+            var typeDisasters = disasters.filter(function(d) {
+                return d.disasterId === disasterId || d.disasterType === disasterId;
+            });
+
+            stats.count = typeDisasters.length;
+
+            var locationMap = {};
+
+            for (var i = 0; i < typeDisasters.length; i++) {
+                var disaster = typeDisasters[i];
+                var damage = disaster.structuralDamage;
+                if (!damage) continue;
+
+                stats.totalLoss += damage.totalLoss || 0;
+                stats.destructions.features += damage.featuresDestroyed || 0;
+                stats.destructions.schools += damage.schoolsDestroyed || 0;
+                stats.destructions.enterprises += damage.enterprisesDestroyed || 0;
+                stats.destructions.residences += damage.residencesDemolished || 0;
+                stats.destructions.households += damage.householdsDestroyed || 0;
+
+                var locationKey = disaster.locationId || 'unknown';
+                if (!locationMap[locationKey]) {
+                    locationMap[locationKey] = {
+                        locationId: disaster.locationId,
+                        locationName: disaster.locationName || 'Unknown',
+                        count: 0,
+                        totalLoss: 0
+                    };
+                }
+                locationMap[locationKey].count++;
+                locationMap[locationKey].totalLoss += damage.totalLoss || 0;
+            }
+
+            stats.locations = Object.values(locationMap);
+            stats.locations.sort(function(a, b) {
+                return b.totalLoss - a.totalLoss;
+            });
+
+            stats.averageLoss = stats.count > 0 ? stats.totalLoss / stats.count : 0;
+
+        } catch (e) {
+            // Error getting stats
+        }
+
+        return stats;
+    }
+
+    // =========================================================================
+    // 5. EXPORTS
     // =========================================================================
 
     window.DisasterQueries = {
@@ -291,7 +691,14 @@
         getDisasterSeverityStats: getDisasterSeverityStats,
         getMostRecentDisaster: getMostRecentDisaster,
         getDeadliestDisasters: getDeadliestDisasters,
-        getLocationDisasterRisk: getLocationDisasterRisk
+        getLocationDisasterRisk: getLocationDisasterRisk,
+
+        // NEW: Destruction statistics
+        getDestructionStatistics: getDestructionStatistics,
+        getDestroyedItems: getDestroyedItems,
+        getLocationDestroyedItems: getLocationDestroyedItems,
+        getGlobalDestructionStatistics: getGlobalDestructionStatistics,
+        getDisasterTypeDestructionStats: getDisasterTypeDestructionStats
     };
 
     // Legacy aliases

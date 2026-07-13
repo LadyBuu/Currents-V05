@@ -13,12 +13,14 @@
  *   - Record surrogacy
  *   - Recursion guard
  *   - Event emission
+ *   - RELIGION INHERITANCE - Children inherit religion from parents at birth
  * 
  * DEPENDENCIES:
  *   - children-state.js (ChildrenState)
  *   - character-commands.js (CharacterCommands)
  *   - family-logic.js (FamilyLogic)
  *   - accessors.js (getCharacterById, getCharacters)
+ *   - religion-inheritance.js (ReligionInheritance)
  * 
  * =============================================================================
  */
@@ -149,13 +151,60 @@
     }
 
     // =========================================================================
-    // 3. RECURSION GUARD
+    // 3. RELIGION INHERITANCE WRAPPERS (NEW)
+    // =========================================================================
+
+    function _inheritReligionForChild(childId, motherId, fatherId, locationId, options) {
+        if (typeof window.ReligionInheritance !== 'undefined' &&
+            typeof window.ReligionInheritance.inheritReligionForChild === 'function') {
+            return window.ReligionInheritance.inheritReligionForChild(childId, motherId, fatherId, locationId, options);
+        }
+        // Fallback: try to assign from mother or father directly
+        var mother = motherId ? _getCharacterById(motherId) : null;
+        var father = fatherId ? _getCharacterById(fatherId) : null;
+        var child = _getCharacterById(childId);
+        
+        if (!child) return null;
+        
+        // If mother has religion, use it
+        if (mother && mother.religionId) {
+            if (typeof window.CharacterCommands !== 'undefined' &&
+                typeof window.CharacterCommands.assignCharacterReligion === 'function') {
+                return window.CharacterCommands.assignCharacterReligion(childId, mother.religionId, {
+                    year: child.birthYear || _getCurrentYear(),
+                    reason: 'inheritance',
+                    notes: 'Inherited from mother (fallback)',
+                    inherited: true,
+                    inheritedFrom: 'mother'
+                });
+            }
+        }
+        
+        // If father has religion, use it
+        if (father && father.religionId) {
+            if (typeof window.CharacterCommands !== 'undefined' &&
+                typeof window.CharacterCommands.assignCharacterReligion === 'function') {
+                return window.CharacterCommands.assignCharacterReligion(childId, father.religionId, {
+                    year: child.birthYear || _getCurrentYear(),
+                    reason: 'inheritance',
+                    notes: 'Inherited from father (fallback)',
+                    inherited: true,
+                    inheritedFrom: 'father'
+                });
+            }
+        }
+        
+        return null;
+    }
+
+    // =========================================================================
+    // 4. RECURSION GUARD
     // =========================================================================
 
     var _processing = false;
 
     // =========================================================================
-    // 4. RECORD BIRTH
+    // 5. RECORD BIRTH (with Religion Inheritance)
     // =========================================================================
 
     /**
@@ -171,6 +220,7 @@
      * @param {string} options.notes - Notes
      * @param {string} options.birthplaceId - Birthplace location ID
      * @param {boolean} options.autoAssignHousehold - Auto-assign to parent's household
+     * @param {boolean} options.inheritReligion - Inherit religion from parents (default: true)
      * @returns {Object} Result object with child
      */
     function recordBirth(mother, father, birthYear, options) {
@@ -226,6 +276,27 @@
                 return { success: false, reason: 'Failed to create child' };
             }
 
+            // ================================================================
+            // NEW: INHERIT RELIGION FROM PARENTS
+            // ================================================================
+            if (options.inheritReligion !== false && !child.isDeceased) {
+                var religionResult = _inheritReligionForChild(
+                    child.id,
+                    mother ? mother.id : null,
+                    father ? father.id : null,
+                    options.birthplaceId || mother.currentLocationId || null,
+                    {
+                        year: birthYear,
+                        notes: 'Inherited at birth'
+                    }
+                );
+
+                if (religionResult && religionResult.success) {
+                    // Religion was inherited
+                    // The child's religionId is already set by the inheritance function
+                }
+            }
+
             // Record pregnancy
             var state = _getState();
             if (state) {
@@ -244,7 +315,8 @@
                 child.name + ' born to ' + mother.name + (father ? ' and ' + father.name : '') + ' in ' + birthYear,
                 [mother, father, child]);
 
-            _showToast(child.name + ' born!', 'success');
+            var religionInfo = child.religionId ? ' (' + (child._religionName || 'with religion') + ')' : '';
+            _showToast(child.name + ' born' + religionInfo, 'success');
 
             _saveMasterData();
             _invalidateCaches();
@@ -257,7 +329,7 @@
     }
 
     // =========================================================================
-    // 5. RECORD ADOPTION
+    // 6. RECORD ADOPTION (with optional religion inheritance)
     // =========================================================================
 
     /**
@@ -270,6 +342,7 @@
      * @param {string} options.notes - Notes
      * @param {string} options.parentType - 'father', 'mother', or 'guardian'
      * @param {Object} options.partner - Co-parent (optional)
+     * @param {boolean} options.inheritReligion - Inherit religion from adoptive parents (default: true)
      * @returns {Object} Result object
      */
     function recordAdoption(parent, child, options) {
@@ -361,6 +434,26 @@
                 });
             }
 
+            // ================================================================
+            // NEW: INHERIT RELIGION FROM ADOPTIVE PARENTS
+            // ================================================================
+            if (options.inheritReligion !== false && child.religionId === null) {
+                var religionResult = _inheritReligionForChild(
+                    child.id,
+                    parent,
+                    options.partner || null,
+                    parent.currentLocationId || null,
+                    {
+                        year: year,
+                        notes: 'Inherited from adoptive parent'
+                    }
+                );
+
+                if (religionResult && religionResult.success) {
+                    // Child inherited religion from adoptive parent
+                }
+            }
+
             // Update state
             var state = _getState();
             if (state) {
@@ -394,7 +487,7 @@
     }
 
     // =========================================================================
-    // 6. REMOVE ADOPTION
+    // 7. REMOVE ADOPTION
     // =========================================================================
 
     /**
@@ -467,6 +560,9 @@
                 });
             }
 
+            // Note: Religion is NOT removed on adoption dissolution
+            // The child keeps their religion regardless
+
             // Update state
             var state = _getState();
             if (state) {
@@ -502,7 +598,7 @@
     }
 
     // =========================================================================
-    // 7. LEGITIMIZE CHILD
+    // 8. LEGITIMIZE CHILD (with optional religion inheritance)
     // =========================================================================
 
     /**
@@ -516,6 +612,7 @@
      * @param {string} options.inheritanceRights - 'full', 'limited', 'none'
      * @param {string} options.notes - Notes
      * @param {boolean} options.autoAssignHousehold - Auto-assign to parent's household
+     * @param {boolean} options.inheritReligion - Inherit religion from legitimizing parents (default: true)
      * @returns {Object} Result object
      */
     function legitimizeChild(child, father, mother, options) {
@@ -566,6 +663,26 @@
                 child.surname = (father.surname || '') + '-' + (mother.surname || '');
             }
 
+            // ================================================================
+            // NEW: INHERIT RELIGION FROM LEGITIMIZING PARENTS
+            // ================================================================
+            if (options.inheritReligion !== false && child.religionId === null) {
+                var religionResult = _inheritReligionForChild(
+                    child.id,
+                    mother ? mother.id : null,
+                    father ? father.id : null,
+                    (mother ? mother.currentLocationId : father ? father.currentLocationId : null),
+                    {
+                        year: year,
+                        notes: 'Inherited during legitimization'
+                    }
+                );
+
+                if (religionResult && religionResult.success) {
+                    // Child inherited religion
+                }
+            }
+
             // Record legitimization
             if (!child.legitimization) child.legitimization = [];
             child.legitimization.push({
@@ -605,7 +722,7 @@
     }
 
     // =========================================================================
-    // 8. RECORD SURROGACY
+    // 9. RECORD SURROGACY (with optional religion inheritance)
     // =========================================================================
 
     /**
@@ -618,6 +735,7 @@
      * @param {Object} options.spermDonor - Sperm donor (optional)
      * @param {Object} options.eggDonor - Egg donor (optional)
      * @param {string} options.notes - Notes
+     * @param {boolean} options.inheritReligion - Inherit religion from intended parents (default: true)
      * @returns {Object} Result object
      */
     function recordSurrogacy(intendedParent, surrogate, options) {
@@ -692,11 +810,33 @@
                         child.geneticFatherId = geneticFather.id;
                     }
 
+                    // ============================================================
+                    // NEW: INHERIT RELIGION FROM INTENDED PARENTS
+                    // ============================================================
+                    if (options.inheritReligion !== false && !child.isDeceased) {
+                        var intendedParentChar = _getCharacterById(intendedParentId);
+                        var intendedPartnerChar = intendedPartnerId ? _getCharacterById(intendedPartnerId) : null;
+
+                        var religionResult = _inheritReligionForChild(
+                            child.id,
+                            intendedPartnerChar || intendedParentChar,
+                            intendedParentChar || null,
+                            surrogate.currentLocationId || null,
+                            {
+                                year: birthYear,
+                                notes: 'Inherited from intended parent via surrogacy'
+                            }
+                        );
+
+                        if (religionResult && religionResult.success) {
+                            // Child inherited religion
+                        }
+                    }
+
                     children.push(child);
 
                     // Create adoption for intended parents
                     if (!isStillborn && typeof window.ChildrenCommands !== 'undefined') {
-                        // Use the adoption function if available
                         try {
                             var parentChar = _getCharacterById(intendedParentId);
                             if (parentChar) {
@@ -704,7 +844,8 @@
                                     year: birthYear,
                                     type: 'legal',
                                     notes: 'Surrogacy arrangement',
-                                    parentType: parentChar.gender === 'male' ? 'father' : 'mother'
+                                    parentType: parentChar.gender === 'male' ? 'father' : 'mother',
+                                    inheritReligion: false  // Already inherited above
                                 });
                             }
                         } catch (e) {
@@ -770,7 +911,7 @@
     }
 
     // =========================================================================
-    // 9. UPDATE SURROGACY RECORD
+    // 10. UPDATE SURROGACY RECORD
     // =========================================================================
 
     function updateSurrogacyRecord(recordId, updates) {
@@ -804,7 +945,60 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 11. BULK BIRTH WITH RELIGION INHERITANCE (NEW)
+    // =========================================================================
+
+    /**
+     * Generates multiple children for a couple with automatic religion inheritance
+     * @param {Object} mother - Mother character
+     * @param {Object} father - Father character (optional)
+     * @param {number} count - Number of children to generate
+     * @param {number} baseYear - Base year for births
+     * @param {Object} options - Options
+     * @param {number} options.spacing - Years between children (default: 2)
+     * @param {boolean} options.inheritReligion - Inherit religion (default: true)
+     * @returns {Object} Result with children array
+     */
+    function generateChildrenForCouple(mother, father, count, baseYear, options) {
+        if (_processing) {
+            return { success: false, reason: 'Already processing', children: [] };
+        }
+        _processing = true;
+
+        try {
+            options = options || {};
+            var spacing = options.spacing || 2;
+            var children = [];
+
+            for (var i = 0; i < count; i++) {
+                var birthYear = baseYear + (i * spacing);
+                var gender = Math.random() < 0.5 ? 'male' : 'female';
+
+                var result = recordBirth(mother, father, birthYear, {
+                    gender: gender,
+                    birthplaceId: mother.currentLocationId || mother.birthplaceId || null,
+                    inheritReligion: options.inheritReligion !== false,
+                    notes: options.notes || 'Batch birth #' + (i + 1)
+                });
+
+                if (result && result.success) {
+                    children.push(result.child);
+                }
+            }
+
+            return {
+                success: true,
+                children: children,
+                count: children.length
+            };
+
+        } finally {
+            _processing = false;
+        }
+    }
+
+    // =========================================================================
+    // 12. EXPORTS
     // =========================================================================
 
     window.ChildrenCommands = {
@@ -813,7 +1007,8 @@
         removeAdoption: removeAdoption,
         legitimizeChild: legitimizeChild,
         recordSurrogacy: recordSurrogacy,
-        updateSurrogacyRecord: updateSurrogacyRecord
+        updateSurrogacyRecord: updateSurrogacyRecord,
+        generateChildrenForCouple: generateChildrenForCouple  // NEW
     };
 
     // Legacy aliases

@@ -12,6 +12,8 @@
  *   - DisasterStatsUI.renderDisasterList(containerId, disasters, options)
  *   - DisasterStatsUI.renderDisasterChart(containerId, data, type)
  *   - DisasterStatsUI.renderRiskIndicator(containerId, locationId)
+ *   - DisasterStatsUI.renderDestructionStats(containerId, locationId) - NEW
+ *   - DisasterStatsUI.renderDestroyedItems(containerId, disasterId, type) - NEW
  *   - DisasterStatsUI.refreshAll()
  * 
  * DEPENDENCIES:
@@ -89,6 +91,14 @@
         if (typeof window.DisasterModals !== 'undefined' && 
             typeof window.DisasterModals.openDisasterDetailsModal === 'function') {
             return window.DisasterModals.openDisasterDetailsModal(disasterId);
+        }
+        return null;
+    }
+
+    function _openDestroyedItemsModal(disasterId) {
+        if (typeof window.DisasterModals !== 'undefined' && 
+            typeof window.DisasterModals.openDestroyedItemsModal === 'function') {
+            return window.DisasterModals.openDestroyedItemsModal(disasterId);
         }
         return null;
     }
@@ -302,11 +312,14 @@
                     _escapeHtml(locationName) +
                     (d.deaths ? ' · ' + d.deaths + ' deaths' : '') +
                     (d.prosperityLoss ? ' · -' + d.prosperityLoss + ' prosperity' : '') +
+                    (d.totalLoss ? ' · ' + d.totalLoss + ' gold lost' : '') +
                     '</div>' +
                     (d.description ? '<div style="font-size: 0.55rem; color: var(--dim);">' + _escapeHtml(d.description.substring(0, 80)) + (d.description.length > 80 ? '...' : '') + '</div>' : '') +
                     '</div>' +
                     (showActions ? '<div style="display: flex; gap: 4px; flex-shrink: 0;">' +
                         '<button class="disaster-detail-btn" style="padding: 2px 8px; font-size: 0.5rem; background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Details</button>' +
+                        (d.structuralDamage && (d.structuralDamage.featuresDestroyed > 0 || d.structuralDamage.schoolsDestroyed > 0 || d.structuralDamage.enterprisesDestroyed > 0) ?
+                            '<button class="disaster-destroyed-btn" style="padding: 2px 8px; font-size: 0.5rem; background: var(--bg2); border: 1px solid var(--warn); border-radius: 4px; cursor: pointer;">Destruction</button>' : '') +
                         '</div>' : '') +
                     '</div>' +
                     '</div>';
@@ -321,11 +334,19 @@
                 (function(item) {
                     var disasterId = item.dataset.disasterId;
                     var detailBtn = item.querySelector('.disaster-detail-btn');
+                    var destroyedBtn = item.querySelector('.disaster-destroyed-btn');
 
                     if (detailBtn) {
                         detailBtn.addEventListener('click', function(e) {
                             e.stopPropagation();
                             _openDisasterDetailsModal(disasterId);
+                        });
+                    }
+
+                    if (destroyedBtn) {
+                        destroyedBtn.addEventListener('click', function(e) {
+                            e.stopPropagation();
+                            _openDestroyedItemsModal(disasterId);
                         });
                     }
 
@@ -488,7 +509,169 @@
     }
 
     // =========================================================================
-    // 6. REFRESH ALL
+    // 6. RENDER DESTRUCTION STATS (NEW)
+    // =========================================================================
+
+    /**
+     * Renders destruction statistics panel
+     * @param {string} containerId - Container element ID
+     * @param {string} locationId - Location ID
+     * @returns {boolean} - True if rendered
+     */
+    function renderDestructionStats(containerId, locationId) {
+        if (_processingRender) return false;
+        _processingRender = true;
+
+        try {
+            var container = document.getElementById(containerId);
+            if (!container) return false;
+
+            var stats = window.DisasterQueries.getDestructionStatistics(locationId);
+            if (!stats || stats.totalDisasters === 0) {
+                container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--dim);font-size:0.65rem;">No destruction records found.</div>';
+                return true;
+            }
+
+            var locationName = locationId ? _getPlaceName(locationId) : 'Global';
+
+            var html = '<div class="destruction-stats-panel">';
+
+            // Header
+            html += '<div style="margin-bottom:12px;font-size:0.7rem;color:var(--accent);">' +
+                'Destruction Statistics: ' + _escapeHtml(locationName) +
+                '</div>';
+
+            // Summary
+            html +=
+                '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px;">' +
+                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; text-align: center;">' +
+                '<div style="font-size: 0.5rem; color: var(--dim);">Total Disasters</div>' +
+                '<div style="font-size: 1rem; font-weight: bold;">' + stats.totalDisasters + '</div>' +
+                '</div>' +
+                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; text-align: center;">' +
+                '<div style="font-size: 0.5rem; color: var(--dim);">Total Loss</div>' +
+                '<div style="font-size: 1rem; font-weight: bold; color: var(--warn);">' + stats.totalLoss + ' gold</div>' +
+                '</div>' +
+                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; text-align: center;">' +
+                '<div style="font-size: 0.5rem; color: var(--dim);">Items Destroyed</div>' +
+                '<div style="font-size: 1rem; font-weight: bold;">' + 
+                (stats.totalDestructions.features + stats.totalDestructions.schools + 
+                 stats.totalDestructions.enterprises + stats.totalDestructions.residences + 
+                 stats.totalDestructions.households) + 
+                '</div>' +
+                '</div>' +
+                '</div>';
+
+            // Destruction breakdown
+            html +=
+                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; margin-bottom: 12px;">' +
+                '<div style="font-size: 0.55rem; color: var(--dim); margin-bottom: 4px;">Structures Destroyed</div>' +
+                '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr; gap: 4px;">' +
+                '<div style="text-align:center;font-size:0.55rem;"><span style="color:var(--dim);">Features</span><br><strong>' + stats.totalDestructions.features + '</strong></div>' +
+                '<div style="text-align:center;font-size:0.55rem;"><span style="color:var(--dim);">Schools</span><br><strong>' + stats.totalDestructions.schools + '</strong></div>' +
+                '<div style="text-align:center;font-size:0.55rem;"><span style="color:var(--dim);">Enterprises</span><br><strong>' + stats.totalDestructions.enterprises + '</strong></div>' +
+                '<div style="text-align:center;font-size:0.55rem;"><span style="color:var(--dim);">Residences</span><br><strong>' + stats.totalDestructions.residences + '</strong></div>' +
+                '<div style="text-align:center;font-size:0.55rem;"><span style="color:var(--dim);">Households</span><br><strong>' + stats.totalDestructions.households + '</strong></div>' +
+                '</div>' +
+                '</div>';
+
+            // Worst disaster
+            if (stats.worstDisaster) {
+                var w = stats.worstDisaster;
+                html +=
+                    '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; margin-bottom: 8px; font-size: 0.6rem;">' +
+                    '<span style="color: var(--dim);">Worst Disaster: </span>' +
+                    _escapeHtml(w.type) + ' (' + w.year + ') - ' + w.totalLoss + ' gold lost' +
+                    (w.featuresDestroyed ? ' · ' + w.featuresDestroyed + ' features' : '') +
+                    (w.schoolsDestroyed ? ' · ' + w.schoolsDestroyed + ' schools' : '') +
+                    (w.enterprisesDestroyed ? ' · ' + w.enterprisesDestroyed + ' enterprises' : '') +
+                    '</div>';
+            }
+
+            // By disaster type
+            if (stats.byDisasterType && Object.keys(stats.byDisasterType).length > 0) {
+                html +=
+                    '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; margin-bottom: 8px;">' +
+                    '<div style="font-size: 0.5rem; color: var(--dim); margin-bottom: 4px;">By Disaster Type</div>';
+                var typeEntries = Object.entries(stats.byDisasterType).sort(function(a, b) { return b[1].totalLoss - a[1].totalLoss; });
+                for (var i = 0; i < Math.min(typeEntries.length, 5); i++) {
+                    var entry = typeEntries[i];
+                    html +=
+                        '<div style="display:flex;justify-content:space-between;font-size:0.55rem;padding:2px 0;border-bottom:1px solid var(--border-light);">' +
+                        '<span>' + _escapeHtml(entry[0]) + ' (' + entry[1].count + ')</span>' +
+                        '<span style="color:var(--warn);">' + entry[1].totalLoss + ' gold</span>' +
+                        '</div>';
+                }
+                html += '</div>';
+            }
+
+            html += '</div>';
+
+            container.innerHTML = html;
+            return true;
+
+        } catch (e) {
+            container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--dim);font-size:0.65rem;">Error loading destruction stats.</div>';
+            return false;
+        } finally {
+            _processingRender = false;
+        }
+    }
+
+    /**
+     * Renders a list of destroyed items from a disaster
+     * @param {string} containerId - Container element ID
+     * @param {string} disasterId - Disaster ID
+     * @param {string} type - Optional: filter by type
+     * @returns {boolean} - True if rendered
+     */
+    function renderDestroyedItems(containerId, disasterId, type) {
+        if (_processingRender) return false;
+        _processingRender = true;
+
+        try {
+            var container = document.getElementById(containerId);
+            if (!container) return false;
+
+            var items = window.DisasterQueries.getDestroyedItems(disasterId, type);
+            if (!items || items.length === 0) {
+                container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--dim);font-size:0.65rem;">No destroyed items found.</div>';
+                return true;
+            }
+
+            var html = '<div class="destroyed-items-list" style="max-height:300px;overflow-y:auto;">';
+            for (var i = 0; i < items.length; i++) {
+                var item = items[i];
+                var category = item.category || item.type || 'unknown';
+                var categoryColor = category === 'features' ? 'var(--accent)' :
+                                   category === 'schools' ? 'var(--accent-dim)' :
+                                   category === 'enterprises' ? 'var(--warn)' :
+                                   category === 'residences' ? 'var(--danger)' :
+                                   'var(--dim)';
+
+                html +=
+                    '<div style="display:flex;justify-content:space-between;padding:4px 8px;background:var(--bg2);border-radius:4px;margin-bottom:2px;font-size:0.6rem;border-left:2px solid ' + categoryColor + ';">' +
+                    '<span>' + _escapeHtml(item.name || item.id) + '</span>' +
+                    '<span style="color:var(--dim);font-size:0.5rem;">' + _escapeHtml(category) + 
+                    (item.year ? ' · ' + item.year : '') +
+                    '</span>' +
+                    '</div>';
+            }
+            html += '</div>';
+
+            container.innerHTML = html;
+            return true;
+
+        } catch (e) {
+            container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--dim);font-size:0.65rem;">Error loading destroyed items.</div>';
+            return false;
+        } finally {
+            _processingRender = false;
+        }
+    }
+
+    // =========================================================================
+    // 7. REFRESH ALL
     // =========================================================================
 
     function refreshAll(locationId) {
@@ -521,10 +704,19 @@
                 renderRiskIndicator(container.id, locationId);
             }
         }
+
+        // NEW: Find all destruction stats panels
+        var destPanels = document.querySelectorAll('.destruction-stats-panel');
+        for (var i = 0; i < destPanels.length; i++) {
+            var container = destPanels[i].parentElement;
+            if (container && container.id) {
+                renderDestructionStats(container.id, locationId);
+            }
+        }
     }
 
     // =========================================================================
-    // 7. EXPORTS
+    // 8. EXPORTS
     // =========================================================================
 
     window.DisasterStatsUI = {
@@ -532,6 +724,8 @@
         renderDisasterList: renderDisasterList,
         renderDisasterChart: renderDisasterChart,
         renderRiskIndicator: renderRiskIndicator,
+        renderDestructionStats: renderDestructionStats,
+        renderDestroyedItems: renderDestroyedItems,
         refreshAll: refreshAll
     };
 

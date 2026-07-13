@@ -1,16 +1,14 @@
 /**
  * =============================================================================
- * HOUSEHOLD COMMANDS (household-commands.js)
+ * STILL WATERS - HOUSEHOLD COMMANDS (household-commands.js)
  * =============================================================================
  * 
- * PURPOSE: All write operations for households.
+ * LOCATION: js/systems/household/household-commands.js
  * 
- * UPDATED: Added household position management commands
- * UPDATED: Added assignment management commands
- * UPDATED: Integrated with Role System via requiredRoleId
- * UPDATED: Added salary and tuition command wrappers
- * UPDATED: Added school profit command wrappers
- * UPDATED: Removed role auto-creation - users must select from existing roles only
+ * All write operations for household management.
+ * 
+ * UPDATED: Added demolishHousehold(), getDemolishedHouseholds(),
+ *          getHouseholdDemolitionStats()
  * 
  * =============================================================================
  */
@@ -19,15 +17,26 @@
     'use strict';
 
     // =========================================================================
-    // 0. RECURSION GUARD
-    // =========================================================================
-
-    var _processingCommand = false;
-    var _recordingHistory = false;
-
-    // =========================================================================
     // 1. DEPENDENCY WRAPPERS
     // =========================================================================
+
+    function _getState() {
+        return typeof window.HouseholdState !== 'undefined' ? window.HouseholdState : null;
+    }
+
+    function _getCharacterById(id) {
+        if (typeof window.getCharacterById === 'function') {
+            return window.getCharacterById(id);
+        }
+        return null;
+    }
+
+    function _getPlaceById(id) {
+        if (typeof window.getPlaceById === 'function') {
+            return window.getPlaceById(id);
+        }
+        return null;
+    }
 
     function _getCurrentYear() {
         if (typeof window.getCurrentYearSafe === 'function') {
@@ -39,43 +48,9 @@
         return 1250;
     }
 
-    function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(id);
-        }
-        return null;
-    }
-
-    function _getCharacters() {
-        if (typeof window.getCharacters === 'function') {
-            return window.getCharacters();
-        }
-        return window.masterData?.data?.characters || [];
-    }
-
-    function _getPlaceById(id) {
-        if (typeof window.getPlaceById === 'function') {
-            return window.getPlaceById(id);
-        }
-        return null;
-    }
-
-    function _getRoleById(id) {
-        if (typeof window.getRoleById === 'function') {
-            return window.getRoleById(id);
-        }
-        return null;
-    }
-
     function _saveMasterData() {
         if (typeof window.saveMasterData === 'function') {
             window.saveMasterData();
-        }
-    }
-
-    function _logEvent(category, type, message, subjects) {
-        if (typeof window.logEvent === 'function') {
-            window.logEvent(category, type, message, subjects);
         }
     }
 
@@ -89,12 +64,31 @@
         }
     }
 
-    function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
+    function _logEvent(category, type, message, subjects) {
+        if (typeof window.logEvent === 'function') {
+            window.logEvent(category, type, message, subjects);
         }
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function _invalidateCaches() {
+        if (typeof window.invalidateAccessorCaches === 'function') {
+            window.invalidateAccessorCaches();
+        }
+        var state = _getState();
+        if (state && typeof state.invalidateCache === 'function') {
+            state.invalidateCache();
+        }
+    }
+
+    function _getResidenceSystem() {
+        return typeof window.ResidenceSystem !== 'undefined' ? window.ResidenceSystem : null;
+    }
+
+    function _getRoleById(id) {
+        if (typeof window.getRoleById === 'function') {
+            return window.getRoleById(id);
+        }
+        return null;
     }
 
     function _addProfession(characterId, roleId, options) {
@@ -104,16 +98,6 @@
         return { success: false };
     }
 
-    // =========================================================================
-    // 2. HOUSEHOLD STATE REFERENCE
-    // =========================================================================
-
-    var _state = window.HouseholdState;
-
-    // =========================================================================
-    // 3. INTERNAL HELPERS
-    // =========================================================================
-
     function _generateId(prefix) {
         if (typeof window.generateId === 'function') {
             return window.generateId(prefix);
@@ -121,8 +105,19 @@
         return prefix + '_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
     }
 
+    // =========================================================================
+    // 2. RECURSION GUARD
+    // =========================================================================
+
+    var _processingCommand = false;
+    var _recordingHistory = false;
+
+    // =========================================================================
+    // 3. INTERNAL HELPERS
+    // =========================================================================
+
     function _addActivityLog(householdId, action, details, actorId) {
-        var household = _state.getHousehold(householdId);
+        var household = _getState().getHousehold(householdId);
         if (!household) return false;
         
         if (!household.activityLog) {
@@ -141,7 +136,7 @@
             household.activityLog = household.activityLog.slice(-100);
         }
         
-        _state.updateHousehold(householdId, {
+        _getState().updateHousehold(householdId, {
             activityLog: household.activityLog
         }, { recordHistory: false });
         
@@ -161,7 +156,7 @@
             }
             
             var currentYear = year || _getCurrentYear();
-            var household = householdId ? _state.getHousehold(householdId) : null;
+            var household = householdId ? _getState().getHousehold(householdId) : null;
             var householdName = household ? household.name : (options.previousHouseholdName || null);
             
             if (action === 'left' || action === 'dissolved' || action === 'removed') {
@@ -277,7 +272,7 @@
     }
 
     function _validateMemberAddition(householdId, characterId, type) {
-        var household = _state.getHousehold(householdId);
+        var household = _getState().getHousehold(householdId);
         if (!household) {
             return { valid: false, reason: 'Household not found' };
         }
@@ -303,19 +298,19 @@
     }
 
     function _updateHouseholdStatus(householdId) {
-        var household = _state.getHousehold(householdId);
+        var household = _getState().getHousehold(householdId);
         if (!household) return;
         
-        var status = _state.getHouseholdStatus(householdId);
+        var status = _getState().getHouseholdStatus(householdId);
         if (status.status !== household.status) {
-            _state.updateHousehold(householdId, {
+            _getState().updateHousehold(householdId, {
                 status: status.status
             }, { recordHistory: false });
         }
     }
 
     function _validatePositionCreation(householdId, name, requiredRoleId) {
-        var household = _state.getHousehold(householdId);
+        var household = _getState().getHousehold(householdId);
         if (!household) {
             return { valid: false, reason: 'Household not found' };
         }
@@ -352,7 +347,7 @@
                 return { success: false, reason: validation.reason };
             }
             
-            var household = _state.getHousehold(householdId);
+            var household = _getState().getHousehold(householdId);
             var character = _getCharacterById(characterId);
             var joinedYear = options.joinedYear || _getCurrentYear();
             var role = options.role || (type === 'family' ? 'Family Member' : 'Staff');
@@ -380,7 +375,7 @@
                 updatedAt: Date.now()
             };
             
-            _state.updateHousehold(householdId, updates, { recordHistory: false });
+            _getState().updateHousehold(householdId, updates, { recordHistory: false });
             
             if (isHead) {
                 for (var i = 0; i < household.members.length; i++) {
@@ -389,7 +384,7 @@
                         household.members[i].headSince = null;
                     }
                 }
-                _state.updateHousehold(householdId, { members: household.members }, { recordHistory: false });
+                _getState().updateHousehold(householdId, { members: household.members }, { recordHistory: false });
             }
             
             if (options.recordHistory !== false) {
@@ -439,7 +434,7 @@
         try {
             options = options || {};
             
-            var household = _state.getHousehold(householdId);
+            var household = _getState().getHousehold(householdId);
             if (!household) {
                 return { success: false, reason: 'Household not found' };
             }
@@ -475,7 +470,7 @@
                 updatedAt: Date.now()
             };
             
-            _state.updateHousehold(householdId, updates, { recordHistory: false });
+            _getState().updateHousehold(householdId, updates, { recordHistory: false });
             
             if (options.recordHistory !== false) {
                 _recordCharacterHouseholdChange(characterId, null, leftYear, 'left',
@@ -542,7 +537,7 @@
         try {
             options = options || {};
             
-            var household = _state.getHousehold(householdId);
+            var household = _getState().getHousehold(householdId);
             if (!household) {
                 return { success: false, reason: 'Household not found' };
             }
@@ -594,7 +589,7 @@
                 return { success: false, reason: 'No changes to apply' };
             }
             
-            _state.updateHousehold(householdId, { members: household.members }, { recordHistory: false });
+            _getState().updateHousehold(householdId, { members: household.members }, { recordHistory: false });
             
             if (member.isHead && !oldIsHead) {
                 for (var i = 0; i < household.members.length; i++) {
@@ -603,7 +598,7 @@
                         household.members[i].headSince = null;
                     }
                 }
-                _state.updateHousehold(householdId, { members: household.members }, { recordHistory: false });
+                _getState().updateHousehold(householdId, { members: household.members }, { recordHistory: false });
             }
             
             if (options.recordHistory !== false && member.role !== oldRole) {
@@ -658,12 +653,12 @@
                 return { success: false, reason: 'Cannot transfer deceased character' };
             }
             
-            var targetHousehold = _state.getHousehold(targetHouseholdId);
+            var targetHousehold = _getState().getHousehold(targetHouseholdId);
             if (!targetHousehold) {
                 return { success: false, reason: 'Target household not found' };
             }
             
-            var currentHousehold = _state.getCharacterHousehold(characterId);
+            var currentHousehold = _getState().getCharacterHousehold(characterId);
             var year = options.year || _getCurrentYear();
             var reason = options.reason || 'Transferred';
             
@@ -769,7 +764,7 @@
         try {
             options = options || {};
             
-            var household = _state.getHousehold(householdId);
+            var household = _getState().getHousehold(householdId);
             if (!household) {
                 return { success: false, reason: 'Household not found' };
             }
@@ -788,7 +783,7 @@
                     }
                 }
                 
-                _state.updateHousehold(householdId, { members: household.members }, { recordHistory: false });
+                _getState().updateHousehold(householdId, { members: household.members }, { recordHistory: false });
                 
                 if (oldHead) {
                     _recordCharacterHouseholdChange(oldHead.characterId, householdId, year, 'transferred',
@@ -856,7 +851,7 @@
             member.role = 'Head of Household';
             member.headSince = year;
             
-            _state.updateHousehold(householdId, { members: household.members }, { recordHistory: false });
+            _getState().updateHousehold(householdId, { members: household.members }, { recordHistory: false });
             
             if (options.recordHistory !== false) {
                 _recordCharacterHouseholdChange(characterId, householdId, year, 'transferred',
@@ -910,7 +905,7 @@
         try {
             options = options || {};
             
-            var household = _state.getHousehold(householdId);
+            var household = _getState().getHousehold(householdId);
             if (!household) {
                 return { success: false, reason: 'Household not found' };
             }
@@ -960,7 +955,7 @@
             }
             household.departments.push(department);
             
-            _state.updateHousehold(householdId, { departments: household.departments }, { recordHistory: false });
+            _getState().updateHousehold(householdId, { departments: household.departments }, { recordHistory: false });
             
             if (department.headId) {
                 for (var i = 0; i < household.members.length; i++) {
@@ -970,7 +965,7 @@
                         break;
                     }
                 }
-                _state.updateHousehold(householdId, { members: household.members }, { recordHistory: false });
+                _getState().updateHousehold(householdId, { members: household.members }, { recordHistory: false });
             }
             
             _addActivityLog(householdId, 'department_added', 'Added department: ' + trimmedName);
@@ -999,7 +994,7 @@
         try {
             options = options || {};
             
-            var household = _state.getHousehold(householdId);
+            var household = _getState().getHousehold(householdId);
             if (!household) {
                 return { success: false, reason: 'Household not found' };
             }
@@ -1031,13 +1026,13 @@
                         }
                     }
                 }
-                _state.updateHousehold(householdId, { members: household.members }, { recordHistory: false });
+                _getState().updateHousehold(householdId, { members: household.members }, { recordHistory: false });
             }
             
             var departmentName = department.name;
             household.departments.splice(departmentIndex, 1);
             
-            _state.updateHousehold(householdId, { departments: household.departments }, { recordHistory: false });
+            _getState().updateHousehold(householdId, { departments: household.departments }, { recordHistory: false });
             
             _addActivityLog(householdId, 'department_deleted', 'Deleted department: ' + departmentName);
             
@@ -1063,7 +1058,7 @@
         _processingCommand = true;
         
         try {
-            var household = _state.getHousehold(householdId);
+            var household = _getState().getHousehold(householdId);
             if (!household) {
                 return { success: false, reason: 'Household not found' };
             }
@@ -1143,7 +1138,7 @@
             }
             
             household.departments[departmentIndex] = department;
-            _state.updateHousehold(householdId, { 
+            _getState().updateHousehold(householdId, { 
                 departments: household.departments,
                 members: household.members
             }, { recordHistory: false });
@@ -1186,7 +1181,7 @@
                 return { success: false, reason: validation.reason };
             }
 
-            var result = _state.createHouseholdPosition(data);
+            var result = _getState().createHouseholdPosition(data);
             if (result) {
                 var roleName = data.requiredRoleId ? (_getRoleById(data.requiredRoleId)?.name || 'Unknown') : 'None';
                 _logEvent('household', 'position_created',
@@ -1209,7 +1204,7 @@
         _processingCommand = true;
 
         try {
-            var position = _state.getHouseholdPosition(positionId);
+            var position = _getState().getHouseholdPosition(positionId);
             if (!position) {
                 return { success: false, reason: 'Position not found' };
             }
@@ -1221,7 +1216,7 @@
                 }
             }
 
-            var result = _state.updateHouseholdPosition(positionId, updates);
+            var result = _getState().updateHouseholdPosition(positionId, updates);
             if (result) {
                 _logEvent('household', 'position_updated',
                     'Updated household position: ' + result.name,
@@ -1244,12 +1239,12 @@
 
         try {
             options = options || {};
-            var position = _state.getHouseholdPosition(positionId);
+            var position = _getState().getHouseholdPosition(positionId);
             if (!position) {
                 return { success: false, reason: 'Position not found' };
             }
 
-            var result = _state.deleteHouseholdPosition(positionId, options);
+            var result = _getState().deleteHouseholdPosition(positionId, options);
             if (result) {
                 _logEvent('household', 'position_deleted',
                     'Deleted household position: ' + position.name,
@@ -1277,7 +1272,7 @@
         try {
             options = options || {};
 
-            var position = _state.getHouseholdPosition(positionId);
+            var position = _getState().getHouseholdPosition(positionId);
             if (!position) {
                 return { success: false, reason: 'Position not found' };
             }
@@ -1291,7 +1286,7 @@
                 return { success: false, reason: 'Character is deceased' };
             }
 
-            var existing = _state.getAssignmentsForPosition(positionId, true);
+            var existing = _getState().getAssignmentsForPosition(positionId, true);
             for (var i = 0; i < existing.length; i++) {
                 if (existing[i].characterId === characterId) {
                     return { success: false, reason: 'Character already assigned to this position' };
@@ -1350,7 +1345,7 @@
                 }
             }
 
-            var result = _state.assignCharacterToHouseholdPosition(positionId, characterId, options);
+            var result = _getState().assignCharacterToHouseholdPosition(positionId, characterId, options);
             if (result) {
                 var title = options.title || position.name;
                 var roleName = requiredRoleId ? (_getRoleById(requiredRoleId)?.name || 'None') : 'None';
@@ -1374,7 +1369,7 @@
         _processingCommand = true;
 
         try {
-            var assignment = _state.getHouseholdAssignment(assignmentId);
+            var assignment = _getState().getHouseholdAssignment(assignmentId);
             if (!assignment) {
                 return { success: false, reason: 'Assignment not found' };
             }
@@ -1383,7 +1378,7 @@
                 return { success: false, reason: 'Assignment already ended' };
             }
 
-            var result = _state.endHouseholdAssignment(assignmentId, endYear, reason);
+            var result = _getState().endHouseholdAssignment(assignmentId, endYear, reason);
             if (result) {
                 var character = _getCharacterById(assignment.characterId);
                 _logEvent('household', 'assignment_ended',
@@ -1406,12 +1401,12 @@
         _processingCommand = true;
 
         try {
-            var assignment = _state.getHouseholdAssignment(assignmentId);
+            var assignment = _getState().getHouseholdAssignment(assignmentId);
             if (!assignment) {
                 return { success: false, reason: 'Assignment not found' };
             }
 
-            var result = _state.deleteHouseholdAssignment(assignmentId);
+            var result = _getState().deleteHouseholdAssignment(assignmentId);
             if (result) {
                 _logEvent('household', 'assignment_deleted',
                     'Deleted household assignment',
@@ -1488,7 +1483,7 @@
         _processingCommand = true;
 
         try {
-            var household = _state.getHousehold(householdId);
+            var household = _getState().getHousehold(householdId);
             if (!household) {
                 return { success: false, reason: 'Household not found' };
             }
@@ -1513,7 +1508,7 @@
                 return { success: false, reason: 'Failed to add salary' };
             }
 
-            var newWealth = _updateHouseholdWealth(householdId, finalAmount, 'Salary for ' + character.name + (reason ? ' (' + reason + ')' : ''));
+            var newWealth = _getState().updateHouseholdWealth(householdId, finalAmount, 'Salary for ' + character.name + (reason ? ' (' + reason + ')' : ''));
 
             if (newWealth !== null) {
                 _logEvent('household', 'salary_added',
@@ -1537,7 +1532,7 @@
         _processingCommand = true;
 
         try {
-            var household = _state.getHousehold(householdId);
+            var household = _getState().getHousehold(householdId);
             if (!household) {
                 return { success: false, reason: 'Household not found' };
             }
@@ -1550,7 +1545,7 @@
             var currentYear = year || _getCurrentYear();
             var finalAmount = Math.max(0, amount);
 
-            var wealth = _getHouseholdWealth(householdId);
+            var wealth = _getState().getHouseholdWealth(householdId);
             if (wealth < finalAmount) {
                 return { success: false, reason: 'Household cannot afford tuition (' + finalAmount + 'g needed, ' + wealth + 'g available)' };
             }
@@ -1558,7 +1553,7 @@
             if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.trackTuitionExpense) {
                 var result = window.HouseholdEconomy.trackTuitionExpense(householdId, finalAmount, institutionId, studentId, currentYear);
                 if (result) {
-                    _updateHouseholdWealth(householdId, -finalAmount, 'Tuition for ' + student.name + (reason ? ' (' + reason + ')' : ''));
+                    _getState().updateHouseholdWealth(householdId, -finalAmount, 'Tuition for ' + student.name + (reason ? ' (' + reason + ')' : ''));
                     _logEvent('household', 'tuition_deducted',
                         'Deducted ' + finalAmount + 'g tuition for ' + student.name + (reason ? ' (' + reason + ')' : ''),
                         [student]);
@@ -1568,7 +1563,7 @@
                 return { success: false, reason: 'Failed to track tuition' };
             }
 
-            var newWealth = _updateHouseholdWealth(householdId, -finalAmount, 'Tuition for ' + student.name + (reason ? ' (' + reason + ')' : ''));
+            var newWealth = _getState().updateHouseholdWealth(householdId, -finalAmount, 'Tuition for ' + student.name + (reason ? ' (' + reason + ')' : ''));
 
             if (newWealth !== null) {
                 _logEvent('household', 'tuition_deducted',
@@ -1610,7 +1605,7 @@
         _processingCommand = true;
 
         try {
-            var household = _state.getHousehold(householdId);
+            var household = _getState().getHousehold(householdId);
             if (!household) {
                 return { success: false, reason: 'Household not found' };
             }
@@ -1630,7 +1625,7 @@
                 return { success: false, reason: 'Failed to add school profit' };
             }
 
-            var newWealth = _updateHouseholdWealth(householdId, finalAmount, 'School profit');
+            var newWealth = _getState().updateHouseholdWealth(householdId, finalAmount, 'School profit');
 
             if (newWealth !== null) {
                 _logEvent('household', 'school_profit_added',
@@ -1669,8 +1664,8 @@
         _processingCommand = true;
         
         try {
-            var characters = _getCharacters();
-            var households = _state.getAllHouseholds({ includeDeprecated: true });
+            var characters = window.getCharacters ? window.getCharacters() : [];
+            var households = _getState().getAllHouseholds({ includeDeprecated: true });
             
             var results = {
                 householdsChecked: households.length,
@@ -1942,7 +1937,7 @@
                 };
             }
             
-            var targetHousehold = _state.getHousehold(householdId);
+            var targetHousehold = _getState().getHousehold(householdId);
             if (!targetHousehold) {
                 return { success: false, reason: 'Target household not found' };
             }
@@ -2002,9 +1997,286 @@
     }
 
     // =========================================================================
-    // 14. EXPORTS
+    // 14. DEMOLISH HOUSEHOLD (NEW - Added to existing file)
     // =========================================================================
 
+    /**
+     * Demolishes/destroys a household (keeps record of destruction)
+     * @param {string} householdId - The household to demolish
+     * @param {string} reason - Why it was demolished
+     * @param {number} year - When it was demolished
+     * @param {Object} options
+     * @param {string} options.destroyedBy - 'disaster', 'war', 'decay', etc.
+     * @param {string} options.disasterId - ID of the disaster that caused this
+     * @param {boolean} options.demolishResidence - Also demolish the residence (default: true)
+     * @param {boolean} options.silent - Suppress toast notifications
+     * @returns {Object} - Demolition result
+     */
+    function demolishHousehold(householdId, reason, year, options) {
+        if (_processingCommand) {
+            return { success: false, error: 'Command already in progress' };
+        }
+        _processingCommand = true;
+
+        try {
+            var state = _getState();
+            if (!state) {
+                return { success: false, error: 'Household state not available' };
+            }
+
+            var household = state.getHousehold(householdId);
+            if (!household) {
+                return { success: false, error: 'Household not found' };
+            }
+
+            if (household.status === 'destroyed' || household.status === 'deprecated') {
+                return { success: false, error: 'Household already destroyed' };
+            }
+
+            options = options || {};
+            var demolishYear = year || _getCurrentYear();
+            var demolishReason = reason || 'Destroyed';
+
+            // Create demolition record
+            var demolitionRecord = {
+                householdId: household.id,
+                householdName: household.name,
+                locationId: household.locationId,
+                locationName: household.locationName || 'Unknown',
+                demolishedYear: demolishYear,
+                demolishedReason: demolishReason,
+                destroyedBy: options.destroyedBy || 'manual',
+                disasterId: options.disasterId || null,
+                memberCount: (household.members || []).length,
+                headId: household.headId || null,
+                headName: household.headName || null,
+                previousWealth: household.wealth || 0,
+                previousReputation: household.reputation || 0,
+                residenceId: household.residenceId || null,
+                residenceName: household.residenceName || null,
+                timestamp: Date.now()
+            };
+
+            // Remove all members (they become refugees)
+            var members = (household.members || []).slice();
+            var removedCount = 0;
+
+            for (var i = 0; i < members.length; i++) {
+                var member = members[i];
+                try {
+                    var result = removeMember(householdId, member.characterId, {
+                        reason: 'Household destroyed: ' + demolishReason,
+                        leftYear: demolishYear,
+                        recordHistory: true
+                    });
+                    if (result && result.success) {
+                        removedCount++;
+                    }
+                } catch (e) {
+                    // Continue with other members
+                }
+            }
+
+            // Update household
+            var updates = {
+                status: 'destroyed',
+                demolishedAt: demolishYear,
+                demolishedReason: demolishReason,
+                destroyedBy: options.destroyedBy || 'manual',
+                disasterId: options.disasterId || null,
+                demolishedRecord: demolitionRecord,
+                members: [],
+                headId: null,
+                headName: null,
+                wealth: 0,
+                reputation: Math.max(0, (household.reputation || 0) - 50),
+                updatedAt: Date.now()
+            };
+
+            // Use state update
+            var result = state.updateHousehold(householdId, updates, { recordHistory: false });
+
+            if (!result) {
+                return { success: false, error: 'Failed to update household' };
+            }
+
+            // Also demolish associated residence if requested
+            if (options.demolishResidence !== false && household.residenceId) {
+                try {
+                    var residenceSystem = _getResidenceSystem();
+                    if (residenceSystem && typeof residenceSystem.demolishResidence === 'function') {
+                        var residenceResult = residenceSystem.demolishResidence(
+                            household.residenceId,
+                            'Household destroyed: ' + demolishReason,
+                            demolishYear,
+                            {
+                                destroyedBy: options.destroyedBy || 'manual',
+                                disasterId: options.disasterId || null,
+                                silent: true
+                            }
+                        );
+                        demolitionRecord.residenceDemolished = residenceResult.success;
+                    }
+                } catch (e) {
+                    demolitionRecord.residenceDemolished = false;
+                }
+            }
+
+            // Add history event
+            var updatedHousehold = state.getHousehold(householdId);
+            if (updatedHousehold) {
+                if (!updatedHousehold.history) updatedHousehold.history = [];
+                updatedHousehold.history.push({
+                    year: demolishYear,
+                    type: 'demolished',
+                    reason: demolishReason,
+                    destroyedBy: options.destroyedBy || 'manual',
+                    disasterId: options.disasterId || null,
+                    record: demolitionRecord,
+                    timestamp: Date.now()
+                });
+                state.updateHousehold(householdId, { history: updatedHousehold.history }, { recordHistory: false });
+            }
+
+            state.invalidateCache();
+            _invalidateCaches();
+
+            _logEvent('household', 'Household Destroyed',
+                'Household "' + household.name + '" destroyed: ' + demolishReason,
+                []);
+
+            if (!options.silent) {
+                _showToast('Household "' + household.name + '" destroyed', 'info');
+            }
+
+            return {
+                success: true,
+                demolitionRecord: demolitionRecord,
+                household: state.getHousehold(householdId),
+                membersRemoved: removedCount
+            };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    // =========================================================================
+    // 15. DEMOLISHED HOUSEHOLD QUERIES (NEW)
+    // =========================================================================
+
+    /**
+     * Gets all demolished households
+     * @param {Object} options
+     * @param {string} options.locationId - Filter by location
+     * @param {string} options.destroyedBy - Filter by cause
+     * @param {boolean} options.includeRecords - Include demolition records
+     * @returns {Array} - Array of demolished households
+     */
+    function getDemolishedHouseholds(options) {
+        try {
+            var state = _getState();
+            if (!state) return [];
+
+            options = options || {};
+            var all = state.getAllHouseholds({ includeDeprecated: true });
+            var filtered = all.filter(function(h) {
+                return h.status === 'destroyed';
+            });
+
+            if (options.locationId) {
+                filtered = filtered.filter(function(h) {
+                    return h.locationId === options.locationId;
+                });
+            }
+
+            if (options.destroyedBy) {
+                filtered = filtered.filter(function(h) {
+                    return h.destroyedBy === options.destroyedBy;
+                });
+            }
+
+            if (!options.includeRecords) {
+                filtered = filtered.map(function(h) {
+                    var result = { ...h };
+                    delete result.demolishedRecord;
+                    return result;
+                });
+            }
+
+            return filtered;
+        } catch (e) {
+            return [];
+        }
+    }
+
+    /**
+     * Gets demolition statistics for a location
+     * @param {string} locationId - Location ID
+     * @returns {Object} - Demolition statistics
+     */
+    function getHouseholdDemolitionStats(locationId) {
+        var stats = {
+            totalDemolished: 0,
+            byDestroyedBy: {},
+            totalMembersLost: 0,
+            totalWealthLost: 0,
+            recentDemolitions: []
+        };
+
+        try {
+            var demolished = getDemolishedHouseholds({
+                locationId: locationId,
+                includeRecords: true
+            });
+
+            stats.totalDemolished = demolished.length;
+
+            for (var i = 0; i < demolished.length; i++) {
+                var h = demolished[i];
+                var record = h.demolishedRecord;
+
+                var destroyedBy = h.destroyedBy || 'unknown';
+                if (!stats.byDestroyedBy[destroyedBy]) {
+                    stats.byDestroyedBy[destroyedBy] = 0;
+                }
+                stats.byDestroyedBy[destroyedBy]++;
+
+                if (record && record.memberCount) {
+                    stats.totalMembersLost += record.memberCount;
+                }
+
+                if (record && record.previousWealth) {
+                    stats.totalWealthLost += record.previousWealth;
+                }
+
+                if (stats.recentDemolitions.length < 5) {
+                    stats.recentDemolitions.push({
+                        name: h.name,
+                        destroyedAt: h.demolishedAt,
+                        destroyedBy: h.destroyedBy,
+                        reason: h.demolishedReason,
+                        membersLost: record ? record.memberCount : 0
+                    });
+                }
+            }
+
+            stats.recentDemolitions.sort(function(a, b) {
+                return (b.destroyedAt || 0) - (a.destroyedAt || 0);
+            });
+
+        } catch (e) {
+            // Error getting stats
+        }
+
+        return stats;
+    }
+
+    // =========================================================================
+    // 16. EXPORTS
+    // =========================================================================
+
+    // Preserve existing exports and add new ones
     window.HouseholdCommands = {
         // Member management
         addMember: addMember,
@@ -2021,13 +2293,6 @@
         updateDepartment: updateDepartment,
         setDepartmentHead: setDepartmentHead,
         
-        // History
-        recordHistory: recordHistory,
-        
-        // Repair
-        repairMemberships: repairMemberships,
-        fixCharacterHousehold: fixCharacterHousehold,
-
         // Household position commands
         createHouseholdPosition: createHouseholdPosition,
         updateHouseholdPosition: updateHouseholdPosition,
@@ -2049,52 +2314,30 @@
 
         // School profit commands
         addSchoolProfitToHousehold: addSchoolProfitToHousehold,
-        getSchoolProfits: getSchoolProfits
+        getSchoolProfits: getSchoolProfits,
+
+        // History
+        recordHistory: recordHistory,
+        
+        // Repair
+        repairMemberships: repairMemberships,
+        fixCharacterHousehold: fixCharacterHousehold,
+
+        // NEW: Demolish functions
+        demolishHousehold: demolishHousehold,
+        getDemolishedHouseholds: getDemolishedHouseholds,
+        getHouseholdDemolitionStats: getHouseholdDemolitionStats
     };
 
     // Legacy aliases
-    window.createHouseholdPosition = createHouseholdPosition;
-    window.updateHouseholdPosition = updateHouseholdPosition;
-    window.deleteHouseholdPosition = deleteHouseholdPosition;
-    window.assignCharacterToHouseholdPosition = assignCharacterToHouseholdPosition;
-    window.endHouseholdAssignment = endHouseholdAssignment;
-    window.deleteHouseholdAssignment = deleteHouseholdAssignment;
-    window.bulkAssignHouseholdPositions = bulkAssignHouseholdPositions;
-    window.addSalaryToHousehold = addSalaryToHousehold;
-    window.deductTuitionFromHousehold = deductTuitionFromHousehold;
-    window.getHouseholdSalaryIncome = getHouseholdSalaryIncome;
-    window.getHouseholdTuitionExpenses = getHouseholdTuitionExpenses;
-    window.addSchoolProfitToHousehold = addSchoolProfitToHousehold;
-    window.getSchoolProfits = getSchoolProfits;
+    if (typeof window !== 'undefined') {
+        window._demolishHousehold = demolishHousehold;
+        window._getDemolishedHouseholds = getDemolishedHouseholds;
+        window._getHouseholdDemolitionStats = getHouseholdDemolitionStats;
+    }
 
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            addMember: addMember,
-            removeMember: removeMember,
-            updateMember: updateMember,
-            transferMember: transferMember,
-            setHead: setHead,
-            addDepartment: addDepartment,
-            removeDepartment: removeDepartment,
-            updateDepartment: updateDepartment,
-            setDepartmentHead: setDepartmentHead,
-            recordHistory: recordHistory,
-            repairMemberships: repairMemberships,
-            fixCharacterHousehold: fixCharacterHousehold,
-            createHouseholdPosition: createHouseholdPosition,
-            updateHouseholdPosition: updateHouseholdPosition,
-            deleteHouseholdPosition: deleteHouseholdPosition,
-            assignCharacterToHouseholdPosition: assignCharacterToHouseholdPosition,
-            endHouseholdAssignment: endHouseholdAssignment,
-            deleteHouseholdAssignment: deleteHouseholdAssignment,
-            bulkAssignHouseholdPositions: bulkAssignHouseholdPositions,
-            addSalaryToHousehold: addSalaryToHousehold,
-            deductTuitionFromHousehold: deductTuitionFromHousehold,
-            getHouseholdSalaryIncome: getHouseholdSalaryIncome,
-            getHouseholdTuitionExpenses: getHouseholdTuitionExpenses,
-            addSchoolProfitToHousehold: addSchoolProfitToHousehold,
-            getSchoolProfits: getSchoolProfits
-        };
+        module.exports = window.HouseholdCommands;
     }
 
 })();

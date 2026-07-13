@@ -6,6 +6,8 @@
  * LOCATION: js/core/crime/crime-commands.js
  * 
  * UPDATED: Integrated with Household system
+ * UPDATED: Added dynamic law checking via CrimeLawIntegration
+ * UPDATED: Removed hardcoded execution reasons (now from laws)
  * 
  * =============================================================================
  */
@@ -137,6 +139,14 @@
         }
     }
 
+    function _showToast(message, type) {
+        if (typeof window._showToast === 'function') {
+            window._showToast(message, type);
+        } else if (typeof window.showToast === 'function') {
+            window.showToast(message, type);
+        }
+    }
+
     function _getCrimeTypes() {
         return window.CRIME_TYPES || {
             MURDER: 'murder',
@@ -159,19 +169,6 @@
         };
     }
 
-    function _getExecutionReasons() {
-        return window.EXECUTION_REASONS || {
-            treason: ['Treason against the Crown', 'Rebellion', 'Coup attempt'],
-            murder: ['Murder of a noble', 'Premeditated murder', 'Political assassination'],
-            adultery: ['Adultery with a noble\'s spouse', 'Repeated adultery'],
-            crime: ['Highway robbery', 'Counterfeiting currency', 'Arson'],
-            military: ['Desertion from military', 'Cowardice in battle', 'Insubordination'],
-            religious: ['Blasphemy', 'Sacrilege', 'Witchcraft or sorcery'],
-            social: ['Violation of sacred taboos', 'Disrespecting a ruler', 'Incest'],
-            common: ['Murder', 'Treason', 'Rebellion', 'Adultery', 'Witchcraft']
-        };
-    }
-
     function _getExecutionMethods() {
         return window.EXECUTION_METHODS || {
             beheading: { id: 'beheading', name: 'Beheading' },
@@ -181,7 +178,97 @@
     }
 
     // =========================================================================
-    // 2. HOUSEHOLD STATE WRAPPER
+    // 2. LAW INTEGRATION (NEW)
+    // =========================================================================
+
+    /**
+     * Gets applicable laws for a character and action
+     * @param {string} characterId - Character ID
+     * @param {Object} action - { type, domain, details }
+     * @returns {Array} Array of applicable laws with source info
+     */
+    function _getApplicableLaws(characterId, action) {
+        if (typeof window.CrimeLawIntegration !== 'undefined' &&
+            typeof window.CrimeLawIntegration.getApplicableLaws === 'function') {
+            return window.CrimeLawIntegration.getApplicableLaws(characterId, action?.domain);
+        }
+
+        // Fallback: try SettlementQueries
+        if (typeof window.SettlementQueries !== 'undefined' &&
+            typeof window.SettlementQueries.getApplicableLaws === 'function') {
+            var character = _getCharacterById(characterId);
+            var locationId = character ? _getCurrentLocationId(character) : null;
+            return window.SettlementQueries.getApplicableLaws(locationId, characterId, action?.domain);
+        }
+
+        return [];
+    }
+
+    /**
+     * Checks law violations for an action
+     * @param {string} characterId - Character ID
+     * @param {Object} action - { type, domain, details }
+     * @param {Object} context - { locationId, targetId, ... }
+     * @returns {Object} { civil, religious, all }
+     */
+    function _checkLawViolations(characterId, action, context) {
+        if (typeof window.CrimeLawIntegration !== 'undefined' &&
+            typeof window.CrimeLawIntegration.checkLawViolations === 'function') {
+            return window.CrimeLawIntegration.checkLawViolations(characterId, action, context);
+        }
+
+        // Fallback: simple check using SettlementQueries
+        if (typeof window.SettlementQueries !== 'undefined' &&
+            typeof window.SettlementQueries.getApplicableLaws === 'function') {
+            var character = _getCharacterById(characterId);
+            var locationId = character ? _getCurrentLocationId(character) : null;
+            var laws = window.SettlementQueries.getApplicableLaws(locationId, characterId, action?.domain);
+            
+            var violations = { civil: [], religious: [], all: [] };
+            for (var i = 0; i < laws.length; i++) {
+                var item = laws[i];
+                // Check if this law applies to this action type
+                var law = item.law;
+                if (law.crimeMapping && law.crimeMapping.crimeType === action.type) {
+                    violations.all.push(item);
+                    if (item.source === 'civil') {
+                        violations.civil.push(item);
+                    } else if (item.source === 'religious') {
+                        violations.religious.push(item);
+                    }
+                }
+            }
+            return violations;
+        }
+
+        return { civil: [], religious: [], all: [] };
+    }
+
+    /**
+     * Gets punishment for a law violation
+     * @param {Object} violation - Law violation object
+     * @param {Object} context - { character, victim, ... }
+     * @returns {string} Punishment description
+     */
+    function _getPunishmentForViolation(violation, context) {
+        if (!violation || !violation.law) return 'Unknown punishment';
+        
+        var law = violation.law;
+        if (law.crimeMapping && law.crimeMapping.punishment) {
+            return law.crimeMapping.punishment;
+        }
+        
+        // Default based on severity
+        var defaultPunishments = {
+            'minor': 'Fine or Public Shaming',
+            'major': 'Exile or Imprisonment',
+            'mortal': 'Execution or Life Imprisonment'
+        };
+        return defaultPunishments[law.severity] || 'Punishment determined by law';
+    }
+
+    // =========================================================================
+    // 3. HOUSEHOLD STATE WRAPPER
     // =========================================================================
 
     function _getHouseholdState() {
@@ -250,7 +337,6 @@
             updates.criminalCount = criminalCount;
             changed = true;
 
-            // Track criminal members
             var criminalMembers = household.criminalMembers || [];
             if (criminalMembers.indexOf(perpetratorId) === -1) {
                 criminalMembers.push(perpetratorId);
@@ -285,7 +371,6 @@
             var vendettaCount = (household.vendettaCount || 0) + 1;
             updates.vendettaCount = vendettaCount;
             
-            // Active vendetta count (will be recalculated, but we increment)
             var activeVendettaCount = (household.activeVendettaCount || 0) + 1;
             updates.activeVendettaCount = activeVendettaCount;
             changed = true;
@@ -313,7 +398,6 @@
             if (typeof state.updateHousehold === 'function') {
                 state.updateHousehold(householdId, updates, { recordHistory: false });
             } else {
-                // Fallback: manually update
                 for (var key in updates) {
                     if (updates.hasOwnProperty(key)) {
                         household[key] = updates[key];
@@ -329,7 +413,7 @@
     }
 
     // =========================================================================
-    // 3. SETTLEMENT UPDATE HELPERS
+    // 4. SETTLEMENT UPDATE HELPERS
     // =========================================================================
 
     function _updateSettlementAfterCrime(locationId, eventType, eventData) {
@@ -376,7 +460,7 @@
     }
 
     // =========================================================================
-    // 4. PUBLIC COMMANDS (UPDATED with Household Integration)
+    // 5. PUBLIC COMMANDS (UPDATED with Law Integration)
     // =========================================================================
 
     function triggerMurder(victimId, killerId, options) {
@@ -411,6 +495,41 @@
             var locationId = options.locationId || _getCrimeLocation(victim, null) || 
                              _getCrimeLocation(killer, null) || 'unknown';
 
+            // ================================================================
+            // NEW: Check law violations
+            // ================================================================
+            var action = {
+                type: crimeTypes.MURDER,
+                domain: 'violence',
+                details: {
+                    victimId: victimId,
+                    killerId: killerId,
+                    reason: reason,
+                    premeditated: !options.accidental,
+                    selfDefense: options.selfDefense || false
+                }
+            };
+            var context = {
+                locationId: locationId,
+                victim: victim,
+                killer: killer,
+                year: year
+            };
+            
+            var violations = _checkLawViolations(killerId, action, context);
+            
+            // Get punishment descriptions
+            var civilPunishment = null;
+            var religiousPunishment = null;
+            
+            if (violations.civil.length > 0) {
+                civilPunishment = _getPunishmentForViolation(violations.civil[0], context);
+            }
+            if (violations.religious.length > 0) {
+                religiousPunishment = _getPunishmentForViolation(violations.religious[0], context);
+            }
+            // ================================================================
+
             // Record the crime
             var recordResult = window.CrimeState.recordCrime({
                 type: crimeTypes.MURDER,
@@ -420,7 +539,35 @@
                 reason: reason,
                 locationId: locationId,
                 solved: !killerGotAway,
-                notes: options.notes || null
+                notes: options.notes || null,
+                // NEW: Law violation data
+                civilViolation: violations.civil.length > 0 ? {
+                    lawId: violations.civil[0].law.id,
+                    lawName: violations.civil[0].law.name,
+                    locationId: locationId,
+                    severity: violations.civil[0].law.crimeMapping?.crimeSeverity || violations.civil[0].law.severity,
+                    punishment: civilPunishment,
+                    sourceId: violations.civil[0].sourceId,
+                    sourceName: violations.civil[0].sourceName
+                } : null,
+                religiousViolation: violations.religious.length > 0 ? {
+                    lawId: violations.religious[0].law.id,
+                    lawName: violations.religious[0].law.name,
+                    religionId: violations.religious[0].sourceId,
+                    religionName: violations.religious[0].sourceName,
+                    severity: violations.religious[0].law.crimeMapping?.crimeSeverity || violations.religious[0].law.severity,
+                    punishment: religiousPunishment
+                } : null,
+                religionId: killer.religionId || null,
+                violatedLaws: violations.all.map(function(item) {
+                    return {
+                        source: item.source,
+                        lawId: item.law.id,
+                        lawName: item.law.name,
+                        sourceId: item.sourceId,
+                        sourceName: item.sourceName
+                    };
+                })
             });
 
             if (!recordResult.success) {
@@ -443,20 +590,39 @@
 
             // Handle consequences for the killer if caught
             if (!killerGotAway && !killer.isDeceased) {
-                var execResult = triggerExecution(killer.id, {
-                    year: year,
-                    reason: 'Executed for murdering ' + (victim.name || 'Unknown'),
-                    isForMurder: true,
-                    victimId: victim.id,
-                    murderReason: reason,
-                    notes: 'Executed for murdering ' + (victim.name || 'Unknown') + ' (' + reason + ')'
+                // Check if murder is illegal (it usually is, but laws define punishment)
+                var isIllegal = violations.all.some(function(item) {
+                    return item.law.crimeMapping && item.law.crimeMapping.isEnforced;
                 });
-                if (execResult.success) {
-                    executionResult = execResult.data;
+                
+                if (isIllegal) {
+                    // Determine execution reason from law
+                    var execReason = 'Executed for murdering ' + (victim.name || 'Unknown');
+                    if (civilPunishment) {
+                        execReason = civilPunishment + ' for murdering ' + (victim.name || 'Unknown');
+                    }
+                    
+                    var execResult = triggerExecution(killer.id, {
+                        year: year,
+                        reason: execReason,
+                        isForMurder: true,
+                        victimId: victim.id,
+                        murderReason: reason,
+                        notes: 'Executed for murdering ' + (victim.name || 'Unknown') + ' (' + reason + ')'
+                    });
+                    if (execResult.success) {
+                        executionResult = execResult.data;
+                    }
+                    _logEvent('execution', 'Execution',
+                        'Execution: ' + (killer.name || 'Unknown') + ' executed for murdering ' + (victim.name || 'Unknown'),
+                        [killer, victim]);
+                } else {
+                    // Murder was not illegal under applicable laws (e.g., legal duel, self-defense)
+                    _logEvent('murder', 'Murder',
+                        (victim.name || 'Unknown') + ' was killed by ' + (killer.name || 'Unknown') + 
+                        ' (' + reason + ') - Not a crime under applicable laws',
+                        [victim, killer]);
                 }
-                _logEvent('execution', 'Execution',
-                    'Execution: ' + (killer.name || 'Unknown') + ' executed for murdering ' + (victim.name || 'Unknown'),
-                    [killer, victim]);
             }
 
             // Start vendetta if requested
@@ -468,13 +634,10 @@
                 });
             }
 
-            // =====================================================================
-            // INTEGRATION: Update Household from Murder
-            // =====================================================================
+            // Update Household from Murder
             var victimHouseholdId = _getHouseholdIdForCharacter(victimId);
             var killerHouseholdId = _getHouseholdIdForCharacter(killerId);
 
-            // Update victim's household
             if (victimHouseholdId) {
                 _updateHouseholdFromCrime(
                     victimHouseholdId,
@@ -485,7 +648,6 @@
                 );
             }
 
-            // Update killer's household (if different)
             if (killerHouseholdId && killerHouseholdId !== victimHouseholdId) {
                 _updateHouseholdFromCrime(
                     killerHouseholdId,
@@ -495,7 +657,6 @@
                     year
                 );
             }
-            // =====================================================================
 
             // Update settlement
             if (locationId && locationId !== 'unknown') {
@@ -504,13 +665,15 @@
                     killerId: killerId,
                     year: year,
                     reason: reason,
-                    solved: !killerGotAway
+                    solved: !killerGotAway,
+                    lawViolations: violations.all.length
                 });
             }
 
             _logEvent('murder', 'Murder',
                 (victim.name || 'Unknown') + ' was murdered by ' + (killer.name || 'Unknown') + ' (' + reason + ')' +
-                (killerGotAway ? '. The killer escaped.' : '. The killer was executed.'),
+                (killerGotAway ? '. The killer escaped.' : '. The killer was executed.') +
+                (violations.all.length > 0 ? ' Violated ' + violations.all.length + ' law(s).' : ''),
                 [victim, killer]);
 
             return {
@@ -525,6 +688,9 @@
                     crime: recordResult.data,
                     execution: executionResult,
                     vendetta: vendettaResult ? vendettaResult.data : null,
+                    lawViolations: violations,
+                    civilPunishment: civilPunishment,
+                    religiousPunishment: religiousPunishment,
                     householdUpdates: {
                         victimHouseholdId: victimHouseholdId,
                         killerHouseholdId: killerHouseholdId
@@ -557,17 +723,42 @@
             }
 
             var year = options.year || _getCurrentYear();
-            var executionReason = options.reason;
-
-            if (options.isForMurder && !executionReason) {
-                executionReason = getRandomExecutionReason('murder');
-            } else if (!executionReason) {
-                executionReason = getRandomExecutionReason();
-            }
-
+            var executionReason = options.reason || 'Unknown reason';
             var executionMethod = options.method || getRandomExecutionMethod().name;
             var executionerId = options.executionerId || null;
             var locationId = options.locationId || _getCrimeLocation(condemned, null) || 'unknown';
+
+            // ================================================================
+            // NEW: Check law violations for execution
+            // ================================================================
+            var action = {
+                type: crimeTypes.EXECUTION,
+                domain: 'death',
+                details: {
+                    condemnedId: condemnedId,
+                    reason: executionReason,
+                    method: executionMethod
+                }
+            };
+            var context = {
+                locationId: locationId,
+                condemned: condemned,
+                year: year,
+                executionerId: executionerId
+            };
+            
+            var violations = _checkLawViolations(executionerId || 'state', action, context);
+            
+            var civilPunishment = null;
+            var religiousPunishment = null;
+            
+            if (violations.civil.length > 0) {
+                civilPunishment = _getPunishmentForViolation(violations.civil[0], context);
+            }
+            if (violations.religious.length > 0) {
+                religiousPunishment = _getPunishmentForViolation(violations.religious[0], context);
+            }
+            // ================================================================
 
             // Record the execution as a crime
             var recordResult = window.CrimeState.recordCrime({
@@ -584,7 +775,35 @@
                     isForMurder: options.isForMurder || false,
                     victimId: options.victimId || null,
                     murderReason: options.murderReason || null
-                }
+                },
+                // NEW: Law violation data
+                civilViolation: violations.civil.length > 0 ? {
+                    lawId: violations.civil[0].law.id,
+                    lawName: violations.civil[0].law.name,
+                    locationId: locationId,
+                    severity: violations.civil[0].law.crimeMapping?.crimeSeverity || violations.civil[0].law.severity,
+                    punishment: civilPunishment,
+                    sourceId: violations.civil[0].sourceId,
+                    sourceName: violations.civil[0].sourceName
+                } : null,
+                religiousViolation: violations.religious.length > 0 ? {
+                    lawId: violations.religious[0].law.id,
+                    lawName: violations.religious[0].law.name,
+                    religionId: violations.religious[0].sourceId,
+                    religionName: violations.religious[0].sourceName,
+                    severity: violations.religious[0].law.crimeMapping?.crimeSeverity || violations.religious[0].law.severity,
+                    punishment: religiousPunishment
+                } : null,
+                religionId: condemned.religionId || null,
+                violatedLaws: violations.all.map(function(item) {
+                    return {
+                        source: item.source,
+                        lawId: item.law.id,
+                        lawName: item.law.name,
+                        sourceId: item.sourceId,
+                        sourceName: item.sourceName
+                    };
+                })
             });
 
             if (!recordResult.success) {
@@ -616,9 +835,7 @@
                 }
             }
 
-            // =====================================================================
-            // INTEGRATION: Update Household from Execution
-            // =====================================================================
+            // Update Household from Execution
             var householdId = _getHouseholdIdForCharacter(condemnedId);
             if (householdId) {
                 _updateHouseholdFromCrime(
@@ -629,19 +846,20 @@
                     year
                 );
             }
-            // =====================================================================
 
             if (locationId && locationId !== 'unknown') {
                 _updateSettlementAfterCrime(locationId, 'execution', {
                     condemnedId: condemnedId,
                     year: year,
                     reason: executionReason,
-                    method: executionMethod
+                    method: executionMethod,
+                    lawViolations: violations.all.length
                 });
             }
 
             _logEvent('execution', 'Execution',
-                (condemned.name || 'Unknown') + ' was executed for ' + executionReason + ' via ' + executionMethod + ' in ' + year,
+                (condemned.name || 'Unknown') + ' was executed for ' + executionReason + ' via ' + executionMethod + ' in ' + year +
+                (violations.all.length > 0 ? ' Violated ' + violations.all.length + ' law(s).' : ''),
                 [condemned]);
 
             return {
@@ -654,7 +872,10 @@
                     locationId: locationId,
                     executionerId: executionerId,
                     crime: recordResult.data,
-                    householdId: householdId
+                    householdId: householdId,
+                    lawViolations: violations,
+                    civilPunishment: civilPunishment,
+                    religiousPunishment: religiousPunishment
                 }
             };
 
@@ -737,9 +958,7 @@
                 return { success: false, error: 'Failed to record death in vendetta: ' + deathResult.error };
             }
 
-            // =====================================================================
-            // INTEGRATION: Update Households from Vendetta
-            // =====================================================================
+            // Update Households from Vendetta
             if (victimHouseholdId) {
                 _updateHouseholdFromCrime(
                     victimHouseholdId,
@@ -758,7 +977,6 @@
                     currentYear
                 );
             }
-            // =====================================================================
 
             var locationId = options.locationId || _getCrimeLocation(victim, null) || 
                              _getCrimeLocation(killer, null) || 'unknown';
@@ -786,7 +1004,7 @@
     }
 
     // =========================================================================
-    // 5. WRAPPER FUNCTIONS
+    // 6. WRAPPER FUNCTIONS
     // =========================================================================
 
     function recordCrime(data) {
@@ -810,7 +1028,7 @@
     }
 
     // =========================================================================
-    // 6. HELPER FUNCTIONS
+    // 7. HELPER FUNCTIONS
     // =========================================================================
 
     function getRandomMurderReason(category) {
@@ -828,21 +1046,6 @@
         return _pickRandom(allReasons) || 'Unknown reason';
     }
 
-    function getRandomExecutionReason(category) {
-        var executionReasons = _getExecutionReasons();
-        if (category && executionReasons[category]) {
-            return _pickRandom(executionReasons[category]) || 'Unknown reason';
-        }
-
-        var allReasons = [];
-        for (var key in executionReasons) {
-            if (executionReasons.hasOwnProperty(key)) {
-                allReasons = allReasons.concat(executionReasons[key]);
-            }
-        }
-        return _pickRandom(allReasons) || 'Unknown reason';
-    }
-
     function getRandomExecutionMethod() {
         var methods = _getExecutionMethods();
         var methodArray = [];
@@ -852,6 +1055,36 @@
             }
         }
         return _pickRandom(methodArray) || { id: 'unknown', name: 'Unknown' };
+    }
+
+    /**
+     * Gets applicable laws for a character (PUBLIC - for UI)
+     * @param {string} characterId - Character ID
+     * @param {string} domain - Optional domain filter
+     * @returns {Array} Array of applicable laws
+     */
+    function getApplicableLaws(characterId, domain) {
+        if (typeof window.CrimeLawIntegration !== 'undefined' &&
+            typeof window.CrimeLawIntegration.getApplicableLaws === 'function') {
+            return window.CrimeLawIntegration.getApplicableLaws(characterId, domain);
+        }
+        
+        var character = _getCharacterById(characterId);
+        var locationId = character ? _getCurrentLocationId(character) : null;
+        
+        if (typeof window.SettlementQueries !== 'undefined' &&
+            typeof window.SettlementQueries.getApplicableLaws === 'function') {
+            return window.SettlementQueries.getApplicableLaws(locationId, characterId, domain);
+        }
+        
+        return [];
+    }
+
+    /**
+     * Checks if an action violates any laws (PUBLIC - for UI)
+     */
+    function checkLawViolations(characterId, action, context) {
+        return _checkLawViolations(characterId, action, context);
     }
 
     function getCharacterCombatStrength(character) {
@@ -886,7 +1119,7 @@
     }
 
     // =========================================================================
-    // 7. EXPORTS
+    // 8. EXPORTS
     // =========================================================================
 
     window.CrimeCommands = {
@@ -901,8 +1134,12 @@
         recordVendettaDeath: recordVendettaDeath,
         resolveVendetta: resolveVendetta,
 
+        // NEW: Law integration
+        getApplicableLaws: getApplicableLaws,
+        checkLawViolations: checkLawViolations,
+
+        // Helpers
         getRandomMurderReason: getRandomMurderReason,
-        getRandomExecutionReason: getRandomExecutionReason,
         getRandomExecutionMethod: getRandomExecutionMethod,
         getCharacterCombatStrength: getCharacterCombatStrength
     };

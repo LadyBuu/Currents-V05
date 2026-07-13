@@ -8,6 +8,9 @@
  * - Cache ranks, features, budget, employment, literacy
  * - Change notifications
  * - UI state management
+ * - PLACES OF WORSHIP TRACKING
+ * - RELIGIOUS DEMOGRAPHICS CACHE
+ * - CIVIL LAWS STORAGE (ALREADY PRESENT)
  * 
  * DEPENDENCIES:
  *   - accessors.js (getPlaceById, getCharacters, getPlaces)
@@ -72,7 +75,11 @@
             employment: new Map(),
             features: new Map(),
             literacy: new Map(),
-            rank: new Map()
+            rank: new Map(),
+            religiousDemographics: new Map(),
+            placesOfWorship: new Map(),
+            dominantReligion: new Map(),
+            civilLaws: new Map()
         },
         uiState: {
             selectedSettlementId: null,
@@ -133,6 +140,29 @@
             totalDebt: 0,
             foundedYear: _getCurrentYear(),
             lastUpgraded: _getCurrentYear(),
+            
+            // Budget allocation fields
+            budgetAllocationYear: _getCurrentYear(),
+            educationBudget: 0,
+            educationSpending: 0,
+            governmentSalaryBudget: 0,
+            infrastructureBudget: 0,
+            militaryBudget: 0,
+
+            // Public enterprise tracking
+            publicEnterpriseIds: [],
+            publicEnterpriseHistory: [],
+
+            // Places of Worship tracking
+            placesOfWorship: [],
+            dominantReligionId: null,
+            religiousUnity: 50,
+
+            // ================================================================
+            // CIVIL LAWS - Already present
+            // ================================================================
+            civilLaws: [],
+
             budget: {
                 income: {
                     taxes: 0,
@@ -148,6 +178,7 @@
                     military: 0,
                     education: 0,
                     infrastructure: 0,
+                    governmentSalaries: 0,
                     other: 0
                 },
                 annualSurplus: 0,
@@ -189,6 +220,10 @@
         _state.cache.features.clear();
         _state.cache.literacy.clear();
         _state.cache.rank.clear();
+        _state.cache.religiousDemographics.clear();
+        _state.cache.placesOfWorship.clear();
+        _state.cache.dominantReligion.clear();
+        _state.cache.civilLaws.clear();
     }
 
     function invalidateCache() {
@@ -339,7 +374,230 @@
     }
 
     // =========================================================================
-    // 7. FEATURE DEFINITIONS
+    // 7. BUDGET ALLOCATION ACCESSORS
+    // =========================================================================
+
+    function getSettlementBudgetAllocation(locationId) {
+        var data = getSettlementData(locationId);
+        if (!data) return null;
+        
+        return {
+            year: data.budgetAllocationYear || _getCurrentYear(),
+            educationBudget: data.educationBudget || 0,
+            governmentSalaryBudget: data.governmentSalaryBudget || 0,
+            infrastructureBudget: data.infrastructureBudget || 0,
+            militaryBudget: data.militaryBudget || 0,
+            totalAllocated: (data.educationBudget || 0) + 
+                            (data.governmentSalaryBudget || 0) + 
+                            (data.infrastructureBudget || 0) + 
+                            (data.militaryBudget || 0)
+        };
+    }
+
+    function getGovernmentSalaryBudget(locationId) {
+        var data = getSettlementData(locationId);
+        return data ? data.governmentSalaryBudget || 0 : 0;
+    }
+
+    function getEducationBudget(locationId) {
+        var data = getSettlementData(locationId);
+        return data ? data.educationBudget || 0 : 0;
+    }
+
+    // =========================================================================
+    // 8. PUBLIC ENTERPRISE ACCESSORS
+    // =========================================================================
+
+    function getPublicEnterpriseIds(locationId) {
+        var data = getSettlementData(locationId);
+        return data ? data.publicEnterpriseIds || [] : [];
+    }
+
+    function getPublicEnterprises(locationId) {
+        var ids = getPublicEnterpriseIds(locationId);
+        var result = [];
+        if (typeof window.IndustryQueries !== 'undefined') {
+            for (var i = 0; i < ids.length; i++) {
+                var enterprise = window.IndustryQueries.getEnterprise(ids[i]);
+                if (enterprise) {
+                    result.push(enterprise);
+                }
+            }
+        }
+        return result;
+    }
+
+    function getPublicEnterpriseHistory(locationId) {
+        var data = getSettlementData(locationId);
+        return data ? data.publicEnterpriseHistory || [] : [];
+    }
+
+    // =========================================================================
+    // 9. PLACES OF WORSHIP ACCESSORS
+    // =========================================================================
+
+    function getPlacesOfWorship(locationId) {
+        var data = getSettlementData(locationId);
+        if (!data) return [];
+
+        if (_state.cache.placesOfWorship.has(locationId)) {
+            return _state.cache.placesOfWorship.get(locationId);
+        }
+
+        var places = data.placesOfWorship || [];
+        var result = [];
+
+        if (typeof window.ReligionCommands !== 'undefined' &&
+            typeof window.ReligionCommands.getPlacesOfWorshipByLocation === 'function') {
+            var placeData = window.ReligionCommands.getPlacesOfWorshipByLocation(locationId);
+            if (placeData) {
+                result = result.concat(placeData);
+            }
+        }
+
+        _state.cache.placesOfWorship.set(locationId, result);
+        return result;
+    }
+
+    function getPlaceOfWorshipIds(locationId) {
+        var data = getSettlementData(locationId);
+        return data ? data.placesOfWorship || [] : [];
+    }
+
+    function getDominantReligion(locationId) {
+        var data = getSettlementData(locationId);
+        if (!data) return null;
+
+        if (_state.cache.dominantReligion.has(locationId)) {
+            return _state.cache.dominantReligion.get(locationId);
+        }
+
+        var dominantId = data.dominantReligionId || null;
+        if (dominantId && typeof window.ReligionState !== 'undefined') {
+            var religion = window.ReligionState.getReligion(dominantId);
+            _state.cache.dominantReligion.set(locationId, religion);
+            return religion;
+        }
+
+        return null;
+    }
+
+    function getReligiousUnity(locationId) {
+        var data = getSettlementData(locationId);
+        return data ? data.religiousUnity || 50 : 50;
+    }
+
+    function getReligiousDemographics(locationId) {
+        var data = getSettlementData(locationId);
+        if (!data) return null;
+
+        if (_state.cache.religiousDemographics.has(locationId)) {
+            return _state.cache.religiousDemographics.get(locationId);
+        }
+
+        var result = {
+            byReligion: {},
+            total: 0,
+            unaffiliated: 0
+        };
+
+        if (typeof window.ReligionQueries !== 'undefined') {
+            var breakdown = window.ReligionQueries.getReligiousBreakdown(locationId);
+            if (breakdown) {
+                result = breakdown;
+            }
+        }
+
+        _state.cache.religiousDemographics.set(locationId, result);
+        return result;
+    }
+
+    // =========================================================================
+    // 10. CIVIL LAWS ACCESSORS (NEW)
+    // =========================================================================
+
+    function getCivilLaws(locationId) {
+        var data = getSettlementData(locationId);
+        if (!data) return [];
+
+        if (_state.cache.civilLaws.has(locationId)) {
+            return _state.cache.civilLaws.get(locationId);
+        }
+
+        var laws = data.civilLaws || [];
+        _state.cache.civilLaws.set(locationId, laws);
+        return laws;
+    }
+
+    function getCivilLawCount(locationId) {
+        var laws = getCivilLaws(locationId);
+        return laws.length;
+    }
+
+    function getCivilLaw(locationId, lawId) {
+        var laws = getCivilLaws(locationId);
+        for (var i = 0; i < laws.length; i++) {
+            if (laws[i].id === lawId) {
+                return laws[i];
+            }
+        }
+        return null;
+    }
+
+    function getCivilLawsByDomain(locationId, domain) {
+        var laws = getCivilLaws(locationId);
+        if (!domain) return laws;
+
+        var result = [];
+        for (var i = 0; i < laws.length; i++) {
+            if (laws[i].domain === domain) {
+                result.push(laws[i]);
+            }
+        }
+        return result;
+    }
+
+    function getCivilLawsByType(locationId, type) {
+        var laws = getCivilLaws(locationId);
+        if (!type) return laws;
+
+        var result = [];
+        for (var i = 0; i < laws.length; i++) {
+            if (laws[i].type === type) {
+                result.push(laws[i]);
+            }
+        }
+        return result;
+    }
+
+    function getCivilLawsBySeverity(locationId, severity) {
+        var laws = getCivilLaws(locationId);
+        if (!severity) return laws;
+
+        var result = [];
+        for (var i = 0; i < laws.length; i++) {
+            if (laws[i].severity === severity) {
+                result.push(laws[i]);
+            }
+        }
+        return result;
+    }
+
+    function getEnforcedCivilLaws(locationId) {
+        var laws = getCivilLaws(locationId);
+        var result = [];
+
+        for (var i = 0; i < laws.length; i++) {
+            if (laws[i].crimeMapping && laws[i].crimeMapping.isEnforced) {
+                result.push(laws[i]);
+            }
+        }
+
+        return result;
+    }
+
+    // =========================================================================
+    // 11. FEATURE DEFINITIONS
     // =========================================================================
 
     function _getAllFeatures() {
@@ -358,7 +616,6 @@
             { id: 'courthouse', name: 'Courthouse', icon: 'c', cost: 300, justiceBonus: 1.3, maintenance: 8, prosperityBonus: 5, crimeReduction: 0.25, order: 3, category: 'civic', description: 'Center of justice', isPublic: true },
             { id: 'school', name: 'School', icon: 's', cost: 200, educationBonus: 1.2, maintenance: 5, prosperityBonus: 12, literacyBonus: 5, order: 3, category: 'civic', description: 'Center of learning', isPublic: true },
             { id: 'library', name: 'Library', icon: 'l', cost: 250, educationBonus: 1.3, prosperityBonus: 10, maintenance: 8, literacyBonus: 8, order: 3, category: 'civic', description: 'Center of knowledge', isPublic: true },
-            { id: 'temple', name: 'Temple', icon: 't', cost: 400, moraleBonus: 1.2, maintenance: 6, prosperityBonus: 8, crimeReduction: 0.05, order: 2, category: 'civic', description: 'Place of worship', isPublic: true },
             { id: 'market_square', name: 'Market Square', icon: 'm', cost: 200, tradeBonus: 1.3, maintenance: 5, prosperityBonus: 10, order: 1, category: 'civic', description: 'Center of commerce', isPublic: true },
             { id: 'guildhall', name: 'Guildhall', icon: 'g', cost: 250, tradeBonus: 1.2, maintenance: 4, prosperityBonus: 7, order: 2, category: 'civic', description: 'Guild headquarters', isPublic: true },
             // Military
@@ -385,7 +642,7 @@
     }
 
     // =========================================================================
-    // 8. RANK DEFINITIONS
+    // 12. RANK DEFINITIONS
     // =========================================================================
 
     function _getAllRanks() {
@@ -412,7 +669,7 @@
     }
 
     // =========================================================================
-    // 9. UI STATE MANAGEMENT
+    // 13. UI STATE MANAGEMENT
     // =========================================================================
 
     function getUIState() {
@@ -449,7 +706,7 @@
     }
 
     // =========================================================================
-    // 10. MUTATION HELPERS (Internal)
+    // 14. MUTATION HELPERS (Internal)
     // =========================================================================
 
     function _setSettlementData(locationId, data) {
@@ -461,6 +718,10 @@
         _state.cache.features.delete(locationId);
         _state.cache.literacy.delete(locationId);
         _state.cache.rank.delete(locationId);
+        _state.cache.religiousDemographics.delete(locationId);
+        _state.cache.placesOfWorship.delete(locationId);
+        _state.cache.dominantReligion.delete(locationId);
+        _state.cache.civilLaws.delete(locationId);
         _notifySubscribers('settlementUpdated', { locationId: locationId, data: data });
         return data;
     }
@@ -482,6 +743,10 @@
         _state.cache.features.delete(locationId);
         _state.cache.literacy.delete(locationId);
         _state.cache.rank.delete(locationId);
+        _state.cache.religiousDemographics.delete(locationId);
+        _state.cache.placesOfWorship.delete(locationId);
+        _state.cache.dominantReligion.delete(locationId);
+        _state.cache.civilLaws.delete(locationId);
         _notifySubscribers('settlementUpdated', { locationId: locationId, updates: updates });
         return data;
     }
@@ -511,6 +776,176 @@
         _saveMasterData();
         _state.cache.features.delete(locationId);
         _notifySubscribers('featureRemoved', { locationId: locationId, featureId: featureId });
+        return true;
+    }
+
+    // =========================================================================
+    // 15. CIVIL LAWS MUTATION HELPERS (NEW)
+    // =========================================================================
+
+    function _addCivilLaw(locationId, law) {
+        var data = getSettlementData(locationId);
+        if (!data) return false;
+
+        if (!data.civilLaws) data.civilLaws = [];
+        
+        // Check for duplicate ID
+        for (var i = 0; i < data.civilLaws.length; i++) {
+            if (data.civilLaws[i].id === law.id) {
+                return false;
+            }
+        }
+
+        data.civilLaws.push(law);
+        _saveMasterData();
+        _state.cache.civilLaws.delete(locationId);
+        _notifySubscribers('civilLawAdded', { locationId: locationId, law: law });
+        return true;
+    }
+
+    function _updateCivilLaw(locationId, lawId, updates) {
+        var data = getSettlementData(locationId);
+        if (!data || !data.civilLaws) return false;
+
+        var index = -1;
+        for (var i = 0; i < data.civilLaws.length; i++) {
+            if (data.civilLaws[i].id === lawId) {
+                index = i;
+                break;
+            }
+        }
+
+        if (index === -1) return false;
+
+        var law = data.civilLaws[index];
+        for (var key in updates) {
+            if (updates.hasOwnProperty(key)) {
+                law[key] = updates[key];
+            }
+        }
+
+        law.updatedAt = Date.now();
+
+        _saveMasterData();
+        _state.cache.civilLaws.delete(locationId);
+        _notifySubscribers('civilLawUpdated', { locationId: locationId, lawId: lawId });
+        return true;
+    }
+
+    function _removeCivilLaw(locationId, lawId) {
+        var data = getSettlementData(locationId);
+        if (!data || !data.civilLaws) return false;
+
+        var index = -1;
+        for (var i = 0; i < data.civilLaws.length; i++) {
+            if (data.civilLaws[i].id === lawId) {
+                index = i;
+                break;
+            }
+        }
+
+        if (index === -1) return false;
+
+        data.civilLaws.splice(index, 1);
+        _saveMasterData();
+        _state.cache.civilLaws.delete(locationId);
+        _notifySubscribers('civilLawRemoved', { locationId: locationId, lawId: lawId });
+        return true;
+    }
+
+    // =========================================================================
+    // 16. PLACES OF WORSHIP MUTATION HELPERS
+    // =========================================================================
+
+    function _addPlaceOfWorship(locationId, placeId) {
+        var data = getSettlementData(locationId);
+        if (!data) return false;
+
+        if (!data.placesOfWorship) data.placesOfWorship = [];
+        if (data.placesOfWorship.indexOf(placeId) !== -1) return false;
+
+        data.placesOfWorship.push(placeId);
+        _saveMasterData();
+        _state.cache.placesOfWorship.delete(locationId);
+        _state.cache.dominantReligion.delete(locationId);
+        _notifySubscribers('placeOfWorshipAdded', { locationId: locationId, placeId: placeId });
+        return true;
+    }
+
+    function _removePlaceOfWorship(locationId, placeId) {
+        var data = getSettlementData(locationId);
+        if (!data || !data.placesOfWorship) return false;
+
+        var index = data.placesOfWorship.indexOf(placeId);
+        if (index === -1) return false;
+
+        data.placesOfWorship.splice(index, 1);
+        _saveMasterData();
+        _state.cache.placesOfWorship.delete(locationId);
+        _state.cache.dominantReligion.delete(locationId);
+        _notifySubscribers('placeOfWorshipRemoved', { locationId: locationId, placeId: placeId });
+        return true;
+    }
+
+    function _setDominantReligion(locationId, religionId) {
+        var data = getSettlementData(locationId);
+        if (!data) return false;
+
+        data.dominantReligionId = religionId;
+        _state.cache.dominantReligion.delete(locationId);
+        _state.cache.religiousDemographics.delete(locationId);
+        _saveMasterData();
+        return true;
+    }
+
+    function _setReligiousUnity(locationId, unity) {
+        var data = getSettlementData(locationId);
+        if (!data) return false;
+
+        data.religiousUnity = Math.min(100, Math.max(0, unity));
+        _saveMasterData();
+        return true;
+    }
+
+    function _addPublicEnterprise(locationId, enterpriseId) {
+        var data = getSettlementData(locationId);
+        if (!data) return false;
+
+        if (!data.publicEnterpriseIds) data.publicEnterpriseIds = [];
+        if (data.publicEnterpriseIds.indexOf(enterpriseId) !== -1) return false;
+
+        data.publicEnterpriseIds.push(enterpriseId);
+
+        if (!data.publicEnterpriseHistory) data.publicEnterpriseHistory = [];
+        data.publicEnterpriseHistory.push({
+            enterpriseId: enterpriseId,
+            year: _getCurrentYear(),
+            action: 'added'
+        });
+
+        _saveMasterData();
+        _notifySubscribers('publicEnterpriseAdded', { locationId: locationId, enterpriseId: enterpriseId });
+        return true;
+    }
+
+    function _removePublicEnterprise(locationId, enterpriseId) {
+        var data = getSettlementData(locationId);
+        if (!data || !data.publicEnterpriseIds) return false;
+
+        var index = data.publicEnterpriseIds.indexOf(enterpriseId);
+        if (index === -1) return false;
+
+        data.publicEnterpriseIds.splice(index, 1);
+
+        if (!data.publicEnterpriseHistory) data.publicEnterpriseHistory = [];
+        data.publicEnterpriseHistory.push({
+            enterpriseId: enterpriseId,
+            year: _getCurrentYear(),
+            action: 'removed'
+        });
+
+        _saveMasterData();
+        _notifySubscribers('publicEnterpriseRemoved', { locationId: locationId, enterpriseId: enterpriseId });
         return true;
     }
 
@@ -551,7 +986,7 @@
     }
 
     // =========================================================================
-    // 11. CHANGE NOTIFICATIONS
+    // 17. CHANGE NOTIFICATIONS
     // =========================================================================
 
     function subscribe(callback) {
@@ -587,7 +1022,7 @@
     }
 
     // =========================================================================
-    // 12. EXPORTS
+    // 18. EXPORTS
     // =========================================================================
 
     window.SettlementState = {
@@ -598,6 +1033,34 @@
         getSettlementEmployment: getSettlementEmployment,
         getStateEnterpriseIds: getStateEnterpriseIds,
         getSettlementHistory: getSettlementHistory,
+
+        // Budget allocation accessors
+        getSettlementBudgetAllocation: getSettlementBudgetAllocation,
+        getGovernmentSalaryBudget: getGovernmentSalaryBudget,
+        getEducationBudget: getEducationBudget,
+
+        // Public enterprise accessors
+        getPublicEnterpriseIds: getPublicEnterpriseIds,
+        getPublicEnterprises: getPublicEnterprises,
+        getPublicEnterpriseHistory: getPublicEnterpriseHistory,
+
+        // Places of Worship accessors
+        getPlacesOfWorship: getPlacesOfWorship,
+        getPlaceOfWorshipIds: getPlaceOfWorshipIds,
+        getDominantReligion: getDominantReligion,
+        getReligiousUnity: getReligiousUnity,
+        getReligiousDemographics: getReligiousDemographics,
+
+        // ================================================================
+        // CIVIL LAWS ACCESSORS (NEW)
+        // ================================================================
+        getCivilLaws: getCivilLaws,
+        getCivilLawCount: getCivilLawCount,
+        getCivilLaw: getCivilLaw,
+        getCivilLawsByDomain: getCivilLawsByDomain,
+        getCivilLawsByType: getCivilLawsByType,
+        getCivilLawsBySeverity: getCivilLawsBySeverity,
+        getEnforcedCivilLaws: getEnforcedCivilLaws,
 
         _getAllRanks: _getAllRanks,
         _getAllFeatures: _getAllFeatures,
@@ -618,6 +1081,23 @@
         _addStateEnterprise: _addStateEnterprise,
         _removeStateEnterprise: _removeStateEnterprise,
         _addHistoryEntry: _addHistoryEntry,
+
+        // Public enterprise mutation helpers
+        _addPublicEnterprise: _addPublicEnterprise,
+        _removePublicEnterprise: _removePublicEnterprise,
+
+        // Places of Worship mutation helpers
+        _addPlaceOfWorship: _addPlaceOfWorship,
+        _removePlaceOfWorship: _removePlaceOfWorship,
+        _setDominantReligion: _setDominantReligion,
+        _setReligiousUnity: _setReligiousUnity,
+
+        // ================================================================
+        // CIVIL LAWS MUTATION HELPERS (NEW)
+        // ================================================================
+        _addCivilLaw: _addCivilLaw,
+        _updateCivilLaw: _updateCivilLaw,
+        _removeCivilLaw: _removeCivilLaw,
 
         _initialize: _initializeState
     };

@@ -1,19 +1,10 @@
-
 /**
  * =============================================================================
- * STILL WATERS - HOUSEHOLD DEPARTMENTS TAB UI
+ * HOUSEHOLD DEPARTMENTS TAB
  * =============================================================================
  * 
- * UPDATED: Uses new HouseholdState/HouseholdCommands/HouseholdQueries system
- * 
- * DEPENDENCIES:
- *   - household-state.js (HouseholdState)
- *   - household-commands.js (HouseholdCommands)
- *   - household-queries.js (HouseholdQueries)
- *   - modals-core.js (_escapeHtml, _showToast, _getIcon)
- *   - modals-char-select.js (openCharacterSelector)
- *   - modals-assign-staff.js (openAssignStaffModal)
- *   - household-servant.js (HouseholdServant)
+ * UPDATED: Full integration with HouseholdState, HouseholdCommands,
+ *          HouseholdQueries, HouseholdEconomy, and HouseholdServant
  * 
  * =============================================================================
  */
@@ -32,75 +23,45 @@
     // =========================================================================
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
-        }
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
+        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
+        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
         if (!str) return '';
         return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
-    function _showToast(message, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(message, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(message, type);
-        }
+    function _showToast(msg, type) {
+        if (typeof window._showToast === 'function') return window._showToast(msg, type);
+        if (typeof window.showToast === 'function') return window.showToast(msg, type);
+        console.log('[' + (type || 'info') + '] ' + msg);
     }
 
     function _getCurrentYear() {
-        if (typeof window._getCurrentYear === 'function') {
-            return window._getCurrentYear();
-        }
-        if (typeof window.getCurrentYearSafe === 'function') {
-            return window.getCurrentYearSafe();
-        }
-        if (typeof window.getCurrentYear === 'function') {
-            return window.getCurrentYear();
-        }
+        if (typeof window._getCurrentYear === 'function') return window._getCurrentYear();
+        if (typeof window.getCurrentYearSafe === 'function') return window.getCurrentYearSafe();
+        if (typeof window.getCurrentYear === 'function') return window.getCurrentYear();
         return 1250;
     }
 
     function _getIcon(name) {
-        if (typeof window._getIcon === 'function') {
-            return window._getIcon(name);
-        }
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
+        if (typeof window._getIcon === 'function') return window._getIcon(name);
+        if (window.Icons && window.Icons[name]) return window.Icons[name];
         return '';
     }
 
     function _openModal(options) {
-        if (typeof window.openModal === 'function') {
-            return window.openModal(options);
-        }
-        if (typeof window._openModal === 'function') {
-            return window._openModal(options);
-        }
+        if (typeof window.openModal === 'function') return window.openModal(options);
+        if (typeof window._openModal === 'function') return window._openModal(options);
         return null;
     }
 
     function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') {
-            window.closeTopModal();
-        }
-        if (typeof window._closeTopModal === 'function') {
-            window._closeTopModal();
-        }
+        if (typeof window.closeTopModal === 'function') window.closeTopModal();
+        if (typeof window._closeTopModal === 'function') window._closeTopModal();
     }
 
     function _confirmDialog(message, title, onConfirm, onCancel) {
-        if (typeof window.confirmDialog === 'function') {
-            return window.confirmDialog(message, title, onConfirm, onCancel);
-        }
-        if (typeof window._confirmDialog === 'function') {
-            return window._confirmDialog(message, title, onConfirm, onCancel);
-        }
+        if (typeof window.confirmDialog === 'function') return window.confirmDialog(message, title, onConfirm, onCancel);
+        if (typeof window._confirmDialog === 'function') return window._confirmDialog(message, title, onConfirm, onCancel);
         if (confirm(message)) {
             if (onConfirm) onConfirm();
         } else {
@@ -109,12 +70,8 @@
     }
 
     function _promptDialog(message, defaultValue, onConfirm, onCancel) {
-        if (typeof window.promptDialog === 'function') {
-            return window.promptDialog(message, defaultValue, onConfirm, onCancel);
-        }
-        if (typeof window._promptDialog === 'function') {
-            return window._promptDialog(message, defaultValue, onConfirm, onCancel);
-        }
+        if (typeof window.promptDialog === 'function') return window.promptDialog(message, defaultValue, onConfirm, onCancel);
+        if (typeof window._promptDialog === 'function') return window._promptDialog(message, defaultValue, onConfirm, onCancel);
         var result = prompt(message, defaultValue);
         if (result !== null && result.trim()) {
             if (onConfirm) onConfirm(result.trim());
@@ -123,13 +80,22 @@
         }
     }
 
+    function _openCharacterSelector(options) {
+        if (typeof window.openCharacterSelector === 'function') return window.openCharacterSelector(options);
+        if (typeof window.openUnifiedCharacterSelector === 'function') return window.openUnifiedCharacterSelector(options);
+        if (typeof window._openCharacterSelector === 'function') return window._openCharacterSelector(options);
+        _showToast('Character selector not available', 'error');
+        return null;
+    }
+
     // =========================================================================
-    // 2. STATE, COMMANDS, AND QUERIES REFERENCE
+    // 2. STATE, COMMANDS, QUERIES, ECONOMY, SERVANT
     // =========================================================================
 
     var _state = window.HouseholdState;
     var _commands = window.HouseholdCommands;
     var _queries = window.HouseholdQueries;
+    var _economy = window.HouseholdEconomy;
     var _servant = window.HouseholdServant;
 
     // =========================================================================
@@ -141,14 +107,8 @@
         return icon || '';
     }
 
-    function _iconSpan(icon, title) {
-        if (!icon) return '';
-        var titleAttr = title ? ' title="' + _escapeHtml(title) + '"' : '';
-        return '<span style="display:inline-flex;align-items:center;vertical-align:middle;' + (title ? 'cursor:help;' : '') + '"' + titleAttr + '>' + icon + '</span>';
-    }
-
     // =========================================================================
-    // 4. BUSINESS LOGIC WRAPPERS (Using new system)
+    // 4. BUSINESS LOGIC WRAPPERS
     // =========================================================================
 
     function _getHousehold(householdId) {
@@ -156,28 +116,17 @@
     }
 
     function _getCharacterById(characterId) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(characterId);
-        }
+        if (typeof window.getCharacterById === 'function') return window.getCharacterById(characterId);
         return null;
     }
 
     function _getCharacters() {
-        if (typeof window.getCharacters === 'function') {
-            return window.getCharacters();
-        }
+        if (typeof window.getCharacters === 'function') return window.getCharacters();
         return [];
     }
 
-    function _getActiveRankDisplay(character) {
-        if (typeof window.getActiveRankDisplay === 'function') {
-            return window.getActiveRankDisplay(character);
-        }
-        return null;
-    }
-
-    function _getHouseholdHeadCharacter(householdId) {
-        return _state ? _state.getHouseholdHead(householdId) : null;
+    function _getHouseholdMembers(householdId) {
+        return _state ? _state.getHouseholdMembersWithCharacters(householdId) : [];
     }
 
     function _getDepartments(householdId) {
@@ -185,51 +134,21 @@
         return household ? (household.departments || []) : [];
     }
 
-    function _getHouseholdMembers(householdId) {
-        var household = _getHousehold(householdId);
-        return household ? (household.members || []) : [];
+    function _getHouseholdHead(householdId) {
+        return _state ? _state.getHouseholdHead(householdId) : null;
     }
 
-    function _getCharacterDepartmentHead(householdId, characterId) {
-        if (typeof window.getCharacterDepartmentHead === 'function') {
-            return window.getCharacterDepartmentHead(householdId, characterId);
-        }
-        var household = _getHousehold(householdId);
-        if (!household || !household.departments) return null;
-        for (var i = 0; i < household.departments.length; i++) {
-            if (household.departments[i].headId === characterId) {
-                return household.departments[i];
-            }
-        }
+    function _getActiveRankDisplay(character) {
+        if (typeof window.getActiveRankDisplay === 'function') return window.getActiveRankDisplay(character);
         return null;
     }
 
-    function _modifyHouseholdReputation(householdId, delta, reason) {
-        if (typeof window.modifyHouseholdReputation === 'function') {
-            return window.modifyHouseholdReputation(householdId, delta, reason);
-        }
-        // Use state update if available
-        var household = _getHousehold(householdId);
-        if (household && _state && typeof _state.updateHousehold === 'function') {
-            var newRep = Math.max(0, Math.min(100, (household.reputation || 50) + delta));
-            _state.updateHousehold(householdId, { reputation: newRep }, { recordHistory: false });
-            return newRep;
-        }
-        return null;
-    }
-
-    function _modifyHouseholdWealth(householdId, amount, reason) {
-        if (typeof window.modifyHouseholdWealth === 'function') {
-            return window.modifyHouseholdWealth(householdId, amount, reason);
-        }
-        // Use state update if available
-        var household = _getHousehold(householdId);
-        if (household && _state && typeof _state.updateHousehold === 'function') {
-            var newWealth = Math.max(0, (household.wealth || 0) + amount);
-            _state.updateHousehold(householdId, { wealth: newWealth }, { recordHistory: false });
-            return newWealth;
-        }
-        return null;
+    function _calculateAge(birthYear, isDeceased, deathYear) {
+        if (typeof window.calculateAge === 'function') return window.calculateAge(birthYear, isDeceased, deathYear);
+        var currentYear = _getCurrentYear();
+        if (!birthYear) return 0;
+        if (isDeceased && deathYear) return Math.max(0, deathYear - birthYear);
+        return Math.max(0, currentYear - birthYear);
     }
 
     // =========================================================================
@@ -265,7 +184,25 @@
     }
 
     // =========================================================================
-    // 6. STAFF ASSIGNMENT MODAL WRAPPER
+    // 6. ECONOMY HELPERS
+    // =========================================================================
+
+    function _modifyHouseholdWealth(householdId, amount, reason) {
+        return _economy ? _economy.updateHouseholdWealth(householdId, amount, reason) : null;
+    }
+
+    function _modifyHouseholdReputation(householdId, delta, reason) {
+        var household = _getHousehold(householdId);
+        if (household && _state && typeof _state.updateHousehold === 'function') {
+            var newRep = Math.max(0, Math.min(100, (household.reputation || 50) + delta));
+            _state.updateHousehold(householdId, { reputation: newRep }, { recordHistory: false });
+            return newRep;
+        }
+        return null;
+    }
+
+    // =========================================================================
+    // 7. MODAL WRAPPERS
     // =========================================================================
 
     function _openAssignStaffModal(householdId, departmentId, onSuccess) {
@@ -280,7 +217,7 @@
     }
 
     // =========================================================================
-    // 7. HELPER FUNCTIONS
+    // 8. HELPER FUNCTIONS
     // =========================================================================
 
     function getDepartmentStats(householdId) {
@@ -338,7 +275,7 @@
     }
 
     // =========================================================================
-    // 8. UI RENDERING
+    // 9. MAIN RENDER FUNCTION
     // =========================================================================
 
     function renderHouseholdDepartmentsTab(containerId, householdId, onRefresh) {
@@ -357,7 +294,7 @@
 
             var departments = household.departments || [];
             var members = household.members || [];
-            var householdHead = _getHouseholdHeadCharacter(householdId);
+            var householdHead = _getHouseholdHead(householdId);
             var employerId = householdHead ? householdHead.id : null;
             var stats = getDepartmentStats(householdId);
 
@@ -407,7 +344,7 @@
                     } else if (deptNameLower.indexOf('stable') !== -1) {
                         deptIcon = '⌂';
                     } else if (deptNameLower.indexOf('account') !== -1 || deptNameLower.indexOf('treasury') !== -1) {
-                        deptIcon = '⭐';
+                        deptIcon = '♡';
                     }
 
                     html += '<div class="department-card" data-dept-id="' + dept.id + '" style="';
@@ -530,7 +467,7 @@
     }
 
     // =========================================================================
-    // 9. EVENT HANDLERS
+    // 10. EVENT HANDLERS
     // =========================================================================
 
     function _attachEventHandlers(container, householdId, departments, employerId, onRefresh) {
@@ -717,17 +654,10 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 11. EXPORTS
     // =========================================================================
 
     window.renderHouseholdDepartmentsTab = renderHouseholdDepartmentsTab;
     window.getDepartmentStats = getDepartmentStats;
-
-    if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            renderHouseholdDepartmentsTab: renderHouseholdDepartmentsTab,
-            getDepartmentStats: getDepartmentStats
-        };
-    }
 
 })();

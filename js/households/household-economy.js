@@ -8,11 +8,15 @@
  * Business logic for household economy management including wealth, resources,
  * income, expenses, and enterprise integration.
  * 
+ * UPDATED: Enhanced enterprise profit/loss tracking
+ *          Added enterprise history tracking
+ *          Added enterprise value calculation
+ * 
  * DEPENDENCIES:
- *   - household-state.js - HouseholdState
- *   - household-queries.js - HouseholdQueries
- *   - household-commands.js - HouseholdCommands
- *   - accessors.js - getCharacterById, getCharacters, getPlaceById, getCurrentYear
+ *   - household-state.js (HouseholdState)
+ *   - household-queries.js (HouseholdQueries)
+ *   - household-commands.js (HouseholdCommands)
+ *   - accessors.js (getCharacterById, getCharacters, getPlaceById, getCurrentYear)
  * 
  * =============================================================================
  */
@@ -363,7 +367,7 @@
     }
 
     // =========================================================================
-    // 6. INCOME & EXPENSES (Updated with Enterprise Integration)
+    // 6. INCOME & EXPENSES (UPDATED with Enterprise Integration)
     // =========================================================================
 
     function calculateAnnualIncome(householdId) {
@@ -407,16 +411,34 @@
                 }
             }
 
-            // 3. ENTERPRISE PROFITS (NEW)
+            // ================================================================
+            // 3. ENTERPRISE PROFITS (ENHANCED)
+            // ================================================================
             if (queries && typeof queries.getHouseholdEnterpriseSummaries === 'function') {
                 var summaries = queries.getHouseholdEnterpriseSummaries(householdId);
+                var stateObj = _getState();
                 for (var i = 0; i < summaries.length; i++) {
-                    var profit = summaries[i].annualProfit || 0;
+                    var s = summaries[i];
+                    
+                    // Only track private enterprises (public profits go to settlement)
+                    if (s.ownershipType === 'public') continue;
+                    
+                    var profit = s.annualProfit || 0;
                     if (profit > 0) {
                         income += profit;
+                        // Track profit in household history
+                        if (stateObj && typeof stateObj.trackEnterpriseProfit === 'function') {
+                            stateObj.trackEnterpriseProfit(
+                                householdId, 
+                                s.id, 
+                                profit, 
+                                _getCurrentYear()
+                            );
+                        }
                     }
                 }
             }
+            // ================================================================
 
             // 4. School profits (if household owns schools)
             if (household.economy && household.economy.schoolProfits) {
@@ -463,16 +485,35 @@
                 }
             }
 
-            // 3. ENTERPRISE LOSSES (NEW)
+            // ================================================================
+            // 3. ENTERPRISE LOSSES (ENHANCED)
+            // ================================================================
             if (queries && typeof queries.getHouseholdEnterpriseSummaries === 'function') {
                 var summaries = queries.getHouseholdEnterpriseSummaries(householdId);
+                var stateObj = _getState();
                 for (var i = 0; i < summaries.length; i++) {
-                    var profit = summaries[i].annualProfit || 0;
+                    var s = summaries[i];
+                    
+                    // Only track private enterprises
+                    if (s.ownershipType === 'public') continue;
+                    
+                    var profit = s.annualProfit || 0;
                     if (profit < 0) {
-                        expenses += Math.abs(profit);
+                        var loss = Math.abs(profit);
+                        expenses += loss;
+                        // Track loss in household history
+                        if (stateObj && typeof stateObj.trackEnterpriseProfit === 'function') {
+                            stateObj.trackEnterpriseProfit(
+                                householdId, 
+                                s.id, 
+                                profit, // Negative value
+                                _getCurrentYear()
+                            );
+                        }
                     }
                 }
             }
+            // ================================================================
 
             // 4. Tuition expenses
             if (household.economy && household.economy.tuitionExpenses) {
@@ -506,7 +547,7 @@
     }
 
     // =========================================================================
-    // 7. ANNUAL PROCESSING (Updated with Enterprise Integration)
+    // 7. ANNUAL PROCESSING (UPDATED with Enterprise Integration)
     // =========================================================================
 
     function processAnnualEconomy(householdId) {
@@ -538,7 +579,7 @@
                 updateHouseholdWealth(householdId, netChange, 'Annual economy processing');
             }
 
-            // Process enterprise events (NEW)
+            // Process enterprise events (ENHANCED)
             if (queries && typeof queries.getHouseholdEnterpriseSummaries === 'function') {
                 var summaries = queries.getHouseholdEnterpriseSummaries(householdId);
                 if (!household.eventLog) household.eventLog = [];
@@ -551,7 +592,8 @@
                             type: s.annualProfit > 0 ? 'enterprise_profit' : 'enterprise_loss',
                             amount: Math.abs(s.annualProfit),
                             enterpriseName: s.name,
-                            enterpriseId: s.id
+                            enterpriseId: s.id,
+                            ownershipType: s.ownershipType || 'private'
                         });
                     }
                 }
@@ -1096,6 +1138,35 @@
             description: 'Property damaged by fire',
             delta: function(household) { return -15 - Math.floor(Math.random() * 30); },
             chance: 0.04
+        },
+        // NEW: Enterprise-related events
+        enterprise_boom: {
+            id: 'enterprise_boom',
+            name: 'Enterprise Boom',
+            description: 'Your enterprises are thriving!',
+            delta: function(household) { 
+                var state = _getState();
+                if (state && typeof state.getHouseholdEnterprises === 'function') {
+                    var enterprises = state.getHouseholdEnterprises(household.id);
+                    return enterprises.length * 5 + Math.floor(Math.random() * 20);
+                }
+                return 15 + Math.floor(Math.random() * 20);
+            },
+            chance: 0.04
+        },
+        enterprise_crisis: {
+            id: 'enterprise_crisis',
+            name: 'Enterprise Crisis',
+            description: 'Market downturn affects your businesses',
+            delta: function(household) { 
+                var state = _getState();
+                if (state && typeof state.getHouseholdEnterprises === 'function') {
+                    var enterprises = state.getHouseholdEnterprises(household.id);
+                    return -(enterprises.length * 3 + Math.floor(Math.random() * 15));
+                }
+                return -(10 + Math.floor(Math.random() * 15));
+            },
+            chance: 0.04
         }
     };
 
@@ -1288,12 +1359,12 @@
         getHouseholdResources: getHouseholdResources,
         updateHouseholdResources: updateHouseholdResources,
 
-        // Income & Expenses (Updated with Enterprise Integration)
+        // Income & Expenses (UPDATED with Enterprise Integration)
         calculateAnnualIncome: calculateAnnualIncome,
         calculateAnnualExpenses: calculateAnnualExpenses,
         computeNetAnnualChange: computeNetAnnualChange,
 
-        // Annual Processing (Updated with Enterprise Integration)
+        // Annual Processing (UPDATED with Enterprise Integration)
         processAnnualEconomy: processAnnualEconomy,
         consumeAnnualFood: consumeAnnualFood,
 

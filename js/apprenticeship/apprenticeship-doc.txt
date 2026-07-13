@@ -1,98 +1,52 @@
-# APPRENTICESHIP SYSTEM - COMPLETE DOCUMENTATION
+# STILL WATERS - APPRENTICESHIP SYSTEM DOCUMENTATION
+
+---
+
+## TABLE OF CONTENTS
+
+1. [System Overview](#system-overview)
+2. [System Files](#system-files)
+3. [Apprenticeship Constants](#apprenticeship-constants)
+4. [Apprenticeship System (Consolidated)](#apprenticeship-system-consolidated)
+5. [Apprenticeship Modals](#apprenticeship-modals)
+6. [Complete API Reference](#complete-api-reference)
+7. [Data Schemas](#data-schemas)
+8. [Dependency Map](#dependency-map)
+9. [Integration with Other Systems](#integration-with-other-systems)
+
+---
 
 ## SYSTEM OVERVIEW
 
-The Apprenticeship System manages the master-apprentice relationship for skill transfer and professional development. It handles the creation, progression, and completion of apprenticeships, with skill tracking and stage-based progression.
+The Apprenticeship System manages the master-apprentice relationships where characters learn professions and skills from more experienced practitioners. It handles skill progression, teaching sessions, knowledge preservation on death, and finding masters by location.
 
-**KEY FEATURES:**
-- Master-apprentice relationship management
-- Skill progression through defined stages (Novice → Apprentice → Journeyman → Master)
-- Automatic annual skill advancement
-- Teaching sessions and skill transfer
-- Knowledge preservation on death
-- Full UI integration with character and role systems
+**Key Principles:**
+- **Consolidated Architecture:** Single file (`apprenticeship-system.js`) delegates all functionality to `ProfessionalLogic`
+- **No Trust System:** All trust-related functionality has been removed
+- **Direct Learning:** Skills are taught directly through teaching sessions
+- **Skill Progression:** Skill levels range from 0-100 with defined stages
+- **Master-Apprentice Relationships:** Stored as relationship records
+- **Knowledge Preservation:** Skills can be passed on through inheritance/teaching
+- **Location-Based Discovery:** Find masters in settlements
 
 ---
 
-## DIRECTORY STRUCTURE
-
-Based on your project structure, the Apprenticeship System files are located at:
+## SYSTEM FILES
 
 ```
 js/apprenticeship/
-├── apprenticeship-constants.js     # All constants (stages, skill levels, transfer methods)
-├── apprenticeship-system.js        # Consolidated wrapper (delegates to ProfessionalLogic)
-├── modals-apprenticeship.js        # UI modals (CRUD, details, master tree, find master)
-├── modals-apprenticeship.js        # (Continued - full modal implementations)
-└── (apprenticeship-state.js, -commands.js, -queries.js, -learning.js → Consolidated)
-```
-
-**NOTE:** The system has been **CONSOLIDATED**. The following files have been replaced by `apprenticeship-system.js` which delegates all functionality to `ProfessionalLogic`:
-- ~~apprenticeship-state.js~~
-- ~~apprenticeship-commands.js~~
-- ~~apprenticeship-queries.js~~
-- ~~apprenticeship-learning.js~~
-
----
-
-## RELATED FILES (Cross-System Dependencies)
-
-```
-js/core/
-├── accessors.js                # getCharacterById, getCharacters, getRoleById, getRoles
-├── ids.js                      # generateId()
-├── storage.js                  # saveMasterData()
-├── constants.js                # AGE_GROUPS, AGE_GROUPS_MAP
-├── formatting.js               # escapeHtml()
-├── icons.js                    # SVG icons (NO EMOJIS)
-├── modals-core.js              # openModal, closeTopModal, _showToast, _getIcon
-├── modals-char-select.js       # Character selector
-├── time.js                     # getCurrentYearSafe, calculateAge
-├── world.js                    # getCurrentLocation, getLocationTypeById
-└── randomness.js               # chance(), pickRandom()
-
-js/roles/
-├── role-state.js               # RoleState (role definitions)
-├── role-queries.js             # RoleQueries (role lookups)
-└── role-commands.js            # RoleCommands (role assignment)
-
-js/relationships/
-├── relationship-registry.js    # Relationship management (apprenticeships stored here)
-├── relationship-queries.js     # Relationship queries
-└── professional-logic.js       # ProfessionalLogic (core apprenticeship logic)
-
-js/households/
-├── household-state.js          # Household management
-└── household-commands.js       # Household operations
-
-js/character/
-├── character-state.js          # Character data
-└── character-commands.js       # Character operations
+├── apprenticeship-constants.js         # All constants (stages, skill levels, methods)
+├── apprenticeship-system.js            # Consolidated wrapper delegating to ProfessionalLogic
+└── modals-apprenticeship.js            # UI modals (create, edit, details, find master)
 ```
 
 ---
 
-## KEY PRINCIPLES
-
-| Principle | Description |
-|-----------|-------------|
-| **NO TRUST SYSTEM** | Trust has been completely removed from the apprenticeship system |
-| **Consolidated Architecture** | All functionality delegates to `ProfessionalLogic` |
-| **Relationship-Based** | Apprenticeships are stored as relationship records |
-| **Command-Query Separation** | Commands (writes) vs Queries (reads) separated |
-| **Separation of Concerns** | Constants, modals, and system wrapper all separate |
-| **Recursion Guards** | All public functions protected from infinite loops |
-| **No Emojis** | All icons from `icons.js` via `_getIcon()` |
-
----
-
-# 1. APPRENTICESHIP-CONSTANTS.JS
+## APPRENTICESHIP-CONSTANTS.JS
 
 **PURPOSE:** All apprenticeship-related constants. Pure constants - no dependencies.
 
----
-
-## APPRENTICESHIP STAGES
+### APPRENTICESHIP STAGES
 
 | Stage | ID | Min Level | Max Level | Icon | Required Years |
 |-------|-----|-----------|-----------|------|----------------|
@@ -101,9 +55,7 @@ js/character/
 | Journeyman | `journeyman` | 51 | 75 | ⌇ | 4 |
 | Master | `master` | 76 | 100 | ◉ | 5 |
 
----
-
-## SKILL LEVELS
+### SKILL LEVELS
 
 | Level | ID | Min | Max | Modifier |
 |-------|-----|-----|-----|----------|
@@ -114,9 +66,7 @@ js/character/
 | Expert | `expert` | 76 | 90 | 1.0 |
 | Master | `master` | 91 | 100 | 1.1 |
 
----
-
-## SKILL TRANSFER METHODS (NO TRUST)
+### SKILL TRANSFER METHODS
 
 | Method | ID | Base Success | Icon | Gain |
 |--------|-----|--------------|------|------|
@@ -129,559 +79,423 @@ js/character/
 
 ---
 
-# 2. APPRENTICESHIP-SYSTEM.JS
+## APPRENTICESHIP-SYSTEM.JS
 
-**PURPOSE:** Consolidated wrapper that delegates all functionality to `ProfessionalLogic`. This file **REPLACES** the separate state, commands, queries, and learning files.
+**PURPOSE:** Consolidated wrapper that delegates all functionality to `ProfessionalLogic`. Replaces the separate state, commands, queries, and learning files.
+
+### Architecture
+
+```
+apprenticeship-system.js
+        │
+        ▼
+  ProfessionalLogic
+        │
+        ├── createApprenticeship()
+        ├── updateApprenticeship()
+        ├── setSkillLevel()
+        ├── progressApprenticeship()
+        ├── completeApprenticeship()
+        ├── endApprenticeship()
+        ├── cancelApprenticeship()
+        ├── terminateApprenticeship()
+        ├── progressApprenticeshipStage()
+        ├── getMaster()
+        ├── getApprentices()
+        ├── isApprentice()
+        ├── isMaster()
+        ├── getApprenticeship()
+        ├── getSkillLevel()
+        ├── getSkillLevelName()
+        ├── getSkillModifier()
+        ├── getApprenticeshipStage()
+        ├── getApprenticeshipProgress()
+        ├── getApprenticeshipRole()
+        ├── getTeachableSkills()
+        ├── findPotentialMasters()
+        ├── recommendMastersForCharacter()
+        ├── canTeach()
+        ├── teachSkill()
+        ├── teachSpecialization()
+        ├── conductTeachingSession()
+        ├── advanceApprenticeshipSkills()
+        ├── preserveKnowledgeOnDeath()
+        └── assessKnowledgeLoss()
+```
+
+### Commands (Delegated to ProfessionalLogic)
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `createApprenticeship(masterId, apprenticeId, options)` | `masterId`, `apprenticeId`, `options` | `Object\|null` | Creates an apprenticeship |
+| `updateApprenticeship(masterId, apprenticeId, updates)` | `masterId`, `apprenticeId`, `updates` | `boolean` | Updates an apprenticeship |
+| `setSkillLevel(masterId, apprenticeId, level)` | `masterId`, `apprenticeId`, `level` | `boolean` | Sets skill level |
+| `progressApprenticeship(masterId, apprenticeId, amount)` | `masterId`, `apprenticeId`, `amount` | `Object` | Progresses skill |
+| `completeApprenticeship(masterId, apprenticeId, finalSkillLevel)` | `masterId`, `apprenticeId`, `finalSkillLevel` | `boolean` | Completes apprenticeship |
+| `endApprenticeship(masterId, apprenticeId, options)` | `masterId`, `apprenticeId`, `options` | `boolean` | Ends apprenticeship |
+| `cancelApprenticeship(masterId, apprenticeId, reason)` | `masterId`, `apprenticeId`, `reason` | `boolean` | Cancels apprenticeship |
+| `terminateApprenticeship(masterId, apprenticeId, reason)` | `masterId`, `apprenticeId`, `reason` | `boolean` | Terminates apprenticeship |
+| `progressApprenticeshipStage(masterId, apprenticeId, stageId)` | `masterId`, `apprenticeId`, `stageId` | `boolean` | Progresses to next stage |
+
+**createApprenticeship Options:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `roleId` | string | Profession/role ID |
+| `startYear` | number | Year started |
+| `initialSkill` | number | Initial skill level (0-100) |
+| `notes` | string | Terms of apprenticeship |
+| `moveOption` | string | 'apprentice', 'master', 'separate' |
+| `householdOption` | string | 'master', 'separate', 'none' |
+
+### Queries (Delegated to ProfessionalLogic)
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getMaster(characterId)` | `characterId` | `Object\|null` | Gets apprentice's master |
+| `getApprentices(masterId, activeOnly)` | `masterId`, `activeOnly` | `Array` | Gets master's apprentices |
+| `isApprentice(characterId)` | `characterId` | `boolean` | Checks if character is an apprentice |
+| `isMaster(characterId)` | `characterId` | `boolean` | Checks if character is a master |
+| `getApprenticeship(masterId, apprenticeId)` | `masterId`, `apprenticeId` | `Object\|null` | Gets specific apprenticeship |
+| `getSkillLevel(characterId, roleId)` | `characterId`, `roleId` | `number` | Gets skill level |
+| `getSkillLevelName(level)` | `level` | `string` | Gets skill level name |
+| `getSkillModifier(characterId, roleId)` | `characterId`, `roleId` | `number` | Gets skill modifier |
+| `getApprenticeshipStage(characterId, roleId)` | `characterId`, `roleId` | `Object` | Gets current stage |
+| `getApprenticeshipProgress(characterId, roleId)` | `characterId`, `roleId` | `number` | Gets progress percentage |
+| `getApprenticeshipRole(characterId)` | `characterId` | `Object\|null` | Gets role being learned |
+| `getTeachableSkills(masterId, minSkillLevel)` | `masterId`, `minSkillLevel` | `Array` | Gets skills master can teach |
+| `findPotentialMasters(roleId, locationId, minSkillLevel)` | `roleId`, `locationId`, `minSkillLevel` | `Array` | Finds potential masters |
+| `recommendMastersForCharacter(characterId, roleId)` | `characterId`, `roleId` | `Array` | Recommends masters |
+| `canTeach(characterId, roleId, minSkillLevel)` | `characterId`, `roleId`, `minSkillLevel` | `boolean` | Checks if can teach |
+
+### Learning Functions (Delegated to ProfessionalLogic)
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `teachSkill(masterId, apprenticeId, method)` | `masterId`, `apprenticeId`, `method` | `Object` | Teaches a skill |
+| `teachSpecialization(masterId, apprenticeId, specialization)` | `masterId`, `apprenticeId`, `specialization` | `Object` | Teaches a specialization |
+| `conductTeachingSession(masterId, apprenticeId, hours)` | `masterId`, `apprenticeId`, `hours` | `Object` | Conducts a teaching session |
+| `advanceApprenticeshipSkills(year)` | `year` | `Array` | Advances all apprenticeships |
+| `preserveKnowledgeOnDeath(dyingId, heirId)` | `dyingId`, `heirId` | `Array` | Preserves knowledge on death |
+| `assessKnowledgeLoss(characterId)` | `characterId` | `Object` | Assesses knowledge loss risk |
+
+### State Queries (Using Relationship Registry)
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getAllApprenticeships()` | None | `Array` | Gets all apprenticeships |
+| `getApprenticeshipById(id)` | `id` | `Object\|null` | Gets apprenticeship by ID |
+| `getApprenticeshipsByMaster(masterId)` | `masterId` | `Array` | Gets apprenticeships by master |
+| `getApprenticeshipsByApprentice(apprenticeId)` | `apprenticeId` | `Array` | Gets apprenticeships by apprentice |
+| `getApprenticeshipBetween(masterId, apprenticeId)` | `masterId`, `apprenticeId` | `Object\|null` | Gets apprenticeship between two characters |
+
+### Internal Helpers (Backward Compatibility)
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `_getApprenticeships()` | None | `Array` | Alias for getAllApprenticeships |
+| `_getAllApprenticeships()` | None | `Array` | Alias for getAllApprenticeships |
+| `_validateApprenticeship(masterId, apprenticeId, roleId)` | `masterId`, `apprenticeId`, `roleId` | `Object` | Validates apprenticeship |
+| `_getApprenticeshipSkillLevel(masterId, apprenticeId)` | `masterId`, `apprenticeId` | `number` | Gets skill level |
+| `_getApprenticeshipStage(masterId, apprenticeId)` | `masterId`, `apprenticeId` | `Object` | Gets stage |
+| `_getApprenticeshipProgress(masterId, apprenticeId)` | `masterId`, `apprenticeId` | `number` | Gets progress |
+| `_getApprenticeshipRole(masterId, apprenticeId)` | `masterId`, `apprenticeId` | `Object\|null` | Gets role |
 
 ---
 
-## Commands (Delegated to ProfessionalLogic)
+## APPRENTICESHIP-MODALS.JS
 
-| Function | Description |
-|----------|-------------|
-| `createApprenticeship(masterId, apprenticeId, options)` | Creates a new apprenticeship |
-| `updateApprenticeship(masterId, apprenticeId, updates)` | Updates an existing apprenticeship |
-| `setSkillLevel(masterId, apprenticeId, level)` | Sets the skill level for an apprentice |
-| `progressApprenticeship(masterId, apprenticeId, amount)` | Progresses skill by a given amount |
-| `completeApprenticeship(masterId, apprenticeId, finalSkillLevel)` | Completes and graduates the apprentice |
-| `endApprenticeship(masterId, apprenticeId, options)` | Ends the apprenticeship relationship |
-| `cancelApprenticeship(masterId, apprenticeId, reason)` | Cancels the apprenticeship |
-| `terminateApprenticeship(masterId, apprenticeId, reason)` | Terminates the apprenticeship |
-| `progressApprenticeshipStage(masterId, apprenticeId, stageId)` | Advances to a specific stage |
+**PURPOSE:** UI modals for apprenticeship management.
 
----
+### Modal Functions
 
-## Queries (Delegated to ProfessionalLogic)
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `openCreateApprenticeshipModal(master, candidate, onSuccess)` | `master`, `candidate`, `onSuccess` | None | Creates apprenticeship |
+| `openEditApprenticeshipModal(masterId, apprenticeId, onSuccess)` | `masterId`, `apprenticeId`, `onSuccess` | None | Edits apprenticeship |
+| `openApprenticeshipDetailsModal(masterId, apprenticeId, onSave, onDelete)` | `masterId`, `apprenticeId`, `onSave`, `onDelete` | None | Shows apprenticeship details |
+| `openViewMasterTreeModal(masterId, onRefresh)` | `masterId`, `onRefresh` | None | Shows master tree |
+| `openFindMasterByLocationModal(locationId, roleId, onSuccess)` | `locationId`, `roleId`, `onSuccess` | None | Finds masters by location |
 
-| Function | Description |
-|----------|-------------|
-| `getMaster(characterId)` | Gets the master of a character |
-| `getApprentices(masterId, activeOnly)` | Gets all apprentices of a master |
-| `isApprentice(characterId)` | Checks if a character is an apprentice |
-| `isMaster(characterId)` | Checks if a character is a master |
-| `getApprenticeship(masterId, apprenticeId)` | Gets a specific apprenticeship |
-| `getSkillLevel(characterId, roleId)` | Gets skill level for a role |
-| `getSkillLevelName(level)` | Gets the name of a skill level |
-| `getSkillModifier(characterId, roleId)` | Gets the skill modifier |
-| `getApprenticeshipStage(characterId, roleId)` | Gets the current apprenticeship stage |
-| `getApprenticeshipProgress(characterId, roleId)` | Gets progress within current stage |
-| `getApprenticeshipRole(characterId)` | Gets the role being learned |
-| `getTeachableSkills(characterId, minSkillLevel)` | Gets skills a character can teach |
-| `findPotentialMasters(roleId, locationId, minSkillLevel)` | Finds potential masters |
-| `recommendMastersForCharacter(characterId, roleId)` | Recommends masters for a character |
-| `canTeach(characterId, roleId, minSkillLevel)` | Checks if a character can teach |
+### Modal Features
 
----
-
-## Learning Functions (Delegated to ProfessionalLogic)
-
-| Function | Description |
-|----------|-------------|
-| `teachSkill(masterId, apprenticeId, method)` | Conducts a teaching session |
-| `teachSpecialization(masterId, apprenticeId, specialization)` | Teaches a specialization |
-| `conductTeachingSession(masterId, apprenticeId, hours)` | Conducts a multi-hour teaching session |
-| `advanceApprenticeshipSkills(year)` | Advances all apprenticeships annually |
-| `preserveKnowledgeOnDeath(dyingId, heirId)` | Preserves knowledge when a master dies |
-| `assessKnowledgeLoss(characterId)` | Assesses knowledge loss on death |
-
----
-
-## State Functions (Using Relationship Registry)
-
-| Function | Description |
-|----------|-------------|
-| `getAllApprenticeships()` | Gets all apprenticeships |
-| `getApprenticeshipById(id)` | Gets an apprenticeship by ID |
-| `getApprenticeshipsByMaster(masterId)` | Gets all apprenticeships for a master |
-| `getApprenticeshipsByApprentice(apprenticeId)` | Gets all apprenticeships for an apprentice |
-| `getApprenticeshipBetween(masterId, apprenticeId)` | Gets the apprenticeship between two characters |
-| `subscribeApprenticeships(callback)` | Subscribes to apprenticeship events (no-op, use registry) |
-
----
-
-## Internal Helpers (Backward Compatibility)
-
-| Function | Description |
-|----------|-------------|
-| `_getApprenticeships()` | Alias for `getAllApprenticeships()` |
-| `_getAllApprenticeships()` | Alias for `getAllApprenticeships()` |
-| `_validateApprenticeship(masterId, apprenticeId, roleId)` | Validates an apprenticeship |
-| `_getApprenticeshipSkillLevel(masterId, apprenticeId)` | Gets skill level from apprenticeship |
-| `_getApprenticeshipStage(masterId, apprenticeId)` | Gets stage from apprenticeship |
-| `_getApprenticeshipProgress(masterId, apprenticeId)` | Gets progress from apprenticeship |
-| `_getApprenticeshipRole(masterId, apprenticeId)` | Gets role from apprenticeship |
-
----
-
-# 3. MODALS-APPRENTICESHIP.JS
-
-**PURPOSE:** UI modals for apprenticeship management - creation, editing, details, master tree viewing, and master finding.
-
-**DEPENDENCIES:**
-- `modals-core.js` - `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon`
-- `modals-char-select.js` - `openCharacterSelector`
-- `apprenticeship-system.js` - All apprenticeship functions
-- `accessors.js` - `getCharacterById`, `getCharacters`, `getRoleById`
-- `constants.js` - `AGE_GROUPS`, `AGE_GROUPS_MAP`
-- `world.js` - `getCurrentLocation`, `getLocationTypeById`
-- `households/` - Household management functions
-
----
-
-## Modal Functions
-
-### `openCreateApprenticeshipModal(master, candidate, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to create a new apprenticeship |
-| **Parameters** | `master` (Object), `candidate` (Object), `onSuccess` (function) |
-| **Returns** | void |
-
-**Modal Features:**
-- Displays master and candidate information
-- Shows location comparison (with move options)
-- Profession selection from master's teachable skills
-- Start age and start year selection
-- Skill level slider (0-100)
-- Move options (apprentice to master, master to apprentice, keep separate)
+**Create Apprenticeship Modal:**
+- Master and candidate info display
+- Profession to learn selection (from teachable skills)
+- Start year input
+- Initial skill level input (0-100)
+- Move options (apprentice to master, master to apprentice, separate)
 - Household assignment options
 - Notes field
 
-**Move Options:**
-| Option | Description |
-|--------|-------------|
-| `apprentice` | Move apprentice to master's location |
-| `master` | Move master to candidate's location |
-| `separate` | Keep separate residences |
+**Edit Apprenticeship Modal:**
+- Master and apprentice info
+- Current skill display
+- Start year edit
+- Skill level edit (0-100)
+- Status dropdown (ongoing, completed, ended)
+- Notes edit
+- Quick action buttons: +5 Skill, Complete
 
-**Household Assignment Options:**
-| Option | Description |
-|--------|-------------|
-| `master` | Move apprentice to master's household |
-| `separate` | Keep independent household |
-| `none` | No household change |
+**Apprenticeship Details Modal:**
+- Full apprenticeship information display
+- Profession, skill level, start year, duration
+- Status badge
+- Action buttons: Edit, +5 Skill, Complete, Terminate, Delete
 
----
+**View Master Tree Modal:**
+- Master info display
+- List of all apprentices with skill levels and status
+- Click on apprentice to view details
 
-### `openEditApprenticeshipModal(masterId, apprenticeId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to edit an existing apprenticeship |
-| **Parameters** | `masterId` (string), `apprenticeId` (string), `onSuccess` (function) |
-| **Returns** | void |
-
-**Modal Features:**
-- Displays master and apprentice information
-- Current skill level display with stage name
-- Profession selection (from master's teachable skills)
-- Start year editing
-- Skill level slider (0-100)
-- Status selection (Ongoing, Terminated, Completed)
-- Notes editing
-- Progress Skill button (+5)
-- Complete Apprenticeship button
+**Find Master by Location Modal (NEW):**
+- Settlement selection
+- Role filter (optional)
+- List of masters with apprentice counts
+- Click on master to select
 
 ---
 
-### `openApprenticeshipDetailsModal(masterId, apprenticeId, onSave, onDelete)`
+## COMPLETE API REFERENCE
 
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal with full apprenticeship details and actions |
-| **Parameters** | `masterId` (string), `apprenticeId` (string), `onSave` (function), `onDelete` (function) |
-| **Returns** | void |
+### Constants
 
-**Modal Features:**
-- Complete apprenticeship information display
-- Status badge (Active/Completed/Terminated)
-- Start year, duration, end year
-- Specializations taught
-- Notes editing
-- Action buttons:
-  - Edit Apprenticeship
-  - Progress Skill (+5)
-  - Complete Apprenticeship
-  - Terminate Apprenticeship
-
----
-
-### `openViewMasterTreeModal(masterId, onRefresh)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal showing a master's apprentice tree |
-| **Parameters** | `masterId` (string), `onRefresh` (function) |
-| **Returns** | void |
-
-**Modal Features:**
-- Shows master information
-- Tree view of all apprentices (including historical)
-- Each apprentice shows: name, skill level, role, status, location, start year
-- Click on apprentice to view their details
-- Color coding: Green (Completed), Red (Ended), Accent (Active)
-
----
-
-### `openFindMasterModal(characterId, roleId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to find potential masters for a character |
-| **Parameters** | `characterId` (string), `roleId` (string), `onSuccess` (function) |
-| **Returns** | void |
-
-**Modal Features:**
-- Displays character and role information
-- Lists potential masters with:
-  - Name, age, location (with same location indicator)
-  - Skill level and tier (Journeyman, Expert, Master)
-  - Number of apprentices
-  - Score (matching quality)
-- Click on a master to select them
-
-**Master Ranking Criteria:**
-| Factor | Weight |
-|--------|--------|
-| Skill Level | High |
-| Same Location | Bonus |
-| Number of Apprentices | Moderate |
-| Skill Tier | High |
-| Score | Combined metric |
-
----
-
-# 4. INTEGRATION WITH OTHER SYSTEMS
-
-## Apprenticeship ↔ Relationship System
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Apprenticeship → Relationship | Stored in relationship registry as type 'apprenticeship' | ✅ Complete |
-| Relationship → Apprenticeship | Queries filter by type | ✅ Complete |
-| Master-Apprentice Tracking | Via relationship participants | ✅ Complete |
-
-## Apprenticeship ↔ Role System
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Apprenticeship → Role | `metadata.roleId` field | ✅ Complete |
-| Role → Apprenticeship | Skill level tracking | ✅ Complete |
-| Role Granting | On apprenticeship completion | ✅ Complete |
-
-## Apprenticeship ↔ ProfessionalLogic
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| All Apprenticeship Logic | Delegated to ProfessionalLogic | ✅ Complete |
-| Skill Progression | ProfessionalLogic.progressApprenticeship | ✅ Complete |
-| Teaching | ProfessionalLogic.teachSkill | ✅ Complete |
-
-## Apprenticeship ↔ Character System
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Apprenticeship → Character | Master and apprentice references | ✅ Complete |
-| Character → Apprenticeship | Query functions | ✅ Complete |
-
-## Apprenticeship ↔ Household System
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Apprenticeship → Household | Move and household assignment | ✅ Complete |
-| Household → Apprenticeship | Member tracking | ✅ Complete |
-
----
-
-# 5. COMPLETE FUNCTION LIST
-
-## Apprenticeship Constants
-
-| Constant | Description |
-|----------|-------------|
-| `APPRENTICESHIP_STAGES` | Stage definitions (Novice → Master) |
-| `SKILL_LEVELS` | Skill level definitions |
-| `SKILL_TRANSFER_METHODS` | Teaching methods with success rates |
-
----
-
-## Apprenticeship System (Commands)
-
-| Function | Type | Description |
+| Constant | Type | Description |
 |----------|------|-------------|
-| `createApprenticeship(masterId, apprenticeId, options)` | Command | Create apprenticeship |
-| `updateApprenticeship(masterId, apprenticeId, updates)` | Command | Update apprenticeship |
-| `setSkillLevel(masterId, apprenticeId, level)` | Command | Set skill level |
-| `progressApprenticeship(masterId, apprenticeId, amount)` | Command | Progress skill |
-| `completeApprenticeship(masterId, apprenticeId, finalSkillLevel)` | Command | Complete apprenticeship |
-| `endApprenticeship(masterId, apprenticeId, options)` | Command | End apprenticeship |
-| `cancelApprenticeship(masterId, apprenticeId, reason)` | Command | Cancel apprenticeship |
-| `terminateApprenticeship(masterId, apprenticeId, reason)` | Command | Terminate apprenticeship |
-| `progressApprenticeshipStage(masterId, apprenticeId, stageId)` | Command | Advance to stage |
+| `APPRENTICESHIP_STAGES` | Object | Stage definitions |
+| `SKILL_LEVELS` | Object | Skill level definitions |
+| `SKILL_TRANSFER_METHODS` | Object | Teaching method definitions |
+
+### Commands
+
+| Function | Parameters | Returns |
+|----------|------------|---------|
+| `createApprenticeship(masterId, apprenticeId, options)` | `masterId`, `apprenticeId`, `options` | `Object\|null` |
+| `updateApprenticeship(masterId, apprenticeId, updates)` | `masterId`, `apprenticeId`, `updates` | `boolean` |
+| `setSkillLevel(masterId, apprenticeId, level)` | `masterId`, `apprenticeId`, `level` | `boolean` |
+| `progressApprenticeship(masterId, apprenticeId, amount)` | `masterId`, `apprenticeId`, `amount` | `Object` |
+| `completeApprenticeship(masterId, apprenticeId, finalSkillLevel)` | `masterId`, `apprenticeId`, `finalSkillLevel` | `boolean` |
+| `endApprenticeship(masterId, apprenticeId, options)` | `masterId`, `apprenticeId`, `options` | `boolean` |
+| `cancelApprenticeship(masterId, apprenticeId, reason)` | `masterId`, `apprenticeId`, `reason` | `boolean` |
+| `terminateApprenticeship(masterId, apprenticeId, reason)` | `masterId`, `apprenticeId`, `reason` | `boolean` |
+| `progressApprenticeshipStage(masterId, apprenticeId, stageId)` | `masterId`, `apprenticeId`, `stageId` | `boolean` |
+
+### Queries
+
+| Function | Parameters | Returns |
+|----------|------------|---------|
+| `getMaster(characterId)` | `characterId` | `Object\|null` |
+| `getApprentices(masterId, activeOnly)` | `masterId`, `activeOnly` | `Array` |
+| `isApprentice(characterId)` | `characterId` | `boolean` |
+| `isMaster(characterId)` | `characterId` | `boolean` |
+| `getApprenticeship(masterId, apprenticeId)` | `masterId`, `apprenticeId` | `Object\|null` |
+| `getSkillLevel(characterId, roleId)` | `characterId`, `roleId` | `number` |
+| `getSkillLevelName(level)` | `level` | `string` |
+| `getSkillModifier(characterId, roleId)` | `characterId`, `roleId` | `number` |
+| `getApprenticeshipStage(characterId, roleId)` | `characterId`, `roleId` | `Object` |
+| `getApprenticeshipProgress(characterId, roleId)` | `characterId`, `roleId` | `number` |
+| `getApprenticeshipRole(characterId)` | `characterId` | `Object\|null` |
+| `getTeachableSkills(masterId, minSkillLevel)` | `masterId`, `minSkillLevel` | `Array` |
+| `findPotentialMasters(roleId, locationId, minSkillLevel)` | `roleId`, `locationId`, `minSkillLevel` | `Array` |
+| `recommendMastersForCharacter(characterId, roleId)` | `characterId`, `roleId` | `Array` |
+| `canTeach(characterId, roleId, minSkillLevel)` | `characterId`, `roleId`, `minSkillLevel` | `boolean` |
+
+### Learning
+
+| Function | Parameters | Returns |
+|----------|------------|---------|
+| `teachSkill(masterId, apprenticeId, method)` | `masterId`, `apprenticeId`, `method` | `Object` |
+| `teachSpecialization(masterId, apprenticeId, specialization)` | `masterId`, `apprenticeId`, `specialization` | `Object` |
+| `conductTeachingSession(masterId, apprenticeId, hours)` | `masterId`, `apprenticeId`, `hours` | `Object` |
+| `advanceApprenticeshipSkills(year)` | `year` | `Array` |
+| `preserveKnowledgeOnDeath(dyingId, heirId)` | `dyingId`, `heirId` | `Array` |
+| `assessKnowledgeLoss(characterId)` | `characterId` | `Object` |
+
+### State
+
+| Function | Parameters | Returns |
+|----------|------------|---------|
+| `getAllApprenticeships()` | None | `Array` |
+| `getApprenticeshipById(id)` | `id` | `Object\|null` |
+| `getApprenticeshipsByMaster(masterId)` | `masterId` | `Array` |
+| `getApprenticeshipsByApprentice(apprenticeId)` | `apprenticeId` | `Array` |
+| `getApprenticeshipBetween(masterId, apprenticeId)` | `masterId`, `apprenticeId` | `Object\|null` |
+
+### Internal Helpers
+
+| Function | Parameters | Returns |
+|----------|------------|---------|
+| `_getApprenticeships()` | None | `Array` |
+| `_getAllApprenticeships()` | None | `Array` |
+| `_validateApprenticeship(masterId, apprenticeId, roleId)` | `masterId`, `apprenticeId`, `roleId` | `Object` |
+| `_getApprenticeshipSkillLevel(masterId, apprenticeId)` | `masterId`, `apprenticeId` | `number` |
+| `_getApprenticeshipStage(masterId, apprenticeId)` | `masterId`, `apprenticeId` | `Object` |
+| `_getApprenticeshipProgress(masterId, apprenticeId)` | `masterId`, `apprenticeId` | `number` |
+| `_getApprenticeshipRole(masterId, apprenticeId)` | `masterId`, `apprenticeId` | `Object\|null` |
+
+### Modals
+
+| Function | Parameters | Returns |
+|----------|------------|---------|
+| `openCreateApprenticeshipModal(master, candidate, onSuccess)` | `master`, `candidate`, `onSuccess` | None |
+| `openEditApprenticeshipModal(masterId, apprenticeId, onSuccess)` | `masterId`, `apprenticeId`, `onSuccess` | None |
+| `openApprenticeshipDetailsModal(masterId, apprenticeId, onSave, onDelete)` | `masterId`, `apprenticeId`, `onSave`, `onDelete` | None |
+| `openViewMasterTreeModal(masterId, onRefresh)` | `masterId`, `onRefresh` | None |
+| `openFindMasterByLocationModal(locationId, roleId, onSuccess)` | `locationId`, `roleId`, `onSuccess` | None |
 
 ---
 
-## Apprenticeship System (Queries)
+## DATA SCHEMAS
 
-| Function | Type | Description |
-|----------|------|-------------|
-| `getMaster(characterId)` | Query | Get character's master |
-| `getApprentices(masterId, activeOnly)` | Query | Get master's apprentices |
-| `isApprentice(characterId)` | Query | Check if apprentice |
-| `isMaster(characterId)` | Query | Check if master |
-| `getApprenticeship(masterId, apprenticeId)` | Query | Get specific apprenticeship |
-| `getSkillLevel(characterId, roleId)` | Query | Get skill level |
-| `getSkillLevelName(level)` | Query | Get skill level name |
-| `getSkillModifier(characterId, roleId)` | Query | Get skill modifier |
-| `getApprenticeshipStage(characterId, roleId)` | Query | Get current stage |
-| `getApprenticeshipProgress(characterId, roleId)` | Query | Get progress within stage |
-| `getApprenticeshipRole(characterId)` | Query | Get role being learned |
-| `getTeachableSkills(characterId, minSkillLevel)` | Query | Get teachable skills |
-| `findPotentialMasters(roleId, locationId, minSkillLevel)` | Query | Find potential masters |
-| `recommendMastersForCharacter(characterId, roleId)` | Query | Recommend masters |
-| `canTeach(characterId, roleId, minSkillLevel)` | Query | Check if can teach |
-
----
-
-## Apprenticeship System (State)
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `getAllApprenticeships()` | Query | Get all apprenticeships |
-| `getApprenticeshipById(id)` | Query | Get by ID |
-| `getApprenticeshipsByMaster(masterId)` | Query | Get by master |
-| `getApprenticeshipsByApprentice(apprenticeId)` | Query | Get by apprentice |
-| `getApprenticeshipBetween(masterId, apprenticeId)` | Query | Get between two characters |
-| `subscribeApprenticeships(callback)` | Command | Subscribe to events |
-
----
-
-## Apprenticeship System (Learning)
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `teachSkill(masterId, apprenticeId, method)` | Command | Teach a skill |
-| `teachSpecialization(masterId, apprenticeId, specialization)` | Command | Teach specialization |
-| `conductTeachingSession(masterId, apprenticeId, hours)` | Command | Conduct teaching session |
-| `advanceApprenticeshipSkills(year)` | Command | Annual advancement |
-| `preserveKnowledgeOnDeath(dyingId, heirId)` | Command | Preserve knowledge |
-| `assessKnowledgeLoss(characterId)` | Query | Assess knowledge loss |
-
----
-
-## Modals
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `openCreateApprenticeshipModal(master, candidate, onSuccess)` | UI | Create apprenticeship modal |
-| `openEditApprenticeshipModal(masterId, apprenticeId, onSuccess)` | UI | Edit apprenticeship modal |
-| `openApprenticeshipDetailsModal(masterId, apprenticeId, onSave, onDelete)` | UI | Apprenticeship details modal |
-| `openViewMasterTreeModal(masterId, onRefresh)` | UI | Master tree modal |
-| `openFindMasterModal(characterId, roleId, onSuccess)` | UI | Find master modal |
-
----
-
-# 6. APPRENTICESHIP DATA SCHEMA
-
-## Apprenticeship (as Relationship Record)
+### Apprenticeship Record (Relationship)
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `type` | string | Always 'apprenticeship' |
 | `id` | string | Unique identifier |
-| `type` | string | `'apprenticeship'` |
-| `participantA` | string | Master character ID |
-| `participantB` | string | Apprentice character ID |
-| `startYear` | number | Year apprenticeship began |
-| `endYear` | number | Year apprenticeship ended (if ended) |
-| `status` | string | `'ongoing'`, `'completed'`, `'ended'` |
+| `characterId` | string | Apprentice ID |
+| `partnerId` | string | Master ID |
+| `status` | string | 'ongoing', 'completed', 'ended', 'cancelled' |
+| `startYear` | number | Year started |
+| `endYear` | number | Year ended (if ended) |
 | `metadata` | object | Additional data |
+| `metadata.roleId` | string | Profession/role ID |
+| `metadata.skillLevel` | number | Current skill level (0-100) |
+| `metadata.stage` | string | Current stage ID |
+| `metadata.specializations` | array | Learned specializations |
+| `metadata.notes` | string | Notes/terms |
+| `metadata.moveOption` | string | 'apprentice', 'master', 'separate' |
+| `metadata.householdOption` | string | 'master', 'separate', 'none' |
 
-### Metadata Schema
+### Skill Level Reference
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `roleId` | string | Role/profession being taught |
-| `roleName` | string | Name of the role |
-| `skillLevel` | number | Current skill level (0-100) |
-| `stage` | string | Current stage ID |
-| `notes` | string | Notes about the apprenticeship |
-| `specializationsTaught` | array | Specializations taught |
-| `completedYear` | number | Year of completion |
-| `endedReason` | string | Reason for ending |
+| Level | Value Range | Teaching Ability |
+|-------|-------------|------------------|
+| Untrained | 0 | Cannot teach |
+| Novice | 1-25 | Cannot teach |
+| Apprentice | 26-50 | Cannot teach |
+| Journeyman | 51-75 | Can teach (51+) |
+| Expert | 76-90 | Can teach |
+| Master | 91-100 | Can teach |
 
 ---
 
-# 7. DEPENDENCY MAP
+## DEPENDENCY MAP
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    APPRENTICESHIP SYSTEM DEPENDENCIES                     │
+│                    APPRENTICESHIP SYSTEM DEPENDENCIES                      │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  apprenticeship-constants.js ─────────────────────────────────────────────┐ │
+│  apprenticeship-constants.js ────────────────────────────────────────────┐ │
 │  └── None (pure constants)                                               │ │
 │                                                                             │
-│  apprenticeship-system.js ───────────────────────────────────────────────┐ │
-│  ├── ProfessionalLogic (core logic)                                      │ │
-│  ├── relationship-registry.js (storage)                                  │ │
-│  ├── role-state.js (roles)                                               │ │
-│  └── character-state.js (characters)                                    │ │
+│  apprenticeship-system.js ──────────────────────────────────────────────┐ │
+│  ├── ProfessionalLogic (all functionality)                                │ │
+│  │   ├── createApprenticeship()                                           │ │
+│  │   ├── updateApprenticeship()                                           │ │
+│  │   ├── setSkillLevel()                                                  │ │
+│  │   ├── progressApprenticeship()                                         │ │
+│  │   ├── completeApprenticeship()                                         │ │
+│  │   ├── endApprenticeship()                                              │ │
+│  │   ├── cancelApprenticeship()                                           │ │
+│  │   ├── terminateApprenticeship()                                        │ │
+│  │   ├── progressApprenticeshipStage()                                    │ │
+│  │   ├── getMaster()                                                      │ │
+│  │   ├── getApprentices()                                                 │ │
+│  │   ├── isApprentice()                                                   │ │
+│  │   ├── isMaster()                                                       │ │
+│  │   ├── getApprenticeship()                                              │ │
+│  │   ├── getSkillLevel()                                                  │ │
+│  │   ├── getSkillLevelName()                                              │ │
+│  │   ├── getSkillModifier()                                               │ │
+│  │   ├── getApprenticeshipStage()                                         │ │
+│  │   ├── getApprenticeshipProgress()                                      │ │
+│  │   ├── getApprenticeshipRole()                                          │ │
+│  │   ├── getTeachableSkills()                                             │ │
+│  │   ├── findPotentialMasters()                                           │ │
+│  │   ├── recommendMastersForCharacter()                                   │ │
+│  │   ├── canTeach()                                                       │ │
+│  │   ├── teachSkill()                                                     │ │
+│  │   ├── teachSpecialization()                                            │ │
+│  │   ├── conductTeachingSession()                                         │ │
+│  │   ├── advanceApprenticeshipSkills()                                    │ │
+│  │   ├── preserveKnowledgeOnDeath()                                       │ │
+│  │   └── assessKnowledgeLoss()                                            │ │
+│  └── Relationship Registry (state queries)                                │ │
+│      ├── getAllRelationships()                                            │ │
+│      ├── getRelationshipById()                                            │ │
+│      └── getRelationshipsForCharacter()                                   │ │
 │                                                                             │
-│  modals-apprenticeship.js ───────────────────────────────────────────────┐ │
-│  ├── modals-core.js (modal system)                                      │ │
-│  ├── modals-char-select.js (character selector)                         │ │
-│  ├── apprenticeship-system.js (functions)                               │ │
-│  ├── accessors.js (character/role lookups)                              │ │
-│  ├── constants.js (age groups)                                           │ │
-│  └── world.js (location functions)                                      │ │
-│                                                                             │
-│  ProfessionalLogic (External) ──────────────────────────────────────────┐ │
-│  ├── All apprenticeship business logic                                  │ │
-│  ├── Skill progression                                                  │ │
-│  ├── Teaching mechanics                                                 │ │
-│  └── Knowledge preservation                                             │ │
+│  modals-apprenticeship.js ──────────────────────────────────────────────┐ │
+│  ├── modals-core.js                                                       │ │
+│  ├── modals-char-select.js                                                │ │
+│  ├── apprenticeship-system.js                                             │ │
+│  ├── accessors.js                                                         │ │
+│  ├── constants.js                                                         │ │
+│  ├── world.js                                                             │ │
+│  └── households/                                                          │ │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-# 8. RECURSION GUARDS
+## INTEGRATION WITH OTHER SYSTEMS
 
-| Guard Name | Location | Purpose |
-|------------|----------|---------|
-| `_processingModal` | modals-apprenticeship.js | Prevent modal re-entry |
+### Apprenticeship ↔ Role System
 
----
+| Integration Point | Status | Description |
+|-------------------|--------|-------------|
+| **Role → Apprenticeship (Skill)** | ✅ Implemented | Roles have skill levels |
+| **Apprenticeship → Role (Learning)** | ✅ Implemented | Apprentices learn roles |
+| **Role → Apprenticeship (Teaching)** | ✅ Implemented | Roles determine teaching ability |
+| **Apprenticeship → Role (Completion)** | ✅ Implemented | Completion grants role |
 
-# 9. ICON POLICY
+### Apprenticeship ↔ Education System
 
-All icons come from `icons.js` via `_getIcon()`.
+| Integration Point | Status | Description |
+|-------------------|--------|-------------|
+| **Education → Apprenticeship (Graduation)** | ✅ Implemented | Graduates can become masters |
+| **Apprenticeship → Education (Curriculum)** | ✅ Implemented | Apprenticeship skills can be taught |
 
-## Available Icons for Apprenticeship System
+### Apprenticeship ↔ Household System
 
-| Usage | Icon |
-|-------|------|
-| Master | CROWN |
-| Apprentice | PERSON |
-| Skill Level | CIRCLE_DOT |
-| Location | LOCATION |
-| Household | HOUSEHOLD |
-| Edit | EDIT |
-| Delete | TRASH |
-| Check/Success | CHECK_SIMPLE |
-| Warning | WARNING |
-| Info | CIRCLE_DOT |
-| Search | SEARCH |
-| Status Active | STATUS_ACTIVE |
-| Status Ended | STATUS_ENDED |
-| X/Cross | X_HEAVY |
+| Integration Point | Status | Description |
+|-------------------|--------|-------------|
+| **Household → Apprenticeship (Location)** | ✅ Implemented | Apprentices can move to master's household |
+| **Apprenticeship → Household (Staff)** | ✅ Implemented | Apprentices can be household members |
 
----
+### Apprenticeship ↔ Settlement System
 
-# 10. MIGRATION NOTES
+| Integration Point | Status | Description |
+|-------------------|--------|-------------|
+| **Settlement → Apprenticeship (Masters)** | ✅ Implemented | Find masters by settlement |
+| **Apprenticeship → Settlement (Economy)** | ✅ Implemented | Apprenticeship affects economy |
 
-## What Was Removed
+### Apprenticeship ↔ Mortality System
 
-| Item | Reason |
-|------|--------|
-| **TRUST SYSTEM** | Completely removed - no trust tracking in apprenticeships |
-| `apprenticeship-state.js` | Consolidated into `apprenticeship-system.js` |
-| `apprenticeship-commands.js` | Consolidated into `apprenticeship-system.js` |
-| `apprenticeship-queries.js` | Consolidated into `apprenticeship-system.js` |
-| `apprenticeship-learning.js` | Consolidated into `apprenticeship-system.js` |
-
-## What Was Preserved
-
-| Category | Status |
-|----------|--------|
-| Apprenticeship Stages | ✅ Preserved |
-| Skill Levels | ✅ Preserved |
-| Skill Transfer Methods | ✅ Preserved |
-| All Commands | ✅ Preserved (delegated to ProfessionalLogic) |
-| All Queries | ✅ Preserved (delegated to ProfessionalLogic) |
-| All Learning Functions | ✅ Preserved (delegated to ProfessionalLogic) |
-| All UI Modals | ✅ Preserved |
-
-## What Was Added (NEW)
-
-| Feature | Description |
-|---------|-------------|
-| `openFindMasterModal()` | Find potential masters for a character |
-| `recommendMastersForCharacter()` | Recommend masters based on character and role |
-| `assessKnowledgeLoss()` | Assess knowledge loss on character death |
-| `preserveKnowledgeOnDeath()` | Preserve knowledge when a master dies |
+| Integration Point | Status | Description |
+|-------------------|--------|-------------|
+| **Mortality → Apprenticeship (Knowledge)** | ✅ Implemented | Knowledge preservation on death |
+| **Apprenticeship → Mortality (Inheritance)** | ✅ Implemented | Skills passed to heirs |
 
 ---
 
-# 11. TESTING THE APPRENTICESHIP SYSTEM
+## FILE SIZES
 
-## Quick Test Commands
-
-```javascript
-// Get all apprenticeships
-var allApps = window.getAllApprenticeships();
-
-// Get a master's apprentices
-var apps = window.getApprentices('char_123', true);
-
-// Check if someone is an apprentice
-var isApp = window.isApprentice('char_456');
-
-// Get skill level
-var skill = window.getSkillLevel('char_456', 'role_blacksmith');
-
-// Find potential masters
-var masters = window.findPotentialMasters('role_blacksmith', 'loc_123', 51);
-
-// Create an apprenticeship
-var result = window.createApprenticeship('char_master', 'char_apprentice', {
-    roleId: 'role_blacksmith',
-    startYear: 1250,
-    initialSkill: 10
-});
-
-// Progress an apprenticeship
-window.progressApprenticeship('char_master', 'char_apprentice', 5);
-
-// Complete an apprenticeship
-window.completeApprenticeship('char_master', 'char_apprentice', 76);
-
-// Teach a skill
-window.teachSkill('char_master', 'char_apprentice', 'apprenticeship');
-
-// Annual advancement
-window.advanceApprenticeshipSkills(1251);
-```
-
----
-
-# 12. PROFESSIONAL LOGIC INTEGRATION
-
-The apprenticeship system delegates all core functionality to `ProfessionalLogic`. Here are the key functions that ProfessionalLogic provides:
-
-| ProfessionalLogic Function | Apprenticeship Wrapper |
-|---------------------------|----------------------|
-| `createApprenticeship()` | `createApprenticeship()` |
-| `updateApprenticeship()` | `updateApprenticeship()` |
-| `setSkillLevel()` | `setSkillLevel()` |
-| `progressApprenticeship()` | `progressApprenticeship()` |
-| `completeApprenticeship()` | `completeApprenticeship()` |
-| `endApprenticeship()` | `endApprenticeship()` |
-| `getMaster()` | `getMaster()` |
-| `getApprentices()` | `getApprentices()` |
-| `getSkillLevel()` | `getSkillLevel()` |
-| `getSkillLevelName()` | `getSkillLevelName()` |
-| `getApprenticeshipStage()` | `getApprenticeshipStage()` |
-| `teachSkill()` | `teachSkill()` |
-| `advanceApprenticeshipSkills()` | `advanceApprenticeshipSkills()` |
-| `preserveKnowledgeOnDeath()` | `preserveKnowledgeOnDeath()` |
+| File | Size | Description |
+|------|------|-------------|
+| apprenticeship-constants.js | 3,294 bytes | Constants |
+| apprenticeship-system.js | 19,770 bytes | Consolidated wrapper |
+| modals-apprenticeship.js | 76,098 bytes | UI modals |
+| **TOTAL** | **99,162 bytes** | |
 
 ---
 
 # END OF DOCUMENTATION
 
 **Generated:** 2026-07-12
-**Version:** 2.0
-**File Count:** 3 core modules + 1 consolidated wrapper
+**Version:** 1.0
+**Files:** 3 modules
+**Total Size:** ~99 KB

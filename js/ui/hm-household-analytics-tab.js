@@ -1,16 +1,11 @@
 /**
  * =============================================================================
- * HOUSEHOLD ANALYTICS TAB UI
+ * HOUSEHOLD ANALYTICS TAB
  * =============================================================================
  * 
- * UPDATED: Uses new HouseholdState/HouseholdCommands/HouseholdQueries system
- * 
- * DEPENDENCIES:
- *   - household-state.js (HouseholdState)
- *   - household-commands.js (HouseholdCommands)
- *   - household-queries.js (HouseholdQueries)
- *   - household-economy.js (HouseholdEconomy)
- *   - modals-core.js (_escapeHtml, _showToast)
+ * UPDATED: Full integration with HouseholdState, HouseholdCommands,
+ *          HouseholdQueries, HouseholdEconomy, HouseholdAssignment,
+ *          and HouseholdServant
  * 
  * =============================================================================
  */
@@ -29,36 +24,22 @@
     // =========================================================================
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
-        }
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
+        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
+        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
         if (!str) return '';
         return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     function _showToast(msg, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(msg, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(msg, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(msg, type);
-        }
+        if (typeof window._showToast === 'function') return window._showToast(msg, type);
+        if (typeof window.showToast === 'function') return window.showToast(msg, type);
+        console.log('[' + (type || 'info') + '] ' + msg);
     }
 
     function _getCurrentYear() {
-        if (typeof window._getCurrentYear === 'function') {
-            return window._getCurrentYear();
-        }
-        if (typeof window.getCurrentYearSafe === 'function') {
-            return window.getCurrentYearSafe();
-        }
-        if (typeof window.getCurrentYear === 'function') {
-            return window.getCurrentYear();
-        }
+        if (typeof window._getCurrentYear === 'function') return window._getCurrentYear();
+        if (typeof window.getCurrentYearSafe === 'function') return window.getCurrentYearSafe();
+        if (typeof window.getCurrentYear === 'function') return window.getCurrentYear();
         return 1250;
     }
 
@@ -69,33 +50,27 @@
     }
 
     function _getIcon(name) {
-        if (typeof window._getIcon === 'function') {
-            return window._getIcon(name);
-        }
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
+        if (typeof window._getIcon === 'function') return window._getIcon(name);
+        if (window.Icons && window.Icons[name]) return window.Icons[name];
         return '';
     }
 
     function _openModal(options) {
-        if (typeof window.openModal === 'function') {
-            return window.openModal(options);
-        }
-        if (typeof window._openModal === 'function') {
-            return window._openModal(options);
-        }
+        if (typeof window.openModal === 'function') return window.openModal(options);
+        if (typeof window._openModal === 'function') return window._openModal(options);
         return null;
     }
 
     // =========================================================================
-    // 2. STATE, COMMANDS, QUERIES, ECONOMY REFERENCE
+    // 2. STATE, COMMANDS, QUERIES, ECONOMY, ASSIGNMENT, SERVANT
     // =========================================================================
 
     var _state = window.HouseholdState;
     var _commands = window.HouseholdCommands;
     var _queries = window.HouseholdQueries;
     var _economy = window.HouseholdEconomy;
+    var _assignment = window.HouseholdAssignment;
+    var _servant = window.HouseholdServant;
 
     // =========================================================================
     // 3. ICON HELPERS
@@ -115,48 +90,17 @@
     }
 
     function _getCharacterById(characterId) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(characterId);
-        }
+        if (typeof window.getCharacterById === 'function') return window.getCharacterById(characterId);
         return null;
     }
 
     function _getCharacters() {
-        if (typeof window.getCharacters === 'function') {
-            return window.getCharacters();
-        }
+        if (typeof window.getCharacters === 'function') return window.getCharacters();
         return [];
     }
 
-    function _getActiveRankDisplay(character) {
-        if (typeof window.getActiveRankDisplay === 'function') {
-            return window.getActiveRankDisplay(character);
-        }
-        return null;
-    }
-
-    function _calculateAge(birthYear, isDeceased, deathYear) {
-        if (typeof window.calculateAge === 'function') {
-            return window.calculateAge(birthYear, isDeceased, deathYear);
-        }
-        var currentYear = _getCurrentYear();
-        if (!birthYear) return 0;
-        if (isDeceased && deathYear) return Math.max(0, deathYear - birthYear);
-        return Math.max(0, currentYear - birthYear);
-    }
-
-    // Household data
     function _getHouseholdMembers(householdId) {
-        var household = _getHousehold(householdId);
-        return household ? (household.members || []) : [];
-    }
-
-    function _getFamilyMembers(householdId) {
-        return _queries ? _queries.getFamilyMembers(householdId) : [];
-    }
-
-    function _getStaffMembers(householdId) {
-        return _queries ? _queries.getStaffMembers(householdId) : [];
+        return _state ? _state.getHouseholdMembersWithCharacters(householdId) : [];
     }
 
     function _getDepartments(householdId) {
@@ -164,73 +108,33 @@
         return household ? (household.departments || []) : [];
     }
 
+    function _getHouseholdHead(householdId) {
+        return _state ? _state.getHouseholdHead(householdId) : null;
+    }
+
     function _getHouseholdWealth(householdId) {
-        var household = _getHousehold(householdId);
-        return household ? (household.wealth || 0) : 0;
+        return _economy ? _economy.getHouseholdWealth(householdId) : 0;
     }
 
     function _getHouseholdDebt(householdId) {
         return _economy ? _economy.getHouseholdDebt(householdId) : 0;
     }
 
-    function _getHouseholdEconomicTier(householdId) {
-        return _economy ? _economy.getHouseholdEconomicTier(householdId) : null;
-    }
-
     function _getHouseholdResources(householdId) {
         return _economy ? _economy.getHouseholdResources(householdId) : { food: 0, goods: 0, livestock: 0 };
+    }
+
+    function _getHouseholdEconomicTier(householdId) {
+        if (_economy) {
+            var wealth = _economy.getHouseholdWealth(householdId);
+            return _economy.getEconomicTier(wealth);
+        }
+        return { id: 'moderate', name: 'Moderate', icon: '⌂' };
     }
 
     function _getHouseholdReputation(householdId) {
         var household = _getHousehold(householdId);
         return household ? (household.reputation || 50) : 50;
-    }
-
-    function _getHouseholdVendettas(householdId) {
-        var household = _getHousehold(householdId);
-        return household ? (household.vendettas || []) : [];
-    }
-
-    function _getHouseholdEducationStats(householdId) {
-        if (typeof window.getHouseholdEducationStats === 'function') {
-            return window.getHouseholdEducationStats(householdId);
-        }
-        return null;
-    }
-
-    function _getHouseholdSuccession(householdId) {
-        return _queries ? _queries.getSuccession(householdId) : [];
-    }
-
-    function _getHouseholdMemberBreakdown(householdId) {
-        return _queries ? _queries.getMemberBreakdown(householdId) : null;
-    }
-
-    function _estimateHouseholdWealth(householdId) {
-        if (typeof window.estimateHouseholdWealth === 'function') {
-            return window.estimateHouseholdWealth(householdId);
-        }
-        var wealth = _getHouseholdWealth(householdId);
-        return Math.min(100, Math.floor(wealth / 10));
-    }
-
-    function _getHouseholdHighestRank(householdId) {
-        if (typeof window.getHouseholdHighestRank === 'function') {
-            return window.getHouseholdHighestRank(householdId);
-        }
-        var members = _getHouseholdMembers(householdId);
-        var highest = null;
-        for (var i = 0; i < members.length; i++) {
-            var char = members[i].character;
-            if (!char) continue;
-            var rank = _getActiveRankDisplay(char);
-            if (rank && rank.priority !== undefined) {
-                if (!highest || rank.priority < highest.priority) {
-                    highest = rank;
-                }
-            }
-        }
-        return highest;
     }
 
     function _getHouseholdPowerScore(householdId) {
@@ -241,16 +145,41 @@
         return household ? (household.powerScore || 0) : 0;
     }
 
-    function _getHouseholdLoyaltyModifier(householdId) {
-        return _economy ? _economy.getHouseholdLoyaltyModifier(householdId) : 0;
+    function _getHouseholdVendettas(householdId) {
+        var household = _getHousehold(householdId);
+        return household ? (household.vendettas || []) : [];
     }
 
-    function _getCrimeRiskModifier(householdId) {
-        return _economy ? _economy.getCrimeRiskModifier(householdId) : 1;
+    function _getActiveRankDisplay(character) {
+        if (typeof window.getActiveRankDisplay === 'function') return window.getActiveRankDisplay(character);
+        return null;
     }
 
-    function _getEducationIncomeBonus(householdId) {
-        return _economy ? _economy.getEducationIncomeBonus(householdId) : 0;
+    function _calculateAge(birthYear, isDeceased, deathYear) {
+        if (typeof window.calculateAge === 'function') return window.calculateAge(birthYear, isDeceased, deathYear);
+        var currentYear = _getCurrentYear();
+        if (!birthYear) return 0;
+        if (isDeceased && deathYear) return Math.max(0, deathYear - birthYear);
+        return Math.max(0, currentYear - birthYear);
+    }
+
+    function _getHouseholdHeirs(householdId, deceasedId, options) {
+        return _assignment ? _assignment.getHouseholdHeirs(householdId, deceasedId, options) : [];
+    }
+
+    function _getHouseholdLineage(householdId) {
+        return _queries ? _queries.getLineage(householdId) : [];
+    }
+
+    function _getHouseholdSuccession(householdId) {
+        return _queries ? _queries.getSuccession(householdId) : [];
+    }
+
+    function _getHouseholdEducationStats(householdId) {
+        if (typeof window.getHouseholdEducationStats === 'function') {
+            return window.getHouseholdEducationStats(householdId);
+        }
+        return null;
     }
 
     function _getHouseholdHealthScore(householdId) {
@@ -258,17 +187,6 @@
             return window.getHouseholdHealthScore(householdId);
         }
         return null;
-    }
-
-    function _getHouseholdLineage(householdId) {
-        return _queries ? _queries.getLineage(householdId) : [];
-    }
-
-    function _getMostCommonStaffRoles(limit) {
-        if (typeof window.getMostCommonStaffRoles === 'function') {
-            return window.getMostCommonStaffRoles(limit);
-        }
-        return [];
     }
 
     function _getHouseholdSnapshot(householdId, year) {
@@ -279,11 +197,11 @@
     }
 
     function _getHouseholdNamePeriods(householdId) {
-        if (typeof window.getHouseholdNamePeriods === 'function') {
-            return window.getHouseholdNamePeriods(householdId);
-        }
-        var household = _getHousehold(householdId);
-        return household ? (household.nameHistory || []) : [];
+        return _state ? _state.getHouseholdNamePeriods(householdId) : [];
+    }
+
+    function _getHouseholdNamePeriodForYear(householdId, year) {
+        return _state ? _state.getHouseholdNamePeriodForYear(householdId, year) : null;
     }
 
     // =========================================================================
@@ -300,71 +218,83 @@
     // 6. SECTION RENDERERS
     // =========================================================================
 
-    function _renderMemberStats(familyMembers, staffMembers, memberBreakdown, commonRoles) {
-        var familyHtml = '';
+    function _renderMemberStats(members, familyMembers, staffMembers) {
+        var html = '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">';
+
+        // Family Members
+        html += '<div>';
+        html += '<div style="font-size: 0.7rem; color: var(--accent); margin-bottom: 8px;">⟡ Family (' + familyMembers.length + ')</div>';
+        html += '<div style="max-height: 200px; overflow-y: auto;">';
         if (familyMembers.length > 0) {
-            var displayMembers = familyMembers.slice(0, 5);
-            familyHtml = displayMembers.map(function(m) {
-                var age = _calculateAge(m.character.birthYear, false, null);
-                var rankDisplay = _getActiveRankDisplay(m.character);
-                return '<div style="display: flex; justify-content: space-between; padding: 4px 0;">' +
-                    '<span style="font-size: 0.65rem;">' + _escapeHtml(m.characterName || m.character.name) + '</span>' +
+            var displayFamily = familyMembers.slice(0, 5);
+            for (var i = 0; i < displayFamily.length; i++) {
+                var m = displayFamily[i];
+                var char = m.character;
+                if (!char) continue;
+                var age = _calculateAge(char.birthYear, false, null);
+                var rank = _getActiveRankDisplay(char);
+                html += '<div style="display: flex; justify-content: space-between; padding: 4px 0;">' +
+                    '<span style="font-size: 0.65rem;">' + _escapeHtml(char.name) + ' ' + _escapeHtml(char.surname || '') + '</span>' +
                     '<span style="font-size: 0.6rem; color: var(--dim);">' + age + ' yrs</span>' +
-                    (rankDisplay ? '<span style="font-size: 0.55rem; color: var(--accent);">⟡ ' + _escapeHtml(rankDisplay) + '</span>' : '') +
+                    (rank ? '<span style="font-size: 0.55rem; color: var(--accent);">⟡ ' + _escapeHtml(rank) + '</span>' : '') +
                     '</div>';
-            }).join('');
+            }
             if (familyMembers.length > 5) {
-                familyHtml += '<div style="font-size: 0.55rem; color: var(--dim); text-align: center; padding: 4px;">⟡ +' + (familyMembers.length - 5) + ' more</div>';
+                html += '<div style="font-size: 0.55rem; color: var(--dim); text-align: center; padding: 4px;">⟡ +' + (familyMembers.length - 5) + ' more</div>';
             }
         } else {
-            familyHtml = '<div style="color: var(--dim); text-align: center; padding: 12px;">⟡ No family members</div>';
+            html += '<div style="color: var(--dim); text-align: center; padding: 12px;">⟡ No family members</div>';
         }
+        html += '</div></div>';
 
-        var staffHtml = '';
+        // Staff Members
+        html += '<div>';
+        html += '<div style="font-size: 0.7rem; color: var(--accent); margin-bottom: 8px;">⟡ Staff (' + staffMembers.length + ')</div>';
+        html += '<div style="max-height: 200px; overflow-y: auto;">';
         if (staffMembers.length > 0) {
             var displayStaff = staffMembers.slice(0, 5);
-            staffHtml = displayStaff.map(function(m) {
-                return '<div style="display: flex; justify-content: space-between; padding: 4px 0;">' +
-                    '<span style="font-size: 0.65rem;">' + _escapeHtml(m.characterName || m.character.name) + '</span>' +
+            for (var i = 0; i < displayStaff.length; i++) {
+                var m = displayStaff[i];
+                var char = m.character;
+                if (!char) continue;
+                html += '<div style="display: flex; justify-content: space-between; padding: 4px 0;">' +
+                    '<span style="font-size: 0.65rem;">' + _escapeHtml(char.name) + ' ' + _escapeHtml(char.surname || '') + '</span>' +
                     '<span style="font-size: 0.55rem; color: var(--dim);">⟡ ' + _escapeHtml(m.role || 'Staff') + '</span>' +
                     '</div>';
-            }).join('');
+            }
             if (staffMembers.length > 5) {
-                staffHtml += '<div style="font-size: 0.55rem; color: var(--dim); text-align: center; padding: 4px;">⟡ +' + (staffMembers.length - 5) + ' more</div>';
+                html += '<div style="font-size: 0.55rem; color: var(--dim); text-align: center; padding: 4px;">⟡ +' + (staffMembers.length - 5) + ' more</div>';
             }
         } else {
-            staffHtml = '<div style="color: var(--dim); text-align: center; padding: 12px;">⟡ No staff members</div>';
+            html += '<div style="color: var(--dim); text-align: center; padding: 12px;">⟡ No staff members</div>';
+        }
+        html += '</div></div>';
+
+        html += '</div>';
+
+        // Member breakdown
+        if (familyMembers.length + staffMembers.length > 0) {
+            var total = familyMembers.length + staffMembers.length;
+            var familyPct = Math.round((familyMembers.length / total) * 100);
+            var staffPct = Math.round((staffMembers.length / total) * 100);
+            html += '<div style="margin-top: 12px;">' +
+                '<div style="display: flex; justify-content: space-between; font-size: 0.6rem; color: var(--dim);">' +
+                '<span>⟡ Family / Staff Ratio:</span>' +
+                '<span>' + familyPct + '% / ' + staffPct + '%</span></div>' +
+                '<div style="background: var(--bg3); border-radius: 4px; height: 6px; margin-top: 4px; overflow: hidden;">' +
+                '<div style="width: ' + familyPct + '%; height: 100%; background: var(--accent);"></div>' +
+                '<div style="width: ' + staffPct + '%; height: 100%; background: var(--accent-dim); margin-left: ' + familyPct + '%;"></div></div></div>';
         }
 
-        var commonRolesHtml = '';
-        if (commonRoles.length > 0) {
-            commonRolesHtml = '<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-light);">' +
-                '<div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 6px;">⟡ Most Common Staff Roles</div>' +
-                '<div style="display: flex; flex-wrap: wrap; gap: 6px;">' +
-                commonRoles.map(function(r) {
-                    return '<span style="background: var(--bg3); padding: 2px 6px; border-radius: 12px; font-size: 0.55rem;">' + _escapeHtml(r.role) + ' (' + r.count + ')</span>';
-                }).join('') +
-                '</div></div>';
-        }
-
-        return '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">' +
-            '<div><div style="font-size: 0.7rem; color: var(--accent); margin-bottom: 8px;">⟡ Family (' + familyMembers.length + ')</div>' +
-            '<div style="max-height: 200px; overflow-y: auto;">' + familyHtml + '</div></div>' +
-            '<div><div style="font-size: 0.7rem; color: var(--accent); margin-bottom: 8px;">⟡ Staff (' + staffMembers.length + ')</div>' +
-            '<div style="max-height: 200px; overflow-y: auto;">' + staffHtml + '</div></div></div>' +
-            (memberBreakdown ? '<div style="margin: 12px 0;"></div>' +
-                '<div style="display: flex; justify-content: space-between;">' +
-                '<div style="font-size: 0.6rem; color: var(--dim);">⟡ Family / Staff Ratio:</div>' +
-                '<div style="font-size: 0.6rem;">' + Math.round(memberBreakdown.familyPercentage) + '% / ' + Math.round(memberBreakdown.staffPercentage) + '%</div></div>' : '') +
-            commonRolesHtml;
+        return html;
     }
 
-    function _renderDepartments(household, departments) {
+    function _renderDepartments(departments, household) {
         if (!departments || departments.length === 0) {
             return '<div style="color: var(--dim); text-align: center; padding: 20px;">⌂ No departments established</div>';
         }
 
-        var deptHtml = '';
+        var html = '';
         for (var i = 0; i < departments.length; i++) {
             var dept = departments[i];
             var members = household.members ? household.members.filter(function(m) { return m.departmentId === dept.id; }) : [];
@@ -382,7 +312,7 @@
                 deptIcon = '♡';
             }
 
-            deptHtml += '<div style="background: var(--bg3); border-radius: 8px; padding: 12px; margin-bottom: 12px;">' +
+            html += '<div style="background: var(--bg3); border-radius: 8px; padding: 12px; margin-bottom: 12px;">' +
                 '<div style="display: flex; justify-content: space-between; margin-bottom: 8px;">' +
                 '<span style="font-weight: bold; font-size: 0.7rem;">' + deptIcon + ' ' + _escapeHtml(dept.name) + '</span>' +
                 '<span style="font-size: 0.6rem; color: var(--dim);">⟡ ' + members.length + ' members</span></div>' +
@@ -396,7 +326,7 @@
                 '</div></div>';
         }
 
-        return '<div>' + deptHtml + '</div>';
+        return '<div>' + html + '</div>';
     }
 
     function _renderResources(resources) {
@@ -419,62 +349,21 @@
             '<span style="font-size: 0.6rem; color: ' + selfSufficiencyColor + ';">' + selfSufficiency + '</span></div>';
     }
 
-    function _renderWealthStanding(wealth, estimatedWealth, highestRank, loyaltyModifier, crimeRiskModifier, educationBonus) {
+    function _renderWealthStanding(wealth, powerScore, highestRank, tier) {
         var wealthLevel = wealth >= 500 ? 'Royal' : wealth >= 200 ? 'Noble' : wealth >= 100 ? 'Wealthy' : wealth >= 50 ? 'Prosperous' : wealth >= 20 ? 'Moderate' : 'Poor';
         var wealthIcon = wealth >= 500 ? '♡' : wealth >= 200 ? '♡' : wealth >= 100 ? '⟡' : wealth >= 50 ? '⟡' : '✗';
         var wealthColor = wealth >= 500 ? 'gold' : wealth >= 200 ? 'var(--accent)' : wealth >= 100 ? '#4caf50' : wealth >= 50 ? '#2196f3' : '#ff9800';
 
-        var loyaltyDisplay = '';
-        var loyaltyColor = 'var(--dim)';
-        if (loyaltyModifier > 5) {
-            loyaltyDisplay = '♡ +' + loyaltyModifier;
-            loyaltyColor = '#4caf50';
-        } else if (loyaltyModifier > 0) {
-            loyaltyDisplay = '✓ +' + loyaltyModifier;
-            loyaltyColor = '#4caf50';
-        } else if (loyaltyModifier < -5) {
-            loyaltyDisplay = '✗ ' + loyaltyModifier;
-            loyaltyColor = '#f44336';
-        } else if (loyaltyModifier < 0) {
-            loyaltyDisplay = '⟡ ' + loyaltyModifier;
-            loyaltyColor = '#ff9800';
-        } else {
-            loyaltyDisplay = '⟡ 0';
-        }
-
-        var crimeDisplay = '';
-        var crimeColor = 'var(--dim)';
-        if (crimeRiskModifier >= 2) {
-            crimeDisplay = '✗ ' + crimeRiskModifier.toFixed(1) + 'x';
-            crimeColor = '#f44336';
-        } else if (crimeRiskModifier >= 1.5) {
-            crimeDisplay = '⟡ ' + crimeRiskModifier.toFixed(1) + 'x';
-            crimeColor = '#ff9800';
-        } else if (crimeRiskModifier <= 0.5) {
-            crimeDisplay = '♡ ' + crimeRiskModifier.toFixed(1) + 'x';
-            crimeColor = '#4caf50';
-        } else {
-            crimeDisplay = '⟡ ' + crimeRiskModifier.toFixed(1) + 'x';
-        }
-
         return '<div style="text-align: center;">' +
             '<div style="margin-bottom: 12px;">' +
             '<span style="font-size: 1.5rem;">' + wealthIcon + '</span>' +
-            '<div style="font-weight: bold; color: ' + wealthColor + ';">' + wealthLevel + '</div></div>' +
+            '<div style="font-weight: bold; color: ' + wealthColor + ';">' + wealthLevel + '</div>' +
+            '<div style="font-size: 0.55rem; color: var(--dim);">Tier: ' + _escapeHtml(tier.name) + '</div></div>' +
             '<div style="display: flex; justify-content: space-between; margin-top: 12px;">' +
-            '<div style="font-size: 0.6rem; color: var(--dim);">⟡ Estimated Power Score:</div>' +
-            '<div style="font-size: 0.6rem;">' + estimatedWealth + '/100</div></div>' +
+            '<div style="font-size: 0.6rem; color: var(--dim);">⟡ Power Score:</div>' +
+            '<div style="font-size: 0.6rem;">' + powerScore + '/100</div></div>' +
             '<div style="background: var(--bg3); border-radius: 4px; height: 6px; margin: 8px 0; overflow: hidden;">' +
-            '<div style="width: ' + Math.min(100, wealth / 10) + '%; height: 100%; background: ' + wealthColor + '; border-radius: 4px;"></div></div>' +
-            '<div style="display: flex; justify-content: space-between; margin-top: 8px;">' +
-            '<div style="font-size: 0.6rem; color: var(--dim);">♡ Loyalty Modifier:</div>' +
-            '<div style="font-size: 0.6rem; color: ' + loyaltyColor + ';">' + loyaltyDisplay + '</div></div>' +
-            '<div style="display: flex; justify-content: space-between;">' +
-            '<div style="font-size: 0.6rem; color: var(--dim);">⚔ Crime Risk:</div>' +
-            '<div style="font-size: 0.6rem; color: ' + crimeColor + ';">' + crimeDisplay + '</div></div>' +
-            '<div style="display: flex; justify-content: space-between;">' +
-            '<div style="font-size: 0.6rem; color: var(--dim);">⟡ Education Bonus:</div>' +
-            '<div style="font-size: 0.6rem;">+' + Math.round(educationBonus * 100) + '% income</div></div>' +
+            '<div style="width: ' + Math.min(100, powerScore) + '%; height: 100%; background: ' + (powerScore >= 70 ? '#4caf50' : powerScore >= 40 ? '#ff9800' : '#f44336') + '; border-radius: 4px;"></div></div>' +
             (highestRank ? '<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-light);">' +
                 '<div style="font-size: 0.6rem; color: var(--dim);">♡ Highest Rank:</div>' +
                 '<div style="font-size: 0.6rem; font-weight: bold;">' + _escapeHtml(highestRank.name) + '</div></div>' : '') +
@@ -489,13 +378,8 @@
         var enrollmentRate = Math.round(educationStats.enrollmentRate || 0);
         var literacyRate = Math.round(educationStats.literacyRate || 0);
 
-        var enrollmentColor = '#4caf50';
-        if (enrollmentRate < 30) enrollmentColor = '#f44336';
-        else if (enrollmentRate < 60) enrollmentColor = '#ff9800';
-
-        var literacyColor = '#4caf50';
-        if (literacyRate < 30) literacyColor = '#f44336';
-        else if (literacyRate < 60) literacyColor = '#ff9800';
+        var enrollmentColor = enrollmentRate < 30 ? '#f44336' : enrollmentRate < 60 ? '#ff9800' : '#4caf50';
+        var literacyColor = literacyRate < 30 ? '#f44336' : literacyRate < 60 ? '#ff9800' : '#4caf50';
 
         return '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">' +
             '<div style="text-align: center;">' +
@@ -520,74 +404,37 @@
                 '<div>Scholar: ' + (educationStats.educationLevels.scholar || 0) + '</div></div></div>' : '');
     }
 
-    function _renderReputation(reputation, vendettas, activeVendettas) {
-        var repColor = reputation >= 70 ? '#4caf50' : reputation >= 40 ? '#ff9800' : '#f44336';
-        var repIcon = reputation >= 70 ? '♡' : reputation >= 40 ? '⟡' : '✗';
-
-        var vendettaHtml = '';
-        if (activeVendettas > 0) {
-            var activeList = vendettas.filter(function(v) { return !v.resolved; }).slice(0, 3);
-            vendettaHtml = activeList.map(function(v) {
-                return '<div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-light);">' +
-                    '<span>⚔</span>' +
-                    '<span style="flex: 1; margin-left: 8px; font-size: 0.6rem;">vs ' + _escapeHtml(v.targetName || 'Unknown') + '</span>' +
-                    '<span style="font-size: 0.55rem; color: var(--dim);">⟡ since ' + v.declaredYear + '</span></div>';
-            }).join('');
-            if (vendettas.filter(function(v) { return !v.resolved; }).length > 3) {
-                vendettaHtml += '<div style="font-size: 0.55rem; color: var(--dim); text-align: center; padding: 4px;">⟡ +' + (vendettas.filter(function(v) { return !v.resolved; }).length - 3) + ' more</div>';
-            }
-        } else {
-            vendettaHtml = '<div style="color: var(--dim); text-align: center; padding: 12px;">⟡ No active vendettas</div>';
+    function _renderSuccession(householdId, head) {
+        if (!head) {
+            return '<div style="color: var(--dim); text-align: center; padding: 20px;">No head of household - succession not applicable</div>';
         }
 
-        return '<div style="text-align: center;">' +
-            '<div style="display: inline-block;">' +
-            '<div style="font-size: 2rem; font-weight: bold; color: ' + repColor + ';">' + reputation + '</div>' +
-            '<div style="font-size: 0.6rem; color: var(--dim);">/100</div>' +
-            '<div style="font-size: 1.2rem;">' + repIcon + '</div></div>' +
-            '<div style="margin-top: 16px;">' +
-            '<div style="font-size: 0.7rem; color: var(--accent); margin-bottom: 8px;">⚔ Active Vendettas (' + activeVendettas + ')</div>' +
-            vendettaHtml +
-            '</div></div>';
-    }
+        var heirs = _getHouseholdHeirs(householdId, head.id, {
+            includeExternal: true,
+            maxAge: 60,
+            minAge: 16
+        });
 
-    function _renderSuccession(succession, lineage) {
-        if ((!succession || succession.length === 0) && (!lineage || lineage.length === 0)) {
-            return '<div style="color: var(--dim); text-align: center; padding: 20px;">⟡ No succession data available</div>';
+        if (heirs.length === 0) {
+            return '<div style="color: var(--warn); text-align: center; padding: 20px;">No eligible heirs found</div>';
         }
 
-        var successionHtml = '';
-        if (succession && succession.length > 0) {
-            for (var i = 0; i < Math.min(5, succession.length); i++) {
-                var heir = succession[i];
-                var heirChar = heir.character;
-                successionHtml += '<div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border-light); ' + (i === 0 ? 'background: var(--accent-dim); border-radius: 6px; margin-bottom: 4px;' : '') + '">' +
-                    '<div style="width: 30px; font-size: 0.7rem; ' + (i === 0 ? 'color: var(--accent); font-weight: bold;' : '') + '">#' + (i + 1) + '</div>' +
-                    '<div style="flex: 1;">' +
-                    '<div style="font-size: 0.7rem; font-weight: ' + (i === 0 ? 'bold' : 'normal') + ';">' + _escapeHtml(heirChar ? heirChar.name : 'Unknown') + ' ' + _escapeHtml(heirChar ? heirChar.surname || '' : '') + '</div>' +
-                    '<div style="font-size: 0.55rem; color: var(--dim);">⟡ ' + (heir.relationship || 'Family') + ' • Age ' + (heir.age || '?') +
-                    (heir.isQualified ? ' <span style="color: #4caf50; margin-left: 6px;">✓ Qualified</span>' : '') +
-                    '</div></div></div>';
-            }
-            if (succession.length > 5) {
-                successionHtml += '<div style="font-size: 0.55rem; color: var(--dim); text-align: center; padding: 8px;">⟡ +' + (succession.length - 5) + ' more in line</div>';
-            }
+        var html = '';
+        for (var i = 0; i < Math.min(5, heirs.length); i++) {
+            var h = heirs[i];
+            html += '<div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border-light); ' + (i === 0 ? 'background: var(--accent-dim); border-radius: 6px; margin-bottom: 4px;' : '') + '">' +
+                '<div style="width: 30px; font-size: 0.7rem; ' + (i === 0 ? 'color: var(--accent); font-weight: bold;' : '') + '">#' + (i + 1) + '</div>' +
+                '<div style="flex: 1;">' +
+                '<div style="font-size: 0.7rem; font-weight: ' + (i === 0 ? 'bold' : 'normal') + ';">' + _escapeHtml(h.name) + '</div>' +
+                '<div style="font-size: 0.55rem; color: var(--dim);">⟡ ' + (h.relation || 'Member') + ' • Age ' + (h.age || '?') +
+                (h.isQualified ? ' <span style="color: #4caf50; margin-left: 6px;">✓ Qualified</span>' : '') +
+                '</div></div></div>';
+        }
+        if (heirs.length > 5) {
+            html += '<div style="font-size: 0.55rem; color: var(--dim); text-align: center; padding: 8px;">⟡ +' + (heirs.length - 5) + ' more in line</div>';
         }
 
-        var lineageHtml = '';
-        if (lineage && lineage.length > 0 && lineage.length > 1) {
-            var previousHeads = lineage.slice(0, 3);
-            lineageHtml = '<div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-light);">' +
-                '<div style="font-size: 0.65rem; color: var(--accent); margin-bottom: 8px;">⟡ Previous Heads</div>' +
-                previousHeads.map(function(entry) {
-                    return '<div style="display: flex; justify-content: space-between; padding: 4px 0; font-size: 0.55rem;">' +
-                        '<span>' + (entry.head ? _escapeHtml(entry.head.name) : 'Unknown') + '</span>' +
-                        '<span style="color: var(--dim);">' + entry.startYear + ' - ' + (entry.endYear || 'Present') + '</span></div>';
-                }).join('') +
-                '</div>';
-        }
-
-        return '<div>' + successionHtml + lineageHtml + '</div>';
+        return html;
     }
 
     // =========================================================================
@@ -633,33 +480,21 @@
 
             // Get data
             var members = _getHouseholdMembers(householdId);
-            var familyMembers = _getFamilyMembers(householdId);
-            var staffMembers = _getStaffMembers(householdId);
+            var familyMembers = members.filter(function(m) { return m.type === 'family'; });
+            var staffMembers = members.filter(function(m) { return m.type === 'staff'; });
             var departments = _getDepartments(householdId);
             var wealth = _getHouseholdWealth(householdId);
             var debt = _getHouseholdDebt(householdId);
-            var economicTier = _getHouseholdEconomicTier(householdId);
+            var tier = _getHouseholdEconomicTier(householdId);
             var resources = _getHouseholdResources(householdId);
             var reputation = _getHouseholdReputation(householdId);
-            var vendettas = _getHouseholdVendettas(householdId);
             var powerScore = _getHouseholdPowerScore(householdId);
+            var head = _getHouseholdHead(householdId);
+            var highestRank = head ? _getActiveRankDisplay(head) : null;
             var educationStats = _getHouseholdEducationStats(householdId);
-            var succession = _getHouseholdSuccession(householdId);
-            var memberBreakdown = _getHouseholdMemberBreakdown(householdId);
-            var estimatedWealth = _estimateHouseholdWealth(householdId);
-            var highestRank = _getHouseholdHighestRank(householdId);
-            var loyaltyModifier = _getHouseholdLoyaltyModifier(householdId);
-            var crimeRiskModifier = _getCrimeRiskModifier(householdId);
-            var educationBonus = _getEducationIncomeBonus(householdId);
             var healthScore = _getHouseholdHealthScore(householdId);
-            var lineage = _getHouseholdLineage(householdId);
-            var commonRoles = _getMostCommonStaffRoles(5);
-            var activeVendettas = vendettas.filter(function(v) { return !v.resolved; }).length;
+            var vendettas = _getHouseholdVendettas(householdId);
 
-            var wealthTrend = wealth > 100 ? '♡ Rising' : wealth > 50 ? '⟡ Stable' : '✗ Declining';
-            var wealthTrendColor = wealth > 100 ? '#4caf50' : wealth > 50 ? '#ff9800' : '#f44336';
-
-            // Build name period indicator for header
             var periodIndicator = '';
             if (isHistorical) {
                 var periodLabel = 'Viewing: ' + viewYear;
@@ -727,29 +562,25 @@
 
             // Header Stats
             html += '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 24px;">';
-            html += '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center;">';
-            html += '<div style="font-size: 1.2rem;">⟡</div>';
-            html += '<div style="font-size: 1.2rem; font-weight: bold;">' + _formatNumber(wealth) + '</div>';
-            html += '<div style="font-size: 0.65rem; color: var(--dim);">Wealth (Gold)</div>';
-            if (debt > 0) html += '<div style="font-size: 0.55rem; color: var(--warn);">Debt: ' + _formatNumber(debt) + '</div>';
-            html += '<div style="font-size: 0.55rem; color: ' + wealthTrendColor + ';">' + wealthTrend + '</div></div>';
-
-            html += '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center;">';
-            html += '<div style="font-size: 1.2rem;">♡</div>';
-            html += '<div style="font-size: 1.2rem; font-weight: bold;">' + powerScore + '</div>';
-            html += '<div style="font-size: 0.65rem; color: var(--dim);">Power Score</div>';
-            html += '<div style="font-size: 0.55rem;">⟡ ' + estimatedWealth + '/100 est</div></div>';
-
+            html += '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center;">' +
+                '<div style="font-size: 1.2rem;">⟡</div>' +
+                '<div style="font-size: 1.2rem; font-weight: bold;">' + _formatNumber(wealth) + '</div>' +
+                '<div style="font-size: 0.65rem; color: var(--dim);">Wealth (Gold)</div>' +
+                (debt > 0 ? '<div style="font-size: 0.55rem; color: var(--warn);">Debt: ' + _formatNumber(debt) + '</div>' : '') +
+                '</div>';
+            html += '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center;">' +
+                '<div style="font-size: 1.2rem;">♡</div>' +
+                '<div style="font-size: 1.2rem; font-weight: bold;">' + powerScore + '</div>' +
+                '<div style="font-size: 0.65rem; color: var(--dim);">Power Score</div></div>';
             html += '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center;">' +
                 '<div style="font-size: 1.2rem;">♡</div>' +
                 '<div style="font-size: 1.2rem; font-weight: bold;">' + reputation + '</div>' +
                 '<div style="font-size: 0.65rem; color: var(--dim);">Reputation</div>' +
                 '<div style="background: var(--bg3); border-radius: 4px; height: 4px; margin-top: 6px; overflow: hidden;">' +
                 '<div style="width: ' + reputation + '%; height: 100%; background: ' + (reputation >= 70 ? '#4caf50' : reputation >= 40 ? '#ff9800' : '#f44336') + '; border-radius: 4px;"></div></div></div>';
-
             html += '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center;">' +
-                '<div style="font-size: 1.2rem;">' + (economicTier ? economicTier.icon : '⟡') + '</div>' +
-                '<div style="font-size: 1rem; font-weight: bold;">' + (economicTier ? economicTier.name : 'Unknown') + '</div>' +
+                '<div style="font-size: 1.2rem;">' + (tier ? tier.icon : '⟡') + '</div>' +
+                '<div style="font-size: 1rem; font-weight: bold;">' + (tier ? tier.name : 'Unknown') + '</div>' +
                 '<div style="font-size: 0.65rem; color: var(--dim);">Economic Tier</div></div></div>';
 
             // Two column layout
@@ -765,7 +596,7 @@
                 '<h3 style="margin: 0; font-size: 0.85rem;">Member Statistics</h3>' +
                 (isHistorical ? '<span style="font-size:0.5rem;color:var(--warn);margin-left:auto;">As of ' + viewYear + '</span>' : '') +
                 '</div>' +
-                _renderMemberStats(familyMembers, staffMembers, memberBreakdown, commonRoles) +
+                _renderMemberStats(members, familyMembers, staffMembers) +
                 '</div>';
 
             // Department Analytics
@@ -773,7 +604,7 @@
                 '<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; border-bottom: 1px solid var(--border); padding-bottom: 8px;">' +
                 '<span style="font-size: 1rem;">⌂</span>' +
                 '<h3 style="margin: 0; font-size: 0.85rem;">Department Analytics</h3></div>' +
-                _renderDepartments(household, departments) +
+                _renderDepartments(departments, household) +
                 '</div>';
 
             // Resources
@@ -794,7 +625,7 @@
                 '<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; border-bottom: 1px solid var(--border); padding-bottom: 8px;">' +
                 '<span style="font-size: 1rem;">♡</span>' +
                 '<h3 style="margin: 0; font-size: 0.85rem;">Wealth & Standing</h3></div>' +
-                _renderWealthStanding(wealth, estimatedWealth, highestRank, loyaltyModifier, crimeRiskModifier, educationBonus) +
+                _renderWealthStanding(wealth, powerScore, highestRank, tier) +
                 '</div>';
 
             // Education
@@ -805,21 +636,33 @@
                 _renderEducation(educationStats) +
                 '</div>';
 
-            // Reputation & Vendettas
-            html += '<div style="background: var(--bg2); border-radius: 8px; padding: 16px;">' +
-                '<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; border-bottom: 1px solid var(--border); padding-bottom: 8px;">' +
-                '<span style="font-size: 1rem;">⚔</span>' +
-                '<h3 style="margin: 0; font-size: 0.85rem;">Reputation & Conflicts</h3></div>' +
-                _renderReputation(reputation, vendettas, activeVendettas) +
-                '</div>';
-
             // Succession
             html += '<div style="background: var(--bg2); border-radius: 8px; padding: 16px;">' +
                 '<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; border-bottom: 1px solid var(--border); padding-bottom: 8px;">' +
                 '<span style="font-size: 1rem;">⟡</span>' +
                 '<h3 style="margin: 0; font-size: 0.85rem;">Succession Line</h3></div>' +
-                _renderSuccession(succession, lineage) +
+                _renderSuccession(householdId, head) +
                 '</div>';
+
+            // Vendettas
+            if (vendettas && vendettas.length > 0) {
+                var activeVendettas = vendettas.filter(function(v) { return !v.resolved; });
+                html += '<div style="background: var(--bg2); border-radius: 8px; padding: 16px;">' +
+                    '<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; border-bottom: 1px solid var(--border); padding-bottom: 8px;">' +
+                    '<span style="font-size: 1rem;">⚔</span>' +
+                    '<h3 style="margin: 0; font-size: 0.85rem;">Conflicts (' + activeVendettas.length + ' active)</h3></div>';
+                var displayVendettas = activeVendettas.slice(0, 5);
+                for (var i = 0; i < displayVendettas.length; i++) {
+                    var v = displayVendettas[i];
+                    html += '<div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-light);">' +
+                        '<span style="font-size: 0.6rem;">vs ' + _escapeHtml(v.targetName || 'Unknown') + '</span>' +
+                        '<span style="font-size: 0.55rem; color: var(--dim);">since ' + v.declaredYear + '</span></div>';
+                }
+                if (activeVendettas.length > 5) {
+                    html += '<div style="font-size: 0.55rem; color: var(--dim); text-align: center; padding-top: 4px;">... and ' + (activeVendettas.length - 5) + ' more</div>';
+                }
+                html += '</div>';
+            }
 
             html += '</div>'; // End right column
             html += '</div>'; // End two column layout
@@ -907,9 +750,5 @@
 
     window.renderHouseholdAnalyticsTab = renderHouseholdAnalyticsTab;
     window.analyticsState = analyticsState;
-
-    if (typeof module !== 'undefined' && module.exports) {
-        module.exports = { renderHouseholdAnalyticsTab, analyticsState };
-    }
 
 })();

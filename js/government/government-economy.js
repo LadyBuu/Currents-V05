@@ -4,19 +4,19 @@
  * =============================================================================
  * 
  * This file contains business logic for:
- * - Budget calculations (income, expenses)
  * - Salary management for government positions
- * - Tax collection and distribution
- * - Financial reporting and analytics
- * - Efficiency scoring
- * - INDUSTRY TAX REVENUE integration
- * - SALARY CALCULATION for government positions (used by commands)
+ * - Position salary calculation
+ * - Salary history tracking
+ * - DEPARTMENT SALARY REQUIREMENTS (for settlement allocation)
+ * 
+ * REMOVED: Self-budget calculation (now owned by settlement)
+ * REMOVED: Tax collection (now owned by settlement)
+ * REMOVED: Financial reporting (now owned by settlement)
  * 
  * DEPENDENCIES:
  *   - government-state.js (GovernmentState)
  *   - government-queries.js (GovernmentQueries)
  *   - accessors.js (getCharacterById, getPlaceById, getCurrentYear)
- *   - household-state.js (HouseholdState) - for tax/salary integration
  * 
  * =============================================================================
  */
@@ -97,50 +97,8 @@
     };
 
     // =========================================================================
-    // 4. BUDGET CALCULATIONS
+    // 4. POSITION SALARY CALCULATION (KEPT - still needed)
     // =========================================================================
-
-    function calculateDepartmentBudget(departmentId) {
-        if (_processingEconomy) {
-            return null;
-        }
-        _processingEconomy = true;
-
-        try {
-            var dept = GovernmentState.getDepartment(departmentId);
-            if (!dept) return null;
-
-            var assignments = GovernmentState.getAssignmentsForDepartment(departmentId, true);
-            var totalSalaries = 0;
-            var positions = dept.positions || [];
-            var filledPositions = 0;
-
-            for (var i = 0; i < assignments.length; i++) {
-                var a = assignments[i];
-                var salary = calculatePositionSalary(a.positionId, dept);
-                totalSalaries += salary;
-                filledPositions++;
-            }
-
-            var budget = {
-                departmentId: departmentId,
-                departmentName: dept.name,
-                totalPositions: positions.length,
-                filledPositions: filledPositions,
-                vacantPositions: positions.length - filledPositions,
-                totalSalaries: Math.round(totalSalaries),
-                averageSalary: filledPositions > 0 ? Math.round(totalSalaries / filledPositions) : 0,
-                annualBudget: Math.round(totalSalaries * 1.2),
-                overhead: Math.round(totalSalaries * 0.2),
-                locationId: dept.locationId
-            };
-
-            return budget;
-
-        } finally {
-            _processingEconomy = false;
-        }
-    }
 
     function calculatePositionSalary(positionId, department) {
         if (_processingEconomy) {
@@ -209,181 +167,105 @@
     }
 
     // =========================================================================
-    // 5. LOCATION GOVERNMENT BUDGET (UPDATED with Industry)
+    // 5. DEPARTMENT SALARY REQUIREMENTS (NEW - for settlement allocation)
     // =========================================================================
 
-    function calculateLocationGovernmentBudget(locationId) {
+    /**
+     * Calculates the salary requirements for all positions in a department
+     * Used by settlement to determine how much to allocate
+     * @param {string} departmentId - Department ID
+     * @returns {Object} Salary requirements
+     */
+    function calculateDepartmentSalaryRequirements(departmentId) {
         if (_processingEconomy) {
             return null;
+        }
+        _processingEconomy = true;
+
+        try {
+            var dept = GovernmentState.getDepartment(departmentId);
+            if (!dept) return null;
+
+            var assignments = GovernmentState.getAssignmentsForDepartment(departmentId, true);
+            var totalSalaries = 0;
+            var positions = dept.positions || [];
+            var filledPositions = 0;
+            var details = [];
+
+            for (var i = 0; i < assignments.length; i++) {
+                var a = assignments[i];
+                var salary = calculatePositionSalary(a.positionId, dept);
+                totalSalaries += salary;
+                filledPositions++;
+
+                var position = GovernmentState.getPositionById(dept.id, a.positionId);
+                details.push({
+                    assignmentId: a.id,
+                    characterId: a.characterId,
+                    characterName: a.characterName || 'Unknown',
+                    positionId: a.positionId,
+                    positionName: position ? position.name : 'Unknown',
+                    salary: salary
+                });
+            }
+
+            return {
+                departmentId: departmentId,
+                departmentName: dept.name,
+                locationId: dept.locationId,
+                totalPositions: positions.length,
+                filledPositions: filledPositions,
+                vacantPositions: positions.length - filledPositions,
+                totalSalaryRequirement: Math.round(totalSalaries),
+                averageSalary: filledPositions > 0 ? Math.round(totalSalaries / filledPositions) : 0,
+                details: details
+            };
+
+        } finally {
+            _processingEconomy = false;
+        }
+    }
+
+    /**
+     * Calculates the total salary requirements for all departments in a location
+     * Used by settlement to determine government salary allocation
+     * @param {string} locationId - Location ID
+     * @returns {Object} Total salary requirements
+     */
+    function calculateLocationSalaryRequirements(locationId) {
+        if (_processingEconomy) {
+            return { total: 0, details: [] };
         }
         _processingEconomy = true;
 
         try {
             var departments = GovernmentState.getDepartmentsByLocation(locationId);
-            var place = _getPlaceById(locationId);
-
-            var budget = {
-                locationId: locationId,
-                locationName: place ? place.displayName : 'Unknown',
-                totalDepartments: departments.length,
-                totalSalaries: 0,
-                totalOverhead: 0,
-                totalBudget: 0,
-                departments: [],
-                // Industry tax revenue
-                industryTaxRevenue: 0,
-                totalRevenue: 0
-            };
+            var total = 0;
+            var details = [];
 
             for (var i = 0; i < departments.length; i++) {
-                var deptBudget = calculateDepartmentBudget(departments[i].id);
-                if (deptBudget) {
-                    budget.totalSalaries += deptBudget.totalSalaries;
-                    budget.totalOverhead += deptBudget.overhead;
-                    budget.totalBudget += deptBudget.annualBudget;
-                    budget.departments.push(deptBudget);
+                var dept = departments[i];
+                var deptReq = calculateDepartmentSalaryRequirements(dept.id);
+                if (deptReq) {
+                    total += deptReq.totalSalaryRequirement;
+                    details.push(deptReq);
                 }
             }
 
-            // Add industry tax revenue
-            budget.industryTaxRevenue = GovernmentState.getIndustryTaxRevenue(locationId);
-            budget.totalRevenue = budget.industryTaxRevenue;
-
-            budget.totalSalaries = Math.round(budget.totalSalaries);
-            budget.totalOverhead = Math.round(budget.totalOverhead);
-            budget.totalBudget = Math.round(budget.totalBudget);
-
-            return budget;
-
-        } finally {
-            _processingEconomy = false;
-        }
-    }
-
-    // =========================================================================
-    // 6. TAX CALCULATIONS (UPDATED with Industry)
-    // =========================================================================
-
-    function calculateGovernmentTaxRevenue(locationId, year) {
-        if (_processingEconomy) {
-            return null;
-        }
-        _processingEconomy = true;
-
-        try {
-            year = year || _getCurrentYear();
-
-            var settlement = _getSettlementData(locationId);
-            if (!settlement) return null;
-
-            var govBudget = calculateLocationGovernmentBudget(locationId);
-            if (!govBudget) return null;
-
-            var taxRate = (settlement.taxRate || 10) / 100;
-            var tradeTariff = (settlement.tradeTariff || 5) / 100;
-
-            var population = _getLocationPopulationCount(locationId);
-
-            var baseTaxRevenue = population * 0.5 * taxRate;
-            var tradeRevenue = population * 0.2 * tradeTariff;
-
-            // Industry tax revenue from GovernmentState
-            var industryRevenue = GovernmentState.getIndustryTaxRevenue(locationId, year);
-
-            var deptCount = govBudget.totalDepartments || 1;
-            var efficiencyBonus = Math.max(0.5, 1 - (deptCount * 0.02));
-
-            var totalRevenue = (baseTaxRevenue + tradeRevenue + industryRevenue) * efficiencyBonus;
-
-            var result = {
+            return {
                 locationId: locationId,
-                year: year,
-                taxRevenue: Math.round(baseTaxRevenue),
-                tradeRevenue: Math.round(tradeRevenue),
-                industryRevenue: Math.round(industryRevenue),
-                totalRevenue: Math.round(totalRevenue),
-                governmentExpenses: govBudget.totalBudget,
-                surplus: Math.round(totalRevenue - govBudget.totalBudget),
-                taxRate: taxRate,
-                tradeTariff: tradeTariff,
-                industryTaxRate: settlement.industryTaxRate || 8,
-                departmentCount: deptCount,
-                population: population
+                totalSalaryRequirement: Math.round(total),
+                departments: details,
+                departmentCount: details.length
             };
 
-            return result;
-
         } finally {
             _processingEconomy = false;
         }
     }
 
     // =========================================================================
-    // 7. FINANCIAL REPORTING
-    // =========================================================================
-
-    function getGovernmentFinancialReport(locationId, yearRange) {
-        if (_processingEconomy) {
-            return null;
-        }
-        _processingEconomy = true;
-
-        try {
-            yearRange = yearRange || 5;
-            var currentYear = _getCurrentYear();
-            var reports = [];
-
-            for (var i = 0; i < yearRange; i++) {
-                var year = currentYear - i;
-                var report = calculateGovernmentTaxRevenue(locationId, year);
-                if (report) {
-                    reports.push(report);
-                }
-            }
-
-            if (reports.length === 0) return null;
-
-            var revenueTrend = 0;
-            var expenseTrend = 0;
-            var surplusTrend = 0;
-
-            for (var i = 1; i < reports.length; i++) {
-                var prev = reports[i - 1];
-                var curr = reports[i];
-                if (prev.totalRevenue > 0) {
-                    revenueTrend += (curr.totalRevenue - prev.totalRevenue) / prev.totalRevenue;
-                }
-                if (prev.governmentExpenses > 0) {
-                    expenseTrend += (curr.governmentExpenses - prev.governmentExpenses) / prev.governmentExpenses;
-                }
-                if (prev.surplus !== 0) {
-                    surplusTrend += (curr.surplus - prev.surplus) / Math.abs(prev.surplus);
-                }
-            }
-
-            var count = reports.length - 1;
-            var result = {
-                locationId: locationId,
-                reports: reports,
-                summary: {
-                    averageRevenue: Math.round(reports.reduce(function(sum, r) { return sum + r.totalRevenue; }, 0) / reports.length),
-                    averageExpenses: Math.round(reports.reduce(function(sum, r) { return sum + r.governmentExpenses; }, 0) / reports.length),
-                    averageSurplus: Math.round(reports.reduce(function(sum, r) { return sum + r.surplus; }, 0) / reports.length),
-                    revenueTrend: count > 0 ? Math.round((revenueTrend / count) * 100) : 0,
-                    expenseTrend: count > 0 ? Math.round((expenseTrend / count) * 100) : 0,
-                    surplusTrend: count > 0 ? Math.round((surplusTrend / count) * 100) : 0
-                }
-            };
-
-            return result;
-
-        } finally {
-            _processingEconomy = false;
-        }
-    }
-
-    // =========================================================================
-    // 8. SALARY MANAGEMENT
+    // 6. SALARY MANAGEMENT
     // =========================================================================
 
     function updatePositionSalary(departmentId, positionId, newSalary) {
@@ -461,91 +343,20 @@
     }
 
     // =========================================================================
-    // 9. ECONOMIC ANALYTICS (UPDATED with Industry)
-    // =========================================================================
-
-    function getGovernmentEfficiencyScore(locationId) {
-        if (_processingEconomy) {
-            return null;
-        }
-        _processingEconomy = true;
-
-        try {
-            var budget = calculateLocationGovernmentBudget(locationId);
-            var tax = calculateGovernmentTaxRevenue(locationId);
-
-            if (!budget || !tax) return null;
-
-            var deptCount = budget.totalDepartments || 1;
-            var revenuePerDept = tax.totalRevenue / deptCount;
-            var avgSalary = budget.totalSalaries / Math.max(1, budget.filledPositions || 1);
-
-            var efficiency = 0;
-            if (avgSalary > 0) {
-                efficiency = Math.min(100, (revenuePerDept / avgSalary) * 10);
-            }
-
-            var score = {
-                locationId: locationId,
-                efficiency: Math.round(efficiency),
-                revenuePerDepartment: Math.round(revenuePerDept),
-                averageSalary: Math.round(avgSalary),
-                departments: deptCount,
-                totalRevenue: tax.totalRevenue,
-                totalExpenses: budget.totalBudget,
-                surplus: tax.surplus,
-                rating: efficiency >= 80 ? 'Excellent' :
-                        efficiency >= 60 ? 'Good' :
-                        efficiency >= 40 ? 'Average' :
-                        efficiency >= 20 ? 'Poor' : 'Critical'
-            };
-
-            return score;
-
-        } finally {
-            _processingEconomy = false;
-        }
-    }
-
-    function getGovernmentIndustryRevenue(locationId) {
-        if (_processingEconomy) {
-            return 0;
-        }
-        _processingEconomy = true;
-
-        try {
-            return GovernmentState.getIndustryTaxRevenue(locationId);
-
-        } finally {
-            _processingEconomy = false;
-        }
-    }
-
-    // =========================================================================
-    // 10. EXPORTS (UPDATED with Industry Integration)
+    // 7. EXPORTS
     // =========================================================================
 
     window.GovernmentEconomy = {
-        // Budget calculations
-        calculateDepartmentBudget: calculateDepartmentBudget,
+        // Salary calculation (KEPT - still needed)
         calculatePositionSalary: calculatePositionSalary,
-        calculateLocationGovernmentBudget: calculateLocationGovernmentBudget,
 
-        // Tax calculations
-        calculateGovernmentTaxRevenue: calculateGovernmentTaxRevenue,
+        // Department salary requirements (NEW - for settlement allocation)
+        calculateDepartmentSalaryRequirements: calculateDepartmentSalaryRequirements,
+        calculateLocationSalaryRequirements: calculateLocationSalaryRequirements,
 
-        // Financial reporting
-        getGovernmentFinancialReport: getGovernmentFinancialReport,
-
-        // Salary management
+        // Salary management (KEPT)
         updatePositionSalary: updatePositionSalary,
         getPositionSalaryHistory: getPositionSalaryHistory,
-
-        // Economic analytics
-        getGovernmentEfficiencyScore: getGovernmentEfficiencyScore,
-
-        // Industry integration - NEW
-        getGovernmentIndustryRevenue: getGovernmentIndustryRevenue,
 
         // Constants
         SALARY_TIERS: SALARY_TIERS

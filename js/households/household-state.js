@@ -8,6 +8,11 @@
  * Single source of truth for all household data. Manages caching, subscriptions,
  * and data loading.
  * 
+ * UPDATED: Added enterpriseHistory field for tracking enterprise ownership changes
+ *          Added trackEnterpriseProfit() function
+ *          Added getHouseholdEnterpriseProfitHistory() function
+ *          Added getHouseholdEnterpriseValue() function
+ * 
  * DEPENDENCIES:
  *   - accessors.js - getCharacters, getPlaceById, getCurrentYear
  *   - storage.js - saveMasterData
@@ -126,7 +131,7 @@
             for (var i = 0; i < master.data.households.length; i++) {
                 var h = master.data.households[i];
                 if (!h.enterprises) h.enterprises = [];
-                if (!h.enterpriseHistory) h.enterpriseHistory = [];
+                if (!h.enterpriseHistory) h.enterpriseHistory = []; // NEW
                 if (!h.eventLog) h.eventLog = [];
                 if (!h.nameHistory) h.nameHistory = [];
                 if (!h.members) h.members = [];
@@ -546,194 +551,7 @@
     }
 
     // =========================================================================
-    // 9. PUBLIC API - NAME PERIOD MANAGEMENT
-    // =========================================================================
-
-    function getHouseholdNamePeriods(householdId) {
-        var household = getHousehold(householdId);
-        if (!household) return [];
-        return household.nameHistory || [];
-    }
-
-    function getHouseholdNamePeriodForYear(householdId, year) {
-        var periods = getHouseholdNamePeriods(householdId);
-        if (periods.length === 0) return null;
-
-        // Sort by year descending
-        var sorted = periods.slice().sort(function(a, b) {
-            return (b.year || 0) - (a.year || 0);
-        });
-
-        // Find the period that was active at the given year
-        for (var i = 0; i < sorted.length; i++) {
-            var period = sorted[i];
-            if (period.year <= year) {
-                // Check if this period ended before the given year
-                var ended = false;
-                for (var j = i + 1; j < sorted.length; j++) {
-                    if (sorted[j].year > year && sorted[j].periodEnd === period.year) {
-                        ended = true;
-                        break;
-                    }
-                }
-                if (!ended) {
-                    return period;
-                }
-            }
-        }
-
-        // If no period found, return the most recent
-        return sorted[0] || null;
-    }
-
-    function editHouseholdNamePeriod(householdId, periodIndex, updates) {
-        var household = getHousehold(householdId);
-        if (!household || !household.nameHistory) return false;
-        if (periodIndex < 0 || periodIndex >= household.nameHistory.length) return false;
-
-        var allowedFields = ['oldName', 'newName', 'year', 'periodEnd', 'reason', 'changedBy'];
-        for (var i = 0; i < allowedFields.length; i++) {
-            var key = allowedFields[i];
-            if (updates[key] !== undefined) {
-                household.nameHistory[periodIndex][key] = updates[key];
-            }
-        }
-
-        var households = _state.households;
-        var index = -1;
-        for (var j = 0; j < households.length; j++) {
-            if (households[j].id === householdId) {
-                index = j;
-                break;
-            }
-        }
-        if (index !== -1) {
-            households[index] = household;
-            _setHouseholds(households);
-        }
-
-        return true;
-    }
-
-    function deleteHouseholdNamePeriod(householdId, periodIndex) {
-        var household = getHousehold(householdId);
-        if (!household || !household.nameHistory) return false;
-        if (periodIndex < 0 || periodIndex >= household.nameHistory.length) return false;
-
-        household.nameHistory.splice(periodIndex, 1);
-
-        var households = _state.households;
-        var index = -1;
-        for (var j = 0; j < households.length; j++) {
-            if (households[j].id === householdId) {
-                index = j;
-                break;
-            }
-        }
-        if (index !== -1) {
-            households[index] = household;
-            _setHouseholds(households);
-        }
-
-        return true;
-    }
-
-    // =========================================================================
-    // 10. PUBLIC API - RESIDENCE ASSOCIATION
-    // =========================================================================
-
-    function associateHouseholdWithResidence(householdId, residenceId, options) {
-        options = options || {};
-        var household = getHousehold(householdId);
-        if (!household) return false;
-
-        household.residenceId = residenceId;
-        household.residenceName = options.residenceName || null;
-        household.residenceType = options.residenceType || null;
-        household.associatedYear = options.year || _getCurrentYear();
-        household.residenceUnitNumber = options.unitNumber || null;
-        household.residenceNotes = options.notes || '';
-
-        var households = _state.households;
-        var index = -1;
-        for (var i = 0; i < households.length; i++) {
-            if (households[i].id === householdId) {
-                index = i;
-                break;
-            }
-        }
-        if (index !== -1) {
-            households[index] = household;
-            _setHouseholds(households);
-        }
-
-        return true;
-    }
-
-    function disassociateHouseholdFromResidence(householdId, residenceId, reason, year) {
-        var household = getHousehold(householdId);
-        if (!household) return false;
-
-        // Store the disassociation in history
-        if (!household.residenceHistory) household.residenceHistory = [];
-        household.residenceHistory.push({
-            residenceId: residenceId,
-            residenceName: household.residenceName,
-            action: 'disassociated',
-            year: year || _getCurrentYear(),
-            reason: reason || 'Unknown'
-        });
-
-        household.residenceId = null;
-        household.residenceName = null;
-        household.residenceType = null;
-        household.associatedYear = null;
-        household.residenceUnitNumber = null;
-
-        var households = _state.households;
-        var index = -1;
-        for (var i = 0; i < households.length; i++) {
-            if (households[i].id === householdId) {
-                index = i;
-                break;
-            }
-        }
-        if (index !== -1) {
-            households[index] = household;
-            _setHouseholds(households);
-        }
-
-        return true;
-    }
-
-    function getHouseholdResidence(householdId) {
-        var household = getHousehold(householdId);
-        if (!household) return null;
-        if (!household.residenceId) return null;
-
-        return {
-            residenceId: household.residenceId,
-            residenceName: household.residenceName,
-            residenceType: household.residenceType,
-            associatedYear: household.associatedYear,
-            unitNumber: household.residenceUnitNumber,
-            notes: household.residenceNotes
-        };
-    }
-
-    function getHouseholdsByResidence(residenceId) {
-        var households = _state.households;
-        var result = [];
-        for (var i = 0; i < households.length; i++) {
-            if (households[i].residenceId === residenceId) {
-                result.push(households[i]);
-            }
-        }
-        return result;
-    }
-
-    // =========================================================================
-    // 11. PUBLIC API - ENTERPRISE INTEGRATION (NEW)
+    // 9. PUBLIC API - ENTERPRISE INTEGRATION (UPDATED)
     // =========================================================================
 
     /**
@@ -752,6 +570,71 @@
         var household = getHousehold(householdId);
         if (!household) return [];
         return household.enterpriseHistory || [];
+    }
+
+    /**
+     * Tracks enterprise profit for a household (NEW)
+     * @param {string} householdId - Household ID
+     * @param {string} enterpriseId - Enterprise ID
+     * @param {number} profit - Profit amount (positive or negative)
+     * @param {number} year - Year
+     * @returns {boolean} True if tracked
+     */
+    function trackEnterpriseProfit(householdId, enterpriseId, profit, year) {
+        var household = getHousehold(householdId);
+        if (!household) return false;
+
+        if (!household.enterpriseHistory) household.enterpriseHistory = [];
+        household.enterpriseHistory.push({
+            enterpriseId: enterpriseId,
+            year: year || _getCurrentYear(),
+            profit: profit,
+            type: profit >= 0 ? 'profit' : 'loss'
+        });
+
+        if (household.enterpriseHistory.length > 100) {
+            household.enterpriseHistory = household.enterpriseHistory.slice(-100);
+        }
+
+        _saveMasterData();
+        return true;
+    }
+
+    /**
+     * Gets enterprise profit history for a household (NEW)
+     * @param {string} householdId - Household ID
+     * @param {number} limit - Number of entries to return
+     * @returns {Array} Profit history
+     */
+    function getHouseholdEnterpriseProfitHistory(householdId, limit) {
+        var household = getHousehold(householdId);
+        if (!household || !household.enterpriseHistory) return [];
+
+        limit = limit || 20;
+        var history = household.enterpriseHistory.slice();
+        history.sort(function(a, b) { return (b.year || 0) - (a.year || 0); });
+        return history.slice(0, limit);
+    }
+
+    /**
+     * Gets total enterprise value for a household (NEW)
+     * @param {string} householdId - Household ID
+     * @returns {number} Total value
+     */
+    function getHouseholdEnterpriseValue(householdId) {
+        var household = getHousehold(householdId);
+        if (!household || !household.enterprises) return 0;
+
+        var total = 0;
+        if (typeof window.IndustryQueries !== 'undefined') {
+            for (var i = 0; i < household.enterprises.length; i++) {
+                var summary = window.IndustryQueries.getEnterpriseSummary(household.enterprises[i]);
+                if (summary) {
+                    total += summary.wealth || 0;
+                }
+            }
+        }
+        return total;
     }
 
     /**
@@ -900,6 +783,193 @@
             }
         }
 
+        return result;
+    }
+
+    // =========================================================================
+    // 10. PUBLIC API - NAME PERIOD MANAGEMENT
+    // =========================================================================
+
+    function getHouseholdNamePeriods(householdId) {
+        var household = getHousehold(householdId);
+        if (!household) return [];
+        return household.nameHistory || [];
+    }
+
+    function getHouseholdNamePeriodForYear(householdId, year) {
+        var periods = getHouseholdNamePeriods(householdId);
+        if (periods.length === 0) return null;
+
+        // Sort by year descending
+        var sorted = periods.slice().sort(function(a, b) {
+            return (b.year || 0) - (a.year || 0);
+        });
+
+        // Find the period that was active at the given year
+        for (var i = 0; i < sorted.length; i++) {
+            var period = sorted[i];
+            if (period.year <= year) {
+                // Check if this period ended before the given year
+                var ended = false;
+                for (var j = i + 1; j < sorted.length; j++) {
+                    if (sorted[j].year > year && sorted[j].periodEnd === period.year) {
+                        ended = true;
+                        break;
+                    }
+                }
+                if (!ended) {
+                    return period;
+                }
+            }
+        }
+
+        // If no period found, return the most recent
+        return sorted[0] || null;
+    }
+
+    function editHouseholdNamePeriod(householdId, periodIndex, updates) {
+        var household = getHousehold(householdId);
+        if (!household || !household.nameHistory) return false;
+        if (periodIndex < 0 || periodIndex >= household.nameHistory.length) return false;
+
+        var allowedFields = ['oldName', 'newName', 'year', 'periodEnd', 'reason', 'changedBy'];
+        for (var i = 0; i < allowedFields.length; i++) {
+            var key = allowedFields[i];
+            if (updates[key] !== undefined) {
+                household.nameHistory[periodIndex][key] = updates[key];
+            }
+        }
+
+        var households = _state.households;
+        var index = -1;
+        for (var j = 0; j < households.length; j++) {
+            if (households[j].id === householdId) {
+                index = j;
+                break;
+            }
+        }
+        if (index !== -1) {
+            households[index] = household;
+            _setHouseholds(households);
+        }
+
+        return true;
+    }
+
+    function deleteHouseholdNamePeriod(householdId, periodIndex) {
+        var household = getHousehold(householdId);
+        if (!household || !household.nameHistory) return false;
+        if (periodIndex < 0 || periodIndex >= household.nameHistory.length) return false;
+
+        household.nameHistory.splice(periodIndex, 1);
+
+        var households = _state.households;
+        var index = -1;
+        for (var j = 0; j < households.length; j++) {
+            if (households[j].id === householdId) {
+                index = j;
+                break;
+            }
+        }
+        if (index !== -1) {
+            households[index] = household;
+            _setHouseholds(households);
+        }
+
+        return true;
+    }
+
+    // =========================================================================
+    // 11. PUBLIC API - RESIDENCE ASSOCIATION
+    // =========================================================================
+
+    function associateHouseholdWithResidence(householdId, residenceId, options) {
+        options = options || {};
+        var household = getHousehold(householdId);
+        if (!household) return false;
+
+        household.residenceId = residenceId;
+        household.residenceName = options.residenceName || null;
+        household.residenceType = options.residenceType || null;
+        household.associatedYear = options.year || _getCurrentYear();
+        household.residenceUnitNumber = options.unitNumber || null;
+        household.residenceNotes = options.notes || '';
+
+        var households = _state.households;
+        var index = -1;
+        for (var i = 0; i < households.length; i++) {
+            if (households[i].id === householdId) {
+                index = i;
+                break;
+            }
+        }
+        if (index !== -1) {
+            households[index] = household;
+            _setHouseholds(households);
+        }
+
+        return true;
+    }
+
+    function disassociateHouseholdFromResidence(householdId, residenceId, reason, year) {
+        var household = getHousehold(householdId);
+        if (!household) return false;
+
+        // Store the disassociation in history
+        if (!household.residenceHistory) household.residenceHistory = [];
+        household.residenceHistory.push({
+            residenceId: residenceId,
+            residenceName: household.residenceName,
+            action: 'disassociated',
+            year: year || _getCurrentYear(),
+            reason: reason || 'Unknown'
+        });
+
+        household.residenceId = null;
+        household.residenceName = null;
+        household.residenceType = null;
+        household.associatedYear = null;
+        household.residenceUnitNumber = null;
+
+        var households = _state.households;
+        var index = -1;
+        for (var i = 0; i < households.length; i++) {
+            if (households[i].id === householdId) {
+                index = i;
+                break;
+            }
+        }
+        if (index !== -1) {
+            households[index] = household;
+            _setHouseholds(households);
+        }
+
+        return true;
+    }
+
+    function getHouseholdResidence(householdId) {
+        var household = getHousehold(householdId);
+        if (!household) return null;
+        if (!household.residenceId) return null;
+
+        return {
+            residenceId: household.residenceId,
+            residenceName: household.residenceName,
+            residenceType: household.residenceType,
+            associatedYear: household.associatedYear,
+            unitNumber: household.residenceUnitNumber,
+            notes: household.residenceNotes
+        };
+    }
+
+    function getHouseholdsByResidence(residenceId) {
+        var households = _state.households;
+        var result = [];
+        for (var i = 0; i < households.length; i++) {
+            if (households[i].residenceId === residenceId) {
+                result.push(households[i]);
+            }
+        }
         return result;
     }
 
@@ -1137,7 +1207,7 @@
     }
 
     // =========================================================================
-    // 15. EXPORTS
+    // 15. EXPORTS (UPDATED with enterprise profit functions)
     // =========================================================================
 
     var HouseholdState = {
@@ -1164,13 +1234,17 @@
         getHouseholdResidence: getHouseholdResidence,
         getHouseholdsByResidence: getHouseholdsByResidence,
 
-        // Enterprise Integration (NEW)
+        // Enterprise Integration (UPDATED)
         getHouseholdEnterprises: getHouseholdEnterprises,
         getHouseholdEnterpriseHistory: getHouseholdEnterpriseHistory,
         getHouseholdEnterprisesWithData: getHouseholdEnterprisesWithData,
         addEnterpriseToHousehold: addEnterpriseToHousehold,
         removeEnterpriseFromHousehold: removeEnterpriseFromHousehold,
         transferEnterprisesToHousehold: transferEnterprisesToHousehold,
+        // NEW: Enterprise profit tracking
+        trackEnterpriseProfit: trackEnterpriseProfit,
+        getHouseholdEnterpriseProfitHistory: getHouseholdEnterpriseProfitHistory,
+        getHouseholdEnterpriseValue: getHouseholdEnterpriseValue,
 
         // Position Functions
         createHouseholdPosition: createHouseholdPosition,

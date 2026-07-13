@@ -1,600 +1,1409 @@
-# 📚 **CHILDREN SYSTEM - COMPLETE DOCUMENTATION**
+# CHILDREN & FAMILY SYSTEM - COMPLETE DOCUMENTATION
+
+## SYSTEM OVERVIEW
+
+The Children & Family System manages all aspects of family relationships, including birth, adoption, surrogacy, pregnancy, and family lineage tracking. It provides a complete API for recording births, managing adoptions, creating surrogacy arrangements, and tracking family relationships across generations.
+
+**Key Design Principles:**
+- **Single Source of Truth**: `children-state.js` holds all child-related data
+- **Command-Query Separation**: Commands (writes) vs Queries (reads) separated
+- **Separation of Concerns**: State, commands, queries, lifecycle, UI all separate
+- **Recursion Guards**: All public functions protected from infinite loops
+- **Household Integration**: Children can be assigned to households
+- **Character Integration**: Children are full character objects with parent relationships
+- **Adoption Tracking**: Legal, guardianship, and foster care relationships
+- **Surrogacy Management**: Full surrogacy arrangement lifecycle
+- **Pregnancy History**: Historical pregnancy tracking
+- **Inheritance Support**: Legitimization and inheritance rights
 
 ---
 
-## 📋 **TABLE OF CONTENTS**
-
-1. System Overview
-2. File Structure
-3. children-state.js - Single Source of Truth
-4. children-commands.js - Write Operations
-5. children-queries.js - Read Operations
-6. children-lifecycle.js - Business Logic
-7. adoption-service.js - Adoption Logic
-8. pregnancy-service.js - Pregnancy Logic
-9. surrogacy-service.js - Surrogacy Logic
-10. modals-birth.js - Birth UI Modals
-11. modals-adoption.js - Adoption UI Modals
-12. modals-surrogacy.js - Surrogacy UI Modals
-13. Dependency Map
-14. Recursion Guards
-15. Icon Policy
-16. Data Schema
-17. Legacy Aliases
-
----
-
-## 1. SYSTEM OVERVIEW
-
-The Children System manages all aspects of child-related data in the Still Waters simulation:
-
-| Feature | Description |
-|---------|-------------|
-| **Birth** | Recording births, creating child characters, tracking pregnancy history |
-| **Adoption** | Legal adoption, guardianship, foster care placement |
-| **Surrogacy** | Traditional and gestational surrogacy, swap arrangements |
-| **Pregnancy** | Fertility calculations, pregnancy simulation, complications |
-| **Legitimization** | Declaring children legitimate heirs with inheritance rights |
-
-**KEY PRINCIPLES:**
-- Single Source of Truth (children-state.js)
-- Command-Query Separation (commands vs queries)
-- Separation of Concerns (state, commands, queries, lifecycle, UI)
-- Recursion Guards on all public functions
-- Change Notifications via subscriptions
-- No direct masterData access outside state
-- NO TRUST/LOYALTY systems
-
----
-
-## 2. FILE STRUCTURE
+## FILE STRUCTURE
 
 ```
 js/core/children/
-├── children-state.js          # Single source of truth + cache + notifications
-├── children-commands.js       # All write operations (birth, adoption, surrogacy)
-├── children-queries.js        # All read operations (stats, history)
-├── children-lifecycle.js      # Business logic (fertility, pregnancy, inheritance)
-├── adoption-service.js        # Adoption logic (queries, validation, creation)
-├── pregnancy-service.js       # Pregnancy logic (fertility, simulation, history)
-├── surrogacy-service.js       # Surrogacy logic (arrangements, swaps, queries)
-│
-└── ui/
-    ├── modals-birth.js        # Birth UI modals
-    ├── modals-adoption.js     # Adoption UI modals
-    └── modals-surrogacy.js    # Surrogacy UI modals
+├── children-state.js              # Single source of truth + cache + notifications
+├── children-commands.js           # All write operations (birth, adoption, surrogacy)
+├── children-queries.js            # All read operations (adoption, pregnancy, surrogacy)
+├── children-lifecycle.js          # Business logic (fertility, pregnancy, inheritance)
+├── pregnancy-service.js           # Pure pregnancy logic (fertility, complications)
+├── surrogacy-service.js           # Pure surrogacy logic
+├── adoption-service.js            # Pure adoption logic
+└── modals-*.js                    # UI modals (birth, adoption, surrogacy)
+
+js/core/modals/
+├── modals-adoption.js                 # Adoption modals
+├── modals-birth.js                    # Birth modals
+└── modals-surrogacy.js                # Surrogacy modals
 ```
 
 ---
 
-## 3. CHILDREN-STATE.JS - Single Source of Truth
+# 1. CHILDREN-STATE.JS
 
-**PURPOSE:** Manages the central state for all child-related data.
+**PURPOSE:** Single source of truth for all child-related data. Manages caching, subscriptions, and data loading.
 
 **DEPENDENCIES:**
-- storage.js (masterData)
-- accessors.js (getCharacters, getCharacterById)
-
-**DATA STRUCTURES:**
-
-```javascript
-_state = {
-    // Adoption records (childId -> array of adoption records)
-    adoptionRecords: new Map(),
-    
-    // Pregnancy records (historical)
-    pregnancyRecords: [],
-    
-    // Surrogacy records
-    surrogacyRecords: [],
-    
-    // Cache
-    cache: {
-        adoptedChildren: new Map(),      // parentId -> [childId]
-        adoptiveParents: new Map(),      // childId -> [parentId]
-        childrenByParent: new Map(),     // parentId -> [childId]
-        pregnanciesByMother: new Map(),  // motherId -> [pregnancy]
-        surrogaciesByParent: new Map()   // parentId -> [surrogacy]
-    },
-    
-    // Subscribers
-    subscribers: [],
-    _processingState: false,
-    _initialized: false,
-    lastUpdated: null
-}
-```
-
-**FUNCTIONS:**
-
-```javascript
-// ---- Adoption ----
-ChildrenState.getAdoptionRecords(childId)          // Array of adoption records
-ChildrenState.getAdoptiveParents(childId)          // Array of { character, record }
-ChildrenState.getAdoptedChildren(parentId)         // Array of child characters
-ChildrenState.isAdopted(childId)                   // boolean
-
-// ---- Pregnancy ----
-ChildrenState.getPregnancyRecords(motherId)        // Array of pregnancy records
-
-// ---- Surrogacy ----
-ChildrenState.getSurrogacyRecords()                // Array of surrogacy records
-ChildrenState.getSurrogacyRecordsForParent(parentId) // Array of surrogacy records
-
-// ---- Children ----
-ChildrenState.getChildren(parentId, includeAdopted) // { biological: [], adopted: [] }
-ChildrenState.getTotalChildren(parentId, includeAdopted) // number
-
-// ---- Subscriptions ----
-ChildrenState.subscribe(callback)                  // Returns unsubscribe function
-
-// ---- Cache ----
-ChildrenState.invalidateCache()                    // Rebuilds all caches
-
-// ---- Internal ----
-ChildrenState._addAdoptionRecord(childId, adoption)
-ChildrenState._removeAdoptionRecord(childId, parentId)
-ChildrenState._addPregnancyRecord(record)
-ChildrenState._addSurrogacyRecord(record)
-ChildrenState._updateSurrogacyRecord(index, updates)
-ChildrenState._loadData()
-ChildrenState._rebuildCaches()
-```
+- `storage.js` - `masterData`
+- `accessors.js` - `getCharacters`, `getCharacterById`
 
 ---
 
-## 4. CHILDREN-COMMANDS.JS - Write Operations
+## Data Schemas
+
+### Adoption Record Schema
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `parentId` | string | Adoptive parent character ID |
+| `parentName` | string | Parent name |
+| `year` | number | Year of adoption |
+| `type` | string | 'legal', 'guardianship', 'foster' |
+| `notes` | string | Notes |
+| `status` | string | 'active', 'ended', 'dissolved' |
+| `timestamp` | number | Creation timestamp |
+
+### Pregnancy Record Schema
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `motherId` | string | Mother character ID |
+| `fatherId` | string | Father character ID |
+| `childId` | string | Child character ID |
+| `childIds` | array | Child IDs (for multiple) |
+| `birthYear` | number | Year of birth |
+| `gender` | string | 'male', 'female', 'mixed' |
+| `isMultiple` | boolean | Multiple birth flag |
+| `fetusCount` | number | Number of fetuses |
+| `isStillborn` | boolean | Stillborn flag |
+| `hasComplications` | boolean | Complications flag |
+| `maternalDeath` | boolean | Maternal death flag |
+| `notes` | string | Notes |
+
+### Surrogacy Record Schema
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique identifier |
+| `intendedParentId` | string | Intended parent ID |
+| `intendedPartnerId` | string | Co-parent ID |
+| `surrogateId` | string | Surrogate character ID |
+| `spermDonorId` | string | Sperm donor ID |
+| `eggDonorId` | string | Egg donor ID |
+| `arrangementYear` | number | Year arranged |
+| `expectedBirthYear` | number | Expected birth year |
+| `actualBirthYear` | number | Actual birth year |
+| `childIds` | array | Children born |
+| `status` | string | 'active', 'completed', 'cancelled' |
+| `type` | string | 'traditional' or 'gestational' |
+| `notes` | string | Notes |
+
+---
+
+## Data Access Functions
+
+### `ChildrenState.getAdoptionRecords(childId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all adoption records for a child |
+| **Parameters** | `childId` (string) |
+| **Returns** | `Array` - Adoption records |
+
+### `ChildrenState.getAdoptiveParents(childId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets adoptive parents of a child |
+| **Parameters** | `childId` (string) |
+| **Returns** | `Array` - Adoptive parent records |
+
+### `ChildrenState.getAdoptedChildren(parentId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets adopted children of a parent |
+| **Parameters** | `parentId` (string) |
+| **Returns** | `Array` - Adopted child IDs |
+
+### `ChildrenState.isAdopted(childId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Checks if a child is adopted |
+| **Parameters** | `childId` (string) |
+| **Returns** | `boolean` |
+
+---
+
+## Pregnancy Access Functions
+
+### `ChildrenState.getPregnancyRecords(motherId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets pregnancy records for a mother |
+| **Parameters** | `motherId` (string) |
+| **Returns** | `Array` - Pregnancy records |
+
+---
+
+## Surrogacy Access Functions
+
+### `ChildrenState.getSurrogacyRecords()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all surrogacy records |
+| **Returns** | `Array` - Surrogacy records |
+
+### `ChildrenState.getSurrogacyRecordsForParent(parentId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets surrogacy records for a parent |
+| **Parameters** | `parentId` (string) |
+| **Returns** | `Array` - Surrogacy records |
+
+---
+
+## Children Access Functions
+
+### `ChildrenState.getChildren(parentId, includeAdopted)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets children of a parent |
+| **Parameters** | `parentId` (string), `includeAdopted` (boolean) |
+| **Returns** | `{ biological: Array, adopted: Array }` |
+
+### `ChildrenState.getTotalChildren(parentId, includeAdopted)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets total child count |
+| **Parameters** | `parentId` (string), `includeAdopted` (boolean) |
+| **Returns** | `number` |
+
+---
+
+## Subscription and Cache
+
+### `ChildrenState.subscribe(callback)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Subscribes to state changes |
+| **Parameters** | `callback` (function) |
+| **Returns** | `function` - Unsubscribe function |
+
+### `ChildrenState.invalidateCache()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Invalidates all caches |
+| **Returns** | `void` |
+
+---
+
+## Internal State Mutators
+
+| Function | Description |
+|----------|-------------|
+| `_addAdoptionRecord(childId, adoption)` | Adds an adoption record |
+| `_removeAdoptionRecord(childId, parentId)` | Removes an adoption record |
+| `_addPregnancyRecord(record)` | Adds a pregnancy record |
+| `_addSurrogacyRecord(record)` | Adds a surrogacy record |
+| `_updateSurrogacyRecord(index, updates)` | Updates a surrogacy record |
+
+---
+
+# 2. CHILDREN-COMMANDS.JS
 
 **PURPOSE:** All write operations for children (birth, adoption, surrogacy, legitimization).
 
 **DEPENDENCIES:**
-- children-state.js (ChildrenState)
-- character-commands.js (CharacterCommands)
-- family-logic.js (FamilyLogic)
-- accessors.js (getCharacterById, getCharacters)
-
-**FUNCTIONS:**
-
-```javascript
-// ---- Birth ----
-ChildrenCommands.recordBirth(mother, father, birthYear, options)
-// options: { gender, isStillborn, name, surname, notes, birthplaceId, autoAssignHousehold }
-// RETURNS: { success: boolean, child: Object, reason: string }
-
-// ---- Adoption ----
-ChildrenCommands.recordAdoption(parent, child, options)
-// options: { year, type: 'legal'|'guardianship'|'foster', notes, parentType, partner }
-// RETURNS: { success: boolean, child: Object, adoption: Object, reason: string }
-
-// ---- Remove Adoption ----
-ChildrenCommands.removeAdoption(parent, child, options)
-// options: { endYear, reason, keepHistory }
-// RETURNS: { success: boolean, reason: string }
-
-// ---- Legitimize Child ----
-ChildrenCommands.legitimizeChild(child, father, mother, options)
-// options: { year, changeSurname: 'none'|'father'|'mother'|'hyphenated', 
-//           inheritanceRights: 'full'|'limited'|'none', notes, autoAssignHousehold }
-// RETURNS: { success: boolean, child: Object, year: number, inheritanceRights: string }
-
-// ---- Surrogacy ----
-ChildrenCommands.recordSurrogacy(intendedParent, surrogate, options)
-// options: { childCount, birthYear, spermDonor, eggDonor, notes }
-// RETURNS: { success: boolean, children: Array, surrogacyRecord: Object }
-
-// ---- Update Surrogacy ----
-ChildrenCommands.updateSurrogacyRecord(recordId, updates)
-// updates: { status, actualBirthYear, childIds, notes }
-// RETURNS: updated record or null
-```
-
-**LEGACY ALIASES:**
-```javascript
-window.generateNewborn = ChildrenCommands.recordBirth
-window.createAdoption = ChildrenCommands.recordAdoption
-window.removeAdoption = ChildrenCommands.removeAdoption
-window.createSurrogacyArrangement = ChildrenCommands.recordSurrogacy
-```
+- `children-state.js` - `ChildrenState`
+- `character-commands.js` - `CharacterCommands`
+- `family-logic.js` - `FamilyLogic`
+- `accessors.js` - `getCharacterById`, `getCharacters`
 
 ---
 
-## 5. CHILDREN-QUERIES.JS - Read Operations
+## Record Birth
 
-**PURPOSE:** All read-only queries for children data.
+### `ChildrenCommands.recordBirth(mother, father, birthYear, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Records a birth (creates a child character) |
+| **Parameters** | `mother` (Object), `father` (Object), `birthYear` (number), `options.gender` (string), `options.isStillborn` (boolean), `options.name` (string), `options.surname` (string), `options.notes` (string), `options.birthplaceId` (string), `options.autoAssignHousehold` (boolean) |
+| **Returns** | `{ success: boolean, child: Object }` |
+
+---
+
+## Record Adoption
+
+### `ChildrenCommands.recordAdoption(parent, child, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Records an adoption |
+| **Parameters** | `parent` (Object), `child` (Object), `options.year` (number), `options.type` (string - 'legal', 'guardianship', 'foster'), `options.notes` (string), `options.parentType` (string - 'father', 'mother', 'guardian'), `options.partner` (Object) |
+| **Returns** | `{ success: boolean, child: Object, adoption: Object }` |
+
+---
+
+## Remove Adoption
+
+### `ChildrenCommands.removeAdoption(parent, child, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Removes an adoption |
+| **Parameters** | `parent` (Object), `child` (Object), `options.endYear` (number), `options.reason` (string), `options.keepHistory` (boolean) |
+| **Returns** | `{ success: boolean }` |
+
+---
+
+## Legitimize Child
+
+### `ChildrenCommands.legitimizeChild(child, father, mother, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Legitimizes a child (declares them legitimate heir) |
+| **Parameters** | `child` (Object), `father` (Object), `mother` (Object), `options.year` (number), `options.changeSurname` (string - 'none', 'father', 'mother', 'hyphenated'), `options.inheritanceRights` (string - 'full', 'limited', 'none'), `options.notes` (string), `options.autoAssignHousehold` (boolean) |
+| **Returns** | `{ success: boolean, child: Object, year: number, inheritanceRights: string }` |
+
+---
+
+## Record Surrogacy
+
+### `ChildrenCommands.recordSurrogacy(intendedParent, surrogate, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Records a surrogacy arrangement |
+| **Parameters** | `intendedParent` (Object), `surrogate` (Object), `options.childCount` (number), `options.birthYear` (number), `options.spermDonor` (Object), `options.eggDonor` (Object), `options.notes` (string), `options.arrangementYear` (number) |
+| **Returns** | `{ success: boolean, children: Array, surrogacyRecord: Object }` |
+
+### `ChildrenCommands.updateSurrogacyRecord(recordId, updates)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Updates a surrogacy record |
+| **Parameters** | `recordId` (string), `updates` (Object) |
+| **Returns** | `Object|null` - Updated record or null |
+
+---
+
+# 3. CHILDREN-QUERIES.JS
+
+**PURPOSE:** All read operations for children (birth, adoption, surrogacy).
 
 **DEPENDENCIES:**
-- children-state.js (ChildrenState)
-- accessors.js (getCharacterById, getCharacters)
-- family-logic.js (FamilyLogic)
-
-**FUNCTIONS:**
-
-```javascript
-// ---- Adoption Queries ----
-ChildrenQueries.getAdoptionRecords(childId)              // Array of adoption records
-ChildrenQueries.getAdoptiveParents(childId)              // Array of { character, record }
-ChildrenQueries.getAdoptedChildren(parentId)             // Array of child characters
-ChildrenQueries.isAdopted(childId)                       // boolean
-ChildrenQueries.isAdoptiveParent(parentId, childId)      // boolean
-ChildrenQueries.getAdoptionType(parentId, childId)       // 'legal'|'guardianship'|'foster'|null
-ChildrenQueries.getAdoptionYear(parentId, childId)       // number|null
-
-// ---- Pregnancy Queries ----
-ChildrenQueries.getPregnancyRecords(motherId)            // Array of pregnancy records
-ChildrenQueries.getChildrenByMother(motherId, includeStillborn) // Array of children
-ChildrenQueries.getChildrenByFather(fatherId, includeStillborn) // Array of children
-ChildrenQueries.getChildrenByCouple(parentId1, parentId2, includeStillborn) // Array of children
-
-// ---- Surrogacy Queries ----
-ChildrenQueries.getSurrogacyRecords()                    // Array of surrogacy records
-ChildrenQueries.getSurrogacyRecordsForParent(parentId)   // Array of surrogacy records
-ChildrenQueries.getSurrogacyRecordsForSurrogate(surrogateId) // Array of surrogacy records
-ChildrenQueries.getSurrogacyChildrenForParent(parentId)  // Array of child characters
-ChildrenQueries.isSurrogacyChild(childId)                // boolean
-ChildrenQueries.getSurrogacyGeneticParents(childId)      // { geneticMother, geneticFather, birthMother }
-
-// ---- Statistics ----
-ChildrenQueries.getParentChildrenStatistics(parentId)    // { total, living, deceased, male, female, biological, adopted, surrogacy }
-ChildrenQueries.getAllChildrenOfParent(parentId, includeStillborn) // Array of all children
-```
+- `children-state.js` - `ChildrenState`
+- `accessors.js` - `getCharacterById`, `getCharacters`
+- `family-logic.js` - `FamilyLogic`
 
 ---
 
-## 6. CHILDREN-LIFECYCLE.JS - Business Logic
+## Adoption Queries
+
+### `ChildrenQueries.getAdoptionRecords(childId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all adoption records for a child |
+| **Parameters** | `childId` (string) |
+| **Returns** | `Array` - Adoption records |
+
+### `ChildrenQueries.getAdoptiveParents(childId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all adoptive parents of a child |
+| **Parameters** | `childId` (string) |
+| **Returns** | `Array` - { character, record } |
+
+### `ChildrenQueries.getAdoptedChildren(parentId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all adopted children of a parent |
+| **Parameters** | `parentId` (string) |
+| **Returns** | `Array` - Child characters |
+
+### `ChildrenQueries.isAdopted(childId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Checks if a child is adopted |
+| **Parameters** | `childId` (string) |
+| **Returns** | `boolean` |
+
+### `ChildrenQueries.isAdoptiveParent(parentId, childId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Checks if someone is an adoptive parent |
+| **Parameters** | `parentId` (string), `childId` (string) |
+| **Returns** | `boolean` |
+
+### `ChildrenQueries.getAdoptionType(parentId, childId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets the adoption type between parent and child |
+| **Parameters** | `parentId` (string), `childId` (string) |
+| **Returns** | `string|null` - Adoption type or null |
+
+### `ChildrenQueries.getAdoptionYear(parentId, childId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets the adoption year between parent and child |
+| **Parameters** | `parentId` (string), `childId` (string) |
+| **Returns** | `number|null` - Adoption year or null |
+
+---
+
+## Pregnancy Queries
+
+### `ChildrenQueries.getPregnancyRecords(motherId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all pregnancy records for a mother |
+| **Parameters** | `motherId` (string) |
+| **Returns** | `Array` - Pregnancy records |
+
+### `ChildrenQueries.getChildrenByMother(motherId, includeStillborn)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all children born to a mother |
+| **Parameters** | `motherId` (string), `includeStillborn` (boolean) |
+| **Returns** | `Array` - Child characters |
+
+### `ChildrenQueries.getChildrenByFather(fatherId, includeStillborn)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all children born to a father |
+| **Parameters** | `fatherId` (string), `includeStillborn` (boolean) |
+| **Returns** | `Array` - Child characters |
+
+### `ChildrenQueries.getChildrenByCouple(parentId1, parentId2, includeStillborn)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all children born to a couple |
+| **Parameters** | `parentId1` (string), `parentId2` (string), `includeStillborn` (boolean) |
+| **Returns** | `Array` - Child characters |
+
+---
+
+## Surrogacy Queries
+
+### `ChildrenQueries.getSurrogacyRecords()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all surrogacy records |
+| **Returns** | `Array` - Surrogacy records |
+
+### `ChildrenQueries.getSurrogacyRecordsForParent(parentId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets surrogacy records for a parent |
+| **Parameters** | `parentId` (string) |
+| **Returns** | `Array` - Surrogacy records |
+
+### `ChildrenQueries.getSurrogacyRecordsForSurrogate(surrogateId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets surrogacy records for a surrogate |
+| **Parameters** | `surrogateId` (string) |
+| **Returns** | `Array` - Surrogacy records |
+
+### `ChildrenQueries.getSurrogacyChildrenForParent(parentId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets children born via surrogacy for a parent |
+| **Parameters** | `parentId` (string) |
+| **Returns** | `Array` - Child characters |
+
+### `ChildrenQueries.isSurrogacyChild(childId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Checks if a child was born via surrogacy |
+| **Parameters** | `childId` (string) |
+| **Returns** | `boolean` |
+
+### `ChildrenQueries.getSurrogacyGeneticParents(childId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets the genetic parents of a surrogacy child |
+| **Parameters** | `childId` (string) |
+| **Returns** | `{ geneticMother, geneticFather, birthMother }` |
+
+---
+
+## Statistics Queries
+
+### `ChildrenQueries.getParentChildrenStatistics(parentId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets statistics about a parent's children |
+| **Parameters** | `parentId` (string) |
+| **Returns** | `{ total, living, deceased, stillborn, male, female, biological, adopted, surrogacy }` |
+
+### `ChildrenQueries.getAllChildrenOfParent(parentId, includeStillborn)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all children of a parent (biological + adopted + surrogacy) |
+| **Parameters** | `parentId` (string), `includeStillborn` (boolean) |
+| **Returns** | `Array` - Child characters |
+
+---
+
+# 4. CHILDREN-LIFECYCLE.JS
 
 **PURPOSE:** Business logic for children lifecycle (fertility, pregnancy, inheritance).
 
 **DEPENDENCIES:**
-- children-state.js (ChildrenState)
-- children-commands.js (ChildrenCommands)
-- children-queries.js (ChildrenQueries)
-- accessors.js (getCharacterById, getCharacters)
-- time.js (calculateAge, getCurrentYearSafe)
-- randomness.js (chance, random, randomInt, randomFloat)
-
-**CONSTANTS:**
-
-```javascript
-FERTILITY_CONFIG = {
-    MIN_AGE: 14,
-    MAX_AGE: 47,
-    BASE_CHANCE: 0.20,
-    MULTIPLE_BIRTH_CHANCE: 0.02,
-    TRIPLET_CHANCE: 0.002,
-    MISCARRIAGE_BASE_CHANCE: 0.05,
-    STILLBORN_BASE_CHANCE: 0.02,
-    CHILDBED_FEVER_BASE_CHANCE: 0.03,
-    DEFAULT_MIN_CHILD_SPACING: 2,
-    DEFAULT_MAX_CHILD_SPACING: 3
-}
-```
-
-**FUNCTIONS:**
-
-```javascript
-// ---- Fertility ----
-ChildrenLifecycle.getFertilityAgeModifier(character)     // number (0-1)
-ChildrenLifecycle.getConceptionChance(mother, father)    // number (0-1)
-ChildrenLifecycle.canConceive(mother, father)            // { canConceive: boolean, reason: string }
-
-// ---- Expected Children ----
-ChildrenLifecycle.calculateExpectedChildren(mother, father) // number
-ChildrenLifecycle.getExistingChildrenCount(mother, father)  // number
-ChildrenLifecycle.getExpectedRemainingChildren(mother, father) // number
-
-// ---- Birth Years ----
-ChildrenLifecycle.calculateBirthYears(mother, father, childCount) // Array of years
-
-// ---- Pregnancy Outcomes ----
-ChildrenLifecycle.rollPregnancyComplications(mother, pregnancyNumber) // boolean
-ChildrenLifecycle.rollMiscarriage(mother, currentAge)       // boolean
-ChildrenLifecycle.rollStillbirth(mother, currentAge, hasComplications) // boolean
-
-// ---- Child Spacing ----
-ChildrenLifecycle.calculateChildSpacing(existingBirthYears, minSpacing, maxSpacing) // number
-
-// ---- Batch Generation ----
-ChildrenLifecycle.generateChildrenForCouple(mother, father, count, baseYear, options) // Array of children
-
-// ---- Inheritance ----
-ChildrenLifecycle.getInheritanceOrder(parentId, options)   // Array of children
-ChildrenLifecycle.getPrimaryHeir(parentId, options)        // Object|null
-ChildrenLifecycle.canInherit(childId, parentId)            // boolean
-```
+- `children-state.js` - `ChildrenState`
+- `children-commands.js` - `ChildrenCommands`
+- `children-queries.js` - `ChildrenQueries`
+- `accessors.js` - `getCharacterById`, `getCharacters`
+- `time.js` - `calculateAge`, `getCurrentYearSafe`
+- `randomness.js` - `chance`, `random`, `randomInt`, `randomFloat`
 
 ---
 
-## 7. ADOPTION-SERVICE.JS - Adoption Logic
+## Constants
 
-**PURPOSE:** Pure adoption logic with NO UI.
+### Fertility Configuration
+
+| Constant | Default | Description |
+|----------|---------|-------------|
+| `MIN_AGE` | 14 | Minimum fertile age |
+| `MAX_AGE` | 47 | Maximum fertile age |
+| `BASE_CHANCE` | 0.20 | Base conception chance |
+| `MULTIPLE_BIRTH_CHANCE` | 0.02 | Chance of twins |
+| `TRIPLET_CHANCE` | 0.002 | Chance of triplets |
+| `MISCARRIAGE_BASE_CHANCE` | 0.05 | Base miscarriage chance |
+| `STILLBORN_BASE_CHANCE` | 0.02 | Base stillborn chance |
+| `CHILDBED_FEVER_BASE_CHANCE` | 0.03 | Base maternal death chance |
+| `DEFAULT_MIN_CHILD_SPACING` | 2 | Minimum years between children |
+| `DEFAULT_MAX_CHILD_SPACING` | 3 | Maximum years between children |
+
+---
+
+## Fertility Functions
+
+### `ChildrenLifecycle.getFertilityAgeModifier(character)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets fertility age modifier for a character |
+| **Parameters** | `character` (Object) |
+| **Returns** | `number` - Fertility modifier (0-1) |
+
+### `ChildrenLifecycle.getConceptionChance(mother, father)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets conception chance for a couple |
+| **Parameters** | `mother` (Object), `father` (Object) |
+| **Returns** | `number` - Conception chance (0-1) |
+
+### `ChildrenLifecycle.canConceive(mother, father)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Checks if a character can conceive |
+| **Parameters** | `mother` (Object), `father` (Object) |
+| **Returns** | `{ canConceive: boolean, reason: string }` |
+
+---
+
+## Expected Children
+
+### `ChildrenLifecycle.calculateExpectedChildren(mother, father)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Calculates expected number of children for a couple |
+| **Parameters** | `mother` (Object), `father` (Object) |
+| **Returns** | `number` - Expected children count |
+
+### `ChildrenLifecycle.getExistingChildrenCount(mother, father)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets existing children count for a couple |
+| **Parameters** | `mother` (Object), `father` (Object) |
+| **Returns** | `number` - Existing children count |
+
+### `ChildrenLifecycle.getExpectedRemainingChildren(mother, father)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets expected remaining children for a couple |
+| **Parameters** | `mother` (Object), `father` (Object) |
+| **Returns** | `number` - Expected remaining children |
+
+---
+
+## Birth Year Distribution
+
+### `ChildrenLifecycle.calculateBirthYears(mother, father, childCount)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Calculates birth years for children of a couple |
+| **Parameters** | `mother` (Object), `father` (Object), `childCount` (number) |
+| **Returns** | `Array` - Array of birth years |
+
+---
+
+## Pregnancy Outcomes
+
+### `ChildrenLifecycle.rollPregnancyComplications(mother, pregnancyNumber)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Rolls for pregnancy complications |
+| **Parameters** | `mother` (Object), `pregnancyNumber` (number) |
+| **Returns** | `boolean` - True if complications |
+
+### `ChildrenLifecycle.rollMiscarriage(mother, currentAge)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Rolls for miscarriage |
+| **Parameters** | `mother` (Object), `currentAge` (number) |
+| **Returns** | `boolean` - True if miscarriage |
+
+### `ChildrenLifecycle.rollStillbirth(mother, currentAge, hasComplications)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Rolls for stillbirth |
+| **Parameters** | `mother` (Object), `currentAge` (number), `hasComplications` (boolean) |
+| **Returns** | `boolean` - True if stillbirth |
+
+---
+
+## Child Spacing
+
+### `ChildrenLifecycle.calculateChildSpacing(existingBirthYears, minSpacing, maxSpacing)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Calculates recommended spacing between children |
+| **Parameters** | `existingBirthYears` (Array), `minSpacing` (number), `maxSpacing` (number) |
+| **Returns** | `number` - Recommended spacing |
+
+---
+
+## Batch Generation
+
+### `ChildrenLifecycle.generateChildrenForCouple(mother, father, count, baseYear, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Generates multiple children for a couple |
+| **Parameters** | `mother` (Object), `father` (Object), `count` (number), `baseYear` (number), `options.gender` (string), `options.notes` (string), `options.autoAssignHousehold` (boolean) |
+| **Returns** | `Array` - Array of child characters |
+
+---
+
+## Inheritance
+
+### `ChildrenLifecycle.getInheritanceOrder(parentId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets the inheritance order for a parent's children |
+| **Parameters** | `parentId` (string), `options.includeAdopted` (boolean), `options.includeSurrogacy` (boolean), `options.includeDeceased` (boolean), `options.onlyLegitimate` (boolean), `options.genderPreference` (string) |
+| **Returns** | `Array` - Children in inheritance order |
+
+### `ChildrenLifecycle.getPrimaryHeir(parentId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets the primary heir for a parent |
+| **Parameters** | `parentId` (string), `options` (Object) |
+| **Returns** | `Object|null` - Heir character or null |
+
+### `ChildrenLifecycle.canInherit(childId, parentId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Checks if a child can inherit from a parent |
+| **Parameters** | `childId` (string), `parentId` (string) |
+| **Returns** | `boolean` - True if can inherit |
+
+---
+
+# 5. PREGNANCY-SERVICE.JS
+
+**PURPOSE:** Pure pregnancy logic with no UI.
 
 **DEPENDENCIES:**
-- children-state.js (ChildrenState)
-- children-commands.js (ChildrenCommands)
-- children-queries.js (ChildrenQueries)
-- accessors.js (getCharacterById, getCharacters)
-
-**CONSTANTS:**
-
-```javascript
-ADOPTION_TYPES = {
-    LEGAL: 'legal',
-    GUARDIANSHIP: 'guardianship',
-    FOSTER: 'foster'
-}
-
-ADOPTION_TYPE_NAMES = {
-    legal: 'Legal Adoption',
-    guardianship: 'Guardianship',
-    foster: 'Foster Placement'
-}
-```
-
-**FUNCTIONS:**
-
-```javascript
-// ---- Queries ----
-AdoptionService.getAdoptiveParents(childId)               // Array of { parent, record }
-AdoptionService.getAdoptedChildren(parentId)              // Array of { child, record }
-AdoptionService.hasAdoptiveParents(childId)               // boolean
-AdoptionService.hasAdoptedChildren(parentId)              // boolean
-AdoptionService.isAdoptiveParent(parentId, childId)       // boolean
-AdoptionService.getAdoptionType(parentId, childId)        // string|null
-AdoptionService.getAdoptionYear(parentId, childId)        // number|null
-AdoptionService.getAdoptionRecord(parentId, childId)      // Object|null
-
-// ---- Validation ----
-AdoptionService.validateAdoption(parent, child, options)  // { isValid: boolean, reasons: Array }
-
-// ---- Creation ----
-AdoptionService.createAdoption(parentId, childId, options) // { success, child, adoption }
-AdoptionService.createGuardianship(guardianId, childId, year, options) // { success, child }
-AdoptionService.createFosterPlacement(fosterId, childId, year, options) // { success, child }
-
-// ---- Removal ----
-AdoptionService.removeAdoption(parentId, childId, options) // { success }
-AdoptionService.removeAllAdoptiveParents(childId, options) // number removed
-
-// ---- Statistics ----
-AdoptionService.getAdoptionStats(characterId)            // { asParent, asChild, legalAdoptions, guardianships, fosterPlacements }
-```
+- `children-state.js` - `ChildrenState`
+- `children-commands.js` - `ChildrenCommands`
+- `children-queries.js` - `ChildrenQueries`
+- `children-lifecycle.js` - `ChildrenLifecycle`
+- `accessors.js` - `getCharacterById`, `getCharacters`
+- `time.js` - `calculateAge`, `getCurrentYearSafe`
+- `randomness.js` - `chance`, `random`, `randomInt`, `randomFloat`
 
 ---
 
-## 8. PREGNANCY-SERVICE.JS - Pregnancy Logic
+## Fertility Functions
 
-**PURPOSE:** Pure pregnancy logic with NO UI.
+### `PregnancyService.getFertilityAgeModifier(character)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets fertility age modifier |
+| **Parameters** | `character` (Object) |
+| **Returns** | `number` - Modifier (0-1) |
+
+### `PregnancyService.getConceptionChance(mother, father)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets conception chance |
+| **Parameters** | `mother` (Object), `father` (Object) |
+| **Returns** | `number` - Chance (0-1) |
+
+### `PregnancyService.canConceive(mother, father)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Checks if character can conceive |
+| **Parameters** | `mother` (Object), `father` (Object) |
+| **Returns** | `{ canConceive: boolean, reason: string }` |
+
+---
+
+## Expected Children
+
+### `PregnancyService.calculateExpectedChildren(mother, father)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Calculates expected number of children |
+| **Parameters** | `mother` (Object), `father` (Object) |
+| **Returns** | `number` - Expected children count |
+
+### `PregnancyService.getExistingChildrenCount(mother, father)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets existing children count |
+| **Parameters** | `mother` (Object), `father` (Object) |
+| **Returns** | `number` - Existing children count |
+
+### `PregnancyService.getExpectedRemainingChildren(mother, father)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets expected remaining children |
+| **Parameters** | `mother` (Object), `father` (Object) |
+| **Returns** | `number` - Expected remaining children |
+
+---
+
+## Birth Year Distribution
+
+### `PregnancyService.calculateBirthYears(mother, father, childCount)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Calculates birth years for children |
+| **Parameters** | `mother` (Object), `father` (Object), `childCount` (number) |
+| **Returns** | `Array` - Birth years |
+
+---
+
+## Pregnancy Complications
+
+### `PregnancyService.rollPregnancyComplications(mother, pregnancyNumber)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Rolls for pregnancy complications |
+| **Parameters** | `mother` (Object), `pregnancyNumber` (number) |
+| **Returns** | `boolean` - True if complications |
+
+### `PregnancyService.rollMiscarriage(mother, currentAge)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Rolls for miscarriage |
+| **Parameters** | `mother` (Object), `currentAge` (number) |
+| **Returns** | `boolean` - True if miscarriage |
+
+### `PregnancyService.rollStillbirth(mother, currentAge, hasComplications)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Rolls for stillbirth |
+| **Parameters** | `mother` (Object), `currentAge` (number), `hasComplications` (boolean) |
+| **Returns** | `boolean` - True if stillbirth |
+
+### `PregnancyService.rollMaternalDeath(mother, currentAge, hasComplications, isMultiple)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Rolls for maternal death |
+| **Parameters** | `mother` (Object), `currentAge` (number), `hasComplications` (boolean), `isMultiple` (boolean) |
+| **Returns** | `boolean` - True if maternal death |
+
+---
+
+## Pregnancy Simulation
+
+### `PregnancyService.simulatePregnancyAttempt(mother, father, year, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Simulates a pregnancy attempt |
+| **Parameters** | `mother` (Object), `father` (Object), `year` (number), `options.attemptNumber` (number), `options.forceConception` (boolean) |
+| **Returns** | `Object` - Result object |
+
+### `PregnancyService.simulatePregnancyAndBirth(mother, father, year, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Simulates a full pregnancy and birth |
+| **Parameters** | `mother` (Object), `father` (Object), `year` (number), `options.attemptNumber` (number), `options.forceConception` (boolean), `options.forceSingle` (boolean), `options.gender` (string), `options.autoAssignHousehold` (boolean) |
+| **Returns** | `Object` - Result with children |
+
+### `PregnancyService.simulateMultiplePregnancies(mother, father, startYear, endYear, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Simulates multiple pregnancies over a period |
+| **Parameters** | `mother` (Object), `father` (Object), `startYear` (number), `endYear` (number), `options.maxChildren` (number), `options.minSpacing` (number), `options.maxSpacing` (number) |
+| **Returns** | `Array` - Pregnancy results |
+
+---
+
+## Pregnancy History
+
+### `PregnancyService.getPregnancyHistory(motherId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets pregnancy history for a mother |
+| **Parameters** | `motherId` (string) |
+| **Returns** | `Array` - Pregnancy records |
+
+### `PregnancyService.getPregnancyCount(motherId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets pregnancy count for a mother |
+| **Parameters** | `motherId` (string) |
+| **Returns** | `number` - Pregnancy count |
+
+### `PregnancyService.getChildbirthCount(motherId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets childbirth count for a mother |
+| **Parameters** | `motherId` (string) |
+| **Returns** | `number` - Childbirth count |
+
+### `PregnancyService.getPregnancyStatistics(motherId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets pregnancy statistics for a mother |
+| **Parameters** | `motherId` (string) |
+| **Returns** | `{ pregnancies, miscarriages, births, children, stillbirths, multipleBirths, maternalDeaths, successRate }` |
+
+---
+
+# 6. SURROGACY-SERVICE.JS
+
+**PURPOSE:** Pure surrogacy logic with no UI.
 
 **DEPENDENCIES:**
-- children-state.js (ChildrenState)
-- children-commands.js (ChildrenCommands)
-- children-queries.js (ChildrenQueries)
-- children-lifecycle.js (ChildrenLifecycle)
-- accessors.js (getCharacterById, getCharacters)
-
-**CONSTANTS:**
-
-```javascript
-PREGNANCY_CONFIG = {
-    GESTATION_MONTHS: 9,
-    FERTILITY_BASE_CHANCE: 0.20,
-    FERTILITY_MAX_AGE: 47,
-    FERTILITY_MIN_AGE: 14,
-    MULTIPLE_BIRTH_CHANCE: 0.02,
-    TRIPLET_CHANCE: 0.002,
-    MISCARRIAGE_BASE_CHANCE: 0.05,
-    STILLBORN_BASE_CHANCE: 0.02,
-    CHILDBED_FEVER_BASE_CHANCE: 0.03,
-    DEFAULT_MIN_CHILD_SPACING: 2,
-    DEFAULT_MAX_CHILD_SPACING: 3
-}
-```
-
-**FUNCTIONS:**
-
-```javascript
-// ---- Fertility ----
-PregnancyService.getFertilityAgeModifier(character)      // number (0-1)
-PregnancyService.getConceptionChance(mother, father)     // number (0-1)
-PregnancyService.canConceive(mother, father)             // { canConceive, reason }
-
-// ---- Expected Children ----
-PregnancyService.calculateExpectedChildren(mother, father) // number
-PregnancyService.getExistingChildrenCount(mother, father)  // number
-PregnancyService.getExpectedRemainingChildren(mother, father) // number
-
-// ---- Birth Years ----
-PregnancyService.calculateBirthYears(mother, father, childCount) // Array of years
-
-// ---- Complications ----
-PregnancyService.rollPregnancyComplications(mother, pregnancyNumber) // boolean
-PregnancyService.rollMiscarriage(mother, currentAge)       // boolean
-PregnancyService.rollStillbirth(mother, currentAge, hasComplications) // boolean
-PregnancyService.rollMaternalDeath(mother, currentAge, hasComplications, isMultiple) // boolean
-
-// ---- Simulation ----
-PregnancyService.simulatePregnancyAttempt(mother, father, year, options) // Object
-PregnancyService.simulatePregnancyAndBirth(mother, father, year, options) // Object
-PregnancyService.simulateMultiplePregnancies(mother, father, startYear, endYear, options) // Array
-
-// ---- History ----
-PregnancyService.getPregnancyHistory(motherId)           // Array of records
-PregnancyService.getPregnancyCount(motherId)             // number
-PregnancyService.getChildbirthCount(motherId)            // number
-PregnancyService.getPregnancyStatistics(motherId)        // { pregnancies, miscarriages, births, children, stillbirths, multipleBirths, maternalDeaths, successRate }
-```
+- `children-state.js` - `ChildrenState`
+- `children-commands.js` - `ChildrenCommands`
+- `children-queries.js` - `ChildrenQueries`
+- `accessors.js` - `getCharacterById`, `getCharacters`
+- `time.js` - `calculateAge`, `getCurrentYearSafe`
+- `randomness.js` - `random`, `chance`
 
 ---
 
-## 9. SURROGACY-SERVICE.JS - Surrogacy Logic
+## Constants
 
-**PURPOSE:** Pure surrogacy logic with NO UI.
+### Surrogacy Types
+
+| Type | Description |
+|------|-------------|
+| `traditional` | Surrogate is also egg donor |
+| `gestational` | Surrogate carries, egg donor separate |
+
+### Surrogacy Status
+
+| Status | Description |
+|--------|-------------|
+| `active` | Arrangement in progress |
+| `completed` | Arrangement completed |
+| `cancelled` | Arrangement cancelled |
+
+---
+
+## Validation
+
+### `SurrogacyService.validateSurrogacy(intendedParent, surrogate, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Validates a surrogacy arrangement |
+| **Parameters** | `intendedParent` (Object), `surrogate` (Object), `options.spermDonor` (Object), `options.eggDonor` (Object) |
+| **Returns** | `{ valid: boolean, errors: Array<string> }` |
+
+---
+
+## Creation
+
+### `SurrogacyService.createSurrogacyArrangement(intendedParent, surrogate, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Creates a surrogacy arrangement |
+| **Parameters** | `intendedParent` (Object), `surrogate` (Object), `options.childCount` (number), `options.birthYear` (number), `options.spermDonor` (Object), `options.eggDonor` (Object), `options.notes` (string), `options.type` (string), `options.autoAssignHousehold` (boolean) |
+| **Returns** | `{ success: boolean, children: Array, livingChildren: Array, surrogacyRecord: Object, stillbornCount: number }` |
+
+### `SurrogacyService.createSwapArrangements(femaleCouple, maleCouple, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Creates a swap arrangement between two couples |
+| **Parameters** | `femaleCouple` (Object), `maleCouple` (Object), `options.birthYear` (number), `options.surrogateA` (Object), `options.surrogateB` (Object), `options.donorA` (Object), `options.donorB` (Object), `options.notes` (string) |
+| **Returns** | `{ success: boolean, arrangement1, arrangement2, child1, child2 }` |
+
+---
+
+## Queries
+
+### `SurrogacyService.getSurrogacyArrangements()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all surrogacy arrangements |
+| **Returns** | `Array` - Surrogacy arrangements |
+
+### `SurrogacyService.getSurrogacyArrangementsForCharacter(characterId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets surrogacy arrangements for a character |
+| **Parameters** | `characterId` (string) |
+| **Returns** | `Array` - Surrogacy arrangements |
+
+### `SurrogacyService.getSurrogacyArrangementsBySurrogate(surrogateId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets surrogacy arrangements for a surrogate |
+| **Parameters** | `surrogateId` (string) |
+| **Returns** | `Array` - Surrogacy arrangements |
+
+### `SurrogacyService.getSurrogacyArrangementsAsIntendedParent(characterId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets surrogacy arrangements where character is intended parent |
+| **Parameters** | `characterId` (string) |
+| **Returns** | `Array` - Surrogacy arrangements |
+
+### `SurrogacyService.getSurrogacyChildrenForParent(parentId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets children born via surrogacy for a parent |
+| **Parameters** | `parentId` (string) |
+| **Returns** | `Array` - Child characters |
+
+### `SurrogacyService.isSurrogacyChild(childId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Checks if a child was born via surrogacy |
+| **Parameters** | `childId` (string) |
+| **Returns** | `boolean` |
+
+### `SurrogacyService.getSurrogacyGeneticParents(childId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets the genetic parents of a surrogacy child |
+| **Parameters** | `childId` (string) |
+| **Returns** | `{ geneticMother, geneticFather, birthMother }` |
+
+---
+
+## Updates
+
+### `SurrogacyService.updateSurrogacyArrangement(arrangementId, updates)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Updates a surrogacy arrangement |
+| **Parameters** | `arrangementId` (string), `updates` (Object) |
+| **Returns** | `Object|null` - Updated arrangement or null |
+
+### `SurrogacyService.completeSurrogacyArrangement(arrangementId, birthYear, childIds)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Completes a surrogacy arrangement |
+| **Parameters** | `arrangementId` (string), `birthYear` (number), `childIds` (Array) |
+| **Returns** | `Object|null` - Updated arrangement or null |
+
+### `SurrogacyService.cancelSurrogacyArrangement(arrangementId, reason)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Cancels a surrogacy arrangement |
+| **Parameters** | `arrangementId` (string), `reason` (string) |
+| **Returns** | `Object|null` - Updated arrangement or null |
+
+---
+
+# 7. ADOPTION-SERVICE.JS
+
+**PURPOSE:** Pure adoption logic with no UI.
 
 **DEPENDENCIES:**
-- children-state.js (ChildrenState)
-- children-commands.js (ChildrenCommands)
-- children-queries.js (ChildrenQueries)
-- accessors.js (getCharacterById, getCharacters)
-
-**CONSTANTS:**
-
-```javascript
-SURROGACY_TYPES = {
-    TRADITIONAL: 'traditional',   // Surrogate is also egg donor
-    GESTATIONAL: 'gestational'    // Surrogate carries, egg donor separate
-}
-
-SURROGACY_STATUS = {
-    ACTIVE: 'active',
-    COMPLETED: 'completed',
-    CANCELLED: 'cancelled'
-}
-```
-
-**FUNCTIONS:**
-
-```javascript
-// ---- Validation ----
-SurrogacyService.validateSurrogacy(intendedParent, surrogate, options) // { valid, errors }
-
-// ---- Creation ----
-SurrogacyService.createSurrogacyArrangement(intendedParent, surrogate, options) // { success, children, surrogacyRecord }
-SurrogacyService.createSwapArrangements(femaleCouple, maleCouple, options) // { success, arrangement1, arrangement2, child1, child2 }
-
-// ---- Queries ----
-SurrogacyService.getSurrogacyArrangements()                  // Array of records
-SurrogacyService.getSurrogacyArrangementsForCharacter(characterId) // Array of records
-SurrogacyService.getSurrogacyArrangementsBySurrogate(surrogateId) // Array of records
-SurrogacyService.getSurrogacyArrangementsAsIntendedParent(characterId) // Array of records
-SurrogacyService.getSurrogacyChildrenForParent(parentId)      // Array of children
-SurrogacyService.isSurrogacyChild(childId)                    // boolean
-SurrogacyService.getSurrogacyGeneticParents(childId)          // { geneticMother, geneticFather, birthMother }
-
-// ---- Updates ----
-SurrogacyService.updateSurrogacyArrangement(arrangementId, updates) // Updated record
-SurrogacyService.completeSurrogacyArrangement(arrangementId, birthYear, childIds) // Updated record
-SurrogacyService.cancelSurrogacyArrangement(arrangementId, reason) // Updated record
-```
+- `children-state.js` - `ChildrenState`
+- `children-commands.js` - `ChildrenCommands`
+- `children-queries.js` - `ChildrenQueries`
+- `accessors.js` - `getCharacterById`, `getCharacters`
+- `storage.js` - `saveMasterData`
+- `family.js` - `clearFamilyCache`
+- `time.js` - `calculateAge`, `getCurrentYearSafe`
+- `eventLogger.js` - `logEvent`
 
 ---
 
-## 10. MODALS-BIRTH.JS - Birth UI Modals
+## Constants
 
-**PURPOSE:** UI modals for recording births.
+### Adoption Types
+
+| Type | Description |
+|------|-------------|
+| `legal` | Legal Adoption (full parental rights) |
+| `guardianship` | Guardianship (caregiver, not legal parent) |
+| `foster` | Foster Care (temporary placement) |
+
+---
+
+## Queries
+
+### `AdoptionService.getAdoptiveParents(childId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all adoptive parents of a child |
+| **Parameters** | `childId` (string) |
+| **Returns** | `Array` - Adoptive parent objects with metadata |
+
+### `AdoptionService.getAdoptedChildren(parentId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all adopted children of a parent |
+| **Parameters** | `parentId` (string) |
+| **Returns** | `Array` - Adopted child objects with metadata |
+
+### `AdoptionService.hasAdoptiveParents(childId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Checks if a child has any adoptive parents |
+| **Parameters** | `childId` (string) |
+| **Returns** | `boolean` |
+
+### `AdoptionService.hasAdoptedChildren(parentId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Checks if a parent has any adopted children |
+| **Parameters** | `parentId` (string) |
+| **Returns** | `boolean` |
+
+### `AdoptionService.isAdoptiveParent(parentId, childId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Checks if a specific adoption relationship exists |
+| **Parameters** | `parentId` (string), `childId` (string) |
+| **Returns** | `boolean` |
+
+### `AdoptionService.getAdoptionType(parentId, childId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets the adoption type between parent and child |
+| **Parameters** | `parentId` (string), `childId` (string) |
+| **Returns** | `string|null` - Adoption type or null |
+
+### `AdoptionService.getAdoptionYear(parentId, childId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets the adoption year between parent and child |
+| **Parameters** | `parentId` (string), `childId` (string) |
+| **Returns** | `number|null` - Adoption year or null |
+
+### `AdoptionService.getAdoptionRecord(parentId, childId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets the adoption record between parent and child |
+| **Parameters** | `parentId` (string), `childId` (string) |
+| **Returns** | `Object|null` - Adoption record or null |
+
+---
+
+## Validation
+
+### `AdoptionService.validateAdoption(parent, child, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Validates if an adoption can be created |
+| **Parameters** | `parent` (Object), `child` (Object), `options.minAgeGap` (number), `options.allowSameAge` (boolean) |
+| **Returns** | `{ isValid: boolean, reasons: Array<string> }` |
+
+---
+
+## Creation
+
+### `AdoptionService.createAdoption(parentId, childId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Creates an adoption relationship |
+| **Parameters** | `parentId` (string), `childId` (string), `options.year` (number), `options.type` (string), `options.notes` (string), `options.parentType` (string), `options.partnerId` (string) |
+| **Returns** | `Object` - Result object |
+
+### `AdoptionService.createGuardianship(guardianId, childId, year, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Creates a guardianship |
+| **Parameters** | `guardianId` (string), `childId` (string), `year` (number), `options` (Object) |
+| **Returns** | `Object` - Result object |
+
+### `AdoptionService.createFosterPlacement(fosterId, childId, year, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Creates a foster placement |
+| **Parameters** | `fosterId` (string), `childId` (string), `year` (number), `options` (Object) |
+| **Returns** | `Object` - Result object |
+
+---
+
+## Removal
+
+### `AdoptionService.removeAdoption(parentId, childId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Removes an adoption relationship |
+| **Parameters** | `parentId` (string), `childId` (string), `options.endYear` (number), `options.reason` (string), `options.keepHistory` (boolean) |
+| **Returns** | `Object` - Result object |
+
+### `AdoptionService.removeAllAdoptiveParents(childId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Removes all adoptive parents from a child |
+| **Parameters** | `childId` (string), `options.keepHistory` (boolean), `options.reason` (string) |
+| **Returns** | `number` - Number of adoptions removed |
+
+---
+
+## Statistics
+
+### `AdoptionService.getAdoptionStats(characterId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets adoption statistics for a character |
+| **Parameters** | `characterId` (string) |
+| **Returns** | `{ asParent, asChild, legalAdoptions, guardianships, fosterPlacements }` |
+
+---
+
+# 8. MODALS-ADOPTION.JS
+
+**PURPOSE:** UI modals for adoption operations.
 
 **DEPENDENCIES:**
-- modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast)
-- modals-char-select.js (openCharacterSelector)
-- children-commands.js (ChildrenCommands)
-- children-queries.js (ChildrenQueries)
-- children-lifecycle.js (ChildrenLifecycle)
-- pregnancy-service.js (PregnancyService)
-
-**FUNCTIONS:**
-
-```javascript
-// ---- Record a new birth (active) ----
-openBirthModal(motherId, fatherId, onSuccess)
-// Opens modal with: Birth Year, Gender, Stillborn checkbox, Auto-assign household, Notes
-
-// ---- Random surprise birth ----
-openSurpriseBirthModal(mother, father, onSuccess)
-// Randomizes: 1-4 children, birth years, genders, stillbirth chance
-
-// ---- Add multiple children (active) ----
-openAddChildrenModal(mother, father, onSuccess)
-// Allows: Number of children (1-5), Birth year range, Auto-assign household
-
-// ---- Add existing children retroactively ----
-openAddChildForCoupleModal(motherId, fatherId, onSuccess)
-// For: Adding historical children, Multiple children spacing, Auto-assign household
-```
+- `modals-core.js` - `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon`
+- `children-commands.js` - `ChildrenCommands`
+- `children-queries.js` - `ChildrenQueries`
+- `adoption-service.js` - `AdoptionService`
+- `accessors.js` - `getCharacterById`, `getCharacters`, `getPlaces`
+- `family.js` - `getFullRelationshipDescription`, `getRelationshipBetween`
 
 ---
 
-## 11. MODALS-ADOPTION.JS - Adoption UI Modals
+## Modal Functions
 
-**PURPOSE:** UI modals for adoption management.
+### `openSetBirthParentsModal(child, father, mother, onSuccess)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to set birth parents for a child |
+| **Parameters** | `child` (Object), `father` (Object), `mother` (Object), `onSuccess` (function) |
+
+**Features:**
+- Sets father and mother IDs
+- Updates birth year if not set
+- Records move to parent's location
+
+### `openCreateAdoptionModal(child, guardian, partner, onSuccess)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to create adoption/guardianship |
+| **Parameters** | `child` (Object), `guardian` (Object), `partner` (Object), `onSuccess` (function) |
+
+**Features:**
+- Adoption type selection (legal, guardianship, foster)
+- Age/year synchronization
+- Household assignment options
+
+### `openEditAdoptionModal(child, parent, adoptionRecord, onSuccess)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to edit an adoption |
+| **Parameters** | `child` (Object), `parent` (Object), `adoptionRecord` (Object), `onSuccess` (function) |
+
+**Features:**
+- Edit type, year, status, notes
+- Terminate adoption button
+
+### `openRemoveAdoptionModal(child, guardian, partner, onSuccess)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to remove an adoption |
+| **Parameters** | `child` (Object), `guardian` (Object), `partner` (Object), `onSuccess` (function) |
+
+**Features:**
+- Year of termination
+- Reason for removal
+- Keep history option
+
+### `openAdoptionSearchModal(onSelect, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to search for adoptable children |
+| **Parameters** | `onSelect` (function), `options.minAge`, `options.maxAge`, `options.location`, `options.status`, `options.gender` |
+
+**Features:**
+- Age range filter
+- Gender filter
+- Location filter
+- Status filter (orphan, abandoned, in foster)
+- Search by name
+
+### `openLegitimizationModal(child, father, mother, onSuccess)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to legitimize a child |
+| **Parameters** | `child` (Object), `father` (Object), `mother` (Object), `onSuccess` (function) |
+
+**Features:**
+- Year of legitimization
+- Change surname option
+- Inheritance rights selection
+- Household assignment
+
+---
+
+# 9. MODALS-BIRTH.JS
+
+**PURPOSE:** UI modals for birth operations.
 
 **DEPENDENCIES:**
-- modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast)
-- modals-char-select.js (openCharacterSelector)
-- children-commands.js (ChildrenCommands)
-- children-queries.js (ChildrenQueries)
-- adoption-service.js (AdoptionService)
-
-**FUNCTIONS:**
-
-```javascript
-// ---- Set Birth Parents ----
-openSetBirthParentsModal(child, father, mother, onSuccess)
-// Sets biological parents with birth year and location
-
-// ---- Create Adoption/Guardianship ----
-openCreateAdoptionModal(child, guardian, partner, onSuccess)
-// Creates: Legal adoption, Guardianship, or Foster care
-// NO AGE LIMITS, includes household transfer
-
-// ---- Edit Adoption ----
-openEditAdoptionModal(child, parent, adoptionRecord, onSuccess)
-// Edits: Type, year, status, notes
-
-// ---- Remove Adoption ----
-openRemoveAdoptionModal(child, guardian, partner, onSuccess)
-// Removes with: Reason, end year, keep history option
-
-// ---- Adoption Search ----
-openAdoptionSearchModal(onSelect, options)
-// Finds adoptable children with filters: age, status, location, gender
-
-// ---- Legitimize Child ----
-openLegitimizationModal(child, father, mother, onSuccess)
-// Declares child legitimate with: Surname change, Inheritance rights, Household transfer
-```
+- `modals-core.js` - `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon`
+- `children-commands.js` - `ChildrenCommands`
+- `children-lifecycle.js` - `ChildrenLifecycle`
+- `pregnancy-service.js` - `PregnancyService`
+- `accessors.js` - `getCharacterById`, `getCharacters`, `getPlaces`
 
 ---
 
-## 12. MODALS-SURROGACY.JS - Surrogacy UI Modals
+## Modal Functions
 
-**PURPOSE:** UI modals for surrogacy management.
+### `openBirthModal(motherId, fatherId, onSuccess)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to record a new birth (active) |
+| **Parameters** | `motherId` (string), `fatherId` (string), `onSuccess` (function) |
+
+**Features:**
+- Fertility window validation
+- Birth year selection
+- Gender selection
+- Stillborn checkbox
+- Auto-assign household option
+
+### `openSurpriseBirthModal(mother, father, onSuccess)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal for a random surprise birth |
+| **Parameters** | `mother` (Object), `father` (Object), `onSuccess` (function) |
+
+**Features:**
+- Random number of children (1-4)
+- Random birth years
+- Random genders
+- Stillborn chance
+
+### `openAddChildrenModal(mother, father, onSuccess)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to add multiple children (active) |
+| **Parameters** | `mother` (Object), `father` (Object), `onSuccess` (function) |
+
+**Features:**
+- Number of children selection (1-5)
+- Birth year range
+- Auto-assign household option
+
+### `openAddChildForCoupleModal(motherId, fatherId, onSuccess)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to add existing children retroactively |
+| **Parameters** | `motherId` (string), `fatherId` (string), `onSuccess` (function) |
+
+**Features:**
+- Number of children (1-10)
+- Birth year (single child)
+- Gender selection
+- Auto-assign household option
+
+---
+
+# 10. MODALS-SURROGACY.JS
+
+**PURPOSE:** UI modals for surrogacy operations.
 
 **DEPENDENCIES:**
-- modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast)
-- modals-char-select.js (openCharacterSelector)
-- children-commands.js (ChildrenCommands)
-- surrogacy-service.js (SurrogacyService)
-
-**FUNCTIONS:**
-
-```javascript
-// ---- Donor Selection ----
-openDonorSelectionModal(couple, onSuccess)
-// Selects sperm donor with filters: location, age, single status, search
-
-// ---- Surrogate Selection ----
-openSurrogateSelectionModal(couple, onSuccess)
-// Selects surrogate with filters: location, age, single status, search
-
-// ---- Intended Parent Selection ----
-openIntendedParentSelectModal(couple, donorOrSurrogate, type, onSuccess)
-// Selects which parent in a couple is the intended parent
-
-// ---- Complete Surrogacy ----
-openCompleteSurrogacyModal(couple, donor, surrogate, intendedParent, type, onSuccess)
-// Completes arrangement with: child count (1-3), birth year, notes
-
-// ---- Swap Confirmation ----
-openSwapConfirmationModal(femaleCouple, maleCouple, onSuccess)
-// Confirms swap arrangement between two couples
-
-// ---- Legacy Surrogacy Agreement ----
-openSurrogacyAgreementModal(intendedParent, intendedPartner, surrogate, onSuccess)
-// Legacy agreement modal (kept for backward compatibility)
-```
+- `modals-core.js` - `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon`
+- `surrogacy-service.js` - `SurrogacyService`
+- `children-commands.js` - `ChildrenCommands`
+- `children-queries.js` - `ChildrenQueries`
+- `accessors.js` - `getCharacterById`, `getCharacters`
 
 ---
 
-## 13. DEPENDENCY MAP
+## Modal Functions
+
+### `openDonorSelectionModal(couple, onSuccess)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to select a sperm donor |
+| **Parameters** | `couple` (Object), `onSuccess` (function) |
+
+**Features:**
+- Filter by location
+- Filter by age (peers only)
+- Filter by relationship status
+- Search by name
+
+### `openSurrogateSelectionModal(couple, onSuccess)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to select a surrogate |
+| **Parameters** | `couple` (Object), `onSuccess` (function) |
+
+**Features:**
+- Filter by location
+- Filter by age (peers only)
+- Filter by relationship status
+- Search by name
+
+### `openIntendedParentSelectModal(couple, donorOrSurrogate, type, onSuccess)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to select intended parent |
+| **Parameters** | `couple` (Object), `donorOrSurrogate` (Object), `type` (string), `onSuccess` (function) |
+
+### `openCompleteSurrogacyModal(couple, donor, surrogate, intendedParent, type, onSuccess)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to complete a surrogacy arrangement |
+| **Parameters** | `couple` (Object), `donor` (Object), `surrogate` (Object), `intendedParent` (Object), `type` (string), `onSuccess` (function) |
+
+**Features:**
+- Number of children (1-3)
+- Birth year
+- Notes
+
+### `openSwapConfirmationModal(femaleCouple, maleCouple, onSuccess)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to confirm a swap arrangement |
+| **Parameters** | `femaleCouple` (Object), `maleCouple` (Object), `onSuccess` (function) |
+
+**Features:**
+- Swap display
+- Birth year
+
+### `openSurrogacyAgreementModal(intendedParent, intendedPartner, surrogate, onSuccess)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Legacy surrogacy agreement modal |
+| **Parameters** | `intendedParent` (Object), `intendedPartner` (Object), `surrogate` (Object), `onSuccess` (function) |
+
+---
+
+# 11. DEPENDENCY MAP
+
+## Core Dependencies
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -607,10 +1416,7 @@ openSurrogacyAgreementModal(intendedParent, intendedPartner, surrogate, onSucces
 │  ├── _escapeHtml()                                                       │ │
 │  ├── _showToast()                                                        │ │
 │  ├── _getIcon()                                                          │ │
-│  └── _getCharacterById()                                                 │ │
-│                                                                             │
-│  modals-char-select.js ─────────────────────────────────────────────────┐ │
-│  └── openCharacterSelector()                                             │ │
+│  └── _getCurrentYear()                                                   │ │
 │                                                                             │
 │  accessors.js ──────────────────────────────────────────────────────────┐ │
 │  ├── getCharacterById()                                                  │ │
@@ -618,37 +1424,36 @@ openSurrogacyAgreementModal(intendedParent, intendedPartner, surrogate, onSucces
 │  ├── getPlaceById()                                                      │ │
 │  ├── getPlaces()                                                         │ │
 │  ├── getCurrentYear()                                                    │ │
-│  └── getLocationTypeById()                                               │ │
+│  └── getCurrentLocation()                                                │ │
 │                                                                             │
 │  storage.js ────────────────────────────────────────────────────────────┐ │
 │  └── saveMasterData()                                                    │ │
 │                                                                             │
-│  time.js ───────────────────────────────────────────────────────────────┐ │
-│  ├── calculateAge()                                                      │ │
-│  └── getCurrentYearSafe()                                                │ │
+│  ids.js ────────────────────────────────────────────────────────────────┐ │
+│  └── generateId()                                                        │ │
 │                                                                             │
-│  constants.js ──────────────────────────────────────────────────────────┐ │
-│  ├── AGE_GROUPS                                                          │ │
-│  └── AGE_GROUPS_MAP                                                      │ │
+│  household-system.js ──────────────────────────────────────────────────┐ │
+│  ├── HouseholdState.getHousehold()                                       │ │
+│  ├── HouseholdState.getCharacterHousehold()                              │ │
+│  ├── HouseholdState.updateHousehold()                                    │ │
+│  └── HouseholdState.addMember()                                          │ │
 │                                                                             │
-│  icons.js ──────────────────────────────────────────────────────────────┐ │
-│  └── Icons                                                               │ │
-│                                                                             │
-│  randomness.js ─────────────────────────────────────────────────────────┐ │
-│  ├── chance()                                                            │ │
-│  ├── random()                                                            │ │
-│  ├── randomInt()                                                         │ │
-│  └── randomFloat()                                                       │ │
+│  character-system.js ──────────────────────────────────────────────────┐ │
+│  └── CharacterCommands.createCharacter()                                 │ │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
+```
 
+## Children System Dependencies
+
+```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    CHILDREN SYSTEM DEPENDENCIES                            │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  children-state.js ─────────────────────────────────────────────────────┐ │
-│  ├── storage.js                                                          │ │
-│  └── accessors.js                                                        │ │
+│  children-state.js ──────────────────────────────────────────────────────┐ │
+│  ├── accessors.js                                                        │ │
+│  └── storage.js                                                          │ │
 │                                                                             │
 │  children-commands.js ──────────────────────────────────────────────────┐ │
 │  ├── children-state.js                                                   │ │
@@ -658,18 +1463,10 @@ openSurrogacyAgreementModal(intendedParent, intendedPartner, surrogate, onSucces
 │                                                                             │
 │  children-queries.js ───────────────────────────────────────────────────┐ │
 │  ├── children-state.js                                                   │ │
-│  ├── accessors.js                                                        │ │
-│  └── family-logic.js                                                     │ │
+│  ├── family-logic.js                                                     │ │
+│  └── accessors.js                                                        │ │
 │                                                                             │
 │  children-lifecycle.js ─────────────────────────────────────────────────┐ │
-│  ├── children-state.js                                                   │ │
-│  ├── children-commands.js                                                │ │
-│  ├── children-queries.js                                                 │ │
-│  ├── accessors.js                                                        │ │
-│  ├── time.js                                                             │ │
-│  └── randomness.js                                                       │ │
-│                                                                             │
-│  adoption-service.js ───────────────────────────────────────────────────┐ │
 │  ├── children-state.js                                                   │ │
 │  ├── children-commands.js                                                │ │
 │  ├── children-queries.js                                                 │ │
@@ -680,8 +1477,7 @@ openSurrogacyAgreementModal(intendedParent, intendedPartner, surrogate, onSucces
 │  ├── children-commands.js                                                │ │
 │  ├── children-queries.js                                                 │ │
 │  ├── children-lifecycle.js                                               │ │
-│  ├── accessors.js                                                        │ │
-│  └── randomness.js                                                       │ │
+│  └── accessors.js                                                        │ │
 │                                                                             │
 │  surrogacy-service.js ──────────────────────────────────────────────────┐ │
 │  ├── children-state.js                                                   │ │
@@ -689,204 +1485,93 @@ openSurrogacyAgreementModal(intendedParent, intendedPartner, surrogate, onSucces
 │  ├── children-queries.js                                                 │ │
 │  └── accessors.js                                                        │ │
 │                                                                             │
-│  modals-birth.js ──────────────────────────────────────────────────────┐ │
-│  ├── modals-core.js                                                      │ │
-│  ├── modals-char-select.js                                               │ │
+│  adoption-service.js ───────────────────────────────────────────────────┐ │
+│  ├── children-state.js                                                   │ │
 │  ├── children-commands.js                                                │ │
 │  ├── children-queries.js                                                 │ │
-│  ├── children-lifecycle.js                                               │ │
-│  └── pregnancy-service.js                                                │ │
-│                                                                             │
-│  modals-adoption.js ────────────────────────────────────────────────────┐ │
-│  ├── modals-core.js                                                      │ │
-│  ├── modals-char-select.js                                               │ │
-│  ├── children-commands.js                                                │ │
-│  ├── children-queries.js                                                 │ │
-│  └── adoption-service.js                                                 │ │
-│                                                                             │
-│  modals-surrogacy.js ───────────────────────────────────────────────────┐ │
-│  ├── modals-core.js                                                      │ │
-│  ├── modals-char-select.js                                               │ │
-│  ├── children-commands.js                                                │ │
-│  ├── children-queries.js                                                 │ │
-│  └── surrogacy-service.js                                                │ │
+│  └── accessors.js                                                        │ │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 14. RECURSION GUARDS
+# 12. INTEGRATION WITH OTHER SYSTEMS
 
-All modules implement recursion guards to prevent infinite loops:
+## Children ↔ Household Integration
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Child → Household | `_addHouseholdMember()` | ✅ Integrated |
+| Child → Household | `_removeHouseholdMember()` | ✅ Integrated |
+| Household → Child | `_recordHouseholdChange()` | ✅ Integrated |
+| Household → Child | `_getCharacterHousehold()` | ✅ Integrated |
+
+## Children ↔ Character Integration
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Birth → Character | `recordBirth()` | ✅ Integrated |
+| Adoption → Character | `recordAdoption()` | ✅ Integrated |
+| Character → Children | `getChildren()` | ✅ Integrated |
+| Character → Parents | `getParents()` | ✅ Integrated |
+
+## Children ↔ Relationship Integration
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Adoption → Relationship | `setParent()` | ✅ Integrated |
+| Adoption → Relationship | `removeParent()` | ✅ Integrated |
+| Relationship → Children | `getChildren()` | ✅ Integrated |
+
+---
+
+# 13. RECURSION GUARDS
 
 | Guard Name | Location | Purpose |
 |------------|----------|---------|
-| `_processingState` | children-state.js | Prevent state mutation re-entry |
+| `_processing` | children-state.js | Prevent state re-entry |
 | `_processing` | children-commands.js | Prevent command re-entry |
 | `_processing` | children-queries.js | Prevent query re-entry |
-| `_processing` | children-lifecycle.js | Prevent lifecycle operation re-entry |
-| `_processing` | adoption-service.js | Prevent adoption operation re-entry |
-| `_processing` | pregnancy-service.js | Prevent pregnancy operation re-entry |
-| `_processing` | surrogacy-service.js | Prevent surrogacy operation re-entry |
-
-**Pattern:**
-```javascript
-function someFunction() {
-    if (_processing) {
-        return { success: false, reason: 'Already processing' };
-    }
-    _processing = true;
-    try {
-        // ... function logic ...
-    } finally {
-        _processing = false;
-    }
-}
-```
+| `_processing` | children-lifecycle.js | Prevent lifecycle re-entry |
+| `_processing` | pregnancy-service.js | Prevent pregnancy re-entry |
+| `_processing` | surrogacy-service.js | Prevent surrogacy re-entry |
+| `_processing` | adoption-service.js | Prevent adoption re-entry |
 
 ---
 
-## 15. ICON POLICY
+# 14. ICON POLICY
 
-**RULES:**
-1. **NO emojis** in code or UI
-2. **All icons** from icons.js via `_getIcon()`
-3. **NO icons** in confirm/cancel buttons (plain text only)
+All icons must come from `icons.js` via the `_getIcon()` function.
 
-**AVAILABLE ICONS FOR CHILDREN SYSTEM:**
+## Available Icons for Children System
 
 | Usage | Icon |
 |-------|------|
-| Child/Person | `PERSON` |
-| Household | `HOUSEHOLD` |
-| Location | `LOCATION` |
-| Warning | `WARNING` |
-| Success | `CHECK_SIMPLE` |
-| Edit | `EDIT` |
-| Delete | `X_HEAVY` |
-| Info | `CIRCLE_DOT` |
-| Gender Male | `MALE` |
-| Gender Female | `FEMALE` |
-| Gender Unknown | `GENDER_NEUTRAL` |
-| Crown (Legitimization) | `CROWN` |
-| Search | `SEARCH` |
-| Star (Surprise) | `STAR_4` |
-
-**Usage:**
-```javascript
-var infoIcon = _getIcon('CIRCLE_DOT');
-var personIcon = _getIcon('PERSON');
-```
+| Child | PERSON |
+| Parent | PERSON |
+| Adoption | HOUSEHOLD |
+| Birth | STAR_4 |
+| Surrogacy | PERSON |
+| Legitimization | CROWN |
+| Guardian | SHIELD |
+| Edit | EDIT |
+| Delete | X_HEAVY |
+| Warning | WARNING |
+| Success | CHECK_SIMPLE |
 
 ---
 
-## 16. DATA SCHEMA
+# END OF DOCUMENTATION
 
-### Adoption Record Schema
-
-```javascript
-{
-    parentId: string,           // Adoptive parent ID
-    parentName: string,         // Adoptive parent name
-    year: number,               // Year of adoption
-    type: 'legal'|'guardianship'|'foster',  // Adoption type
-    notes: string,              // Notes about the adoption
-    status: 'active'|'ended'|'dissolved',   // Current status
-    timestamp: number,          // Creation timestamp
-    endedYear?: number,         // Year ended (if status is ended)
-    endedReason?: string        // Reason ended (if status is ended)
-}
-```
-
-### Pregnancy Record Schema
-
-```javascript
-{
-    motherId: string,           // Mother character ID
-    fatherId: string|null,      // Father character ID
-    childIds: Array<string>,    // Child character IDs
-    birthYear: number,          // Year of birth
-    gender: string,             // 'male', 'female', or 'mixed'
-    isMultiple: boolean,        // Multiple birth
-    fetusCount: number,         // Number of fetuses
-    hasComplications: boolean,  // Pregnancy complications
-    maternalDeath: boolean,     // Maternal death occurred
-    notes: string               // Notes about the pregnancy
-}
-```
-
-### Surrogacy Record Schema
-
-```javascript
-{
-    id: string,                 // Surrogacy record ID
-    intendedParentId: string,   // Intended parent ID
-    intendedPartnerId: string|null, // Intended partner ID
-    surrogateId: string,        // Surrogate character ID
-    spermDonorId: string|null,  // Sperm donor ID
-    eggDonorId: string|null,    // Egg donor ID
-    arrangementYear: number,    // Year arrangement made
-    expectedBirthYear: number,  // Expected birth year
-    actualBirthYear: number|null, // Actual birth year
-    childIds: Array<string>,    // Child character IDs
-    status: 'active'|'completed'|'cancelled', // Current status
-    type: 'traditional'|'gestational', // Surrogacy type
-    notes: string               // Notes about the arrangement
-}
-```
-
-### Child Surrogacy Info Schema
-
-```javascript
-// Added to child character object when born via surrogacy
-{
-    surrogateId: string,        // Surrogate character ID
-    intendedParentId: string,   // Intended parent ID
-    intendedPartnerId: string|null, // Intended partner ID
-    arrangementYear: number,    // Year arrangement made
-    birthYear: number,          // Birth year
-    type: 'traditional'|'gestational' // Surrogacy type
-}
-```
-
----
-
-## 17. LEGACY ALIASES
-
-For backward compatibility, legacy aliases are provided:
-
-| Legacy Function | New Function |
-|-----------------|--------------|
-| `generateNewborn(mother, father, birthYear, options)` | `ChildrenCommands.recordBirth(mother, father, birthYear, options)` |
-| `createAdoption(parentId, childId, options)` | `ChildrenCommands.recordAdoption(parent, child, options)` |
-| `removeAdoption(parentId, childId, options)` | `ChildrenCommands.removeAdoption(parent, child, options)` |
-| `createSurrogacyArrangement(intendedParent, surrogate, options)` | `SurrogacyService.createSurrogacyArrangement(intendedParent, surrogate, options)` |
-| `createSwapArrangements(femaleCouple, maleCouple, options)` | `SurrogacyService.createSwapArrangements(femaleCouple, maleCouple, options)` |
-| `getSurrogacyArrangements()` | `SurrogacyService.getSurrogacyArrangements()` |
-| `isSurrogacyChild(childId)` | `ChildrenQueries.isSurrogacyChild(childId)` |
-| `getSurrogacyGeneticParents(childId)` | `ChildrenQueries.getSurrogacyGeneticParents(childId)` |
-| `getFertilityAgeModifier(character)` | `ChildrenLifecycle.getFertilityAgeModifier(character)` |
-| `canConceive(mother, father)` | `ChildrenLifecycle.canConceive(mother, father)` |
-| `generateChildrenForCouple(mother, father, count, baseYear, options)` | `ChildrenLifecycle.generateChildrenForCouple(...)` |
-
----
-
-## 18. SUMMARY
-
-| File | Status | Purpose |
-|------|--------|---------|
-| `children-state.js` | ✅ COMPLETE | Single source of truth for children data |
-| `children-commands.js` | ✅ COMPLETE | All write operations (birth, adoption, surrogacy) |
-| `children-queries.js` | ✅ COMPLETE | All read operations (stats, history) |
-| `children-lifecycle.js` | ✅ COMPLETE | Business logic (fertility, pregnancy, inheritance) |
-| `adoption-service.js` | ✅ COMPLETE | Adoption logic (queries, validation, creation) |
-| `pregnancy-service.js` | ✅ COMPLETE | Pregnancy logic (fertility, simulation, history) |
-| `surrogacy-service.js` | ✅ COMPLETE | Surrogacy logic (arrangements, swaps, queries) |
-| `modals-birth.js` | ✅ COMPLETE | Birth UI modals |
-| `modals-adoption.js` | ✅ COMPLETE | Adoption UI modals |
-| `modals-surrogacy.js` | ✅ COMPLETE | Surrogacy UI modals |
-
----
-
-**END OF CHILDREN SYSTEM DOCUMENTATION**
+**Generated:** 2026-07-12
+**Version:** 3.0
+**File Count:** 7 core modules + 3 modal files
+**Key Updates:**
+- Full adoption lifecycle (v3.0)
+- Surrogacy management
+- Pregnancy service
+- Inheritance and legitimization
+- Child spacing and fertility calculations
+- Household integration
+- Character creation integration

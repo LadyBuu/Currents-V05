@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
+  <title>Rank Manager</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Crimson+Pro:wght@300;400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/common.css">
+  <link rel="stylesheet" href="css/rankManager.css">
+</head>
+<body>
+
+<div class="topbar">
+  <button id="menuToggle" class="burger-menu" aria-label="Toggle menu">
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M3 6h18M3 12h18M3 18h18"/>
+    </svg>
+  </button>
+  <div class="title" id="rankTitle"></div>
+  <div class="spacer"></div>
+  <button id="importBtn" class="tb-btn"></button>
+  <button id="exportBtn" class="tb-btn primary"></button>
+  <button id="refreshBtn" class="tb-btn"></button>
+</div>
+
+<!-- OVERLAY -->
+<div id="sidebarOverlay" class="sidebar-overlay"></div>
+
+<div class="rank-app">
+  <!-- Tab Bar - Unified -->
+  <div class="panel-tabs" id="tabContainer">
+    <button class="tab-btn active" data-tab="editor" id="tabEditor"></button>
+    <button class="tab-btn" data-tab="analytics" id="tabAnalytics"></button>
+    <button class="tab-btn" data-tab="issues" id="tabIssues"></button>
+  </div>
+  
+  <div class="rank-toolbar">
+    <div class="rank-toolbar-title" id="toolbarTitle"></div>
+    <button id="addRankBtn" class="btn primary"></button>
+  </div>
+  
+  <div id="editorTab" class="rank-editor-container" style="display:flex;">
+    <div class="rank-sidebar" id="rankSidebar">
+      <div class="rank-sidebar-header"><span id="sidebarTitle"></span></div>
+      <div id="rankTree"><div class="empty-state" id="treeEmpty"></div></div>
+    </div>
+    <div id="detailPanel" class="rank-detail-panel">
+      <div class="empty-detail" id="detailEmpty"></div>
+    </div>
+  </div>
+  
+  <div id="analyticsTab" class="rank-analytics-tab" style="display: none;"></div>
+  <div id="issuesTab" class="rank-issues-tab" style="display: none;"></div>
+</div>
+
+<!-- =========================================================================
+    CORE MODULES - Load order matters!
+    ========================================================================= -->
+
+<!-- 1. CORE UTILITIES (Pure, no dependencies) -->
+<script src="js/core/constants.js"></script>
+<script src="js/core/randomness.js"></script>
+<script src="js/core/ids.js"></script>
+<script src="js/core/collections.js"></script>
+<script src="js/core/validation.js"></script>
+<script src="js/core/formatting.js"></script>
+<script src="js/core/time.js"></script>
+
+<!-- 2. STORAGE & STATE (Depends on core utilities) -->
+<script src="js/core/storage.js"></script>
+<script src="js/core/state.js"></script>
+<script src="js/core/accessors.js"></script>
+<script src="js/core/icons.js"></script>
+
+<!-- 3. UI HELPERS (Depends on storage, accessors, icons) -->
+<script src="js/core/ui.js"></script>
+<script src="js/core/collapsible.js"></script>
+<script src="js/core/responsive.js"></script>
+<script src="js/core/locationDropdown.js"></script>
+
+<!-- 4. WORLD & LOCATION (Depends on accessors, time) -->
+<script src="js/core/world.js"></script>
+<script src="js/core/names.js"></script>
+
+<!-- 5. CORE MODALS (Depends on icons, ui, accessors, world) -->
+<script src="js/core/modals-core.js"></script>
+<script src="js/core/modals-char-select.js"></script>
+<script src="js/core/modals-household-selector.js"></script>
+
+<!-- 6. RELATIONSHIP SYSTEM (Depends on accessors, time) -->
+<script src="js/relationships/relationship-types.js"></script>
+<script src="js/relationships/relationship-registry.js"></script>
+<script src="js/relationships/relationship-queries.js"></script>
+<script src="js/relationships/family-logic.js"></script>
+<script src="js/relationships/professional-logic.js"></script>
+<script src="js/relationships/romance-logic.js"></script>
+<script src="js/relationships/friendship-logic.js"></script>
+<script src="js/relationships/relationshipFinder.js"></script>
+
+<!-- 7. HOUSEHOLD SYSTEM (Depends on accessors, relationships) -->
+<script src="js/households/household-state.js"></script>
+<script src="js/households/household-queries.js"></script>
+<script src="js/households/household-assignment.js"></script>
+<script src="js/households/household-economy.js"></script>
+
+<!-- 8. RANK SYSTEM (Depends on accessors, time, relationships) -->
+<script src="js/ranks/rank-constants.js"></script>
+<script src="js/ranks/rank-state.js"></script>
+<script src="js/ranks/rank-queries.js"></script>
+<script src="js/ranks/rank-assignments.js"></script>
+<script src="js/ranks/rank-commands.js"></script>
+<script src="js/ranks/rank-ui-list.js"></script>
+<script src="js/ranks/modals-rank.js"></script>
+<script src="js/ranks/rank-issues.js"></script>
+
+<!-- 9. RANK MANAGER UI (Depends on rank system) - USE THE FIXED VERSION -->
+<script src="js/ui/rkm-rank-ui.js"></script>
+
+<!-- =========================================================================
+    10. BOOTSTRAP SCRIPT - FIXED
+    ========================================================================= -->
+
+<script>
+(function() {
+  'use strict';
+
+  // =============================================================================
+  // ICON HELPERS
+  // =============================================================================
+  
+  function getIcon(name) {
+    if (window.Icons && window.Icons[name]) {
+      return window.Icons[name];
+    }
+    if (typeof window._getIcon === 'function') {
+      return window._getIcon(name);
+    }
+    if (typeof window.getIcon === 'function') {
+      return window.getIcon(name);
+    }
+    return '';
+  }
+  
+  function iconWithText(icon, text) {
+    if (!icon) return text || '';
+    return '<span style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle;">' + icon + '<span>' + (text || '') + '</span></span>';
+  }
+  
+  var ICONS = {
+    RANK: getIcon('RANK') || '◉',
+    IMPORT: getIcon('ARROW_RIGHT') || '→',
+    EXPORT: getIcon('ARROW_RIGHT') || '→',
+    REFRESH: getIcon('REFRESH') || '⟳',
+    PLUS: getIcon('PLUS') || '+',
+    EDITOR: getIcon('EDIT') || '✎',
+    ANALYTICS: getIcon('RANK_ANALYTICS') || '📊',
+    ISSUES: getIcon('WARNING') || '⚠',
+    CHECK: getIcon('CHECK_SIMPLE') || '✓',
+    WARNING: getIcon('WARNING') || '⚠',
+    MENU: getIcon('CIRCLE_DOT') || '●'
+  };
+
+  // =============================================================================
+  // STATE
+  // =============================================================================
+
+  var isInitialized = false;
+  var isSidebarOpen = false;
+  var _toastRecursing = false;
+  
+  // =============================================================================
+  // REFRESH STATE - FIXED: COMPLETELY PREVENTS LOOPS
+  // =============================================================================
+
+  var _isRefreshing = false;
+  var _refreshTimeout = null;
+  var _refreshCallCount = 0;
+  var _maxRefreshCalls = 5;
+
+  // =============================================================================
+  // HELPER FUNCTIONS
+  // =============================================================================
+
+  function showToast(msg, type) {
+    if (_toastRecursing) return;
+    _toastRecursing = true;
+    
+    try {
+      if (typeof window._showToast === 'function') {
+        window._showToast(msg, type);
+      } else if (typeof window.showToast === 'function') {
+        window.showToast(msg, type);
+      } else if (typeof window.showToastMessage === 'function') {
+        window.showToastMessage(msg, type);
+      }
+    } finally {
+      setTimeout(function() { _toastRecursing = false; }, 100);
+    }
+  }
+
+  // =============================================================================
+  // REFRESH ALL - FIXED: No re-entry, no loops
+  // =============================================================================
+
+  function refreshAll() {
+    // Emergency stop - if called too many times, block
+    _refreshCallCount++;
+    if (_refreshCallCount > _maxRefreshCalls) {
+      _refreshCallCount = 0;
+      return;
+    }
+    
+    // Reset count after a second of inactivity
+    setTimeout(function() {
+      _refreshCallCount = 0;
+    }, 1000);
+    
+    // Block re-entry
+    if (_isRefreshing) {
+      return;
+    }
+    
+    if (_refreshTimeout) {
+      clearTimeout(_refreshTimeout);
+      _refreshTimeout = null;
+    }
+    
+    _isRefreshing = true;
+    
+    try {
+      // Load data from storage
+      if (typeof window.loadMasterData === 'function') {
+        window.loadMasterData();
+      }
+      
+      // Invalidate caches
+      if (typeof window.invalidateAccessorCaches === 'function') {
+        window.invalidateAccessorCaches();
+      }
+      
+      // Initialize RankState if needed
+      if (typeof window.RankState !== 'undefined' && 
+          typeof window.RankState._initialize === 'function') {
+        window.RankState._initialize();
+      }
+      
+      // Render the rank manager
+      if (typeof window.renderRanksManager === 'function') {
+        window.renderRanksManager('rankTree', 'detailPanel', 'analyticsTab', 'issuesTab');
+      }
+      
+      if (window._userInitiatedRefresh) {
+        showToast('Refreshed', 'success');
+        window._userInitiatedRefresh = false;
+      }
+    } catch (e) {
+      // Silently handle errors
+    } finally {
+      _isRefreshing = false;
+    }
+  }
+
+  function userRefresh() {
+    window._userInitiatedRefresh = true;
+    _refreshCallCount = 0; // Reset counter on user action
+    refreshAll();
+  }
+
+  function debouncedRefresh() {
+    // FIXED: Don't schedule if already refreshing
+    if (_isRefreshing) {
+      return;
+    }
+    
+    if (_refreshTimeout) {
+      clearTimeout(_refreshTimeout);
+    }
+    _refreshTimeout = setTimeout(function() {
+      _refreshTimeout = null;
+      window._userInitiatedRefresh = false;
+      refreshAll();
+    }, 500);
+  }
+
+  // =============================================================================
+  // SETUP UI TEXT WITH ICONS
+  // =============================================================================
+
+  function setupUIText() {
+    var title = document.getElementById('rankTitle');
+    if (title) title.innerHTML = iconWithText(ICONS.RANK, ' RANK MANAGER');
+    
+    var importBtn = document.getElementById('importBtn');
+    if (importBtn) importBtn.innerHTML = iconWithText(ICONS.IMPORT, ' Import');
+    
+    var exportBtn = document.getElementById('exportBtn');
+    if (exportBtn) exportBtn.innerHTML = iconWithText(ICONS.EXPORT, ' Export');
+    
+    var refreshBtn = document.getElementById('refreshBtn');
+    if (refreshBtn) refreshBtn.innerHTML = iconWithText(ICONS.REFRESH, ' Refresh');
+    
+    var toolbarTitle = document.getElementById('toolbarTitle');
+    if (toolbarTitle) toolbarTitle.textContent = 'Nobility & Inheritance System';
+    
+    var addRankBtn = document.getElementById('addRankBtn');
+    if (addRankBtn) addRankBtn.innerHTML = iconWithText(ICONS.PLUS, ' Add New Rank');
+    
+    var sidebarTitle = document.getElementById('sidebarTitle');
+    if (sidebarTitle) sidebarTitle.textContent = 'Rank Hierarchy';
+    
+    var treeEmpty = document.getElementById('treeEmpty');
+    if (treeEmpty) treeEmpty.textContent = 'Loading ranks...';
+    
+    var detailEmpty = document.getElementById('detailEmpty');
+    if (detailEmpty) detailEmpty.textContent = 'Select a rank from the sidebar to view details';
+    
+    var tabEditor = document.getElementById('tabEditor');
+    if (tabEditor) tabEditor.innerHTML = iconWithText(ICONS.EDITOR, ' Rank Editor');
+    
+    var tabAnalytics = document.getElementById('tabAnalytics');
+    if (tabAnalytics) tabAnalytics.innerHTML = iconWithText(ICONS.ANALYTICS, ' Analytics');
+    
+    var tabIssues = document.getElementById('tabIssues');
+    if (tabIssues) tabIssues.innerHTML = iconWithText(ICONS.ISSUES, ' Issues');
+  }
+
+  // =============================================================================
+  // SIDEBAR TOGGLE (Mobile)
+  // =============================================================================
+
+  function closeSidebar() {
+    var sidebar = document.getElementById('rankSidebar');
+    var overlay = document.getElementById('sidebarOverlay');
+    if (sidebar) sidebar.classList.remove('visible');
+    if (overlay) overlay.classList.remove('active');
+    document.body.style.overflow = '';
+    isSidebarOpen = false;
+  }
+
+  function openSidebar() {
+    var sidebar = document.getElementById('rankSidebar');
+    var overlay = document.getElementById('sidebarOverlay');
+    if (sidebar) sidebar.classList.add('visible');
+    if (overlay) overlay.classList.add('active');
+    document.body.style.overflow = 'hidden';
+    isSidebarOpen = true;
+  }
+
+  function initBurgerMenu() {
+    var toggle = document.getElementById('menuToggle');
+    var sidebar = document.getElementById('rankSidebar');
+    var overlay = document.getElementById('sidebarOverlay');
+
+    if (!toggle || !sidebar || !overlay) return;
+
+    toggle.addEventListener('click', function(e) {
+      e.stopPropagation();
+      if (isSidebarOpen) {
+        closeSidebar();
+      } else {
+        openSidebar();
+      }
+    });
+
+    overlay.addEventListener('click', closeSidebar);
+
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && isSidebarOpen) {
+        closeSidebar();
+      }
+    });
+
+    window.addEventListener('resize', function() {
+      if (window.innerWidth > 768 && isSidebarOpen) {
+        closeSidebar();
+      }
+    });
+  }
+
+  // =============================================================================
+  // TAB SWITCHING
+  // =============================================================================
+
+  function switchTab(tabName) {
+    var editorTab = document.getElementById('editorTab');
+    var analyticsTab = document.getElementById('analyticsTab');
+    var issuesTab = document.getElementById('issuesTab');
+    var tabBtns = document.querySelectorAll('.tab-btn');
+    
+    if (editorTab) editorTab.style.display = 'none';
+    if (analyticsTab) analyticsTab.style.display = 'none';
+    if (issuesTab) issuesTab.style.display = 'none';
+    
+    if (tabName === 'editor') {
+      if (editorTab) editorTab.style.display = 'flex';
+    } else if (tabName === 'analytics') {
+      if (analyticsTab) analyticsTab.style.display = 'block';
+    } else if (tabName === 'issues') {
+      if (issuesTab) issuesTab.style.display = 'block';
+    }
+    
+    tabBtns.forEach(function(btn) {
+      if (btn.dataset.tab === tabName) {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    });
+    
+    if (typeof window.switchRankTab === 'function') {
+      window.switchRankTab(tabName);
+    }
+  }
+
+  // =============================================================================
+  // SEED DEMO RANKS
+  // =============================================================================
+
+  function seedDemoRanks() {
+    var ranks = [];
+    
+    if (typeof window.RankQueries !== 'undefined' && 
+        typeof window.RankQueries.getAllRanks === 'function') {
+      ranks = window.RankQueries.getAllRanks();
+    } else if (typeof window.getRanks === 'function') {
+      ranks = window.getRanks();
+    }
+    
+    if (ranks.length === 0) {
+      var created = 0;
+      
+      if (typeof window.RankCommands !== 'undefined' && 
+          typeof window.RankCommands.createRank === 'function') {
+        
+        var demoRanks = [
+          { name: "Sovereign", priority: 1, symbol: "◉", numbered: true, numberingType: "reign" },
+          { name: "Prince", priority: 2, symbol: "◧", numbered: true, numberingType: "birth" },
+          { name: "Duke", priority: 2, symbol: "◈", numbered: false },
+          { name: "Count", priority: 3, symbol: "⟡", numbered: false },
+          { name: "Knight", priority: 4, symbol: "⌂", numbered: false },
+          { name: "Commoner", priority: 5, symbol: "⌇", numbered: false }
+        ];
+        
+        for (var i = 0; i < demoRanks.length; i++) {
+          var result = window.RankCommands.createRank(demoRanks[i]);
+          if (result && result.success !== false) {
+            created++;
+          }
+        }
+      }
+      
+      if (created > 0) {
+        if (typeof window.saveMasterData === 'function') {
+          window.saveMasterData();
+        }
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // =============================================================================
+  // CREATE NEW RANK
+  // =============================================================================
+
+  function createNewRank() {
+    var rankData = null;
+    
+    if (typeof window.RankCommands !== 'undefined' && 
+        typeof window.RankCommands.createRank === 'function') {
+      rankData = window.RankCommands.createRank({ name: "New Rank", priority: 5 });
+    } else if (typeof window.createRank === 'function') {
+      rankData = window.createRank({ name: "New Rank", priority: 5 });
+    }
+    
+    if (rankData && rankData.success !== false) {
+      var newRank = rankData.data || rankData;
+      if (newRank && newRank.id) {
+        if (typeof window.rankUIState !== 'undefined') {
+          window.rankUIState.selectedRankId = newRank.id;
+        }
+        if (typeof window.saveMasterData === 'function') {
+          window.saveMasterData();
+        }
+        refreshAll();
+        showToast('Created new rank: ' + newRank.name, 'success');
+        return newRank;
+      }
+    }
+    
+    showToast('Failed to create rank', 'error');
+    return null;
+  }
+
+  // =============================================================================
+  // INITIALIZATION - FIXED
+  // =============================================================================
+
+  function init() {
+    if (isInitialized) return;
+    isInitialized = true;
+
+    setupUIText();
+
+    // Ensure masterData exists
+    if (!window.masterData) {
+      window.masterData = { data: { ranks: [], characters: [], rankInheritanceRules: {} } };
+    }
+
+    // Load data from storage
+    if (typeof window.loadMasterData === 'function') {
+      window.loadMasterData();
+    }
+
+    // Initialize RankState
+    if (typeof window.RankState !== 'undefined' && 
+        typeof window.RankState._initialize === 'function') {
+      window.RankState._initialize();
+    }
+
+    // Seed demo ranks if needed
+    seedDemoRanks();
+
+    initBurgerMenu();
+
+    // Render the rank manager - first render only
+    if (typeof window.renderRanksManager === 'function') {
+      window.renderRanksManager('rankTree', 'detailPanel', 'analyticsTab', 'issuesTab');
+    }
+    
+    // Tab switching
+    var tabs = document.querySelectorAll('.tab-btn');
+    tabs.forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var tab = this.dataset.tab;
+        switchTab(tab);
+      });
+    });
+    
+    // Add Rank button
+    var addBtn = document.getElementById('addRankBtn');
+    if (addBtn) {
+      addBtn.addEventListener('click', function() {
+        createNewRank();
+      });
+    }
+    
+    // Import button
+    var importBtn = document.getElementById('importBtn');
+    if (importBtn) {
+      importBtn.addEventListener('click', function() {
+        if (typeof window.importData === 'function') {
+          window.importData();
+          setTimeout(userRefresh, 500);
+        } else {
+          showToast('Import function not available', 'error');
+        }
+      });
+    }
+    
+    // Export button
+    var exportBtn = document.getElementById('exportBtn');
+    if (exportBtn) {
+      exportBtn.addEventListener('click', function() {
+        if (typeof window.exportData === 'function') {
+          window.exportData();
+        } else if (typeof window.exportMasterData === 'function') {
+          window.exportMasterData();
+        } else {
+          showToast('Export function not available', 'error');
+        }
+      });
+    }
+    
+    // Refresh button
+    var refreshBtn = document.getElementById('refreshBtn');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', userRefresh);
+    }
+
+    // FIXED: DISABLE AUTO-REFRESH EVENTS - THIS IS WHAT CAUSED THE LOOP
+    // Comment out or remove these event listeners:
+    /*
+    window.addEventListener('masterDataUpdated', function() {
+      debouncedRefresh();
+    });
+    
+    window.addEventListener('rankUpdated', function() {
+      debouncedRefresh();
+    });
+    window.addEventListener('rankAdded', function() {
+      debouncedRefresh();
+    });
+    window.addEventListener('rankDeleted', function() {
+      debouncedRefresh();
+    });
+    */
+  }
+
+  // Start initialization
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+
+})();
+</script>
+
+</body>
+</html>

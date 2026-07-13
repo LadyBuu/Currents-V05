@@ -10,7 +10,9 @@
  * - Manage State Enterprises
  * - Settlement Budget View
  * - Employment Management
- * - SETTLEMENT ROLES MODAL (NEW)
+ * - SETTLEMENT ROLES MODAL
+ * - SETTLEMENT APPRENTICESHIPS MODAL
+ * - SETTLEMENT EDUCATION MODAL (NEW)
  * 
  * REFACTORED: Uses SettlementState, SettlementCommands, SettlementQueries
  * REFACTORED: Uses unified character selector from modals-core.js
@@ -280,6 +282,41 @@
             return SettlementQueries.getSettlementRoleStats(locationId);
         }
         return null;
+    }
+
+    function _getSettlementApprenticeshipDensity(locationId) {
+        if (typeof SettlementQueries !== 'undefined' && SettlementQueries.getSettlementApprenticeshipDensity) {
+            return SettlementQueries.getSettlementApprenticeshipDensity(locationId);
+        }
+        return null;
+    }
+
+    function _getSettlementEducationStats(locationId) {
+        if (typeof SettlementQueries !== 'undefined' && SettlementQueries.getSettlementEducationStats) {
+            return SettlementQueries.getSettlementEducationStats(locationId);
+        }
+        return null;
+    }
+
+    function _getSettlementSchools(locationId, filters) {
+        if (typeof SettlementQueries !== 'undefined' && SettlementQueries.getSettlementSchools) {
+            return SettlementQueries.getSettlementSchools(locationId, filters);
+        }
+        return [];
+    }
+
+    function _getCharacterById(id) {
+        return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    }
+
+    function _calculateAge(birthYear, isDeceased, deathYear) {
+        if (typeof window.calculateAge === 'function') {
+            return window.calculateAge(birthYear, isDeceased, deathYear);
+        }
+        var currentYear = _getCurrentYear();
+        if (!birthYear) return 0;
+        if (isDeceased && deathYear) return Math.max(0, deathYear - birthYear);
+        return Math.max(0, currentYear - birthYear);
     }
 
     // =========================================================================
@@ -1371,6 +1408,8 @@
                 '<button id="employmentBtn" class="btn" style="font-size: 0.65rem; padding: 4px 12px;">Employment</button>' +
                 '<button id="stateEnterprisesBtn" class="btn" style="font-size: 0.65rem; padding: 4px 12px;">State Enterprises</button>' +
                 '<button id="rolesBtn" class="btn" style="font-size: 0.65rem; padding: 4px 12px;">Roles</button>' +
+                '<button id="apprenticeshipsBtn" class="btn" style="font-size: 0.65rem; padding: 4px 12px;">Apprenticeships</button>' +
+                '<button id="educationBtn" class="btn" style="font-size: 0.65rem; padding: 4px 12px;">Education</button>' +
                 '</div>';
 
             content += '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim); margin-top: 12px;">' +
@@ -1453,6 +1492,22 @@
                         openSettlementRolesModal(locationId);
                     });
                 }
+
+                var apprenticeshipsBtn = document.getElementById('apprenticeshipsBtn');
+                if (apprenticeshipsBtn) {
+                    apprenticeshipsBtn.addEventListener('click', function() {
+                        _closeTopModal();
+                        openSettlementApprenticeshipsModal(locationId);
+                    });
+                }
+
+                var educationBtn = document.getElementById('educationBtn');
+                if (educationBtn) {
+                    educationBtn.addEventListener('click', function() {
+                        _closeTopModal();
+                        openSettlementEducationModal(locationId);
+                    });
+                }
             }, 100);
 
         } finally {
@@ -1461,7 +1516,7 @@
     }
 
     // =========================================================================
-    // 12. SETTLEMENT ROLES MODAL (NEW)
+    // 12. SETTLEMENT ROLES MODAL
     // =========================================================================
 
     function openSettlementRolesModal(locationId) {
@@ -1576,7 +1631,342 @@
     }
 
     // =========================================================================
-    // 13. EXPORTS
+    // 13. SETTLEMENT APPRENTICESHIPS MODAL
+    // =========================================================================
+
+    function openSettlementApprenticeshipsModal(locationId) {
+        if (_openingModal) {
+            _showToast('Modal is already opening', 'warning');
+            return;
+        }
+        _openingModal = true;
+
+        try {
+            var place = _getPlaceById(locationId);
+            if (!place) {
+                _showToast('Location not found', 'error');
+                return;
+            }
+
+            var density = _getSettlementApprenticeshipDensity(locationId);
+            if (!density) {
+                _showToast('Apprenticeship data not available', 'error');
+                return;
+            }
+
+            var personIcon = _getIcon('PERSON');
+            var crownIcon = _getIcon('CROWN');
+            var infoIcon = _getIcon('CIRCLE_DOT');
+
+            var content = '<div style="max-height: 500px; overflow-y: auto; padding: 4px;">';
+
+            // Header
+            content += '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; margin-bottom: 16px;">' +
+                '<strong>' + crownIcon + ' Apprenticeship System</strong>' +
+                '<div style="font-size: 0.65rem; color: var(--dim);">' + _escapeHtml(density.settlementName) + '</div>' +
+                '</div>';
+
+            // Stats grid
+            content += '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 16px;">' +
+                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center;">' +
+                '<div style="font-size: 0.55rem; color: var(--dim);">Masters</div>' +
+                '<div style="font-size: 1.2rem; font-weight: bold; color: var(--accent);">' + density.totalMasters + '</div>' +
+                '</div>' +
+                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center;">' +
+                '<div style="font-size: 0.55rem; color: var(--dim);">Apprentices</div>' +
+                '<div style="font-size: 1.2rem; font-weight: bold;">' + density.totalApprentices + '</div>' +
+                '</div>' +
+                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center;">' +
+                '<div style="font-size: 0.55rem; color: var(--dim);">Master:Apprentice</div>' +
+                '<div style="font-size: 1.2rem; font-weight: bold;">' + density.masterToApprenticeRatio + ':1</div>' +
+                '</div>' +
+                '</div>';
+
+            // Density bar
+            var densityPercent = Math.min(100, (density.apprenticeDensity || 0) * 5);
+            content += '<div style="background: var(--bg2); padding: 8px 12px; border-radius: 6px; margin-bottom: 16px;">' +
+                '<div style="font-size: 0.55rem; color: var(--dim); margin-bottom: 4px;">Apprentice Density: ' + (density.apprenticeDensity || 0) + '%</div>' +
+                '<div style="width: 100%; height: 6px; background: var(--bg3); border-radius: 3px; overflow: hidden;">' +
+                '<div style="width: ' + densityPercent + '%; height: 100%; background: var(--accent); border-radius: 3px;"></div>' +
+                '</div>' +
+                '</div>';
+
+            // By role
+            var topRoles = density.topRoles || [];
+            if (topRoles.length > 0) {
+                content += '<div style="margin-bottom: 16px;">';
+                content += '<div style="font-size: 0.65rem; color: var(--accent); margin-bottom: 8px;">Apprentices by Role</div>';
+                for (var i = 0; i < topRoles.length; i++) {
+                    var role = topRoles[i];
+                    var pct = density.totalApprentices > 0 ?
+                        Math.round((role.count / density.totalApprentices) * 100) : 0;
+                    content +=
+                        '<div style="display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--border-light); font-size: 0.6rem;">' +
+                        '<span style="min-width: 100px;">' + _escapeHtml(role.name) + '</span>' +
+                        '<div style="flex: 1; height: 4px; background: var(--bg3); border-radius: 2px; overflow: hidden;">' +
+                        '<div style="width: ' + pct + '%; height: 100%; background: var(--accent); border-radius: 2px;"></div>' +
+                        '</div>' +
+                        '<span style="min-width: 30px; text-align: right;">' + role.count + '</span>' +
+                        '</div>';
+                }
+                content += '</div>';
+            }
+
+            // Top Masters
+            var topMasters = density.topMasters || [];
+            if (topMasters.length > 0) {
+                content += '<div style="margin-bottom: 16px;">';
+                content += '<div style="font-size: 0.65rem; color: var(--accent); margin-bottom: 8px;">Top Masters</div>';
+                for (var i = 0; i < Math.min(5, topMasters.length); i++) {
+                    var m = topMasters[i];
+                    content +=
+                        '<div style="display: flex; justify-content: space-between; padding: 4px 8px; background: var(--bg2); border-radius: 4px; margin-bottom: 2px; font-size: 0.6rem;">' +
+                        '<span>' + crownIcon + ' ' + _escapeHtml(m.name) + '</span>' +
+                        '<span style="color: var(--dim);">' + m.apprenticeCount + ' apprentice(s)</span>' +
+                        '</div>';
+                }
+                if (topMasters.length > 5) {
+                    content += '<div style="font-size: 0.5rem; color: var(--dim); text-align: center; padding: 4px;">+' + 
+                        (topMasters.length - 5) + ' more masters</div>';
+                }
+                content += '</div>';
+            }
+
+            // Status interpretation
+            var statusMsg = '';
+            var statusColor = 'var(--dim)';
+            if (density.totalMasters === 0 && density.totalApprentices > 0) {
+                statusMsg = '⚠️ Apprentices without masters!';
+                statusColor = 'var(--danger)';
+            } else if (density.totalApprentices === 0 && density.totalMasters > 0) {
+                statusMsg = 'ℹ️ Masters available but no apprentices.';
+                statusColor = 'var(--info)';
+            } else if (density.totalMasters === 0 && density.totalApprentices === 0) {
+                statusMsg = 'ℹ️ No apprenticeship activity.';
+                statusColor = 'var(--dim)';
+            } else if (density.masterToApprenticeRatio >= 2 && density.masterToApprenticeRatio <= 5) {
+                statusMsg = '✅ Healthy apprenticeship system.';
+                statusColor = 'var(--success)';
+            } else if (density.masterToApprenticeRatio < 1) {
+                statusMsg = '⚠️ Too many apprentices per master.';
+                statusColor = 'var(--warn)';
+            } else {
+                statusMsg = '✅ Apprenticeship system active.';
+                statusColor = 'var(--success)';
+            }
+
+            content += '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: ' + statusColor + ';">' +
+                infoIcon + ' ' + statusMsg +
+                '</div>';
+
+            content += '</div>';
+
+            _openModal({
+                title: 'Apprenticeships in ' + place.displayName,
+                content: content,
+                confirmText: 'Close',
+                cancelText: '',
+                onConfirm: function() {}
+            });
+
+        } finally {
+            _openingModal = false;
+        }
+    }
+
+    // =========================================================================
+    // 14. SETTLEMENT EDUCATION MODAL (NEW)
+    // =========================================================================
+
+    function openSettlementEducationModal(locationId) {
+        if (_openingModal) {
+            _showToast('Modal is already opening', 'warning');
+            return;
+        }
+        _openingModal = true;
+
+        try {
+            var place = _getPlaceById(locationId);
+            if (!place) {
+                _showToast('Location not found', 'error');
+                return;
+            }
+
+            var stats = _getSettlementEducationStats(locationId);
+            if (!stats) {
+                _showToast('Education data not available', 'error');
+                return;
+            }
+
+            var bookIcon = _getIcon('BOOK');
+            var personIcon = _getIcon('PERSON');
+            var infoIcon = _getIcon('CIRCLE_DOT');
+            var starIcon = _getIcon('STAR_4');
+
+            var schools = _getSettlementSchools(locationId, {});
+
+            var content = '<div style="max-height: 500px; overflow-y: auto; padding: 4px;">';
+
+            // Header
+            content += '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; margin-bottom: 16px;">' +
+                '<strong>' + bookIcon + ' Education System</strong>' +
+                '<div style="font-size: 0.65rem; color: var(--dim);">' + _escapeHtml(stats.settlementName) + '</div>' +
+                '</div>';
+
+            // Stats grid
+            var literacyColor = stats.literacyRate > 70 ? 'var(--success)' :
+                               stats.literacyRate > 40 ? 'var(--accent)' :
+                               'var(--danger)';
+
+            content += '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 16px;">' +
+                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center;">' +
+                '<div style="font-size: 0.55rem; color: var(--dim);">Schools</div>' +
+                '<div style="font-size: 1.2rem; font-weight: bold; color: var(--accent);">' + stats.totalInstitutions + '</div>' +
+                '</div>' +
+                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center;">' +
+                '<div style="font-size: 0.55rem; color: var(--dim);">Students</div>' +
+                '<div style="font-size: 1.2rem; font-weight: bold;">' + stats.totalStudents + '</div>' +
+                '</div>' +
+                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center;">' +
+                '<div style="font-size: 0.55rem; color: var(--dim);">Literacy Rate</div>' +
+                '<div style="font-size: 1.2rem; font-weight: bold; color: ' + literacyColor + ';">' + stats.literacyRate + '%</div>' +
+                '</div>' +
+                '</div>';
+
+            // Coverage
+            var coverageColor = stats.coverageRatio >= 80 ? 'var(--success)' :
+                               stats.coverageRatio >= 50 ? 'var(--accent)' :
+                               'var(--danger)';
+
+            content += '<div style="background: var(--bg3); padding: 12px; border-radius: 6px; margin-bottom: 16px;">' +
+                '<div style="display: flex; justify-content: space-between; font-size: 0.6rem;">' +
+                '<span style="color: var(--dim);">School Coverage</span>' +
+                '<span style="color: ' + coverageColor + '; font-weight: bold;">' + stats.coverageRatio + '%</span>' +
+                '</div>' +
+                '<div style="width: 100%; height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; margin-top: 4px;">' +
+                '<div style="width: ' + Math.min(100, stats.coverageRatio) + '%; height: 100%; background: ' + coverageColor + '; border-radius: 3px;"></div>' +
+                '</div>' +
+                '<div style="display: flex; justify-content: space-between; font-size: 0.5rem; color: var(--dim); margin-top: 4px;">' +
+                '<span>' + stats.schoolAgePopulation + ' school-age children</span>' +
+                '<span>' + stats.totalCapacity + ' capacity</span>' +
+                '</div>' +
+                (stats.needsMoreSchools ? 
+                    '<div style="margin-top: 6px; padding: 4px 8px; background: rgba(200, 112, 64, 0.15); border-radius: 4px; font-size: 0.55rem; color: var(--warn);">' +
+                    '⚠️ Need ' + stats.capacityGap + ' more school seats</div>' : 
+                    '<div style="margin-top: 6px; padding: 4px 8px; background: rgba(74, 158, 106, 0.15); border-radius: 4px; font-size: 0.55rem; color: var(--success);">' +
+                    '✅ Sufficient school capacity</div>'
+                ) +
+                '</div>';
+
+            // School types
+            var typeKeys = Object.keys(stats.byType || {});
+            if (typeKeys.length > 0) {
+                content += '<div style="margin-bottom: 12px;">';
+                content += '<div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 4px;">School Types</div>';
+                content += '<div style="display: flex; flex-wrap: wrap; gap: 6px;">';
+                for (var i = 0; i < typeKeys.length; i++) {
+                    var typeName = typeKeys[i];
+                    var count = stats.byType[typeName];
+                    content += '<span style="font-size: 0.55rem; background: var(--bg2); padding: 2px 8px; border-radius: 12px;">' +
+                        _escapeHtml(typeName) + ': ' + count +
+                        '</span>';
+                }
+                content += '</div></div>';
+            }
+
+            // School list with details
+            if (schools.length > 0) {
+                content += '<div style="margin-bottom: 12px;">';
+                content += '<div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 4px;">Schools (' + schools.length + ')</div>';
+                content += '<div style="max-height: 200px; overflow-y: auto;">';
+
+                for (var i = 0; i < schools.length; i++) {
+                    var s = schools[i];
+                    var capUsed = s.capacityUsed || 0;
+                    var capColor = capUsed > 90 ? 'var(--warn)' : (capUsed > 70 ? 'var(--accent)' : 'var(--success)');
+                    var ownershipIcon = s.ownershipType === 'public' ? '🏛' : '🏠';
+
+                    content += '<div style="display: flex; justify-content: space-between; padding: 4px 8px; background: var(--bg2); border-radius: 4px; margin-bottom: 2px; font-size: 0.55rem; border-left: 3px solid ' + capColor + ';">' +
+                        '<div>' +
+                        '<span>' + bookIcon + ' ' + _escapeHtml(s.name) + '</span>' +
+                        '<span style="font-size: 0.45rem; color: var(--dim); margin-left: 4px;">' + ownershipIcon + ' ' + _escapeHtml(s.type) + '</span>' +
+                        '</div>' +
+                        '<div style="text-align: right;">' +
+                        '<span style="font-size: 0.5rem; color: var(--dim);">' + s.studentCount + '/' + s.capacity + '</span>' +
+                        '<span style="font-size: 0.45rem; color: ' + capColor + '; margin-left: 6px;">' + capUsed + '%</span>' +
+                        '</div>' +
+                        '</div>';
+                }
+
+                content += '</div></div>';
+            }
+
+            // Teacher stats
+            content += '<div style="background: var(--bg3); padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; font-size: 0.55rem;">' +
+                '<div style="display: flex; justify-content: space-between;">' +
+                '<span style="color: var(--dim);">Teachers: <strong>' + stats.totalTeachers + '</strong></span>' +
+                '<span style="color: var(--dim);">Student:Teacher Ratio: <strong>' + (stats.studentTeacherRatio || 'N/A') + ':1</strong></span>' +
+                '<span style="color: var(--dim);">Avg Reputation: <strong>' + stats.averageReputation + '</strong></span>' +
+                '</div>' +
+                '</div>';
+
+            // Literacy levels
+            var levels = stats.educationLevels || {};
+            var levelKeys = ['illiterate', 'basic', 'literate', 'educated', 'scholar'];
+            var levelLabels = {
+                'illiterate': 'Illiterate',
+                'basic': 'Basic',
+                'literate': 'Literate',
+                'educated': 'Educated',
+                'scholar': 'Scholar'
+            };
+            var levelColors = {
+                'illiterate': 'var(--danger)',
+                'basic': 'var(--warn)',
+                'literate': 'var(--accent)',
+                'educated': 'var(--success)',
+                'scholar': 'var(--success-dark)'
+            };
+
+            var totalPop = stats.totalPopulation || 1;
+            content += '<div style="background: var(--bg2); padding: 8px 12px; border-radius: 6px; margin-bottom: 12px;">' +
+                '<div style="font-size: 0.55rem; color: var(--accent); margin-bottom: 4px;">Education Levels</div>';
+            for (var i = 0; i < levelKeys.length; i++) {
+                var key = levelKeys[i];
+                var count = levels[key] || 0;
+                var pct = Math.round((count / totalPop) * 100);
+                content += '<div style="display: flex; align-items: center; gap: 6px; font-size: 0.5rem; padding: 2px 0;">' +
+                    '<span style="min-width: 60px; color: ' + levelColors[key] + ';">' + levelLabels[key] + '</span>' +
+                    '<div style="flex: 1; height: 4px; background: var(--bg3); border-radius: 2px; overflow: hidden;">' +
+                    '<div style="width: ' + pct + '%; height: 100%; background: ' + levelColors[key] + '; border-radius: 2px;"></div>' +
+                    '</div>' +
+                    '<span style="min-width: 30px; text-align: right; color: var(--dim);">' + count + '</span>' +
+                    '</div>';
+            }
+            content += '</div>';
+
+            content += '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
+                infoIcon + ' Education quality affects settlement prosperity. Higher literacy and school coverage increase prosperity.' +
+                '</div>';
+
+            content += '</div>';
+
+            _openModal({
+                title: 'Education in ' + place.displayName,
+                content: content,
+                confirmText: 'Close',
+                cancelText: '',
+                size: 'large',
+                onConfirm: function() {}
+            });
+
+        } finally {
+            _openingModal = false;
+        }
+    }
+
+    // =========================================================================
+    // 15. EXPORTS
     // =========================================================================
 
     window.openManageFeaturesModal = openManageFeaturesModal;
@@ -1587,7 +1977,8 @@
     window.openStateEnterpriseManagementModal = openStateEnterpriseManagementModal;
     window.openCreateStateEnterpriseModal = openCreateStateEnterpriseModal;
     window.openSettlementDetailsModal = openSettlementDetailsModal;
-    // NEW
     window.openSettlementRolesModal = openSettlementRolesModal;
+    window.openSettlementApprenticeshipsModal = openSettlementApprenticeshipsModal;
+    window.openSettlementEducationModal = openSettlementEducationModal; // NEW
 
 })();

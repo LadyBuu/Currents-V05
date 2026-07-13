@@ -10,7 +10,13 @@
  * - Tax/rate management
  * - Justice/watch management
  * - ANNUAL PROCESSING (processAnnualSettlementUpdate, processAllSettlements)
- * - SETTLEMENT ROLE COMMANDS (NEW)
+ * - SETTLEMENT ROLE COMMANDS
+ * - SETTLEMENT EDUCATION SPENDING (ENHANCED)
+ * - BUDGET ALLOCATION
+ * - PUBLIC ENTERPRISE PROFIT COLLECTION
+ * - DEMOLISHED FEATURES TRACKING
+ * - PLACES OF WORSHIP MANAGEMENT (NEW)
+ * - RELIGIOUS UNITY CALCULATION (NEW)
  * 
  * DEPENDENCIES:
  *   - settlement-state.js (SettlementState)
@@ -136,6 +142,33 @@
         if (character.birthplaceId) return character.birthplaceId;
 
         return null;
+    }
+
+    function _getSettlementEducationStats(locationId) {
+        if (typeof SettlementQueries !== 'undefined' && SettlementQueries.getSettlementEducationStats) {
+            return SettlementQueries.getSettlementEducationStats(locationId);
+        }
+        return null;
+    }
+
+    function _getPlaceOfWorship(placeId) {
+        if (typeof window.ReligionCommands !== 'undefined' &&
+            typeof window.ReligionCommands.getPlaceOfWorship === 'function') {
+            return window.ReligionCommands.getPlaceOfWorship(placeId);
+        }
+        return null;
+    }
+
+    function _getReligion(religionId) {
+        if (typeof window.ReligionState !== 'undefined' &&
+            typeof window.ReligionState.getReligion === 'function') {
+            return window.ReligionState.getReligion(religionId);
+        }
+        return null;
+    }
+
+    function _getReligionQueries() {
+        return typeof window.ReligionQueries !== 'undefined' ? window.ReligionQueries : null;
     }
 
     // =========================================================================
@@ -280,7 +313,20 @@
                 return { success: false, reason: 'Feature not found' };
             }
 
+            var demolitionRecord = {
+                featureId: featureId,
+                featureName: feature.name,
+                category: feature.category || 'uncategorized',
+                demolishedAt: _getCurrentYear(),
+                demolishedReason: 'Demolished',
+                destroyedBy: 'manual',
+                disasterId: null,
+                timestamp: Date.now()
+            };
+
             SettlementState._removeFeature(locationId, featureId);
+
+            recordFeatureDemolition(locationId, featureId, demolitionRecord);
 
             SettlementState._addHistoryEntry(locationId, {
                 year: _getCurrentYear(),
@@ -705,11 +751,37 @@
                 return { success: false, reason: 'Settlement data not found' };
             }
 
+            var oldAmount = data.educationSpending || 0;
             data.educationSpending = amount;
 
             SettlementState._updateSettlementData(locationId, { educationSpending: amount });
 
-            _showToast('Education spending updated', 'success');
+            _logEvent('settlement', 'education_spending_changed',
+                'Education spending for ' + (_getPlaceById(locationId)?.displayName || 'Unknown') + 
+                ' changed from ' + oldAmount + ' to ' + amount,
+                []);
+
+            _showToast('Education spending updated to ' + amount + ' gold/year', 'success');
+
+            var eduStats = _getSettlementEducationStats(locationId);
+            if (eduStats) {
+                var coverage = eduStats.coverageRatio || 0;
+                var schools = eduStats.totalInstitutions || 0;
+                var message = '';
+
+                if (amount === 0 && schools > 0) {
+                    message = 'Schools need funding to operate effectively';
+                } else if (amount > 0 && coverage < 50) {
+                    message = 'Consider building more schools in addition to funding';
+                } else if (amount > 0 && schools === 0) {
+                    message = 'Education spending allocated but no schools exist to receive it';
+                }
+
+                if (message) {
+                    _showToast(message, 'warning');
+                }
+            }
+
             return { success: true, data: { educationSpending: amount } };
 
         } finally {
@@ -860,17 +932,349 @@
     }
 
     // =========================================================================
-    // 12. SETTLEMENT ROLE COMMANDS (NEW)
+    // 12. PLACES OF WORSHIP COMMANDS (NEW)
     // =========================================================================
 
     /**
-     * Assigns a role to a character at a settlement
+     * Adds a place of worship to a settlement
      * @param {string} locationId - Settlement location ID
-     * @param {string} characterId - Character ID
-     * @param {string} roleId - Role ID
-     * @param {Object} options - Assignment options
-     * @returns {Object} Result object
+     * @param {string} placeId - Place of worship ID
+     * @param {Object} options - Options
+     * @param {boolean} options.updateDominant - Auto-update dominant religion (default: true)
+     * @param {boolean} options.silent - Suppress toast (default: false)
+     * @returns {Object} Result
      */
+    function addPlaceOfWorshipToSettlement(locationId, placeId, options) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Command already processing' };
+        }
+        _processingCommand = true;
+
+        try {
+            var place = _getPlaceById(locationId);
+            if (!place) {
+                return { success: false, reason: 'Location not found' };
+            }
+
+            var settlement = _getSettlementData(locationId);
+            if (!settlement) {
+                return { success: false, reason: 'Settlement data not found' };
+            }
+
+            options = options || {};
+            var updateDominant = options.updateDominant !== false;
+            var silent = options.silent || false;
+
+            // Check if place already exists in this settlement
+            if (settlement.placesOfWorship && settlement.placesOfWorship.indexOf(placeId) !== -1) {
+                return { success: false, reason: 'Place of worship already in this settlement' };
+            }
+
+            // Get place details from Religion system
+            var placeData = _getPlaceOfWorship(placeId);
+            if (!placeData) {
+                return { success: false, reason: 'Place of worship not found' };
+            }
+
+            // Add to settlement
+            SettlementState._addPlaceOfWorship(locationId, placeId);
+
+            SettlementState._addHistoryEntry(locationId, {
+                year: _getCurrentYear(),
+                type: 'place_of_worship_added',
+                placeId: placeId,
+                placeName: placeData.name || 'Unknown',
+                religionId: placeData.religionId || null,
+                religionName: placeData.religionName || 'Unknown'
+            });
+
+            // Update dominant religion if needed
+            if (updateDominant) {
+                updateDominantReligion(locationId);
+            }
+
+            if (!silent) {
+                var placeName = placeData.name || 'Place of worship';
+                var religionName = placeData.religionName || 'Unknown';
+                _showToast('Added "' + placeName + '" to ' + place.displayName + ' (' + religionName + ')', 'success');
+            }
+
+            _logEvent('settlement', 'place_of_worship_added',
+                'Added place of worship "' + (placeData.name || placeId) + '" to ' + place.displayName +
+                ' (Religion: ' + (placeData.religionName || 'Unknown') + ')',
+                []);
+
+            return {
+                success: true,
+                data: {
+                    locationId: locationId,
+                    placeId: placeId,
+                    placeName: placeData.name || 'Unknown',
+                    religionId: placeData.religionId || null,
+                    religionName: placeData.religionName || 'Unknown'
+                }
+            };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    /**
+     * Removes a place of worship from a settlement
+     * @param {string} locationId - Settlement location ID
+     * @param {string} placeId - Place of worship ID
+     * @param {Object} options - Options
+     * @param {boolean} options.updateDominant - Auto-update dominant religion (default: true)
+     * @param {boolean} options.silent - Suppress toast (default: false)
+     * @returns {Object} Result
+     */
+    function removePlaceOfWorshipFromSettlement(locationId, placeId, options) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Command already processing' };
+        }
+        _processingCommand = true;
+
+        try {
+            var place = _getPlaceById(locationId);
+            if (!place) {
+                return { success: false, reason: 'Location not found' };
+            }
+
+            var settlement = _getSettlementData(locationId);
+            if (!settlement) {
+                return { success: false, reason: 'Settlement data not found' };
+            }
+
+            options = options || {};
+            var updateDominant = options.updateDominant !== false;
+            var silent = options.silent || false;
+
+            // Check if place exists in this settlement
+            if (!settlement.placesOfWorship || settlement.placesOfWorship.indexOf(placeId) === -1) {
+                return { success: false, reason: 'Place of worship not in this settlement' };
+            }
+
+            // Get place details from Religion system
+            var placeData = _getPlaceOfWorship(placeId);
+            var placeName = placeData ? placeData.name || placeId : placeId;
+
+            SettlementState._removePlaceOfWorship(locationId, placeId);
+
+            SettlementState._addHistoryEntry(locationId, {
+                year: _getCurrentYear(),
+                type: 'place_of_worship_removed',
+                placeId: placeId,
+                placeName: placeName
+            });
+
+            // Update dominant religion if needed
+            if (updateDominant) {
+                updateDominantReligion(locationId);
+            }
+
+            if (!silent) {
+                _showToast('Removed "' + placeName + '" from ' + place.displayName, 'info');
+            }
+
+            _logEvent('settlement', 'place_of_worship_removed',
+                'Removed place of worship "' + placeName + '" from ' + place.displayName,
+                []);
+
+            return {
+                success: true,
+                data: {
+                    locationId: locationId,
+                    placeId: placeId,
+                    placeName: placeName
+                }
+            };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    // =========================================================================
+    // 13. DOMINANT RELIGION UPDATE (NEW)
+    // =========================================================================
+
+    /**
+     * Updates the dominant religion for a settlement based on followers
+     * @param {string} locationId - Settlement location ID
+     * @param {Object} options - Options
+     * @param {boolean} options.silent - Suppress toast (default: true)
+     * @returns {Object} Result
+     */
+    function updateDominantReligion(locationId, options) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Command already processing' };
+        }
+        _processingCommand = true;
+
+        try {
+            var settlement = _getSettlementData(locationId);
+            if (!settlement) {
+                return { success: false, reason: 'Settlement data not found' };
+            }
+
+            options = options || {};
+            var silent = options.silent !== false;
+
+            var religionQueries = _getReligionQueries();
+            if (!religionQueries) {
+                return { success: false, reason: 'ReligionQueries not available' };
+            }
+
+            // Get dominant religion
+            var dominant = religionQueries.getDominantReligion(locationId);
+            var oldDominantId = settlement.dominantReligionId;
+
+            if (dominant) {
+                settlement.dominantReligionId = dominant.id;
+                SettlementState._setDominantReligion(locationId, dominant.id);
+            } else {
+                settlement.dominantReligionId = null;
+                SettlementState._setDominantReligion(locationId, null);
+            }
+
+            // Calculate religious unity
+            var religiousUnity = calculateReligiousUnity(locationId);
+            settlement.religiousUnity = religiousUnity;
+            SettlementState._setReligiousUnity(locationId, religiousUnity);
+
+            // Log change
+            if (oldDominantId !== settlement.dominantReligionId) {
+                var place = _getPlaceById(locationId);
+                var oldName = oldDominantId ? _getReligion(oldDominantId)?.name || 'Unknown' : 'None';
+                var newName = settlement.dominantReligionId ? _getReligion(settlement.dominantReligionId)?.name || 'Unknown' : 'None';
+
+                SettlementState._addHistoryEntry(locationId, {
+                    year: _getCurrentYear(),
+                    type: 'dominant_religion_changed',
+                    oldDominant: oldDominantId,
+                    newDominant: settlement.dominantReligionId,
+                    oldName: oldName,
+                    newName: newName,
+                    religiousUnity: religiousUnity
+                });
+
+                if (!silent && oldDominantId !== settlement.dominantReligionId) {
+                    _showToast('Dominant religion changed: ' + oldName + ' → ' + newName, 'info');
+                }
+
+                _logEvent('settlement', 'dominant_religion_changed',
+                    'Dominant religion at ' + (place?.displayName || locationId) +
+                    ' changed from ' + oldName + ' to ' + newName +
+                    ' (Unity: ' + religiousUnity + '%)',
+                    []);
+            }
+
+            return {
+                success: true,
+                data: {
+                    locationId: locationId,
+                    dominantReligionId: settlement.dominantReligionId,
+                    dominantReligionName: settlement.dominantReligionId ? 
+                        _getReligion(settlement.dominantReligionId)?.name || 'Unknown' : 'None',
+                    religiousUnity: religiousUnity
+                }
+            };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    // =========================================================================
+    // 14. RELIGIOUS UNITY CALCULATION (NEW)
+    // =========================================================================
+
+    /**
+     * Calculates religious unity for a settlement (0-100)
+     * Higher = more homogeneous, lower = more diverse
+     * @param {string} locationId - Settlement location ID
+     * @returns {number} Religious unity score (0-100)
+     */
+    function calculateReligiousUnity(locationId) {
+        if (_processingCommand) {
+            return 50;
+        }
+        _processingCommand = true;
+
+        try {
+            var settlement = _getSettlementData(locationId);
+            if (!settlement) {
+                return 50;
+            }
+
+            // Get religious breakdown from ReligionQueries
+            var religionQueries = _getReligionQueries();
+            if (!religionQueries) {
+                return 50;
+            }
+
+            var breakdown = religionQueries.getReligiousBreakdown(locationId);
+            if (!breakdown || !breakdown.byReligion) {
+                return 50;
+            }
+
+            var religions = breakdown.byReligion;
+            var total = breakdown.total || 0;
+
+            // Also get unaffiliated
+            var unaffiliated = breakdown.unaffiliated || 0;
+
+            if (total === 0) {
+                return 50;
+            }
+
+            // Calculate the proportion of the dominant religion
+            var maxCount = 0;
+            var dominantId = null;
+
+            for (var id in religions) {
+                if (religions.hasOwnProperty(id)) {
+                    var count = religions[id].count || 0;
+                    if (count > maxCount) {
+                        maxCount = count;
+                        dominantId = id;
+                    }
+                }
+            }
+
+            // Also consider unaffiliated as a "group"
+            if (unaffiliated > maxCount) {
+                maxCount = unaffiliated;
+            }
+
+            // Unity = dominant proportion * 100
+            // With a baseline of 50% (equal distribution)
+            var dominantProportion = total > 0 ? maxCount / total : 0;
+
+            // Scale: 50% dominant = 50 unity, 100% dominant = 100 unity
+            var unity = 50 + (dominantProportion * 50);
+
+            // Penalize if there's a large unaffiliated population
+            var unaffiliatedPenalty = unaffiliated > 0 ? Math.min(10, unaffiliated / 10) : 0;
+            unity = Math.max(0, unity - unaffiliatedPenalty);
+
+            // Bonus for having a dominant religion with many followers
+            if (dominantId && maxCount > 10) {
+                unity = Math.min(100, unity + 2);
+            }
+
+            return Math.round(Math.min(100, Math.max(0, unity)));
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    // =========================================================================
+    // 15. SETTLEMENT ROLE COMMANDS
+    // =========================================================================
+
     function assignSettlementRole(locationId, characterId, roleId, options) {
         if (_processingCommand) {
             return { success: false, reason: 'Command already processing' };
@@ -896,7 +1300,6 @@
                 return { success: false, reason: 'Role not found' };
             }
 
-            // Check if character is at this settlement
             var charLocationId = _getCurrentLocationId(character);
             var locationIds = _getAllSubLocationIds(locationId);
             var locationIdSet = new Set(locationIds);
@@ -906,7 +1309,6 @@
                 return { success: false, reason: 'Character not at location' };
             }
 
-            // Use RoleCommands to assign
             if (typeof window.RoleCommands !== 'undefined' && 
                 window.RoleCommands.assignRoleToCharacter) {
                 var result = window.RoleCommands.assignRoleToCharacter(characterId, roleId, options);
@@ -929,13 +1331,6 @@
         }
     }
 
-    /**
-     * Removes a role from a character at a settlement
-     * @param {string} locationId - Settlement location ID
-     * @param {string} characterId - Character ID
-     * @param {string} roleId - Role ID
-     * @returns {Object} Result object
-     */
     function removeSettlementRole(locationId, characterId, roleId) {
         if (_processingCommand) {
             return { success: false, reason: 'Command already processing' };
@@ -961,7 +1356,6 @@
                 return { success: false, reason: 'Role not found' };
             }
 
-            // Use RoleCommands to remove
             if (typeof window.RoleCommands !== 'undefined' && 
                 window.RoleCommands.removeRoleFromCharacter) {
                 var result = window.RoleCommands.removeRoleFromCharacter(characterId, roleId);
@@ -984,14 +1378,6 @@
         }
     }
 
-    /**
-     * Updates skill level for a character's role at a settlement
-     * @param {string} locationId - Settlement location ID
-     * @param {string} characterId - Character ID
-     * @param {string} roleId - Role ID
-     * @param {number} skillLevel - New skill level (0-100)
-     * @returns {Object} Result object
-     */
     function updateSettlementCharacterSkill(locationId, characterId, roleId, skillLevel) {
         if (_processingCommand) {
             return { success: false, reason: 'Command already processing' };
@@ -1011,7 +1397,6 @@
                 return { success: false, reason: 'Character not found' };
             }
 
-            // Use RoleCommands to update skill
             if (typeof window.RoleCommands !== 'undefined' && 
                 window.RoleCommands.updateCharacterSkill) {
                 var result = window.RoleCommands.updateCharacterSkill(characterId, roleId, skillLevel);
@@ -1035,7 +1420,407 @@
     }
 
     // =========================================================================
-    // 13. ANNUAL PROCESSING - CRITICAL
+    // 16. BUDGET ALLOCATION COMMANDS
+    // =========================================================================
+
+    function allocateGovernmentSalaryBudget(locationId, amount, year) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Command already processing' };
+        }
+        _processingCommand = true;
+
+        try {
+            var data = _getSettlementData(locationId);
+            if (!data) {
+                return { success: false, reason: 'Settlement data not found' };
+            }
+
+            var currentYear = year || _getCurrentYear();
+            var actualAmount = Math.max(0, amount);
+
+            if (actualAmount > (data.wealth || 0)) {
+                _showToast('Insufficient settlement wealth for allocation', 'warning');
+                return { 
+                    success: false, 
+                    reason: 'Insufficient wealth', 
+                    available: data.wealth || 0,
+                    required: actualAmount
+                };
+            }
+
+            data.wealth = (data.wealth || 0) - actualAmount;
+
+            data.governmentSalaryBudget = actualAmount;
+            data.budgetAllocationYear = currentYear;
+
+            SettlementState._updateSettlementData(locationId, {
+                wealth: data.wealth,
+                governmentSalaryBudget: actualAmount,
+                budgetAllocationYear: currentYear
+            });
+
+            SettlementState._addHistoryEntry(locationId, {
+                year: currentYear,
+                type: 'government_budget_allocated',
+                amount: actualAmount,
+                newWealth: data.wealth,
+                newDebt: data.totalDebt
+            });
+
+            _logEvent('settlement', 'government_budget_allocated',
+                'Allocated ' + actualAmount + ' gold for government salaries at ' + 
+                (_getPlaceById(locationId)?.displayName || 'Unknown'),
+                []);
+
+            _showToast('Allocated ' + actualAmount + ' gold for government salaries', 'success');
+
+            return { 
+                success: true, 
+                data: { 
+                    amount: actualAmount, 
+                    newWealth: data.wealth,
+                    year: currentYear
+                } 
+            };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    function allocateEducationBudget(locationId, amount, year) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Command already processing' };
+        }
+        _processingCommand = true;
+
+        try {
+            var data = _getSettlementData(locationId);
+            if (!data) {
+                return { success: false, reason: 'Settlement data not found' };
+            }
+
+            var currentYear = year || _getCurrentYear();
+            var actualAmount = Math.max(0, amount);
+
+            if (actualAmount > (data.wealth || 0)) {
+                _showToast('Insufficient settlement wealth for allocation', 'warning');
+                return { 
+                    success: false, 
+                    reason: 'Insufficient wealth', 
+                    available: data.wealth || 0,
+                    required: actualAmount
+                };
+            }
+
+            data.wealth = (data.wealth || 0) - actualAmount;
+
+            data.educationBudget = actualAmount;
+            data.educationSpending = actualAmount;
+            data.budgetAllocationYear = currentYear;
+
+            SettlementState._updateSettlementData(locationId, {
+                wealth: data.wealth,
+                educationBudget: actualAmount,
+                educationSpending: actualAmount,
+                budgetAllocationYear: currentYear
+            });
+
+            if (typeof window.EducationCommands !== 'undefined' && 
+                typeof window.EducationCommands.receiveSettlementBudget === 'function') {
+                window.EducationCommands.receiveSettlementBudget(locationId, actualAmount, currentYear);
+            } else {
+                _logEvent('settlement', 'education_budget_stored',
+                    'Education budget of ' + actualAmount + ' gold stored for ' + 
+                    (_getPlaceById(locationId)?.displayName || 'Unknown'),
+                    []);
+            }
+
+            SettlementState._addHistoryEntry(locationId, {
+                year: currentYear,
+                type: 'education_budget_allocated',
+                amount: actualAmount,
+                newWealth: data.wealth,
+                newDebt: data.totalDebt
+            });
+
+            _logEvent('settlement', 'education_budget_allocated',
+                'Allocated ' + actualAmount + ' gold for education at ' + 
+                (_getPlaceById(locationId)?.displayName || 'Unknown'),
+                []);
+
+            _showToast('Allocated ' + actualAmount + ' gold for education', 'success');
+
+            return { 
+                success: true, 
+                data: { 
+                    amount: actualAmount, 
+                    newWealth: data.wealth,
+                    year: currentYear
+                } 
+            };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    function getGovernmentSalaryRequirements(locationId) {
+        if (_processingCommand) {
+            return { total: 0, details: [] };
+        }
+        _processingCommand = true;
+
+        try {
+            if (typeof window.GovernmentEconomy !== 'undefined' && 
+                typeof window.GovernmentEconomy.calculateDepartmentSalaryRequirements === 'function') {
+                return window.GovernmentEconomy.calculateDepartmentSalaryRequirements(locationId);
+            }
+
+            var departments = window.GovernmentState ? 
+                window.GovernmentState.getDepartmentsByLocation(locationId) : [];
+            var total = 0;
+            var details = [];
+
+            for (var i = 0; i < departments.length; i++) {
+                var dept = departments[i];
+                var assignments = window.GovernmentState.getAssignmentsForDepartment(dept.id, true);
+                var deptTotal = 0;
+
+                for (var j = 0; j < assignments.length; j++) {
+                    var salary = 10;
+                    if (typeof window.GovernmentEconomy !== 'undefined' && 
+                        typeof window.GovernmentEconomy.calculatePositionSalary === 'function') {
+                        salary = window.GovernmentEconomy.calculatePositionSalary(
+                            assignments[j].positionId, dept
+                        );
+                    }
+                    deptTotal += salary;
+                }
+
+                total += deptTotal;
+                details.push({
+                    departmentId: dept.id,
+                    departmentName: dept.name,
+                    salaryRequirement: deptTotal,
+                    positionCount: assignments.length
+                });
+            }
+
+            return { total: total, details: details };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    // =========================================================================
+    // 17. PUBLIC ENTERPRISE PROFIT COLLECTION
+    // =========================================================================
+
+    function collectPublicEnterpriseProfits(locationId, year) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Command already processing' };
+        }
+        _processingCommand = true;
+
+        try {
+            var data = _getSettlementData(locationId);
+            if (!data) {
+                return { success: false, reason: 'Settlement data not found' };
+            }
+
+            var publicEnterprises = SettlementState.getPublicEnterprises(locationId);
+            var totalProfit = 0;
+            var details = [];
+
+            for (var i = 0; i < publicEnterprises.length; i++) {
+                var enterprise = publicEnterprises[i];
+                var summary = null;
+
+                if (typeof window.IndustryQueries !== 'undefined') {
+                    summary = window.IndustryQueries.getEnterpriseSummary(enterprise.id);
+                }
+
+                if (summary) {
+                    var profit = summary.annualProfit || 0;
+                    if (profit > 0) {
+                        totalProfit += profit;
+                        details.push({
+                            enterpriseId: enterprise.id,
+                            enterpriseName: enterprise.name,
+                            profit: profit
+                        });
+                    }
+                }
+            }
+
+            if (totalProfit > 0) {
+                data.wealth = (data.wealth || 0) + totalProfit;
+
+                SettlementState._updateSettlementData(locationId, {
+                    wealth: data.wealth
+                });
+
+                SettlementState._addHistoryEntry(locationId, {
+                    year: year || _getCurrentYear(),
+                    type: 'public_enterprise_profit',
+                    totalProfit: totalProfit,
+                    details: details,
+                    newWealth: data.wealth
+                });
+
+                _logEvent('settlement', 'public_enterprise_profit_collected',
+                    'Collected ' + totalProfit + ' gold from public enterprises at ' + 
+                    (_getPlaceById(locationId)?.displayName || 'Unknown'),
+                []);
+
+                _showToast('Collected ' + totalProfit + ' gold from public enterprises', 'success');
+            }
+
+            return {
+                success: true,
+                locationId: locationId,
+                totalProfit: totalProfit,
+                enterprises: details,
+                newWealth: data.wealth
+            };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    function getPublicEnterpriseSummary(locationId) {
+        if (_processingCommand) {
+            return { total: 0, enterprises: [], totalProfit: 0 };
+        }
+        _processingCommand = true;
+
+        try {
+            var publicEnterprises = SettlementState.getPublicEnterprises(locationId);
+            var totalProfit = 0;
+            var totalWealth = 0;
+            var details = [];
+
+            for (var i = 0; i < publicEnterprises.length; i++) {
+                var enterprise = publicEnterprises[i];
+                var summary = null;
+
+                if (typeof window.IndustryQueries !== 'undefined') {
+                    summary = window.IndustryQueries.getEnterpriseSummary(enterprise.id);
+                }
+
+                if (summary) {
+                    totalProfit += summary.annualProfit || 0;
+                    totalWealth += summary.wealth || 0;
+                    details.push({
+                        enterpriseId: enterprise.id,
+                        enterpriseName: enterprise.name,
+                        profit: summary.annualProfit || 0,
+                        wealth: summary.wealth || 0,
+                        workers: summary.workerCount || 0,
+                        status: summary.status || 'active'
+                    });
+                }
+            }
+
+            return {
+                locationId: locationId,
+                total: details.length,
+                totalProfit: totalProfit,
+                totalWealth: totalWealth,
+                enterprises: details
+            };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    // =========================================================================
+    // 18. DEMOLISHED FEATURES TRACKING
+    // =========================================================================
+
+    function getDemolishedFeatures(locationId) {
+        try {
+            var settlement = _getSettlementData(locationId);
+            if (!settlement) return [];
+
+            return settlement.demolishedFeatures || [];
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function recordFeatureDemolition(locationId, featureId, record) {
+        try {
+            var settlement = _getSettlementData(locationId);
+            if (!settlement) return false;
+
+            settlement.demolishedFeatures = settlement.demolishedFeatures || [];
+            settlement.demolishedFeatures.push({
+                featureId: featureId,
+                demolishedAt: record.demolishedAt || _getCurrentYear(),
+                demolishedReason: record.demolishedReason || 'Demolished',
+                destroyedBy: record.destroyedBy || 'manual',
+                disasterId: record.disasterId || null,
+                timestamp: Date.now()
+            });
+
+            SettlementState._updateSettlementData(locationId, {
+                demolishedFeatures: settlement.demolishedFeatures
+            });
+
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function getSettlementDemolitionStats(locationId) {
+        var stats = {
+            totalFeatures: 0,
+            byDestroyedBy: {},
+            recentDemolitions: []
+        };
+
+        try {
+            var features = getDemolishedFeatures(locationId);
+            stats.totalFeatures = features.length;
+
+            for (var i = 0; i < features.length; i++) {
+                var f = features[i];
+
+                var destroyedBy = f.destroyedBy || 'unknown';
+                if (!stats.byDestroyedBy[destroyedBy]) {
+                    stats.byDestroyedBy[destroyedBy] = 0;
+                }
+                stats.byDestroyedBy[destroyedBy]++;
+
+                if (stats.recentDemolitions.length < 5) {
+                    stats.recentDemolitions.push({
+                        featureId: f.featureId,
+                        destroyedAt: f.demolishedAt,
+                        destroyedBy: f.destroyedBy,
+                        reason: f.demolishedReason
+                    });
+                }
+            }
+
+            stats.recentDemolitions.sort(function(a, b) {
+                return (b.destroyedAt || 0) - (a.destroyedAt || 0);
+            });
+
+        } catch (e) {
+            // Error getting stats
+        }
+
+        return stats;
+    }
+
+    // =========================================================================
+    // 19. ANNUAL PROCESSING - CRITICAL
     // =========================================================================
 
     function processAnnualSettlementUpdate(locationId) {
@@ -1068,13 +1853,15 @@
             var tradeIncome = SettlementEconomy.calculateTradeIncome(locationId);
             var industryIncome = SettlementEconomy.calculateIndustryIncome(locationId);
             var stateIncome = SettlementEconomy.calculateStateEnterpriseIncome(locationId);
-            var totalIncome = taxIncome + tradeIncome + industryIncome + stateIncome;
+            var publicIncome = SettlementEconomy.calculatePublicEnterpriseIncome(locationId); // NEW
+            var totalIncome = taxIncome + tradeIncome + industryIncome + stateIncome + publicIncome;
 
             // 3. Calculate expenses
             var maintenance = SettlementEconomy.calculateMaintenanceCosts(locationId);
             var wages = SettlementEconomy.calculateWageCosts(locationId);
             var spending = SettlementEconomy.calculateSpendingCosts(locationId);
-            var totalExpenses = maintenance + wages + spending;
+            var govSalaries = SettlementEconomy.calculateGovernmentSalaryExpenses(locationId);
+            var totalExpenses = maintenance + wages + spending + govSalaries;
 
             // 4. Calculate surplus
             var surplus = totalIncome - totalExpenses;
@@ -1113,6 +1900,7 @@
                     trade: Math.floor(tradeIncome),
                     industry: Math.floor(industryIncome),
                     stateEnterprises: Math.floor(stateIncome),
+                    publicEnterprises: Math.floor(publicIncome), // NEW
                     other: 0
                 },
                 expenses: {
@@ -1122,6 +1910,7 @@
                     military: data.militarySpending || 0,
                     education: data.educationSpending || 0,
                     infrastructure: data.infrastructureSpending || 0,
+                    governmentSalaries: data.governmentSalaryBudget || 0,
                     other: 0
                 },
                 annualSurplus: Math.floor(surplus),
@@ -1129,7 +1918,7 @@
                 totalExpenses: Math.floor(totalExpenses)
             };
 
-            // 8. Update prosperity (includes role factors)
+            // 8. Update prosperity
             var prosperity = SettlementEconomy.calculateProsperity(locationId);
             data.prosperity = prosperity;
 
@@ -1166,7 +1955,13 @@
                 });
             }
 
-            // 12. Save all changes
+            // 12. Update dominant religion (NEW)
+            updateDominantReligion(locationId, { silent: true });
+
+            // 13. Collect public enterprise profits
+            var profitResult = collectPublicEnterpriseProfits(locationId, _getCurrentYear());
+
+            // 14. Save all changes
             SettlementState._updateSettlementData(locationId, {
                 wealth: data.wealth,
                 totalDebt: data.totalDebt,
@@ -1175,15 +1970,20 @@
                 employment: data.employment,
                 crimeRate: data.crimeRate,
                 rankId: data.rankId,
-                lastUpgraded: data.lastUpgraded
+                lastUpgraded: data.lastUpgraded,
+                dominantReligionId: data.dominantReligionId,
+                religiousUnity: data.religiousUnity
             });
 
-            // 13. Log event
+            // 15. Log event
             _logEvent('settlement', 'annual_processed',
                 place.displayName + ' processed: ' + Math.floor(totalIncome) + ' income, ' +
                 Math.floor(totalExpenses) + ' expenses, ' +
                 (surplus >= 0 ? '+' : '') + Math.floor(surplus) + ' surplus' +
-                ' (Prosperity: ' + prosperity + '%)',
+                ' (Prosperity: ' + prosperity + '%, Education Spend: ' + (data.educationSpending || 0) + ')' +
+                (data.dominantReligionId ? ', Dominant Religion: ' + (_getReligion(data.dominantReligionId)?.name || 'Unknown') : '') +
+                (data.religiousUnity ? ', Unity: ' + data.religiousUnity + '%' : '') +
+                (profitResult.totalProfit > 0 ? ', Public enterprise profit: ' + profitResult.totalProfit : ''),
                 []);
 
             return {
@@ -1197,9 +1997,20 @@
                 debt: data.totalDebt,
                 employment: data.employment,
                 crimeRate: data.crimeRate,
+                educationSpending: data.educationSpending || 0,
+                publicEnterpriseProfit: profitResult.totalProfit || 0,
+                // NEW: Religion data
+                dominantReligionId: data.dominantReligionId,
+                dominantReligionName: data.dominantReligionId ? 
+                    (_getReligion(data.dominantReligionId)?.name || 'Unknown') : 'None',
+                religiousUnity: data.religiousUnity || 50,
                 summary: 'Settlement processed: Prosperity ' + data.prosperity + '%, Surplus ' +
                     Math.floor(surplus) + ' gold' +
-                    (data.totalDebt > 0 ? ' (Debt: ' + data.totalDebt + ' gold)' : '')
+                    (data.totalDebt > 0 ? ' (Debt: ' + data.totalDebt + ' gold)' : '') +
+                    (data.educationSpending > 0 ? ' (Education: ' + data.educationSpending + ' gold)' : '') +
+                    (profitResult.totalProfit > 0 ? ' (Public Enterprise Profit: ' + profitResult.totalProfit + ')' : '') +
+                    (data.dominantReligionId ? ' (Dominant: ' + (_getReligion(data.dominantReligionId)?.name || 'Unknown') + ')' : '') +
+                    (data.religiousUnity ? ' (Unity: ' + data.religiousUnity + '%)' : '')
             };
 
         } finally {
@@ -1233,34 +2044,115 @@
     }
 
     // =========================================================================
-    // 14. EXPORTS
+    // 20. EXPORTS
     // =========================================================================
 
     window.SettlementCommands = {
+        // Feature management
         buildFeature: buildFeature,
         removeFeature: removeFeature,
         demolishFeature: demolishFeature,
+        
+        // Settlement management
         upgradeSettlement: upgradeSettlement,
         setSpecialization: setSpecialization,
+        
+        // Wealth & Debt
         updateWealth: updateWealth,
         updateDebt: updateDebt,
+        
+        // Tax & Rate
         updateTaxRate: updateTaxRate,
         updateTradeTariff: updateTradeTariff,
         updateIndustryTaxRate: updateIndustryTaxRate,
+        
+        // Spending
         updateMilitarySpending: updateMilitarySpending,
         updateInfrastructureSpending: updateInfrastructureSpending,
         updateEducationSpending: updateEducationSpending,
+        
+        // Justice & Watch
         updateJusticeSeverity: updateJusticeSeverity,
         updateWatch: updateWatch,
+        
+        // State Enterprises
         createStateEnterprise: createStateEnterprise,
         removeStateEnterprise: removeStateEnterprise,
+        
+        // Annual Processing
         processAnnualSettlementUpdate: processAnnualSettlementUpdate,
         processAllSettlements: processAllSettlements,
+        
+        // Validation
         validateFeature: _validateFeature,
-        // NEW: Role-settlement commands
+        
+        // Role-settlement commands
         assignSettlementRole: assignSettlementRole,
         removeSettlementRole: removeSettlementRole,
-        updateSettlementCharacterSkill: updateSettlementCharacterSkill
+        updateSettlementCharacterSkill: updateSettlementCharacterSkill,
+        
+        // Budget allocation commands
+        allocateGovernmentSalaryBudget: allocateGovernmentSalaryBudget,
+        allocateEducationBudget: allocateEducationBudget,
+        getGovernmentSalaryRequirements: getGovernmentSalaryRequirements,
+        
+        // Public enterprise commands
+        collectPublicEnterpriseProfits: collectPublicEnterpriseProfits,
+        getPublicEnterpriseSummary: getPublicEnterpriseSummary,
+        
+        // Demolished features tracking
+        getDemolishedFeatures: getDemolishedFeatures,
+        recordFeatureDemolition: recordFeatureDemolition,
+        getSettlementDemolitionStats: getSettlementDemolitionStats,
+
+        // ================================================================
+        // NEW: Places of Worship commands
+        // ================================================================
+        addPlaceOfWorshipToSettlement: addPlaceOfWorshipToSettlement,
+        removePlaceOfWorshipFromSettlement: removePlaceOfWorshipFromSettlement,
+        updateDominantReligion: updateDominantReligion,
+        calculateReligiousUnity: calculateReligiousUnity
     };
+
+    // Legacy aliases
+    window._buildFeature = buildFeature;
+    window._removeFeature = removeFeature;
+    window._demolishFeature = demolishFeature;
+    window._upgradeSettlement = upgradeSettlement;
+    window._setSpecialization = setSpecialization;
+    window._updateWealth = updateWealth;
+    window._updateDebt = updateDebt;
+    window._updateTaxRate = updateTaxRate;
+    window._updateTradeTariff = updateTradeTariff;
+    window._updateIndustryTaxRate = updateIndustryTaxRate;
+    window._updateMilitarySpending = updateMilitarySpending;
+    window._updateInfrastructureSpending = updateInfrastructureSpending;
+    window._updateEducationSpending = updateEducationSpending;
+    window._updateJusticeSeverity = updateJusticeSeverity;
+    window._updateWatch = updateWatch;
+    window._createStateEnterprise = createStateEnterprise;
+    window._removeStateEnterprise = removeStateEnterprise;
+    window._processAnnualSettlementUpdate = processAnnualSettlementUpdate;
+    window._processAllSettlements = processAllSettlements;
+    window._assignSettlementRole = assignSettlementRole;
+    window._removeSettlementRole = removeSettlementRole;
+    window._updateSettlementCharacterSkill = updateSettlementCharacterSkill;
+    window._allocateGovernmentSalaryBudget = allocateGovernmentSalaryBudget;
+    window._allocateEducationBudget = allocateEducationBudget;
+    window._getGovernmentSalaryRequirements = getGovernmentSalaryRequirements;
+    window._collectPublicEnterpriseProfits = collectPublicEnterpriseProfits;
+    window._getPublicEnterpriseSummary = getPublicEnterpriseSummary;
+    window._getDemolishedFeatures = getDemolishedFeatures;
+    window._recordFeatureDemolition = recordFeatureDemolition;
+    window._getSettlementDemolitionStats = getSettlementDemolitionStats;
+    // NEW: Places of Worship aliases
+    window._addPlaceOfWorshipToSettlement = addPlaceOfWorshipToSettlement;
+    window._removePlaceOfWorshipFromSettlement = removePlaceOfWorshipFromSettlement;
+    window._updateDominantReligion = updateDominantReligion;
+    window._calculateReligiousUnity = calculateReligiousUnity;
+
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.SettlementCommands;
+    }
 
 })();

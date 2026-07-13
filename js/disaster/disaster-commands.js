@@ -17,6 +17,7 @@
  *   - DisasterCommands.applyDisasterSettlementEffects(locationId, disaster)
  *   - DisasterCommands.applyDisasterCrimeEffect(locationId, disaster)
  *   - DisasterCommands.applyDisasterEducationEffects(locationId, disaster)
+ *   - DisasterCommands.applyStructuralDamage(locationId, disaster, options) - NEW
  *   - DisasterCommands.simulateRandomDisaster(year, baseChance)
  *   - DisasterCommands.getDisasterLocationModifier(location, disasterType)
  * 
@@ -24,6 +25,7 @@
  *   - disaster-state.js: DisasterState
  *   - disaster-queries.js: DisasterQueries
  *   - disaster-constants.js: DISASTER_TYPES, MASS_DEATH_TYPES, LOCATION_KEYWORDS
+ *   - disaster-damage.js: DisasterDamage (NEW)
  *   - accessors.js: getCharacterById, getCharacters, getPlaceById, getPlaces
  *   - time.js: getCurrentYearSafe, calculateAge
  *   - randomness.js: chance, randomInt, pickRandom, pickWeighted
@@ -109,13 +111,6 @@
         return 'Unknown';
     }
 
-    function _getCurrentLocationId(character) {
-        if (typeof window.getCurrentLocationId === 'function') {
-            return window.getCurrentLocationId(character);
-        }
-        return null;
-    }
-
     function _chance(probability) {
         if (typeof window.chance === 'function') {
             return window.chance(probability);
@@ -142,7 +137,6 @@
         if (typeof window.pickWeighted === 'function') {
             return window.pickWeighted(items, weightGetter);
         }
-        // Fallback
         if (!items || items.length === 0) return null;
         var totalWeight = 0;
         var weights = [];
@@ -164,7 +158,6 @@
         if (typeof window.killCharacter === 'function') {
             return window.killCharacter(character, deathYear, deathCause, options);
         }
-        // Fallback
         if (!character || character.isDeceased) {
             return { success: false, reason: 'Character already deceased' };
         }
@@ -358,7 +351,28 @@
                     severityText: severity >= 70 ? 'catastrophic' : (severity >= 50 ? 'severe' : (severity >= 30 ? 'major' : (severity >= 10 ? 'minor' : 'moderate'))),
                     locationModifier: locationModifier,
                     forced: !!forcedType
-                }
+                },
+                // NEW: Structural damage fields
+                structuralDamage: {
+                    featuresDestroyed: 0,
+                    schoolsDestroyed: 0,
+                    enterprisesDestroyed: 0,
+                    residencesDemolished: 0,
+                    householdsDestroyed: 0,
+                    totalLoss: 0,
+                    destructionList: {
+                        features: [],
+                        schools: [],
+                        enterprises: [],
+                        residences: [],
+                        households: []
+                    }
+                },
+                featuresDestroyed: 0,
+                enterprisesDestroyed: 0,
+                residencesDemolished: 0,
+                householdsDestroyed: 0,
+                totalLoss: 0
             };
 
             return { success: true, data: disaster, disasterType: disasterType };
@@ -371,7 +385,7 @@
     }
 
     // =========================================================================
-    // 5. APPLY DISASTER EFFECTS
+    // 5. APPLY DISASTER EFFECTS (UPDATED with structural damage)
     // =========================================================================
 
     function applyDisasterSettlementEffects(locationId, disaster) {
@@ -502,6 +516,10 @@
         });
     }
 
+    /**
+     * Apply all disaster effects to a location
+     * Now includes structural damage via DisasterDamage coordinator
+     */
     function applyDisasterEffects(locationId, disaster) {
         if (_processingCommand) {
             return { success: false, error: 'Already processing a command' };
@@ -514,82 +532,100 @@
                 return { success: false, error: 'Location not found' };
             }
 
-            // Get affected characters
-            var affected = _getCharactersAtLocation(locationId);
-
-            // Filter if options provided
-            if (disaster.metadata && disaster.metadata.filterOptions) {
-                affected = _filterCharactersByOptions(affected, disaster.metadata.filterOptions);
-            }
-
-            // Determine victims
-            var deathPercentage = disaster.severity / 100;
-            var targetDeaths = Math.min(affected.length, Math.floor(affected.length * deathPercentage));
-
-            // Shuffle and select victims
-            var shuffled = affected.slice();
-            for (var i = shuffled.length - 1; i > 0; i--) {
-                var j = Math.floor(Math.random() * (i + 1));
-                var temp = shuffled[i];
-                shuffled[i] = shuffled[j];
-                shuffled[j] = temp;
-            }
-            var victims = shuffled.slice(0, targetDeaths);
-
-            // Kill victims
-            for (var i = 0; i < victims.length; i++) {
-                var victim = victims[i];
-                _killCharacter(victim, disaster.year, disaster.disasterType, {
-                    notes: 'Died in ' + disaster.disasterType + ' at ' + location.displayName
-                });
-            }
-
-            // Apply integrated effects
-            var prosperityLoss = applyDisasterSettlementEffects(locationId, disaster);
-            var crimeIncrease = applyDisasterCrimeEffect(locationId, disaster);
-            var schoolsDestroyed = applyDisasterEducationEffects(locationId, disaster);
-
-            // Update disaster record
-            disaster.actualDeaths = victims.length;
-            disaster.prosperityLoss = prosperityLoss;
-            disaster.crimeIncrease = crimeIncrease;
-            disaster.schoolsDestroyed = schoolsDestroyed;
-
-            // Save the updated disaster
-            var saveResult = window.DisasterState.updateDisaster(disaster.id, {
-                actualDeaths: victims.length,
-                prosperityLoss: prosperityLoss,
-                crimeIncrease: crimeIncrease,
-                schoolsDestroyed: schoolsDestroyed
-            });
-
-            if (!saveResult.success) {
-                return { success: false, error: 'Failed to update disaster record: ' + saveResult.error };
-            }
-
-            _logEvent('disaster', 'Disaster Applied',
-                disaster.disasterType + ' affected ' + location.displayName + 
-                '. ' + victims.length + ' deaths, ' + prosperityLoss + ' prosperity lost, ' + 
-                schoolsDestroyed + ' schools destroyed.',
-                [], location.displayName);
-
-            return {
+            var results = {
                 success: true,
-                data: {
-                    victims: victims,
-                    deaths: victims.length,
-                    prosperityLoss: prosperityLoss,
-                    crimeIncrease: crimeIncrease,
-                    schoolsDestroyed: schoolsDestroyed,
-                    disaster: disaster
-                }
+                locationId: locationId,
+                disasterId: disaster.id,
+                year: disaster.year,
+                prosperityLoss: 0,
+                crimeIncrease: 0,
+                structuralDamage: null
             };
+
+            // 1. Apply settlement effects (prosperity, crime)
+            if (typeof window.SettlementCommands !== 'undefined') {
+                results.prosperityLoss = applyDisasterSettlementEffects(locationId, disaster);
+                results.crimeIncrease = applyDisasterCrimeEffect(locationId, disaster);
+            }
+
+            // 2. Apply education effects (school destruction)
+            // DEPRECATED: Now handled by structural damage
+            // Keeping for backward compatibility
+            if (typeof window.EducationCommands !== 'undefined') {
+                applyDisasterEducationEffects(locationId, disaster);
+            }
+
+            // 3. NEW: Apply structural damage via Damage Coordinator
+            try {
+                if (typeof window.DisasterDamage !== 'undefined' && 
+                    typeof window.DisasterDamage.applyStructuralDamage === 'function') {
+                    var damageResults = window.DisasterDamage.applyStructuralDamage(
+                        locationId, 
+                        disaster,
+                        { demolishHouseholds: true }
+                    );
+                    results.structuralDamage = damageResults;
+                }
+            } catch (e) {
+                // Damage coordinator might not be loaded
+                results.structuralDamage = { success: false, error: e.message };
+            }
+
+            // 4. Update disaster record with comprehensive results
+            try {
+                if (typeof window.DisasterState !== 'undefined') {
+                    var updates = {
+                        prosperityLoss: results.prosperityLoss,
+                        crimeIncrease: results.crimeIncrease
+                    };
+
+                    if (results.structuralDamage && results.structuralDamage.success) {
+                        updates.structuralDamage = {
+                            featuresDestroyed: results.structuralDamage.featuresDestroyed.length || 0,
+                            schoolsDestroyed: results.structuralDamage.schoolsDestroyed.length || 0,
+                            enterprisesDestroyed: results.structuralDamage.enterprisesDestroyed.length || 0,
+                            residencesDemolished: results.structuralDamage.residencesDemolished.length || 0,
+                            householdsDestroyed: results.structuralDamage.householdsDestroyed.length || 0,
+                            totalLoss: results.structuralDamage.totalLoss || 0,
+                            destructionList: {
+                                features: results.structuralDamage.featuresDestroyed || [],
+                                schools: results.structuralDamage.schoolsDestroyed || [],
+                                enterprises: results.structuralDamage.enterprisesDestroyed || [],
+                                residences: results.structuralDamage.residencesDemolished || [],
+                                households: results.structuralDamage.householdsDestroyed || []
+                            }
+                        };
+                        updates.featuresDestroyed = results.structuralDamage.featuresDestroyed.length || 0;
+                        updates.schoolsDestroyed = results.structuralDamage.schoolsDestroyed.length || 0;
+                        updates.enterprisesDestroyed = results.structuralDamage.enterprisesDestroyed.length || 0;
+                        updates.residencesDemolished = results.structuralDamage.residencesDemolished.length || 0;
+                        updates.householdsDestroyed = results.structuralDamage.householdsDestroyed.length || 0;
+                        updates.totalLoss = results.structuralDamage.totalLoss || 0;
+                    }
+
+                    window.DisasterState.updateDisaster(disaster.id, updates);
+                }
+            } catch (e) {
+                // Failed to update
+            }
+
+            return results;
 
         } catch (e) {
             return { success: false, error: e.message || 'Failed to apply disaster effects' };
         } finally {
             _processingCommand = false;
         }
+    }
+
+    /**
+     * Apply structural damage specifically (convenience wrapper)
+     */
+    function applyStructuralDamage(locationId, disaster, options) {
+        if (typeof window.DisasterDamage === 'undefined') {
+            return { success: false, error: 'DisasterDamage module not loaded' };
+        }
+        return window.DisasterDamage.applyStructuralDamage(locationId, disaster, options);
     }
 
     // =========================================================================
@@ -631,11 +667,11 @@
                     success: true,
                     data: {
                         disaster: disaster,
-                        victims: effectResult.data.victims,
-                        deaths: effectResult.data.deaths,
-                        prosperityLoss: effectResult.data.prosperityLoss,
-                        crimeIncrease: effectResult.data.crimeIncrease,
-                        schoolsDestroyed: effectResult.data.schoolsDestroyed
+                        victims: effectResult.data ? effectResult.data.victims : [],
+                        deaths: effectResult.data ? effectResult.data.deaths : 0,
+                        prosperityLoss: effectResult.prosperityLoss || 0,
+                        crimeIncrease: effectResult.crimeIncrease || 0,
+                        structuralDamage: effectResult.structuralDamage || null
                     }
                 };
             }
@@ -681,11 +717,11 @@
                     success: true,
                     data: {
                         disaster: disaster,
-                        victims: effectResult.data.victims,
-                        deaths: effectResult.data.deaths,
-                        prosperityLoss: effectResult.data.prosperityLoss,
-                        crimeIncrease: effectResult.data.crimeIncrease,
-                        schoolsDestroyed: effectResult.data.schoolsDestroyed
+                        victims: effectResult.data ? effectResult.data.victims : [],
+                        deaths: effectResult.data ? effectResult.data.deaths : 0,
+                        prosperityLoss: effectResult.prosperityLoss || 0,
+                        crimeIncrease: effectResult.crimeIncrease || 0,
+                        structuralDamage: effectResult.structuralDamage || null
                     }
                 };
             }
@@ -731,11 +767,11 @@
                     success: true,
                     data: {
                         disaster: disaster,
-                        victims: effectResult.data.victims,
-                        deaths: effectResult.data.deaths,
-                        prosperityLoss: effectResult.data.prosperityLoss,
-                        crimeIncrease: effectResult.data.crimeIncrease,
-                        schoolsDestroyed: effectResult.data.schoolsDestroyed
+                        victims: effectResult.data ? effectResult.data.victims : [],
+                        deaths: effectResult.data ? effectResult.data.deaths : 0,
+                        prosperityLoss: effectResult.prosperityLoss || 0,
+                        crimeIncrease: effectResult.crimeIncrease || 0,
+                        structuralDamage: effectResult.structuralDamage || null
                     }
                 };
             }
@@ -822,11 +858,14 @@
         generateDisasterDescription: generateDisasterDescription,
         getDisasterLocationModifier: getDisasterLocationModifier,
 
-        // Effects
+        // Effects (UPDATED)
         applyDisasterEffects: applyDisasterEffects,
         applyDisasterSettlementEffects: applyDisasterSettlementEffects,
         applyDisasterCrimeEffect: applyDisasterCrimeEffect,
         applyDisasterEducationEffects: applyDisasterEducationEffects,
+
+        // Structural damage (NEW)
+        applyStructuralDamage: applyStructuralDamage,
 
         // Convenience wrappers
         triggerPlague: triggerPlague,

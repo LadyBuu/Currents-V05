@@ -223,7 +223,7 @@ js/core/modals/
 
 ---
 
-## Enterprise Integration (NEW)
+## Enterprise Integration
 
 ### `HouseholdState.getHouseholdEnterprises(householdId)`
 
@@ -240,6 +240,30 @@ js/core/modals/
 | **Description** | Gets the enterprise history for a household |
 | **Parameters** | `householdId` (string) |
 | **Returns** | `Array` - Array of { enterpriseId, year, action } |
+
+### `HouseholdState.getHouseholdEnterpriseProfitHistory(householdId, limit)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets enterprise profit history for a household |
+| **Parameters** | `householdId` (string), `limit` (number) |
+| **Returns** | `Array` - Array of { enterpriseId, year, profit, type } |
+
+### `HouseholdState.getHouseholdEnterpriseValue(householdId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets total enterprise value for a household |
+| **Parameters** | `householdId` (string) |
+| **Returns** | `number` - Total enterprise value |
+
+### `HouseholdState.trackEnterpriseProfit(householdId, enterpriseId, profit, year)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Tracks enterprise profit for a household |
+| **Parameters** | `householdId` (string), `enterpriseId` (string), `profit` (number), `year` (number) |
+| **Returns** | `boolean` - True if tracked |
 
 ### `HouseholdState.getHouseholdEnterprisesWithData(householdId)`
 
@@ -326,7 +350,7 @@ js/core/modals/
 | Property | Value |
 |----------|-------|
 | **Description** | Assigns a character to a household position |
-| **Parameters** | `positionId` (string), `characterId` (string), `options.startYear` (number), `options.endYear` (number), `options.title` (string), `options.notes` (string), `options.addRoleIfMissing` (boolean), `options.defaultSkillLevel` (number) |
+| **Parameters** | `positionId` (string), `characterId` (string), `options.startYear` (number), `options.endYear` (number), `options.title` (string), `options.notes` (string) |
 | **Returns** | `Object|null` - Assignment or null |
 
 ### `HouseholdState.endHouseholdAssignment(assignmentId, endYear, reason)`
@@ -437,7 +461,7 @@ js/core/modals/
 
 ---
 
-## Household CRUD (Updated with Enterprise Cleanup)
+## Household CRUD (with Enterprise Cleanup)
 
 ### `HouseholdCommands.createHousehold(data)`
 
@@ -777,7 +801,7 @@ js/core/modals/
 
 ---
 
-## Enterprise Queries (NEW)
+## Enterprise Queries
 
 ### `HouseholdQueries.getHouseholdEnterprises(householdId)`
 
@@ -793,7 +817,7 @@ js/core/modals/
 |----------|-------|
 | **Description** | Gets enterprise summaries for a household |
 | **Parameters** | `householdId` (string) |
-| **Returns** | `Array` - Array of { id, name, type, category, wealth, debt, workerCount, annualProfit, status } |
+| **Returns** | `Array` - Array of { id, name, type, category, wealth, debt, workerCount, annualProfit, status, ownershipType } |
 
 ### `HouseholdQueries.getHouseholdEnterpriseStats(householdId)`
 
@@ -801,7 +825,7 @@ js/core/modals/
 |----------|-------|
 | **Description** | Gets enterprise statistics for a household |
 | **Parameters** | `householdId` (string) |
-| **Returns** | `{ total, profitable, unprofitable, totalProfit, totalWealth, totalDebt, totalWorkers, byStatus, byCategory, profitableEnterprises, unprofitableEnterprises }` |
+| **Returns** | `{ total, profitable, unprofitable, totalProfit, totalWealth, totalDebt, totalWorkers, byStatus, byCategory, byOwnershipType, profitableEnterprises, unprofitableEnterprises, publicCount, privateCount }` |
 
 ### `HouseholdQueries.getHouseholdEnterpriseValue(householdId)`
 
@@ -887,6 +911,8 @@ js/core/modals/
 | theft | Theft | -10 to -30 | 0.05 |
 | inheritance | Inheritance | 20-70 | 0.03 |
 | fire | Fire | -15 to -45 | 0.04 |
+| enterprise_boom | Enterprise Boom | Variable | 0.04 |
+| enterprise_crisis | Enterprise Crisis | Variable | 0.04 |
 
 ---
 
@@ -954,7 +980,7 @@ js/core/modals/
 
 ---
 
-## Income & Expenses (Updated with Enterprise Integration)
+## Income & Expenses (with Enterprise Integration)
 
 ### `HouseholdEconomy.calculateAnnualIncome(householdId)`
 
@@ -967,7 +993,7 @@ js/core/modals/
 **Income Sources:**
 1. Base income from household economy
 2. Member salaries (government/role salaries)
-3. **Enterprise profits (NEW)**
+3. Enterprise profits
 4. School profits
 
 ### `HouseholdEconomy.calculateAnnualExpenses(householdId)`
@@ -981,7 +1007,7 @@ js/core/modals/
 **Expense Sources:**
 1. Base expenses from household economy
 2. Staff wages
-3. **Enterprise losses (NEW)**
+3. Enterprise losses
 4. Tuition expenses
 5. Debt interest (5% of debt)
 
@@ -995,7 +1021,7 @@ js/core/modals/
 
 ---
 
-## Annual Processing (Updated with Enterprise Integration)
+## Annual Processing (with Enterprise Integration)
 
 ### `HouseholdEconomy.processAnnualEconomy(householdId)`
 
@@ -1008,7 +1034,7 @@ js/core/modals/
 **Processing Steps:**
 1. Calculate net annual change (income - expenses)
 2. Apply net change to wealth
-3. **Log enterprise profit/loss events (NEW)**
+3. Log enterprise profit/loss events
 4. Check for bankruptcy
 5. Update household status
 
@@ -1180,7 +1206,7 @@ js/core/modals/
 
 ---
 
-## Inheritance (Updated with Enterprise Transfer)
+## Inheritance (with Enterprise Transfer)
 
 ### `HouseholdAssignment.processHouseholdInheritanceOnDeath(characterId, options)`
 
@@ -1222,7 +1248,7 @@ js/core/modals/
 
 ---
 
-## Household Management (Updated with Enterprise Transfer)
+## Household Management (with Enterprise Transfer)
 
 ### `HouseholdAssignment.createCadetBranch(householdId, newHouseholdName, memberIds, options)`
 
@@ -2155,9 +2181,10 @@ js/core/modals/
 3. Demographics - Male, Female, Children, Elders
 4. Residence - Current residence and unit
 5. Members List - With roles, ages, head indicator
-6. **Enterprise Section (NEW)**:
+6. **Enterprise Section**:
    - List of owned enterprises with profit/status
    - Total profit and worker count
+   - Ownership type indicators (Public/Private)
    - View All Enterprises button
    - Create Enterprise button
 7. Notes
@@ -2167,6 +2194,7 @@ js/core/modals/
 - Shows up to 5 enterprises with profit and status
 - Click on enterprise to view details
 - Total profit summary
+- Ownership type breakdown (Public/Private)
 - "View All" button opens enterprise list
 - "Create Enterprise" button opens create modal with household pre-selected
 
@@ -2203,8 +2231,8 @@ js/core/modals/
 | `residenceUnitNumber` | number | Unit number |
 | `residenceNotes` | string | Residence association notes |
 | `residenceHistory` | array | Residence association history |
-| **`enterprises`** | **array** | **Array of enterprise IDs (NEW)** |
-| **`enterpriseHistory`** | **array** | **Array of { enterpriseId, year, action } (NEW)** |
+| **`enterprises`** | **array** | **Array of enterprise IDs** |
+| **`enterpriseHistory`** | **array** | **Array of { enterpriseId, year, action }** |
 | `economy` | object | Economy data |
 | `criminalCount` | number | Number of criminal members |
 | `victimCount` | number | Number of victims |
@@ -2556,7 +2584,7 @@ All icons must come from `icons.js` via the `_getIcon()` function.
 | Residence → Household | `residence.householdId` field | ✅ Direct |
 | Residence → Unit | `residence.units[]` array | ✅ Direct |
 
-## Household ↔ Enterprise Integration (NEW)
+## Household ↔ Enterprise Integration
 
 | Direction | Mechanism | Status |
 |-----------|-----------|--------|
@@ -2585,3 +2613,6 @@ All icons must come from `icons.js` via the `_getIcon()` function.
 - Enterprise transfer on inheritance, merge, split, cadet branch
 - Enterprise cleanup on household deletion
 - Enterprise section in household detail modal
+- Ownership type indicators (Public/Private)
+- Enterprise profit history tracking
+- Enterprise value calculation

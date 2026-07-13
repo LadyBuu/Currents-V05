@@ -7,7 +7,7 @@
  * 
  * DEPENDENCIES: None (pure constants)
  * 
- * UPDATED: Removed requiredTeacherSkill from INSTITUTION_TYPES
+ * UPDATED: Added RELIGIOUS ownership type, religious institution types
  * 
  * =============================================================================
  */
@@ -88,7 +88,7 @@
     }
 
     // =============================================================================
-    // 5. INSTITUTION TYPES (NO requiredTeacherSkill)
+    // 5. INSTITUTION TYPES
     // =============================================================================
 
     var INSTITUTION_TYPES = {
@@ -175,11 +175,48 @@
             minPopulation: 500,
             description: 'School focused on a specific profession',
             skillGainPerYear: 12
+        },
+        // ================================================================
+        // NEW: Religious school types
+        // ================================================================
+        RELIGIOUS_SEMINARY: {
+            id: 'religious_seminary',
+            name: 'Religious Seminary',
+            icon: '⌆',
+            costPerYear: 20,
+            maxStudents: 30,
+            baseReputation: 55,
+            requiredYears: 4,
+            minPopulation: 500,
+            description: 'Institution for religious education and clergy training',
+            skillGainPerYear: 10
+        },
+        MONASTIC_SCHOOL: {
+            id: 'monastic_school',
+            name: 'Monastic School',
+            icon: '⌆',
+            costPerYear: 12,
+            maxStudents: 20,
+            baseReputation: 50,
+            requiredYears: 3,
+            minPopulation: 300,
+            description: 'School operated by a religious order',
+            skillGainPerYear: 10
         }
     };
 
     // =============================================================================
-    // 6. TUITION CONSTANTS
+    // 6. OWNERSHIP TYPES (NEW: Added RELIGIOUS)
+    // =============================================================================
+
+    var OWNERSHIP_TYPES = {
+        PUBLIC: 'public',
+        PRIVATE: 'private',
+        RELIGIOUS: 'religious'  // NEW
+    };
+
+    // =============================================================================
+    // 7. TUITION CONSTANTS
     // =============================================================================
 
     var DEFAULT_TUITION_BY_TYPE = {
@@ -189,7 +226,9 @@
         'university': 40,
         'military_academy': 25,
         'court_tutor': 80,
-        'specialized_school': 20
+        'specialized_school': 20,
+        'religious_seminary': 15,  // NEW
+        'monastic_school': 8       // NEW
     };
 
     var DEFAULT_TUITION = 10;
@@ -207,11 +246,13 @@
         'university': 1.5,
         'military_academy': 1.2,
         'court_tutor': 1.0,
-        'specialized_school': 1.0
+        'specialized_school': 1.0,
+        'religious_seminary': 1.0,   // NEW
+        'monastic_school': 0.8       // NEW
     };
 
     // =============================================================================
-    // 7. ROLE CATEGORY OPTIONS (for specialization)
+    // 8. ROLE CATEGORY OPTIONS (for specialization)
     // =============================================================================
 
     var ROLE_CATEGORY_OPTIONS = {
@@ -232,7 +273,7 @@
     };
 
     // =============================================================================
-    // 8. EXPORTS
+    // 9. EXPORTS
     // =============================================================================
 
     window.EDUCATION_LEVELS = EDUCATION_LEVELS;
@@ -240,6 +281,7 @@
     window.HIGHER_SUBJECTS = HIGHER_SUBJECTS;
     window.ALL_SUBJECTS = ALL_SUBJECTS;
     window.INSTITUTION_TYPES = INSTITUTION_TYPES;
+    window.OWNERSHIP_TYPES = OWNERSHIP_TYPES;  // NEW
     window.ROLE_CATEGORY_OPTIONS = ROLE_CATEGORY_OPTIONS;
 
     window.DEFAULT_TUITION_BY_TYPE = DEFAULT_TUITION_BY_TYPE;
@@ -258,6 +300,7 @@
             HIGHER_SUBJECTS: HIGHER_SUBJECTS,
             ALL_SUBJECTS: ALL_SUBJECTS,
             INSTITUTION_TYPES: INSTITUTION_TYPES,
+            OWNERSHIP_TYPES: OWNERSHIP_TYPES,
             ROLE_CATEGORY_OPTIONS: ROLE_CATEGORY_OPTIONS,
             DEFAULT_TUITION_BY_TYPE: DEFAULT_TUITION_BY_TYPE,
             DEFAULT_TUITION: DEFAULT_TUITION,

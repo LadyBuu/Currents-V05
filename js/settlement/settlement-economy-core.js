@@ -1,26 +1,19 @@
 /**
  * =============================================================================
- * SETTLEMENT ECONOMY - Business logic for settlement finances
+ * SETTLEMENT ECONOMY CORE - Income, expenses, surplus, and reporting
  * =============================================================================
  * 
  * This file contains business logic for:
- * - Income calculation (taxes, trade, industry, state enterprises)
- * - Expense calculation (maintenance, wages, spending)
+ * - Income calculation (taxes, trade, industry, state enterprises, public enterprises)
+ * - Expense calculation (maintenance, wages, spending, government salaries)
  * - Surplus calculation
- * - PROSPERITY CALCULATION (calculateProsperity) - UPDATED with Government Leader integration
- * - PROSPERITY CALCULATION - UPDATED with Role integration (NEW)
- * - CRIME RATE CALCULATION (calculateCrimeRate)
- * - SPECIALIZATION BONUSES (calculateSpecializationIncomeBonus, calculateSpecializationProsperityBonus)
- * - LITERACY STATS (getSettlementLiteracyStats)
- * - Employment calculation (calculateEmployment)
- * - Tax revenue calculation
  * - Financial reporting
  * - Efficiency scoring
+ * - Debt ratio
  * 
  * DEPENDENCIES:
  *   - settlement-state.js (SettlementState)
  *   - accessors.js (getPlaceById, getCurrentYear)
- *   - government-queries.js (GovernmentQueries)
  * 
  * =============================================================================
  */
@@ -74,14 +67,6 @@
         return typeof window.GovernmentState !== 'undefined' ? window.GovernmentState : null;
     }
 
-    function _getGovernmentQueries() {
-        return typeof window.GovernmentQueries !== 'undefined' ? window.GovernmentQueries : null;
-    }
-
-    function _getCharacters() {
-        return typeof window.getCharacters === 'function' ? window.getCharacters() : [];
-    }
-
     function _getSettlementData(locationId) {
         return SettlementState.getSettlementData(locationId);
     }
@@ -98,34 +83,12 @@
         return SettlementState.getStateEnterpriseIds(locationId);
     }
 
+    function _getPublicEnterpriseIds(locationId) {
+        return SettlementState.getPublicEnterpriseIds(locationId);
+    }
+
     function _getSettlementRanks() {
         return SettlementState._getAllRanks();
-    }
-
-    function _getCurrentLocationId(character) {
-        if (!character) return null;
-
-        if (character.moves && character.moves.length > 0) {
-            var sortedMoves = character.moves.slice().sort(function(a, b) {
-                return (b.year || 0) - (a.year || 0);
-            });
-            var lastMove = sortedMoves[0];
-            if (lastMove && lastMove.locationId) {
-                return lastMove.locationId;
-            }
-        }
-
-        if (character.currentLocationId) return character.currentLocationId;
-        if (character.birthplaceId) return character.birthplaceId;
-
-        return null;
-    }
-
-    function _getAllSubLocationIds(locationId) {
-        if (typeof LocationState !== 'undefined' && LocationState.getAllSubLocationIds) {
-            return LocationState.getAllSubLocationIds(locationId);
-        }
-        return [locationId];
     }
 
     // =========================================================================
@@ -241,6 +204,34 @@
         }
     }
 
+    function calculatePublicEnterpriseIncome(locationId) {
+        if (_processingEconomy) {
+            return 0;
+        }
+        _processingEconomy = true;
+
+        try {
+            var queries = _getIndustryQueries();
+            if (!queries) return 0;
+
+            var publicIds = _getPublicEnterpriseIds(locationId);
+            if (!publicIds || publicIds.length === 0) return 0;
+
+            var totalProfit = 0;
+            for (var i = 0; i < publicIds.length; i++) {
+                var summary = queries.getEnterpriseSummary(publicIds[i]);
+                if (summary && summary.annualProfit > 0) {
+                    totalProfit += summary.annualProfit;
+                }
+            }
+
+            return totalProfit;
+
+        } finally {
+            _processingEconomy = false;
+        }
+    }
+
     function calculateTotalIncome(locationId) {
         if (_processingEconomy) {
             return 0;
@@ -252,8 +243,9 @@
             var tradeIncome = calculateTradeIncome(locationId);
             var industryIncome = calculateIndustryIncome(locationId);
             var stateIncome = calculateStateEnterpriseIncome(locationId);
+            var publicIncome = calculatePublicEnterpriseIncome(locationId);
 
-            return taxIncome + tradeIncome + industryIncome + stateIncome;
+            return taxIncome + tradeIncome + industryIncome + stateIncome + publicIncome;
 
         } finally {
             _processingEconomy = false;
@@ -328,6 +320,23 @@
         }
     }
 
+    function calculateGovernmentSalaryExpenses(locationId) {
+        if (_processingEconomy) {
+            return 0;
+        }
+        _processingEconomy = true;
+
+        try {
+            var data = _getSettlementData(locationId);
+            if (!data) return 0;
+
+            return data.governmentSalaryBudget || 0;
+
+        } finally {
+            _processingEconomy = false;
+        }
+    }
+
     function calculateTotalExpenses(locationId) {
         if (_processingEconomy) {
             return 0;
@@ -338,8 +347,9 @@
             var maintenance = calculateMaintenanceCosts(locationId);
             var wages = calculateWageCosts(locationId);
             var spending = calculateSpendingCosts(locationId);
+            var govSalaries = calculateGovernmentSalaryExpenses(locationId);
 
-            return maintenance + wages + spending;
+            return maintenance + wages + spending + govSalaries;
 
         } finally {
             _processingEconomy = false;
@@ -347,7 +357,7 @@
     }
 
     // =========================================================================
-    // 5. SURPLUS CALCULATIONS
+    // 5. SURPLUS & TAX REVENUE
     // =========================================================================
 
     function calculateSurplus(locationId) {
@@ -375,7 +385,8 @@
 
         try {
             return calculateTaxIncome(locationId) + calculateTradeIncome(locationId) +
-                   calculateIndustryIncome(locationId) + calculateStateEnterpriseIncome(locationId);
+                   calculateIndustryIncome(locationId) + calculateStateEnterpriseIncome(locationId) +
+                   calculatePublicEnterpriseIncome(locationId);
 
         } finally {
             _processingEconomy = false;
@@ -383,7 +394,7 @@
     }
 
     // =========================================================================
-    // 6. EMPLOYMENT CALCULATION - CRITICAL
+    // 6. EMPLOYMENT CALCULATION
     // =========================================================================
 
     function calculateEmployment(locationId) {
@@ -417,6 +428,7 @@
 
             var privateEmployed = 0;
             var stateEmployed = 0;
+            var publicEmployed = 0;
             var totalWages = 0;
 
             var queries = _getIndustryQueries();
@@ -427,6 +439,8 @@
                     if (e.workerCount) {
                         if (e.ownerType === 'state') {
                             stateEmployed += e.workerCount;
+                        } else if (e.ownerType === 'settlement' || e.ownershipType === 'public') {
+                            publicEmployed += e.workerCount;
                         } else {
                             privateEmployed += e.workerCount;
                         }
@@ -435,7 +449,7 @@
                 }
             }
 
-            var totalEmployed = privateEmployed + stateEmployed;
+            var totalEmployed = privateEmployed + stateEmployed + publicEmployed;
             var unemployed = Math.max(0, adults - totalEmployed);
             var averageWage = totalEmployed > 0 ? Math.floor(totalWages / totalEmployed) : 0;
 
@@ -456,268 +470,7 @@
     }
 
     // =========================================================================
-    // 7. PROSPERITY CALCULATION - CRITICAL (UPDATED with Role integration)
-    // =========================================================================
-
-    function calculateProsperity(locationId) {
-        if (_processingEconomy) {
-            return 50;
-        }
-        _processingEconomy = true;
-
-        try {
-            var data = _getSettlementData(locationId);
-            if (!data) return 50;
-
-            var prosperity = data.prosperity || 50;
-            var population = _getLocationPopulationCount(locationId);
-            var ranks = _getSettlementRanks();
-            var rank = ranks.find(function(r) { return r.id === data.rankId; });
-
-            // Rank-based modifiers
-            if (rank) {
-                if (population < rank.minPopulation * 0.5) {
-                    prosperity = Math.max(0, prosperity - 5);
-                } else if (population < rank.minPopulation) {
-                    prosperity = Math.max(0, prosperity - 2);
-                } else if (population > rank.maxPopulation * 0.8) {
-                    prosperity = Math.min(100, prosperity + 2);
-                }
-            }
-
-            // Feature bonuses
-            var features = _getSettlementFeatures(locationId);
-            for (var i = 0; i < features.length; i++) {
-                if (features[i].prosperityBonus) {
-                    prosperity = Math.min(100, prosperity + features[i].prosperityBonus);
-                }
-            }
-
-            // Specialization bonuses
-            var specProsperityBonus = calculateSpecializationProsperityBonus(locationId);
-            prosperity = Math.min(100, prosperity + specProsperityBonus);
-
-            // Tax rate effects
-            var taxRate = data.taxRate || 10;
-            if (taxRate > 20) {
-                prosperity = Math.max(0, prosperity - 3);
-            } else if (taxRate > 15) {
-                prosperity = Math.max(0, prosperity - 1);
-            }
-
-            // Crime rate effects
-            var crimeRate = calculateCrimeRate(locationId);
-            if (crimeRate > 0.3) {
-                prosperity = Math.max(0, prosperity - 5);
-            } else if (crimeRate > 0.2) {
-                prosperity = Math.max(0, prosperity - 2);
-            }
-
-            // Literacy effects
-            var literacyStats = getSettlementLiteracyStats(locationId);
-            if (literacyStats && literacyStats.literacyRate > 70) {
-                prosperity = Math.min(100, prosperity + 2);
-            } else if (literacyStats && literacyStats.literacyRate > 50) {
-                prosperity = Math.min(100, prosperity + 1);
-            }
-
-            // Employment effects
-            var employment = _getSettlementEmployment(locationId);
-            if (employment) {
-                var employmentRate = employment.employmentRate || 0;
-                if (employmentRate > 80) {
-                    prosperity = Math.min(100, prosperity + 3);
-                } else if (employmentRate < 40) {
-                    prosperity = Math.max(0, prosperity - 3);
-                }
-            }
-
-            // Debt effects
-            if (data.wealth < 0) {
-                var debtRatio = Math.min(1, Math.abs(data.wealth) / 1000);
-                prosperity = Math.max(0, prosperity - Math.floor(debtRatio * 15));
-            }
-
-            // =====================================================================
-            // INTEGRATION: Government Leader affects prosperity
-            // =====================================================================
-            var govQueries = _getGovernmentQueries();
-            if (govQueries && typeof govQueries.getCurrentLeader === 'function') {
-                try {
-                    var leader = govQueries.getCurrentLeader(locationId);
-                    if (leader && leader.character) {
-                        var char = leader.character;
-                        
-                        // Leader traits affect prosperity
-                        if (char.traits) {
-                            if (char.traits.includes('wise') || char.traits.includes('just')) {
-                                prosperity = Math.min(100, prosperity + 5);
-                            }
-                            if (char.traits.includes('tyrant') || char.traits.includes('cruel')) {
-                                prosperity = Math.max(0, prosperity - 5);
-                            }
-                            if (char.traits.includes('charismatic') || char.traits.includes('diplomatic')) {
-                                prosperity = Math.min(100, prosperity + 3);
-                            }
-                            if (char.traits.includes('incompetent') || char.traits.includes('corrupt')) {
-                                prosperity = Math.max(0, prosperity - 3);
-                            }
-                        }
-                        
-                        // Leader experience bonus
-                        if (leader.startYear) {
-                            var tenure = _getCurrentYear() - leader.startYear;
-                            if (tenure > 10) {
-                                prosperity = Math.min(100, prosperity + 2);
-                            } else if (tenure > 5) {
-                                prosperity = Math.min(100, prosperity + 1);
-                            }
-                        }
-                    }
-                } catch(e) {
-                    // Silent fail - leader data may not be available
-                }
-            }
-            // =====================================================================
-
-            // =====================================================================
-            // NEW: ROLE-BASED PROSPERITY FACTORS
-            // =====================================================================
-            
-            // Get roles at this settlement
-            var locationIds = _getAllSubLocationIds(locationId);
-            var locationIdSet = new Set(locationIds);
-            var characters = _getCharacters();
-            var roles = {};
-            var masterCount = 0;
-            var totalProfessions = 0;
-            
-            // Collect role data
-            for (var i = 0; i < characters.length; i++) {
-                var char = characters[i];
-                if (char.isDeceased) continue;
-                
-                var charLocationId = _getCurrentLocationId(char);
-                if (charLocationId && locationIdSet.has(charLocationId)) {
-                    if (char.professions) {
-                        for (var j = 0; j < char.professions.length; j++) {
-                            var prof = char.professions[j];
-                            var skillLevel = prof.skillLevel || 0;
-                            totalProfessions++;
-                            
-                            if (!roles[prof.id]) {
-                                var role = _getRoleById(prof.id);
-                                roles[prof.id] = {
-                                    id: prof.id,
-                                    name: prof.name || (role ? role.name : prof.id),
-                                    count: 0,
-                                    masters: 0
-                                };
-                            }
-                            roles[prof.id].count++;
-                            if (skillLevel >= 76) {
-                                roles[prof.id].masters++;
-                                masterCount++;
-                            }
-                        }
-                    }
-                }
-            }
-            
-            var roleCount = Object.keys(roles).length;
-            
-            // 1. Role diversity bonus
-            if (roleCount > 10) {
-                prosperity = Math.min(100, prosperity + 4);
-            } else if (roleCount > 5) {
-                prosperity = Math.min(100, prosperity + 2);
-            } else if (roleCount === 0 && totalProfessions === 0) {
-                prosperity = Math.max(0, prosperity - 3);
-            }
-            
-            // 2. Master concentration bonus
-            if (masterCount > 20) {
-                prosperity = Math.min(100, prosperity + 3);
-            } else if (masterCount > 10) {
-                prosperity = Math.min(100, prosperity + 2);
-            } else if (masterCount > 0) {
-                prosperity = Math.min(100, prosperity + 1);
-            }
-            
-            // 3. Role specialization synergy bonus
-            // If settlement has specialization AND high role diversity
-            var specBonus = calculateSpecializationProsperityBonus(locationId);
-            if (specBonus > 5 && roleCount > 5) {
-                prosperity = Math.min(100, prosperity + 2);
-            }
-            
-            // 4. Underserved roles penalty
-            // Check if settlement has important roles missing
-            var importantRoles = ['blacksmith', 'merchant', 'healer', 'farmer', 'carpenter', 'baker', 'butcher'];
-            var missingCount = 0;
-            var roleNames = Object.keys(roles).map(function(id) { 
-                return roles[id].name.toLowerCase(); 
-            });
-            
-            for (var i = 0; i < importantRoles.length; i++) {
-                var found = false;
-                for (var j = 0; j < roleNames.length; j++) {
-                    if (roleNames[j].indexOf(importantRoles[i]) !== -1) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) missingCount++;
-            }
-            
-            if (missingCount > 3) {
-                prosperity = Math.max(0, prosperity - 3);
-            } else if (missingCount > 1) {
-                prosperity = Math.max(0, prosperity - 1);
-            }
-            
-            // 5. Skill level average bonus
-            var totalSkill = 0;
-            var skillCount = 0;
-            for (var i = 0; i < characters.length; i++) {
-                var char = characters[i];
-                if (char.isDeceased) continue;
-                
-                var charLocationId = _getCurrentLocationId(char);
-                if (charLocationId && locationIdSet.has(charLocationId)) {
-                    if (char.professions) {
-                        for (var j = 0; j < char.professions.length; j++) {
-                            totalSkill += (char.professions[j].skillLevel || 0);
-                            skillCount++;
-                        }
-                    }
-                }
-            }
-            
-            var avgSkill = skillCount > 0 ? Math.round(totalSkill / skillCount) : 0;
-            if (avgSkill > 60) {
-                prosperity = Math.min(100, prosperity + 2);
-            } else if (avgSkill > 40) {
-                prosperity = Math.min(100, prosperity + 1);
-            } else if (avgSkill < 20 && skillCount > 0) {
-                prosperity = Math.max(0, prosperity - 1);
-            }
-            
-            // =====================================================================
-
-            // Random variation (small)
-            var randomChange = Math.floor(Math.random() * 11) - 5;
-            prosperity = Math.min(100, Math.max(0, prosperity + randomChange));
-
-            return Math.min(100, Math.max(0, Math.round(prosperity)));
-
-        } finally {
-            _processingEconomy = false;
-        }
-    }
-
-    // =========================================================================
-    // 8. CRIME RATE CALCULATION - CRITICAL
+    // 7. CRIME RATE CALCULATION
     // =========================================================================
 
     function calculateCrimeRate(locationId) {
@@ -776,6 +529,20 @@
             var justiceFactor = justiceFactors[data.justiceSeverity] || 0.5;
             crimeRate = crimeRate * (1 - justiceFactor * 0.3);
 
+            // Religious unity effect on crime
+            var religiousUnity = data.religiousUnity || 50;
+            if (religiousUnity > 80) {
+                crimeRate -= 0.02;
+            } else if (religiousUnity < 30) {
+                crimeRate += 0.03;
+            }
+
+            // Places of worship effect
+            var placesOfWorship = data.placesOfWorship || [];
+            if (placesOfWorship && placesOfWorship.length > 0) {
+                crimeRate -= Math.min(0.03, placesOfWorship.length * 0.005);
+            }
+
             return Math.min(0.8, Math.max(0.01, crimeRate));
 
         } finally {
@@ -784,7 +551,7 @@
     }
 
     // =========================================================================
-    // 9. SPECIALIZATION BONUSES - CRITICAL
+    // 8. SPECIALIZATION BONUSES
     // =========================================================================
 
     function calculateSpecializationIncomeBonus(locationId) {
@@ -868,115 +635,7 @@
     }
 
     // =========================================================================
-    // 10. LITERACY STATS - CRITICAL
-    // =========================================================================
-
-    function getSettlementLiteracyStats(locationId) {
-        if (_processingEconomy) {
-            return {
-                locationId: locationId,
-                totalPopulation: 0,
-                literateCount: 0,
-                literacyRate: 0,
-                educationLevels: { illiterate: 0, basic: 0, literate: 0, educated: 0, scholar: 0 },
-                hasSchools: false
-            };
-        }
-        _processingEconomy = true;
-
-        try {
-            var emptyResult = {
-                locationId: locationId,
-                totalPopulation: 0,
-                literateCount: 0,
-                literacyRate: 0,
-                educationLevels: { illiterate: 0, basic: 0, literate: 0, educated: 0, scholar: 0 },
-                hasSchools: false
-            };
-
-            if (!locationId) return emptyResult;
-
-            var characters = _getCharacters();
-            var locationIds = _getAllSubLocationIds(locationId);
-            var locationIdSet = new Set(locationIds);
-
-            var displayNameToId = {};
-            var places = _getPlaces();
-            for (var i = 0; i < places.length; i++) {
-                displayNameToId[places[i].displayName] = places[i].id;
-            }
-
-            var total = 0;
-            var literate = 0;
-            var educationLevels = {
-                illiterate: 0,
-                basic: 0,
-                literate: 0,
-                educated: 0,
-                scholar: 0
-            };
-
-            var hasLiteracySystem = typeof window.isLiterate === 'function' &&
-                                   typeof window.getEducationLevel === 'function';
-
-            for (var i = 0; i < characters.length; i++) {
-                var char = characters[i];
-                if (char.isDeceased) continue;
-
-                var charLocation = typeof window.getCurrentLocation === 'function' ?
-                    window.getCurrentLocation(char) : 'Unknown';
-                var charLocationId = displayNameToId[charLocation];
-
-                if (charLocationId && locationIdSet.has(charLocationId)) {
-                    total++;
-
-                    if (hasLiteracySystem) {
-                        if (window.isLiterate(char.id)) {
-                            literate++;
-                        }
-                        var eduLevel = window.getEducationLevel(char.id);
-                        if (eduLevel && educationLevels[eduLevel.id] !== undefined) {
-                            educationLevels[eduLevel.id]++;
-                        }
-                    } else {
-                        var literacyLevel = (char.subjectProgress && char.subjectProgress.literacy) ?
-                            char.subjectProgress.literacy.level || 0 : 0;
-                        if (literacyLevel >= 30) literate++;
-
-                        if (literacyLevel >= 70) educationLevels.scholar++;
-                        else if (literacyLevel >= 50) educationLevels.educated++;
-                        else if (literacyLevel >= 30) educationLevels.literate++;
-                        else if (literacyLevel >= 10) educationLevels.basic++;
-                        else educationLevels.illiterate++;
-                    }
-                }
-            }
-
-            var hasSchools = false;
-            var features = _getSettlementFeatures(locationId);
-            for (var i = 0; i < features.length; i++) {
-                if (features[i].id === 'school' || features[i].id === 'library') {
-                    hasSchools = true;
-                    break;
-                }
-            }
-
-            return {
-                locationId: locationId,
-                totalPopulation: total,
-                literateCount: literate,
-                literacyRate: total > 0 ? Math.round((literate / total) * 100) : 0,
-                educationLevels: educationLevels,
-                hasSchools: hasSchools
-            };
-
-        } finally {
-            _processingEconomy = false;
-        }
-    }
-
-    // =========================================================================
-    // 11. FINANCIAL REPORTING
+    // 9. FINANCIAL REPORTING
     // =========================================================================
 
     function getFinancialReport(locationId, years) {
@@ -1073,27 +732,152 @@
     }
 
     // =========================================================================
-    // 12. EXPORTS
+    // 10. LITERACY STATS
+    // =========================================================================
+
+    function getSettlementLiteracyStats(locationId) {
+        if (_processingEconomy) {
+            return {
+                locationId: locationId,
+                totalPopulation: 0,
+                literateCount: 0,
+                literacyRate: 0,
+                educationLevels: { illiterate: 0, basic: 0, literate: 0, educated: 0, scholar: 0 },
+                hasSchools: false
+            };
+        }
+        _processingEconomy = true;
+
+        try {
+            var emptyResult = {
+                locationId: locationId,
+                totalPopulation: 0,
+                literateCount: 0,
+                literacyRate: 0,
+                educationLevels: { illiterate: 0, basic: 0, literate: 0, educated: 0, scholar: 0 },
+                hasSchools: false
+            };
+
+            if (!locationId) return emptyResult;
+
+            var characters = typeof window.getCharacters === 'function' ? window.getCharacters() : [];
+            var locationIds = typeof LocationState !== 'undefined' && LocationState.getAllSubLocationIds ?
+                LocationState.getAllSubLocationIds(locationId) : [locationId];
+            var locationIdSet = new Set(locationIds);
+
+            var displayNameToId = {};
+            var places = _getPlaces();
+            for (var i = 0; i < places.length; i++) {
+                displayNameToId[places[i].displayName] = places[i].id;
+            }
+
+            var total = 0;
+            var literate = 0;
+            var educationLevels = {
+                illiterate: 0,
+                basic: 0,
+                literate: 0,
+                educated: 0,
+                scholar: 0
+            };
+
+            var hasLiteracySystem = typeof window.isLiterate === 'function' &&
+                                   typeof window.getEducationLevel === 'function';
+
+            for (var i = 0; i < characters.length; i++) {
+                var char = characters[i];
+                if (char.isDeceased) continue;
+
+                var charLocation = typeof window.getCurrentLocation === 'function' ?
+                    window.getCurrentLocation(char) : 'Unknown';
+                var charLocationId = displayNameToId[charLocation];
+
+                if (charLocationId && locationIdSet.has(charLocationId)) {
+                    total++;
+
+                    if (hasLiteracySystem) {
+                        if (window.isLiterate(char.id)) {
+                            literate++;
+                        }
+                        var eduLevel = window.getEducationLevel(char.id);
+                        if (eduLevel && educationLevels[eduLevel.id] !== undefined) {
+                            educationLevels[eduLevel.id]++;
+                        }
+                    } else {
+                        var literacyLevel = (char.subjectProgress && char.subjectProgress.literacy) ?
+                            char.subjectProgress.literacy.level || 0 : 0;
+                        if (literacyLevel >= 30) literate++;
+
+                        if (literacyLevel >= 70) educationLevels.scholar++;
+                        else if (literacyLevel >= 50) educationLevels.educated++;
+                        else if (literacyLevel >= 30) educationLevels.literate++;
+                        else if (literacyLevel >= 10) educationLevels.basic++;
+                        else educationLevels.illiterate++;
+                    }
+                }
+            }
+
+            var hasSchools = false;
+            var features = _getSettlementFeatures(locationId);
+            for (var i = 0; i < features.length; i++) {
+                if (features[i].id === 'school' || features[i].id === 'library') {
+                    hasSchools = true;
+                    break;
+                }
+            }
+
+            return {
+                locationId: locationId,
+                totalPopulation: total,
+                literateCount: literate,
+                literacyRate: total > 0 ? Math.round((literate / total) * 100) : 0,
+                educationLevels: educationLevels,
+                hasSchools: hasSchools
+            };
+
+        } finally {
+            _processingEconomy = false;
+        }
+    }
+
+    // =========================================================================
+    // 11. EXPORTS
     // =========================================================================
 
     window.SettlementEconomy = {
+        // Income
         calculateTaxIncome: calculateTaxIncome,
         calculateTradeIncome: calculateTradeIncome,
         calculateIndustryIncome: calculateIndustryIncome,
         calculateStateEnterpriseIncome: calculateStateEnterpriseIncome,
+        calculatePublicEnterpriseIncome: calculatePublicEnterpriseIncome,
         calculateTotalIncome: calculateTotalIncome,
+
+        // Expenses
         calculateMaintenanceCosts: calculateMaintenanceCosts,
         calculateWageCosts: calculateWageCosts,
         calculateSpendingCosts: calculateSpendingCosts,
+        calculateGovernmentSalaryExpenses: calculateGovernmentSalaryExpenses,
         calculateTotalExpenses: calculateTotalExpenses,
+
+        // Surplus & Tax
         calculateSurplus: calculateSurplus,
         calculateTaxRevenue: calculateTaxRevenue,
+
+        // Employment
         calculateEmployment: calculateEmployment,
-        calculateProsperity: calculateProsperity,
+
+        // Crime
         calculateCrimeRate: calculateCrimeRate,
+
+        // Specialization
         calculateSpecializationIncomeBonus: calculateSpecializationIncomeBonus,
         calculateSpecializationProsperityBonus: calculateSpecializationProsperityBonus,
+
+        // Literacy
         getSettlementLiteracyStats: getSettlementLiteracyStats,
+
+        // Reporting
         getFinancialReport: getFinancialReport,
         getEfficiencyScore: getEfficiencyScore,
         getDebtRatio: getDebtRatio

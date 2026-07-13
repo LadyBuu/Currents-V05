@@ -14,6 +14,7 @@
  *   - Change notifications via subscriptions
  *   - Recursion guard
  *   - Auto-load on masterData updates
+ *   - Religion tracking (religionId, religionHistory)
  * 
  * =============================================================================
  */
@@ -36,7 +37,8 @@
             byGender: new Map(),
             byProfession: new Map(),
             byRank: new Map(),
-            byBirthDecade: new Map()
+            byBirthDecade: new Map(),
+            byReligion: new Map()  // NEW: religion cache
         },
         subscribers: [],
         _processingState: false
@@ -118,6 +120,7 @@
         cache.byProfession.clear();
         cache.byRank.clear();
         cache.byBirthDecade.clear();
+        cache.byReligion.clear();  // NEW
 
         var characters = _state.characters;
         for (var i = 0; i < characters.length; i++) {
@@ -201,6 +204,14 @@
                     cache.byBirthDecade.set(decadeKey, []);
                 }
                 cache.byBirthDecade.get(decadeKey).push(c);
+            }
+
+            // NEW: By Religion
+            if (c.religionId) {
+                if (!cache.byReligion.has(c.religionId)) {
+                    cache.byReligion.set(c.religionId, []);
+                }
+                cache.byReligion.get(c.religionId).push(c);
             }
         }
     }
@@ -333,6 +344,12 @@
         getCharactersByBirthDecade: function(decade) {
             var key = 'decade_' + decade;
             var result = _state.cache.byBirthDecade.get(key);
+            return result ? result.slice() : [];
+        },
+
+        // NEW: Get characters by religion
+        getCharactersByReligion: function(religionId) {
+            var result = _state.cache.byReligion.get(religionId);
             return result ? result.slice() : [];
         },
 

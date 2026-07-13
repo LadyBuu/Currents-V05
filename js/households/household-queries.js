@@ -7,6 +7,12 @@
  * 
  * All read-only queries for household data. No side effects, no mutations.
  * 
+ * UPDATED: Verified enterprise integration functions
+ *          Added getHouseholdEnterpriseSummaries()
+ *          Added getHouseholdEnterpriseStats()
+ *          Added getHouseholdEnterpriseValue()
+ *          Added searchHouseholdEnterprises()
+ * 
  * DEPENDENCIES:
  *   - household-state.js - HouseholdState
  *   - accessors.js - getCharacterById, getCharacters, getPlaceById, getCurrentYear
@@ -916,7 +922,7 @@
     }
 
     // =========================================================================
-    // 7. ENTERPRISE QUERIES (NEW)
+    // 7. ENTERPRISE QUERIES (UPDATED)
     // =========================================================================
 
     /**
@@ -978,6 +984,8 @@
                         name: e.name,
                         type: e.typeName,
                         category: e.category,
+                        ownershipType: e.ownershipType || 'private',
+                        isPublic: e.ownershipType === 'public',
                         wealth: e.wealth || 0,
                         debt: e.debt || 0,
                         workerCount: e.workerList ? e.workerList.length : 0,
@@ -1014,12 +1022,24 @@
                 totalWorkers: 0,
                 byStatus: {},
                 byCategory: {},
+                byOwnershipType: {}, // NEW
                 profitableEnterprises: [],
-                unprofitableEnterprises: []
+                unprofitableEnterprises: [],
+                publicCount: 0,
+                privateCount: 0
             };
 
             for (var i = 0; i < summaries.length; i++) {
                 var s = summaries[i];
+
+                // Track by ownership type
+                var ownershipType = s.ownershipType || 'private';
+                stats.byOwnershipType[ownershipType] = (stats.byOwnershipType[ownershipType] || 0) + 1;
+                if (ownershipType === 'public') {
+                    stats.publicCount++;
+                } else {
+                    stats.privateCount++;
+                }
 
                 if (s.annualProfit > 0) {
                     stats.profitable++;
@@ -1058,6 +1078,12 @@
         _processing = true;
 
         try {
+            // First check if state has this function
+            var state = _getState();
+            if (state && typeof state.getHouseholdEnterpriseValue === 'function') {
+                return state.getHouseholdEnterpriseValue(householdId);
+            }
+
             var summaries = getHouseholdEnterpriseSummaries(householdId);
             var totalValue = 0;
 
@@ -1127,7 +1153,7 @@
         getHouseholdStaff: getHouseholdStaff,
         getUnassignedHouseholdStaff: getUnassignedHouseholdStaff,
 
-        // Enterprise Integration (NEW)
+        // Enterprise Integration (UPDATED)
         getHouseholdEnterprises: getHouseholdEnterprises,
         getHouseholdEnterpriseSummaries: getHouseholdEnterpriseSummaries,
         getHouseholdEnterpriseStats: getHouseholdEnterpriseStats,

@@ -9,7 +9,8 @@
  * - Location comparison
  * - Population analytics
  * - Move analytics
- * - ROLE-LOCATION INTEGRATION (NEW)
+ * - ROLE-LOCATION INTEGRATION
+ * - APPRENTICESHIP-LOCATION INTEGRATION (NEW)
  * 
  * DEPENDENCIES:
  *   - location-state.js (LocationState)
@@ -111,6 +112,10 @@
             return window.RoleState.getRole(id);
         }
         return null;
+    }
+
+    function _getCharacterById(id) {
+        return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
     }
 
     // =========================================================================
@@ -698,7 +703,7 @@
     }
 
     // =========================================================================
-    // 9. ROLE-LOCATION INTEGRATION (NEW)
+    // 9. ROLE-LOCATION INTEGRATION
     // =========================================================================
 
     /**
@@ -872,7 +877,264 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 10. APPRENTICESHIP-LOCATION QUERIES (NEW)
+    // =========================================================================
+
+    /**
+     * Gets all apprentices at a location
+     * @param {string} locationId - Location ID
+     * @param {boolean} activeOnly - Only active apprenticeships
+     * @returns {Array} Apprentice objects with master info
+     */
+    function getApprenticesAtLocation(locationId, activeOnly) {
+        if (_processingQuery) return [];
+        _processingQuery = true;
+
+        try {
+            if (!locationId) return [];
+
+            var locationIds = LocationState.getAllSubLocationIds(locationId);
+            var locationIdSet = new Set(locationIds);
+            var characters = _getCharacters();
+            var results = [];
+
+            for (var i = 0; i < characters.length; i++) {
+                var char = characters[i];
+                if (char.isDeceased) continue;
+
+                var charLocationId = _getCurrentLocationId(char);
+                if (!charLocationId || !locationIdSet.has(charLocationId)) continue;
+
+                // Check if this character is an apprentice
+                var isApprentice = false;
+                if (typeof window.isApprentice === 'function') {
+                    isApprentice = window.isApprentice(char.id);
+                } else if (typeof window.ApprenticeshipSystem !== 'undefined') {
+                    isApprentice = window.ApprenticeshipSystem.isApprentice(char.id);
+                }
+
+                if (isApprentice) {
+                    var master = null;
+                    var role = null;
+                    var skillLevel = 0;
+                    var status = 'ongoing';
+
+                    // Get master
+                    if (typeof window.getMaster === 'function') {
+                        master = window.getMaster(char.id);
+                    } else if (typeof window.ApprenticeshipSystem !== 'undefined') {
+                        master = window.ApprenticeshipSystem.getMaster(char.id);
+                    }
+
+                    // Get role
+                    if (typeof window.getApprenticeshipRole === 'function') {
+                        role = window.getApprenticeshipRole(char.id);
+                    } else if (typeof window.ApprenticeshipSystem !== 'undefined') {
+                        role = window.ApprenticeshipSystem.getApprenticeshipRole(char.id);
+                    }
+
+                    // Get skill level
+                    if (typeof window.getSkillLevel === 'function') {
+                        skillLevel = window.getSkillLevel(char.id) || 0;
+                    } else if (typeof window.ApprenticeshipSystem !== 'undefined') {
+                        skillLevel = window.ApprenticeshipSystem.getSkillLevel(char.id) || 0;
+                    }
+
+                    // Check if active
+                    if (activeOnly) {
+                        if (typeof window.getApprenticeship === 'function') {
+                            var app = window.getApprenticeship(char.id);
+                            if (app && app.status) status = app.status;
+                        } else if (typeof window.ApprenticeshipSystem !== 'undefined') {
+                            var app = window.ApprenticeshipSystem.getApprenticeship(char.id);
+                            if (app && app.status) status = app.status;
+                        }
+                        if (status !== 'ongoing') continue;
+                    }
+
+                    var masterInfo = null;
+                    if (master && typeof master === 'object') {
+                        masterInfo = master;
+                    } else if (master && typeof master === 'string') {
+                        masterInfo = _getCharacterById(master);
+                    }
+
+                    var roleObj = null;
+                    if (role && typeof role === 'string') {
+                        roleObj = _getRoleById(role);
+                    } else if (role && typeof role === 'object') {
+                        roleObj = role;
+                    }
+
+                    results.push({
+                        apprentice: char,
+                        master: masterInfo,
+                        role: roleObj,
+                        roleId: typeof role === 'string' ? role : (role ? role.id : null),
+                        skillLevel: skillLevel,
+                        status: status
+                    });
+                }
+            }
+
+            return results;
+
+        } finally {
+            _processingQuery = false;
+        }
+    }
+
+    /**
+     * Gets all masters at a location
+     * @param {string} locationId - Location ID
+     * @param {string} roleId - Optional role filter
+     * @param {boolean} activeOnly - Only masters with active apprentices
+     * @returns {Array} Master objects with apprentice counts
+     */
+    function getMastersAtLocation(locationId, roleId, activeOnly) {
+        if (_processingQuery) return [];
+        _processingQuery = true;
+
+        try {
+            if (!locationId) return [];
+
+            var locationIds = LocationState.getAllSubLocationIds(locationId);
+            var locationIdSet = new Set(locationIds);
+            var characters = _getCharacters();
+            var results = [];
+
+            for (var i = 0; i < characters.length; i++) {
+                var char = characters[i];
+                if (char.isDeceased) continue;
+
+                var charLocationId = _getCurrentLocationId(char);
+                if (!charLocationId || !locationIdSet.has(charLocationId)) continue;
+
+                // Check if this character is a master
+                var isMaster = false;
+                if (typeof window.isMaster === 'function') {
+                    isMaster = window.isMaster(char.id);
+                } else if (typeof window.ApprenticeshipSystem !== 'undefined') {
+                    isMaster = window.ApprenticeshipSystem.isMaster(char.id);
+                }
+
+                if (isMaster) {
+                    // Check role filter
+                    if (roleId) {
+                        var hasRole = false;
+                        if (char.professions) {
+                            for (var j = 0; j < char.professions.length; j++) {
+                                if (char.professions[j].id === roleId && 
+                                    char.professions[j].skillLevel >= 76) {
+                                    hasRole = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!hasRole) continue;
+                    }
+
+                    // Get apprentices
+                    var apprentices = [];
+                    if (typeof window.getApprentices === 'function') {
+                        apprentices = window.getApprentices(char.id, true) || [];
+                    } else if (typeof window.ApprenticeshipSystem !== 'undefined') {
+                        apprentices = window.ApprenticeshipSystem.getApprentices(char.id, true) || [];
+                    }
+
+                    if (activeOnly && apprentices.length === 0) continue;
+
+                    // Get apprentice details
+                    var apprenticeDetails = [];
+                    for (var j = 0; j < Math.min(10, apprentices.length); j++) {
+                        var app = apprentices[j];
+                        var appChar = typeof app === 'string' ? _getCharacterById(app) : app;
+                        if (appChar) {
+                            apprenticeDetails.push({
+                                id: appChar.id,
+                                name: appChar.name + (appChar.surname ? ' ' + appChar.surname : '')
+                            });
+                        }
+                    }
+
+                    results.push({
+                        master: char,
+                        apprenticeCount: apprentices.length,
+                        apprentices: apprenticeDetails
+                    });
+                }
+            }
+
+            return results;
+
+        } finally {
+            _processingQuery = false;
+        }
+    }
+
+    /**
+     * Gets apprenticeship density at a location
+     * @param {string} locationId - Location ID
+     * @returns {Object} Density statistics
+     */
+    function getApprenticeshipDensity(locationId) {
+        if (_processingQuery) return null;
+        _processingQuery = true;
+
+        try {
+            if (!locationId) return null;
+
+            var apprentices = getApprenticesAtLocation(locationId, true);
+            var masters = getMastersAtLocation(locationId, null, true);
+            var population = LocationState.getPopulationCount(locationId, false);
+            var place = LocationState.getPlace(locationId);
+
+            var byRole = {};
+            for (var i = 0; i < apprentices.length; i++) {
+                var roleId = apprentices[i].roleId;
+                if (roleId) {
+                    if (!byRole[roleId]) {
+                        var role = _getRoleById(roleId);
+                        byRole[roleId] = {
+                            id: roleId,
+                            name: role ? role.name : roleId,
+                            count: 0
+                        };
+                    }
+                    byRole[roleId].count++;
+                }
+            }
+
+            // Sort roles by count
+            var sortedRoles = Object.keys(byRole).sort(function(a, b) {
+                return byRole[b].count - byRole[a].count;
+            });
+            var topRoles = [];
+            for (var i = 0; i < Math.min(5, sortedRoles.length); i++) {
+                topRoles.push(byRole[sortedRoles[i]]);
+            }
+
+            return {
+                locationId: locationId,
+                locationName: place ? place.displayName : 'Unknown',
+                totalApprentices: apprentices.length,
+                totalMasters: masters.length,
+                masterToApprenticeRatio: masters.length > 0 ? 
+                    Math.round((apprentices.length / masters.length) * 10) / 10 : 0,
+                apprenticeDensity: population > 0 ? 
+                    Math.round((apprentices.length / population) * 1000) / 10 : 0,
+                byRole: byRole,
+                topRoles: topRoles,
+                masters: masters.slice(0, 10)
+            };
+
+        } finally {
+            _processingQuery = false;
+        }
+    }
+
+    // =========================================================================
+    // 11. EXPORTS
     // =========================================================================
 
     window.LocationQueries = {
@@ -885,10 +1147,14 @@
         getMostDenseLocations: getMostDenseLocations,
         getMoveStatistics: getMoveStatistics,
         getMigrationPatterns: getMigrationPatterns,
-        // NEW: Role-location integration
+        // Role-location integration
         getRolesAtLocation: getRolesAtLocation,
         getCharactersByRoleAtLocation: getCharactersByRoleAtLocation,
-        getProfessionDistribution: getProfessionDistribution
+        getProfessionDistribution: getProfessionDistribution,
+        // Apprenticeship-location integration (NEW)
+        getApprenticesAtLocation: getApprenticesAtLocation,
+        getMastersAtLocation: getMastersAtLocation,
+        getApprenticeshipDensity: getApprenticeshipDensity
     };
 
 })();

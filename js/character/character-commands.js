@@ -18,6 +18,7 @@
  *   - PURGE - Permanently remove soft-deleted characters
  *   - BULK OPERATIONS - Create, update, delete multiple characters at once
  *   - RANDOM CHARACTER GENERATION - Fully automatic with cultural name support
+ *   - RELIGION MANAGEMENT - Assign, remove, and track religion changes
  * 
  * DEPENDENCIES:
  *   - character-state.js (CharacterState)
@@ -26,6 +27,7 @@
  *   - names.js (name generation functions)
  *   - world.js (location functions)
  *   - time.js (getCurrentYearSafe)
+ *   - religion-commands.js (ReligionCommands)
  * 
  * =============================================================================
  */
@@ -174,6 +176,38 @@
         return arr[Math.floor(Math.random() * arr.length)];
     }
 
+    function _getReligion(religionId) {
+        if (typeof window.ReligionState !== 'undefined' &&
+            typeof window.ReligionState.getReligion === 'function') {
+            return window.ReligionState.getReligion(religionId);
+        }
+        return null;
+    }
+
+    function _convertCharacter(characterId, newReligionId, options) {
+        if (typeof window.ReligionCommands !== 'undefined' &&
+            typeof window.ReligionCommands.convertCharacter === 'function') {
+            return window.ReligionCommands.convertCharacter(characterId, newReligionId, options);
+        }
+        return null;
+    }
+
+    function _assignReligionToCharacter(characterId, religionId, options) {
+        if (typeof window.ReligionCommands !== 'undefined' &&
+            typeof window.ReligionCommands.assignReligionToCharacter === 'function') {
+            return window.ReligionCommands.assignReligionToCharacter(characterId, religionId, options);
+        }
+        return null;
+    }
+
+    function _removeReligionFromCharacter(characterId) {
+        if (typeof window.ReligionCommands !== 'undefined' &&
+            typeof window.ReligionCommands.removeReligionFromCharacter === 'function') {
+            return window.ReligionCommands.removeReligionFromCharacter(characterId);
+        }
+        return null;
+    }
+
     // =========================================================================
     // 2. RECURSION GUARD
     // =========================================================================
@@ -260,6 +294,12 @@
                     entries: [],
                     lastUpdated: data.birthYear || currentYear
                 },
+
+                // ================================================================
+                // RELIGION (NEW)
+                // ================================================================
+                religionId: data.religionId || null,
+                religionHistory: data.religionHistory || [],
 
                 // ================================================================
                 // SOFT DELETE FLAG
@@ -350,7 +390,8 @@
                 'apprentices', 'masterId', 'isMaster', 'masterProfessionId',
                 'apprenticeshipDetails', 'friendshipDetails', 'epithet',
                 'notes', 'appearance', 'householdHistory', 'surnameHistory',
-                'relationships', 'friends'
+                'relationships', 'friends',
+                'religionId', 'religionHistory'  // NEW: religion fields
             ];
 
             var changed = false;
@@ -1025,6 +1066,7 @@
      * @param {number} options.age - Specific age, or null for random
      * @param {string} options.countryId - Specific country, or null for random
      * @param {boolean} options.assignProfession - Whether to assign a profession (default true)
+     * @param {string} options.religionId - Specific religion, or null for random
      * @returns {Object} The created character
      */
     function createRandomCharacter(options) {
@@ -1146,7 +1188,54 @@
             // If still no surname, leave EMPTY (no fallback)
             
             // =========================================================================
-            // STEP 7: Build the character object
+            // STEP 7: Select a religion (NEW)
+            // =========================================================================
+            
+            var religionId = null;
+            
+            if (options.religionId) {
+                religionId = options.religionId;
+            } else {
+                // Try to find a religion at the birthplace location
+                if (birthplaceId && typeof window.ReligionQueries !== 'undefined') {
+                    var religions = window.ReligionQueries.getReligionsByLocation(birthplaceId);
+                    if (religions && religions.length > 0) {
+                        // Weight by follower count
+                        var weightedReligions = [];
+                        for (var i = 0; i < religions.length; i++) {
+                            var count = 0;
+                            if (typeof window.ReligionQueries.getFollowerCount === 'function') {
+                                count = window.ReligionQueries.getFollowerCount(religions[i].id);
+                            }
+                            // Minimum weight of 1 for any religion at location
+                            weightedReligions.push({
+                                religion: religions[i],
+                                weight: Math.max(1, count)
+                            });
+                        }
+                        
+                        var totalWeight = 0;
+                        for (var i = 0; i < weightedReligions.length; i++) {
+                            totalWeight += weightedReligions[i].weight;
+                        }
+                        
+                        if (totalWeight > 0) {
+                            var roll = Math.random() * totalWeight;
+                            var accumulated = 0;
+                            for (var i = 0; i < weightedReligions.length; i++) {
+                                accumulated += weightedReligions[i].weight;
+                                if (roll <= accumulated) {
+                                    religionId = weightedReligions[i].religion.id;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // =========================================================================
+            // STEP 8: Build the character object
             // =========================================================================
             
             var character = {
@@ -1171,6 +1260,9 @@
                     entries: [],
                     lastUpdated: birthYear
                 },
+                // NEW: Religion fields
+                religionId: religionId,
+                religionHistory: [],
                 relationships: [],
                 friends: [],
                 household: null,
@@ -1200,7 +1292,7 @@
             };
             
             // =========================================================================
-            // STEP 8: Assign a random profession (if roles exist and enabled)
+            // STEP 9: Assign a random profession (if roles exist and enabled)
             // =========================================================================
             
             if (options.assignProfession !== false && age >= 14) {
@@ -1233,7 +1325,7 @@
             }
             
             // =========================================================================
-            // STEP 9: Add to data and save
+            // STEP 10: Add to data and save
             // =========================================================================
             
             var state = _getState();
@@ -1747,7 +1839,206 @@
     }
 
     // =========================================================================
-    // 12. UPDATE CHARACTER NAME
+    // 12. RELIGION MANAGEMENT (NEW)
+    // =========================================================================
+
+    /**
+     * Assigns a religion to a character
+     * @param {string} characterId - Character ID
+     * @param {string} religionId - Religion ID
+     * @param {Object} options - Options { year, reason, notes }
+     * @returns {Object} Result object
+     */
+    function assignCharacterReligion(characterId, religionId, options) {
+        if (_processing) {
+            return { success: false, reason: 'Already processing' };
+        }
+        _processing = true;
+
+        try {
+            var state = _getState();
+            var character = state ? state.getCharacter(characterId) : _getCharacterById(characterId);
+
+            if (!character) {
+                return { success: false, reason: 'Character not found' };
+            }
+
+            if (character.isDeleted === true) {
+                return { success: false, reason: 'Character is soft-deleted' };
+            }
+
+            var religion = _getReligion(religionId);
+            if (!religion) {
+                return { success: false, reason: 'Religion not found' };
+            }
+
+            if (religion.isDeprecated) {
+                return { success: false, reason: 'Cannot assign deprecated religion' };
+            }
+
+            options = options || {};
+
+            // If character already has a religion, convert instead
+            if (character.religionId && character.religionId !== religionId) {
+                return convertCharacterReligion(characterId, religionId, options);
+            }
+
+            // If character already has this religion, just return success
+            if (character.religionId === religionId) {
+                return { success: true, data: character, message: 'Character already has this religion' };
+            }
+
+            // Use ReligionCommands
+            var result = _assignReligionToCharacter(characterId, religionId, {
+                year: options.year || _getCurrentYear(),
+                reason: options.reason || 'assignment',
+                notes: options.notes || ''
+            });
+
+            if (result && result.success) {
+                _invalidateCaches();
+                _logEvent('religion', 'Religion Assigned', 'Assigned ' + religion.name + ' to ' + character.name, [character]);
+                return result;
+            }
+
+            return { success: false, reason: result ? result.reason : 'Failed to assign religion' };
+
+        } catch (e) {
+            return { success: false, reason: e.message || 'Failed to assign religion' };
+        } finally {
+            _processing = false;
+        }
+    }
+
+    /**
+     * Removes religion from a character
+     * @param {string} characterId - Character ID
+     * @returns {Object} Result object
+     */
+    function removeCharacterReligion(characterId) {
+        if (_processing) {
+            return { success: false, reason: 'Already processing' };
+        }
+        _processing = true;
+
+        try {
+            var state = _getState();
+            var character = state ? state.getCharacter(characterId) : _getCharacterById(characterId);
+
+            if (!character) {
+                return { success: false, reason: 'Character not found' };
+            }
+
+            if (character.isDeleted === true) {
+                return { success: false, reason: 'Character is soft-deleted' };
+            }
+
+            if (!character.religionId) {
+                return { success: false, reason: 'Character has no religion' };
+            }
+
+            var result = _removeReligionFromCharacter(characterId);
+
+            if (result && result.success) {
+                _invalidateCaches();
+                _logEvent('religion', 'Religion Removed', 'Removed religion from ' + character.name, [character]);
+                return result;
+            }
+
+            return { success: false, reason: result ? result.reason : 'Failed to remove religion' };
+
+        } catch (e) {
+            return { success: false, reason: e.message || 'Failed to remove religion' };
+        } finally {
+            _processing = false;
+        }
+    }
+
+    /**
+     * Converts a character to a new religion (with history tracking)
+     * @param {string} characterId - Character ID
+     * @param {string} newReligionId - New religion ID
+     * @param {Object} options - Options { year, reason, notes }
+     * @returns {Object} Result object
+     */
+    function convertCharacterReligion(characterId, newReligionId, options) {
+        if (_processing) {
+            return { success: false, reason: 'Already processing' };
+        }
+        _processing = true;
+
+        try {
+            var state = _getState();
+            var character = state ? state.getCharacter(characterId) : _getCharacterById(characterId);
+
+            if (!character) {
+                return { success: false, reason: 'Character not found' };
+            }
+
+            if (character.isDeleted === true) {
+                return { success: false, reason: 'Character is soft-deleted' };
+            }
+
+            var newReligion = _getReligion(newReligionId);
+            if (!newReligion) {
+                return { success: false, reason: 'Religion not found' };
+            }
+
+            if (newReligion.isDeprecated) {
+                return { success: false, reason: 'Cannot convert to deprecated religion' };
+            }
+
+            options = options || {};
+
+            // Use ReligionCommands.convertCharacter
+            var result = _convertCharacter(characterId, newReligionId, {
+                year: options.year || _getCurrentYear(),
+                reason: options.reason || 'personal',
+                notes: options.notes || ''
+            });
+
+            if (result && result.success) {
+                _invalidateCaches();
+                _logEvent('religion', 'Religion Converted', 'Converted ' + character.name + ' to ' + newReligion.name, [character]);
+                return result;
+            }
+
+            return { success: false, reason: result ? result.reason : 'Failed to convert character' };
+
+        } catch (e) {
+            return { success: false, reason: e.message || 'Failed to convert character' };
+        } finally {
+            _processing = false;
+        }
+    }
+
+    /**
+     * Gets a character's religion history
+     * @param {string} characterId - Character ID
+     * @returns {Array} Array of conversion events
+     */
+    function getCharacterReligionHistory(characterId) {
+        var state = _getState();
+        var character = state ? state.getCharacter(characterId) : _getCharacterById(characterId);
+        if (!character) return [];
+        return character.religionHistory || [];
+    }
+
+    /**
+     * Gets a character's current religion
+     * @param {string} characterId - Character ID
+     * @returns {Object|null} Religion object or null
+     */
+    function getCharacterReligion(characterId) {
+        var state = _getState();
+        var character = state ? state.getCharacter(characterId) : _getCharacterById(characterId);
+        if (!character) return null;
+        if (!character.religionId) return null;
+        return _getReligion(character.religionId);
+    }
+
+    // =========================================================================
+    // 13. UPDATE CHARACTER NAME
     // =========================================================================
 
     function updateCharacterName(id, name, surname) {
@@ -1845,14 +2136,14 @@
     }
 
     // =========================================================================
-    // 13. EXPORTS
+    // 14. EXPORTS
     // =========================================================================
 
     window.CharacterCommands = {
         // Creation
         createCharacter: createCharacter,
 
-        // Random Character Generation - NEW
+        // Random Character Generation
         createRandomCharacter: createRandomCharacter,
 
         // Update
@@ -1865,13 +2156,13 @@
         // Delete
         deleteCharacter: deleteCharacter,
 
-        // Soft Delete - NEW
+        // Soft Delete
         softDeleteCharacter: softDeleteCharacter,
         restoreSoftDeletedCharacter: restoreSoftDeletedCharacter,
         getSoftDeletedCharacters: getSoftDeletedCharacters,
         purgeSoftDeletedCharacters: purgeSoftDeletedCharacters,
 
-        // Bulk Operations - NEW
+        // Bulk Operations
         bulkCreateCharacters: bulkCreateCharacters,
         bulkUpdateCharacters: bulkUpdateCharacters,
         bulkDeleteCharacters: bulkDeleteCharacters,
@@ -1889,7 +2180,14 @@
         getCharacterBirthSurname: getCharacterBirthSurname,
         getCharacterSurnameChanges: getCharacterSurnameChanges,
         recordCharacterSurnameChange: recordCharacterSurnameChange,
-        revertCharacterSurnameChange: revertCharacterSurnameChange
+        revertCharacterSurnameChange: revertCharacterSurnameChange,
+
+        // Religion Management (NEW)
+        assignCharacterReligion: assignCharacterReligion,
+        removeCharacterReligion: removeCharacterReligion,
+        convertCharacterReligion: convertCharacterReligion,
+        getCharacterReligionHistory: getCharacterReligionHistory,
+        getCharacterReligion: getCharacterReligion
     };
 
     if (typeof module !== 'undefined' && module.exports) {

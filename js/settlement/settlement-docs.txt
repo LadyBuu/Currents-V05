@@ -1,1592 +1,2183 @@
-# SETTLEMENT SYSTEM - COMPLETE DOCUMENTATION
+# COMPLETE SETTLEMENT SYSTEM DOCUMENTATION
 
-## TABLE OF CONTENTS
-1. SETTLEMENT SYSTEM
-   1.1 settlement-state.js - Single Source of Truth
-   1.2 settlement-commands.js - Write Operations
-   1.3 settlement-queries.js - Read Operations
-   1.4 settlement-economy.js - Economy Business Logic
-   1.5 settlement-ranks.js - Rank Business Logic
-   1.6 settlement-features.js - Feature Business Logic
-   1.7 settlement-ui-list.js - UI List Rendering
-   1.8 modals-settlement.js - Settlement UI Modals
-   1.9 modals-settlement-economy.js - Economy UI Modals
+## SYSTEM OVERVIEW
 
-2. DEPENDENCY MAP
-3. RECURSION GUARDS
-4. ICON POLICY
-5. DATA STRUCTURES
-6. INTEGRATION WITH OTHER SYSTEMS
+The Settlement System manages urban and rural settlements, tracking their economic, social, and infrastructural development. It handles rank progression, feature construction, budget management, employment, literacy, and **ROLE INTEGRATION**.
+
+**KEY FEATURES:**
+- Settlement rank progression (Hamlet → Village → Town → City → Metropolis)
+- Public feature construction (walls, schools, markets, etc.)
+- Economic management (income, expenses, surplus, debt)
+- Employment tracking
+- Literacy statistics
+- **ROLE DISTRIBUTION** - Track professions at settlements
+- **MASTER CONCENTRATION** - Track masters by role
+- **PROSPERITY IMPACT** - Role diversity affects prosperity
+- State enterprise management
+- Justice system (crime rate, watch)
+- Tax rate management
+- Annual processing
+- **PUBLIC ENTERPRISE MANAGEMENT** (NEW)
+- **BUDGET ALLOCATION SYSTEM** (NEW)
+- **EDUCATION SYSTEM INTEGRATION** (NEW)
+- **GOVERNMENT SALARY ALLOCATION** (NEW)
 
 ---
 
-## 1. SETTLEMENT SYSTEM
+## DIRECTORY STRUCTURE
 
-### 1.1 settlement-state.js - Single Source of Truth
+```
+js/settlement/
+├── settlement-state.js           # Single source of truth + cache + notifications
+├── settlement-commands.js        # All write operations (CRUD, features, roles, annual)
+├── settlement-queries.js         # All read operations (summary, stats, role queries)
+├── settlement-economy.js         # Economic calculations (income, expenses, prosperity)
+├── settlement-features.js        # Feature definitions and validation
+├── settlement-ranks.js           # Rank definitions and upgrade logic
+├── settlement-ui-list.js         # UI list rendering
+├── modals-settlement.js          # UI modals (features, upgrade, roles, budget)
+├── modals-settlement-economy.js  # Economy-specific modals
+└── settlement-doc.txt            # This documentation
+```
 
-**PURPOSE:** Manages the central state for all settlement data.
+---
+
+## RELATED FILES (Cross-System Dependencies)
+
+```
+js/core/
+├── accessors.js                # getPlaceById, getPlaces, getCharacters, getCurrentYear
+├── ids.js                      # generateId()
+├── storage.js                  # saveMasterData()
+├── constants.js                # AGE_GROUPS, AGE_GROUPS_MAP
+├── formatting.js               # escapeHtml()
+├── icons.js                    # SVG icons (NO EMOJIS)
+├── modals-core.js              # openModal, closeTopModal, _showToast, _getIcon
+├── time.js                     # getCurrentYearSafe, calculateAge
+├── world.js                    # getLocationPopulationCount, getChildPlaces
+└── randomness.js               # chance(), pickRandom()
+
+js/location/
+├── location-state.js           # Location data (place hierarchy)
+└── location-queries.js         # Location queries (ROLE integration)
+
+js/roles/
+├── role-state.js               # Role definitions
+├── role-commands.js            # Role assignment
+└── role-queries.js             # Role queries
+
+js/industry/
+├── industry-state.js           # Enterprise data
+├── industry-commands.js        # Enterprise commands
+├── industry-queries.js         # Enterprise queries
+└── industry-processor.js       # Annual enterprise processing
+
+js/government/
+├── government-state.js         # Government data
+└── government-queries.js       # Government queries (leader traits)
+
+js/education/
+├── education-state.js          # Education institution data
+├── education-commands.js       # Education commands
+├── education-queries.js        # Education queries
+└── education-system.js         # Education system logic
+```
+
+---
+
+## KEY PRINCIPLES
+
+| Principle | Description |
+|-----------|-------------|
+| **Single Source of Truth** | `settlement-state.js` holds all settlement data |
+| **Command-Query Separation** | Commands (writes) vs Queries (reads) separated |
+| **Separation of Concerns** | State, commands, queries, economy, UI all separate |
+| **Recursion Guards** | All public functions protected from infinite loops |
+| **Change Notifications** | Subscriptions for reactive updates |
+| **No Emojis** | All icons from `icons.js` via `_getIcon()` |
+| **Role Integration** | Roles affect prosperity, tracked by settlement |
+| **Budget Allocation** | Separate tracking for education, government salaries, infrastructure, military |
+| **Public Enterprises** | Settlement-owned enterprises with profit collection |
+
+---
+
+# 1. SETTLEMENT-STATE.JS
+
+**PURPOSE:** Single source of truth for all settlement data. Manages caching, subscriptions, and data persistence.
 
 **DEPENDENCIES:**
-  - accessors.js (getPlaceById, getPlaces, getCharacters)
-  - storage.js (saveMasterData)
+- `accessors.js` - `getPlaceById`, `getPlaces`, `getCharacters`
+- `storage.js` - `saveMasterData`
 
-**FUNCTIONS:**
+---
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementState.getSettlementData(locationId)                             │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets settlement data for a location. Creates default if not exists.       │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: Object - Settlement data object                                   │
-└─────────────────────────────────────────────────────────────────────────────┘
+## Data Access Functions
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementState.getAllSettlements(options)                                │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets all settlements with optional sorting and filtering.                  │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   options.sortBy (string) - 'name', 'population', 'wealth', 'prosperity'   │
-│   options.sortOrder (string) - 'asc' or 'desc'                             │
-│   options.limit (number) - Max results                                     │
-│                                                                             │
-│ RETURNS: Array - Array of { locationId, locationName, data }              │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementState.getSettlementData(locationId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementState.getSettlementFeatures(locationId)                         │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets all features built at a settlement.                                   │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: Array - Array of feature objects                                  │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Gets settlement data for a location |
+| **Parameters** | `locationId` (string) - Location ID |
+| **Returns** | `Object|null` - Settlement data or null |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementState.getSettlementBudget(locationId)                           │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets the budget for a settlement.                                          │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: { income: {}, expenses: {}, annualSurplus, totalIncome,           │
-│           totalExpenses }                                                  │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementState.getAllSettlements(options)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementState.getSettlementEmployment(locationId)                       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets employment statistics for a settlement.                               │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: { totalWorkers, stateEmployed, privateEmployed, unemployed,       │
-│           averageWage, employmentRate }                                    │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all settlements with optional sorting |
+| **Parameters** | `options` (Object) - { sortBy, sortOrder, limit } |
+| **Returns** | `Array` - Array of settlement objects |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementState.getStateEnterpriseIds(locationId)                         │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets state-owned enterprise IDs for a settlement.                          │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: Array - Array of enterprise IDs                                   │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementState.getSettlementFeatures(locationId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementState.getSettlementHistory(locationId)                          │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets history entries for a settlement.                                     │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: Array - Array of history entries                                  │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Gets features built at a settlement |
+| **Parameters** | `locationId` (string) - Location ID |
+| **Returns** | `Array` - Array of feature objects |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementState._getAllRanks()                                            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ INTERNAL: Gets all settlement rank definitions.                            │
-│                                                                             │
-│ RETURNS: Array - Array of rank objects                                     │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementState.getSettlementBudget(locationId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementState._getAllFeatures()                                         │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ INTERNAL: Gets all settlement feature definitions.                         │
-│                                                                             │
-│ RETURNS: Array - Array of feature objects                                  │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Gets budget data for a settlement |
+| **Parameters** | `locationId` (string) - Location ID |
+| **Returns** | `Object|null` - Budget object |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementState.getUIState()                                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets the current UI state.                                                 │
-│                                                                             │
-│ RETURNS: { selectedSettlementId, viewMode, expandedSections,              │
-│           filters: { searchTerm, rankFilter, prosperityFilter } }          │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementState.getSettlementEmployment(locationId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementState.setUIState(key, value, options)                           │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Sets a UI state value.                                                     │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   key (string) - State key                                                 │
-│   value (*) - New value                                                    │
-│   options.notify (boolean) - Notify subscribers (default: true)            │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Gets employment data for a settlement |
+| **Parameters** | `locationId` (string) - Location ID |
+| **Returns** | `Object|null` - Employment object |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementState.updateUIState(updates, options)                           │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Updates multiple UI state values at once.                                  │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   updates (Object) - Updates object                                        │
-│   options.notify (boolean) - Notify subscribers (default: true)            │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementState.getStateEnterpriseIds(locationId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementState.invalidateCache()                                         │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Invalidates all caches.                                                    │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Gets state enterprise IDs for a settlement |
+| **Parameters** | `locationId` (string) - Location ID |
+| **Returns** | `Array` - Array of enterprise IDs |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementState.refreshFromMasterData()                                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Refreshes state from masterData and invalidates caches.                    │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementState.getSettlementHistory(locationId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementState.subscribe(callback)                                       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Subscribes to state changes.                                               │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   callback (function) - Callback receiving { type, data } event object     │
-│                                                                             │
-│ RETURNS: function - Unsubscribe function                                   │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Gets history entries for a settlement |
+| **Parameters** | `locationId` (string) - Location ID |
+| **Returns** | `Array` - Array of history entries |
 
+---
 
-### 1.2 settlement-commands.js - Write Operations
+## UI State
+
+### `SettlementState.getUIState()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets the current UI state |
+| **Returns** | `Object` - UI state |
+
+### `SettlementState.updateUIState(updates)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Updates UI state |
+| **Parameters** | `updates` (Object) - UI state updates |
+
+---
+
+## Subscriptions
+
+### `SettlementState.subscribe(callback)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Subscribes to state changes |
+| **Parameters** | `callback` (function) - Receives event object |
+| **Returns** | `function` - Unsubscribe function |
+
+---
+
+# 2. SETTLEMENT-COMMANDS.JS
 
 **PURPOSE:** All write operations for settlement management.
 
 **DEPENDENCIES:**
-  - settlement-state.js (SettlementState)
-  - accessors.js (getPlaceById, getCharacterById, getCurrentYear)
-  - eventLogger.js (logEvent)
-  - storage.js (saveMasterData)
+- `settlement-state.js` - `SettlementState`
+- `settlement-economy.js` - `SettlementEconomy`
+- `accessors.js` - `getPlaceById`, `getCharacterById`, `getCurrentYear`
+- `eventLogger.js` - `logEvent`
+- `storage.js` - `saveMasterData`
 
-**FUNCTIONS:**
+---
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementCommands.buildFeature(locationId, featureId)                    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Builds a feature at a settlement.                                          │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   featureId (string) - Feature ID                                          │
-│                                                                             │
-│ RETURNS: { success: boolean, data: { featureId, cost, newWealth } }       │
-└─────────────────────────────────────────────────────────────────────────────┘
+## Feature Commands
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementCommands.removeFeature(locationId, featureId)                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Removes a feature with full refund.                                        │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   featureId (string) - Feature ID                                          │
-│                                                                             │
-│ RETURNS: { success: boolean, data: { featureId, refund, newWealth } }     │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementCommands.buildFeature(locationId, featureId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementCommands.demolishFeature(locationId, featureId)                 │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Demolishes a feature with no refund.                                       │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   featureId (string) - Feature ID                                          │
-│                                                                             │
-│ RETURNS: { success: boolean, data: { featureId } }                         │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Builds a public feature at a settlement |
+| **Parameters** | `locationId` (string), `featureId` (string) |
+| **Returns** | `{ success: boolean, data: Object, reason: string }` |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementCommands.upgradeSettlement(locationId)                          │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Upgrades a settlement to the next rank.                                    │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: { success: boolean, data: { oldRank, newRank, population } }     │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementCommands.removeFeature(locationId, featureId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementCommands.setSpecialization(locationId, roleId)                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Sets the specialization for a settlement.                                  │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   roleId (string) - Role ID (null to clear)                                │
-│                                                                             │
-│ RETURNS: { success: boolean, data: { oldRole, newRole } }                 │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Removes a feature with full refund |
+| **Parameters** | `locationId` (string), `featureId` (string) |
+| **Returns** | `{ success: boolean, data: Object, reason: string }` |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementCommands.updateWealth(locationId, delta, reason)                │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Updates settlement wealth.                                                 │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   delta (number) - Change in wealth                                        │
-│   reason (string) - Reason for change                                      │
-│                                                                             │
-│ RETURNS: { success: boolean, data: { newWealth, newDebt } }               │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementCommands.demolishFeature(locationId, featureId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementCommands.updateDebt(locationId, delta, reason)                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Updates settlement debt.                                                   │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   delta (number) - Change in debt                                          │
-│   reason (string) - Reason for change                                      │
-│                                                                             │
-│ RETURNS: { success: boolean, data: { newDebt } }                          │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Demolishes a feature with no refund |
+| **Parameters** | `locationId` (string), `featureId` (string) |
+| **Returns** | `{ success: boolean, data: Object, reason: string }` |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementCommands.updateTaxRate(locationId, rate)                        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Updates the tax rate.                                                      │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   rate (number) - Tax rate (0-50)                                          │
-│                                                                             │
-│ RETURNS: { success: boolean, data: { oldRate, newRate } }                 │
-└─────────────────────────────────────────────────────────────────────────────┘
+---
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementCommands.updateTradeTariff(locationId, tariff)                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Updates the trade tariff.                                                  │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   tariff (number) - Trade tariff (0-30)                                    │
-│                                                                             │
-│ RETURNS: { success: boolean, data: { oldTariff, newTariff } }             │
-└─────────────────────────────────────────────────────────────────────────────┘
+## Settlement Management Commands
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementCommands.updateIndustryTaxRate(locationId, rate)                │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Updates the industry tax rate.                                             │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   rate (number) - Industry tax rate (0-30)                                 │
-│                                                                             │
-│ RETURNS: { success: boolean, data: { oldRate, newRate } }                 │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementCommands.upgradeSettlement(locationId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementCommands.updateMilitarySpending(locationId, amount)             │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Updates military spending.                                                 │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   amount (number) - Spending amount                                        │
-│                                                                             │
-│ RETURNS: { success: boolean, data: { militarySpending } }                 │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Upgrades a settlement to the next rank |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `{ success: boolean, data: Object, reason: string }` |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementCommands.updateInfrastructureSpending(locationId, amount)       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Updates infrastructure spending.                                           │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   amount (number) - Spending amount                                        │
-│                                                                             │
-│ RETURNS: { success: boolean, data: { infrastructureSpending } }           │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementCommands.setSpecialization(locationId, roleId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementCommands.updateEducationSpending(locationId, amount)            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Updates education spending.                                                │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   amount (number) - Spending amount                                        │
-│                                                                             │
-│ RETURNS: { success: boolean, data: { educationSpending } }                │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Sets a settlement's specialization role |
+| **Parameters** | `locationId` (string), `roleId` (string\|null) |
+| **Returns** | `{ success: boolean, data: Object, reason: string }` |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementCommands.updateJusticeSeverity(locationId, severity)            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Updates justice severity.                                                  │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   severity (string) - 'lenient', 'medium', 'harsh', 'extreme'              │
-│                                                                             │
-│ RETURNS: { success: boolean, data: { justiceSeverity } }                  │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementCommands.updateWealth(locationId, delta, reason)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementCommands.updateWatch(locationId, hasWatch, size)                │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Updates watch/guard force status.                                          │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   hasWatch (boolean) - Whether watch exists                                │
-│   size (number) - Watch size                                               │
-│                                                                             │
-│ RETURNS: { success: boolean, data: { hasWatch, watchSize } }              │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Updates settlement wealth |
+| **Parameters** | `locationId` (string), `delta` (number), `reason` (string) |
+| **Returns** | `{ success: boolean, data: Object }` |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementCommands.createStateEnterprise(locationId, data)                │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Creates a state-owned enterprise.                                          │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   data (Object) - Enterprise data                                          │
-│                                                                             │
-│ RETURNS: { success: boolean, data: Enterprise }                           │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementCommands.updateDebt(locationId, delta, reason)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementCommands.removeStateEnterprise(locationId, enterpriseId)        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Removes a state-owned enterprise.                                          │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   enterpriseId (string) - Enterprise ID                                    │
-│                                                                             │
-│ RETURNS: { success: boolean }                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Updates settlement debt |
+| **Parameters** | `locationId` (string), `delta` (number), `reason` (string) |
+| **Returns** | `{ success: boolean, data: Object }` |
 
+---
 
-### 1.3 settlement-queries.js - Read Operations
+## Tax & Rate Commands
 
-**PURPOSE:** All read-only queries for settlement data.
+### `SettlementCommands.updateTaxRate(locationId, rate)`
 
-**DEPENDENCIES:**
-  - settlement-state.js (SettlementState)
-  - accessors.js (getPlaceById, getPlaces, getCurrentYear)
+| Property | Value |
+|----------|-------|
+| **Description** | Updates tax rate (0-50%) |
+| **Parameters** | `locationId` (string), `rate` (number) |
+| **Returns** | `{ success: boolean, data: Object }` |
 
-**FUNCTIONS:**
+### `SettlementCommands.updateTradeTariff(locationId, tariff)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementQueries.getSettlementSummary(locationId)                        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets comprehensive settlement summary.                                     │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: { id, name, rank, population, features, prosperity, wealth,       │
-│           totalDebt, netWorth, foundedYear, lastUpgraded,                  │
-│           specializationRoleId, canUpgrade, nextRank, taxRate,             │
-│           tradeTariff, industryTaxRate, spending, justice, crimeRate,      │
-│           notes, history }                                                 │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Updates trade tariff (0-30%) |
+| **Parameters** | `locationId` (string), `tariff` (number) |
+| **Returns** | `{ success: boolean, data: Object }` |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementQueries.getSettlementRank(locationId)                           │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets the rank of a settlement.                                             │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: Object|null - Rank object or null                                 │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementCommands.updateIndustryTaxRate(locationId, rate)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementQueries.getUpgradeInfo(locationId)                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets upgrade information for a settlement.                                 │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: { canUpgrade, nextRank, requiredPopulation, currentPopulation,    │
-│           reason }                                                         │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Updates industry tax rate (0-30%) |
+| **Parameters** | `locationId` (string), `rate` (number) |
+| **Returns** | `{ success: boolean, data: Object }` |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementQueries.getSettlementFeatures(locationId)                       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets features at a settlement.                                             │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: Array - Array of feature objects                                  │
-└─────────────────────────────────────────────────────────────────────────────┘
+---
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementQueries.getAllFeatures()                                        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets all feature definitions.                                              │
-│                                                                             │
-│ RETURNS: Array - Array of feature objects                                  │
-└─────────────────────────────────────────────────────────────────────────────┘
+## Spending Commands
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementQueries.getFeatureById(featureId)                               │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets a feature by ID.                                                      │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   featureId (string) - Feature ID                                          │
-│                                                                             │
-│ RETURNS: Object|null - Feature object or null                              │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementCommands.updateMilitarySpending(locationId, amount)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementQueries.getFeaturesByCategory(category)                         │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets features by category.                                                 │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   category (string) - Category name                                        │
-│                                                                             │
-│ RETURNS: Array - Array of feature objects                                  │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Updates military spending |
+| **Parameters** | `locationId` (string), `amount` (number) |
+| **Returns** | `{ success: boolean, data: Object }` |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementQueries.getFeatureCategories()                                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets all features grouped by category.                                     │
-│                                                                             │
-│ RETURNS: Object - { category: [features] }                                 │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementCommands.updateInfrastructureSpending(locationId, amount)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementQueries.canAffordFeature(locationId, featureId)                 │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Checks if a settlement can afford a feature.                               │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   featureId (string) - Feature ID                                          │
-│                                                                             │
-│ RETURNS: boolean - True if can afford                                      │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Updates infrastructure spending |
+| **Parameters** | `locationId` (string), `amount` (number) |
+| **Returns** | `{ success: boolean, data: Object }` |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementQueries.wouldCreateDebt(locationId, featureId)                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Checks if building a feature would create debt.                            │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   featureId (string) - Feature ID                                          │
-│                                                                             │
-│ RETURNS: boolean - True if would create debt                               │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementCommands.updateEducationSpending(locationId, amount)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementQueries.getSettlementBudget(locationId)                         │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets the settlement budget.                                                │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: { income: {}, expenses: {}, annualSurplus, totalIncome,           │
-│           totalExpenses }                                                  │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Updates education spending |
+| **Parameters** | `locationId` (string), `amount` (number) |
+| **Returns** | `{ success: boolean, data: Object }` |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementQueries.getSettlementEmployment(locationId)                     │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets employment statistics.                                                │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: { totalWorkers, stateEmployed, privateEmployed, unemployed,       │
-│           averageWage, employmentRate }                                    │
-└─────────────────────────────────────────────────────────────────────────────┘
+---
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementQueries.getTradeStatus(locationId)                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets trade hub status for a settlement.                                    │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: { status, tradeFeatures, totalBonus, description }               │
-└─────────────────────────────────────────────────────────────────────────────┘
+## Justice & Watch Commands
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementQueries.getSettlementIncome(locationId)                         │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets total income for a settlement.                                        │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: number - Total income                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementCommands.updateJusticeSeverity(locationId, severity)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementQueries.getSettlementExpenses(locationId)                       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets total expenses for a settlement.                                      │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: number - Total expenses                                           │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Updates justice severity |
+| **Parameters** | `locationId` (string), `severity` (string) |
+| **Returns** | `{ success: boolean, data: Object }` |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementQueries.getSettlementSurplus(locationId)                        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets surplus for a settlement.                                             │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: number - Surplus                                                  │
-└─────────────────────────────────────────────────────────────────────────────┘
+**Valid Severities:** `'lenient'`, `'medium'`, `'harsh'`, `'extreme'`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementQueries.getSettlementStatistics(locationId)                     │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets comprehensive statistics for a settlement.                            │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: { locationId, locationName, rank, population, prosperity,        │
-│           wealth, debt, netWorth, featureCount, features, budget,         │
-│           employment, trade, taxRate, crimeRate, spending }               │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementCommands.updateWatch(locationId, hasWatch, size)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementQueries.getGlobalSettlementStatistics()                         │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets global settlement statistics.                                         │
-│                                                                             │
-│ RETURNS: { totalSettlements, totalPopulation, totalWealth, totalDebt,      │
-│           averageProsperity, byRank, byStatus, largest, wealthiest,        │
-│           mostProsperous }                                                 │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Updates watch/guard force |
+| **Parameters** | `locationId` (string), `hasWatch` (boolean), `size` (number) |
+| **Returns** | `{ success: boolean, data: Object }` |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementQueries.getLargestSettlements(limit)                            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets settlements sorted by population.                                     │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   limit (number) - Max results (default: 10)                               │
-│                                                                             │
-│ RETURNS: Array - Array of { locationId, locationName, population }         │
-└─────────────────────────────────────────────────────────────────────────────┘
+---
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementQueries.getWealthiestSettlements(limit)                         │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets settlements sorted by wealth.                                         │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   limit (number) - Max results (default: 10)                               │
-│                                                                             │
-│ RETURNS: Array - Array of { locationId, locationName, wealth }             │
-└─────────────────────────────────────────────────────────────────────────────┘
+## State Enterprise Commands
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementQueries.getMostProsperousSettlements(limit)                     │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets settlements sorted by prosperity.                                     │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   limit (number) - Max results (default: 10)                               │
-│                                                                             │
-│ RETURNS: Array - Array of { locationId, locationName, prosperity }         │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementCommands.createStateEnterprise(locationId, data)`
 
+| Property | Value |
+|----------|-------|
+| **Description** | Creates a state-owned enterprise |
+| **Parameters** | `locationId` (string), `data` (Object) |
+| **Returns** | `{ success: boolean, data: Object }` |
 
-### 1.4 settlement-economy.js - Economy Business Logic
+### `SettlementCommands.removeStateEnterprise(locationId, enterpriseId)`
 
-**PURPOSE:** Business logic for settlement finances.
+| Property | Value |
+|----------|-------|
+| **Description** | Removes a state-owned enterprise |
+| **Parameters** | `locationId` (string), `enterpriseId` (string) |
+| **Returns** | `{ success: boolean, reason: string }` |
+
+---
+
+## Budget Allocation Commands (NEW)
+
+### `SettlementCommands.allocateGovernmentSalaryBudget(locationId, amount, year)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Allocates government salary budget from settlement to government |
+| **Parameters** | `locationId` (string), `amount` (number), `year` (number) |
+| **Returns** | `{ success: boolean, data: Object, reason: string }` |
+
+### `SettlementCommands.allocateEducationBudget(locationId, amount, year)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Allocates education budget from settlement to education system |
+| **Parameters** | `locationId` (string), `amount` (number), `year` (number) |
+| **Returns** | `{ success: boolean, data: Object, reason: string }` |
+
+### `SettlementCommands.getGovernmentSalaryRequirements(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets the salary requirements for government in a location |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `{ total: number, details: Array }` |
+
+---
+
+## Public Enterprise Commands (NEW)
+
+### `SettlementCommands.collectPublicEnterpriseProfits(locationId, year)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Collects profits from public enterprises and adds to settlement wealth |
+| **Parameters** | `locationId` (string), `year` (number) |
+| **Returns** | `{ success: boolean, totalProfit: number, enterprises: Array, newWealth: number }` |
+
+### `SettlementCommands.getPublicEnterpriseSummary(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets public enterprise summary for a settlement |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `{ total: number, totalProfit: number, totalWealth: number, enterprises: Array }` |
+
+---
+
+## Settlement Role Commands
+
+### `SettlementCommands.assignSettlementRole(locationId, characterId, roleId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Assigns a role to a character at a settlement |
+| **Parameters** | `locationId` (string), `characterId` (string), `roleId` (string), `options` (Object) |
+| **Returns** | `{ success: boolean, reason: string, character: Object, role: Object }` |
+
+**Options:**
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `skillLevel` | number | 10 | Initial skill level (0-100) |
+| `startYear` | number | current | Year started |
+| `primary` | boolean | false | Is primary profession |
+| `notes` | string | - | Notes |
+
+### `SettlementCommands.removeSettlementRole(locationId, characterId, roleId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Removes a role from a character at a settlement |
+| **Parameters** | `locationId` (string), `characterId` (string), `roleId` (string) |
+| **Returns** | `{ success: boolean, reason: string }` |
+
+### `SettlementCommands.updateSettlementCharacterSkill(locationId, characterId, roleId, skillLevel)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Updates a character's skill level at a settlement |
+| **Parameters** | `locationId` (string), `characterId` (string), `roleId` (string), `skillLevel` (number) |
+| **Returns** | `{ success: boolean, reason: string, newLevel: number }` |
+
+---
+
+## Annual Processing
+
+### `SettlementCommands.processAnnualSettlementUpdate(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Processes annual update for a single settlement |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Object` - Results including prosperity, surplus, wealth, debt |
+
+**Processing Steps:**
+1. Process state enterprises
+2. Calculate income (taxes, trade, industry, state enterprises, public enterprises)
+3. Calculate expenses (maintenance, wages, spending, government salaries)
+4. Calculate surplus
+5. Update wealth and debt
+6. Apply debt interest (5% annually)
+7. Update budget
+8. Update prosperity (includes role factors, government leader, public enterprises)
+9. Update employment
+10. Update crime rate
+11. Update rank (auto-upgrade if population threshold met)
+12. Collect public enterprise profits
+13. Save all changes
+
+### `SettlementCommands.processAllSettlements()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Processes annual update for all settlements |
+| **Returns** | `{ success: boolean, processed: number, results: Array }` |
+
+---
+
+# 3. SETTLEMENT-QUERIES.JS
+
+**PURPOSE:** All read-only operations for settlement data.
 
 **DEPENDENCIES:**
-  - settlement-state.js (SettlementState)
-  - settlement-queries.js (SettlementQueries)
-  - accessors.js (getPlaceById, getCurrentYear)
+- `settlement-state.js` - `SettlementState`
+- `settlement-economy.js` - `SettlementEconomy`
+- `accessors.js` - `getPlaceById`, `getPlaces`, `getCharacters`
 
-**FUNCTIONS:**
+---
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementEconomy.calculateTaxIncome(locationId)                          │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Calculates tax income.                                                     │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: number - Tax income                                               │
-└─────────────────────────────────────────────────────────────────────────────┘
+## Core Queries
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementEconomy.calculateTradeIncome(locationId)                        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Calculates trade income.                                                   │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: number - Trade income                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementQueries.getSettlementSummary(locationId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementEconomy.calculateIndustryIncome(locationId)                     │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Calculates industry tax income.                                            │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: number - Industry tax income                                      │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Gets a formatted summary of a settlement |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Object` - Settlement summary |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementEconomy.calculateStateEnterpriseIncome(locationId)              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Calculates state enterprise income.                                        │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: number - State enterprise income                                  │
-└─────────────────────────────────────────────────────────────────────────────┘
+**Return Structure:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Location ID |
+| `name` | string | Settlement name |
+| `rank` | object | Current rank |
+| `population` | number | Population |
+| `features` | array | Built features |
+| `prosperity` | object | { value, description } |
+| `wealth` | number | Wealth in gold |
+| `totalDebt` | number | Total debt |
+| `netWorth` | number | Wealth - Debt |
+| `foundedYear` | number | Year founded |
+| `lastUpgraded` | number | Last upgrade year |
+| `specializationRoleId` | string | Specialization role ID |
+| `canUpgrade` | boolean | Can upgrade |
+| `nextRank` | object | Next rank |
+| `taxRate` | number | Tax rate |
+| `crimeRate` | number | Crime rate |
+| `budgetAllocation` | object | Budget allocation data (NEW) |
+| `publicEnterprises` | object | Public enterprise summary (NEW) |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementEconomy.calculateTotalIncome(locationId)                        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Calculates total income.                                                   │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: number - Total income                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementQueries.getSettlementRank(locationId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementEconomy.calculateMaintenanceCosts(locationId)                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Calculates feature maintenance costs.                                      │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: number - Maintenance costs                                        │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Gets the current rank of a settlement |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Object|null` - Rank object |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementEconomy.calculateWageCosts(locationId)                          │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Calculates state employee wage costs.                                      │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: number - Wage costs                                               │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementQueries.getUpgradeInfo(locationId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementEconomy.calculateSpendingCosts(locationId)                      │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Calculates spending costs (military, infrastructure, education).           │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: number - Spending costs                                           │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Gets upgrade information for a settlement |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Object` - { canUpgrade, nextRank, requiredPopulation, currentPopulation, reason } |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementEconomy.calculateTotalExpenses(locationId)                      │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Calculates total expenses.                                                 │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: number - Total expenses                                           │
-└─────────────────────────────────────────────────────────────────────────────┘
+---
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementEconomy.calculateSurplus(locationId)                            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Calculates surplus (income - expenses).                                    │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: number - Surplus                                                  │
-└─────────────────────────────────────────────────────────────────────────────┘
+## Feature Queries
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementEconomy.calculateTaxRevenue(locationId)                         │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Calculates total tax revenue.                                              │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: number - Total tax revenue                                        │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementQueries.getSettlementFeatures(locationId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementEconomy.getFinancialReport(locationId, years)                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets financial report for multiple years.                                  │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   years (number) - Years to include (default: 5)                           │
-│                                                                             │
-│ RETURNS: { locationId, reports: [], summary: { averageIncome,             │
-│           averageExpenses, averageSurplus } }                              │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Gets features built at a settlement |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Array` - Feature objects |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementEconomy.getEfficiencyScore(locationId)                          │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets government efficiency score.                                          │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: { efficiency, rating, income, expenses, surplus, population,     │
-│           incomePerCapita }                                                │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementQueries.getAllFeatures()`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementEconomy.getDebtRatio(locationId)                                │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets debt-to-wealth ratio.                                                 │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: number - Debt ratio (0-100)                                       │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all available features |
+| **Returns** | `Array` - Feature objects |
 
+### `SettlementQueries.getFeatureById(featureId)`
 
-### 1.5 settlement-ranks.js - Rank Business Logic
+| Property | Value |
+|----------|-------|
+| **Description** | Gets a feature by ID |
+| **Parameters** | `featureId` (string) |
+| **Returns** | `Object|null` - Feature object |
 
-**PURPOSE:** Business logic for settlement ranks.
+### `SettlementQueries.canAffordFeature(locationId, featureId)`
 
-**DEPENDENCIES:**
-  - settlement-state.js (SettlementState)
+| Property | Value |
+|----------|-------|
+| **Description** | Checks if settlement can afford a feature |
+| **Parameters** | `locationId` (string), `featureId` (string) |
+| **Returns** | `boolean` |
 
-**FUNCTIONS:**
+### `SettlementQueries.wouldCreateDebt(locationId, featureId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementRanks.getAllRanks()                                             │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets all rank definitions.                                                 │
-│                                                                             │
-│ RETURNS: Array - Array of rank objects                                     │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Checks if building a feature would create debt |
+| **Parameters** | `locationId` (string), `featureId` (string) |
+| **Returns** | `boolean` |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementRanks.getRankById(rankId)                                       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets a rank by ID.                                                         │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   rankId (string) - Rank ID                                                │
-│                                                                             │
-│ RETURNS: Object|null - Rank object or null                                 │
-└─────────────────────────────────────────────────────────────────────────────┘
+---
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementRanks.getRankFromPopulation(population)                         │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets a rank from population.                                               │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   population (number) - Population                                         │
-│                                                                             │
-│ RETURNS: Object|null - Rank object or null                                 │
-└─────────────────────────────────────────────────────────────────────────────┘
+## Economic Queries
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementRanks.getSettlementRank(locationId)                             │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets the rank for a settlement.                                            │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: Object|null - Rank object or null                                 │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementQueries.getSettlementBudget(locationId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementRanks.getNextRank(locationId)                                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets the next rank for a settlement.                                       │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: Object|null - Next rank or null                                   │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Gets budget data for a settlement |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Object|null` - Budget object |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementRanks.canUpgrade(locationId)                                    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Checks if a settlement can upgrade.                                        │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: boolean - True if can upgrade                                     │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementQueries.getSettlementEmployment(locationId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementRanks.getUpgradeRequirements(locationId)                        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets upgrade requirements for a settlement.                                │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│                                                                             │
-│ RETURNS: { currentRank, nextRank, currentPopulation, canUpgrade,          │
-│           requirements: [] }                                               │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Gets employment data for a settlement |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Object|null` - Employment object |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementRanks.getRankTaxBonus(rankId)                                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets tax bonus for a rank.                                                 │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   rankId (string) - Rank ID                                                │
-│                                                                             │
-│ RETURNS: number - Tax bonus                                                │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementQueries.getTradeStatus(locationId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementRanks.getRankProsperityModifier(rankId)                         │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets prosperity modifier for a rank.                                       │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   rankId (string) - Rank ID                                                │
-│                                                                             │
-│ RETURNS: number - Prosperity modifier                                      │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Gets trade status for a settlement |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Object` - { status, tradeFeatures, totalBonus, description } |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementRanks.getRankPopulationModifier(rankId)                         │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets population modifier for a rank.                                       │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   rankId (string) - Rank ID                                                │
-│                                                                             │
-│ RETURNS: number - Population modifier                                      │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementQueries.getSettlementIncome(locationId)`
 
+| Property | Value |
+|----------|-------|
+| **Description** | Gets total income for a settlement |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `number` |
 
-### 1.6 settlement-features.js - Feature Business Logic
+### `SettlementQueries.getSettlementExpenses(locationId)`
 
-**PURPOSE:** Business logic for settlement features.
+| Property | Value |
+|----------|-------|
+| **Description** | Gets total expenses for a settlement |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `number` |
 
-**DEPENDENCIES:**
-  - settlement-state.js (SettlementState)
+### `SettlementQueries.getSettlementSurplus(locationId)`
 
-**FUNCTIONS:**
+| Property | Value |
+|----------|-------|
+| **Description** | Gets surplus for a settlement |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `number` |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementFeatures.getAllFeatures()                                       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets all feature definitions.                                              │
-│                                                                             │
-│ RETURNS: Array - Array of feature objects                                  │
-└─────────────────────────────────────────────────────────────────────────────┘
+---
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementFeatures.getFeatureById(featureId)                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets a feature by ID.                                                      │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   featureId (string) - Feature ID                                          │
-│                                                                             │
-│ RETURNS: Object|null - Feature object or null                              │
-└─────────────────────────────────────────────────────────────────────────────┘
+## Budget Allocation Queries (NEW)
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementFeatures.getFeaturesByCategory(category)                        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets features by category.                                                 │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   category (string) - Category name                                        │
-│                                                                             │
-│ RETURNS: Array - Array of feature objects                                  │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementQueries.getSettlementBudgetSummary(locationId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementFeatures.getPublicFeatures()                                    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets all public (settlement-owned) features.                               │
-│                                                                             │
-│ RETURNS: Array - Array of feature objects                                  │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Gets comprehensive budget allocation summary |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Object` - Budget summary |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementFeatures.getFeatureCategories()                                 │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets all features grouped by category.                                     │
-│                                                                             │
-│ RETURNS: Object - { category: [features] }                                 │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementQueries.getBudgetAllocationHistory(locationId, limit)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementFeatures.canAffordFeature(locationId, featureId)                │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Checks if a settlement can afford a feature.                               │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   featureId (string) - Feature ID                                          │
-│                                                                             │
-│ RETURNS: boolean - True if can afford                                      │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Gets budget allocation history |
+| **Parameters** | `locationId` (string), `limit` (number) |
+| **Returns** | `Array` - History entries |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementFeatures.wouldCreateDebt(locationId, featureId)                 │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Checks if building a feature would create debt.                            │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   featureId (string) - Feature ID                                          │
-│                                                                             │
-│ RETURNS: boolean - True if would create debt                               │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementQueries.getSettlementBudgetAllocation(locationId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementFeatures.hasPrerequisites(locationId, featureId)                │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Checks if a settlement has prerequisites for a feature.                    │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   featureId (string) - Feature ID                                          │
-│                                                                             │
-│ RETURNS: boolean - True if prerequisites met                               │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Gets current budget allocation |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Object` - Budget allocation |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementFeatures.getFeatureCost(featureId)                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets the cost of a feature.                                                │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   featureId (string) - Feature ID                                          │
-│                                                                             │
-│ RETURNS: number - Cost in gold                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementQueries.getGovernmentSalaryBudget(locationId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementFeatures.getFeatureMaintenance(featureId)                       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets the maintenance cost of a feature.                                    │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   featureId (string) - Feature ID                                          │
-│                                                                             │
-│ RETURNS: number - Maintenance in gold/year                                 │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Gets government salary budget |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `number` |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementFeatures.getFeatureProsperityBonus(featureId)                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets the prosperity bonus of a feature.                                    │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   featureId (string) - Feature ID                                          │
-│                                                                             │
-│ RETURNS: number - Prosperity bonus                                         │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementQueries.getEducationBudget(locationId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementFeatures.getFeatureCrimeReduction(featureId)                    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets the crime reduction of a feature.                                     │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   featureId (string) - Feature ID                                          │
-│                                                                             │
-│ RETURNS: number - Crime reduction                                          │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Gets education budget |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `number` |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementFeatures.getFeatureEffects(featureId)                           │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Gets all effects of a feature.                                             │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   featureId (string) - Feature ID                                          │
-│                                                                             │
-│ RETURNS: { prosperityBonus, crimeReduction, defenseBonus, tradeBonus,     │
-│           educationBonus, literacyBonus, maintenance, cost }              │
-└─────────────────────────────────────────────────────────────────────────────┘
+---
 
+## Public Enterprise Queries (NEW)
 
-### 1.7 settlement-ui-list.js - UI List Rendering
+### `SettlementQueries.getPublicEnterprises(locationId)`
 
-**PURPOSE:** Renders settlement lists with filters, selection, and sorting.
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all public enterprises at a settlement |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Array` - Enterprise objects |
+
+### `SettlementQueries.getPublicEnterpriseIds(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets public enterprise IDs |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Array` - Enterprise IDs |
+
+### `SettlementQueries.getPublicEnterpriseHistory(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets public enterprise history |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Array` - History entries |
+
+### `SettlementQueries.getPublicEnterpriseSummary(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets summary of public enterprises |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Object` - Enterprise summary |
+
+---
+
+## Literacy Queries
+
+### `SettlementQueries.getSettlementLiteracyStats(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets literacy statistics for a settlement |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Object` - { totalPopulation, literateCount, literacyRate, educationLevels, hasSchools } |
+
+---
+
+## Role-Settlement Queries
+
+### `SettlementQueries.getSettlementRoles(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all roles present in a settlement with counts |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Object` - Role distribution { roleId: { id, name, count } } |
+
+### `SettlementQueries.getSettlementCharactersByRole(locationId, roleId, mastersOnly)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets characters in a settlement with a specific role |
+| **Parameters** | `locationId` (string), `roleId` (string), `mastersOnly` (boolean) |
+| **Returns** | `Array` - Character objects |
+
+### `SettlementQueries.getSettlementRoleStats(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets comprehensive role statistics for a settlement |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Object` - { settlementId, settlementName, totalProfessions, uniqueRoles, topRoles, byCategory } |
+
+**Return Structure:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `settlementId` | string | Location ID |
+| `settlementName` | string | Settlement name |
+| `totalProfessions` | number | Total profession instances |
+| `uniqueRoles` | number | Unique role count |
+| `topRoles` | array | Top 5 roles { id, name, count, percentage } |
+| `byCategory` | object | Roles grouped by category |
+
+### `SettlementQueries.getSettlementMasterStats(locationId, roleId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets master concentration in a settlement |
+| **Parameters** | `locationId` (string), `roleId` (string\|null) |
+| **Returns** | `Object` - { settlementId, settlementName, totalMasters, uniqueMasterRoles, byRole, masters } |
+
+---
+
+## Apprenticeship-Settlement Queries
+
+### `SettlementQueries.getSettlementApprenticeshipDensity(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets apprenticeship density for a settlement |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Object` - { totalApprentices, totalMasters, masterToApprenticeRatio, apprenticeDensity, byRole, topRoles, topMasters } |
+
+### `SettlementQueries.getSettlementMastersByRole(locationId, roleId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets masters by role at a settlement |
+| **Parameters** | `locationId` (string), `roleId` (string\|null) |
+| **Returns** | `Array` - Masters with apprentice counts |
+
+---
+
+## Education-Settlement Queries (NEW)
+
+### `SettlementQueries.getSettlementEducationStats(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets comprehensive education statistics for a settlement |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Object` - Education statistics |
+
+**Return Structure:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `settlementId` | string | Location ID |
+| `settlementName` | string | Settlement name |
+| `totalInstitutions` | number | Total schools |
+| `totalStudents` | number | Total students |
+| `totalTeachers` | number | Total teachers |
+| `totalGraduates` | number | Total graduates |
+| `totalCapacity` | number | Total capacity |
+| `averageReputation` | number | Average school reputation |
+| `publicSchools` | number | Public schools |
+| `privateSchools` | number | Private schools |
+| `specializedSchools` | number | Specialized schools |
+| `byType` | object | Schools by type |
+| `schoolAgePopulation` | number | School-age children |
+| `coverageRatio` | number | Coverage percentage |
+| `capacityGap` | number | Capacity gap |
+| `needsMoreSchools` | boolean | Needs more schools |
+| `studentTeacherRatio` | number | Student:Teacher ratio |
+| `literacyRate` | number | Literacy rate |
+| `educationLevels` | object | Education level distribution |
+| `studentDistribution` | array | Students by school |
+| `educationBudget` | number | Education budget (NEW) |
+| `budgetAllocationYear` | number | Budget allocation year (NEW) |
+
+### `SettlementQueries.getSettlementSchools(locationId, filters)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all schools in a settlement with filters |
+| **Parameters** | `locationId` (string), `filters` (Object) |
+| **Returns** | `Array` - School objects |
+
+**Filters:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | School type |
+| `minReputation` | number | Minimum reputation |
+| `maxStudents` | number | Maximum students |
+| `hasStudents` | boolean | Has students |
+| `ownershipType` | string | 'public' or 'private' |
+| `isSpecialized` | boolean | Is specialized |
+
+### `SettlementQueries.getSettlementStudentDistribution(locationId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets student distribution by settlement |
+| **Parameters** | `locationId` (string), `options` (Object) |
+| **Returns** | `Object` - Student distribution statistics |
+
+---
+
+## Statistics Queries
+
+### `SettlementQueries.getSettlementStatistics(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets comprehensive settlement statistics |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Object` - Statistics object |
+
+### `SettlementQueries.getGlobalSettlementStatistics()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets global settlement statistics |
+| **Returns** | `Object` - { totalSettlements, totalPopulation, totalWealth, totalDebt, averageProsperity, byRank, largest, wealthiest, mostProsperous, totalEducationBudget, totalGovernmentSalaryBudget, totalPublicEnterprises, totalPublicEnterpriseProfit } |
+
+---
+
+## Ranking Queries
+
+### `SettlementQueries.getLargestSettlements(limit)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets largest settlements by population |
+| **Parameters** | `limit` (number, default 10) |
+| **Returns** | `Array` - { locationId, locationName, population } |
+
+### `SettlementQueries.getWealthiestSettlements(limit)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets wealthiest settlements |
+| **Parameters** | `limit` (number, default 10) |
+| **Returns** | `Array` - { locationId, locationName, wealth } |
+
+### `SettlementQueries.getMostProsperousSettlements(limit)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets most prosperous settlements |
+| **Parameters** | `limit` (number, default 10) |
+| **Returns** | `Array` - { locationId, locationName, prosperity } |
+
+---
+
+# 4. SETTLEMENT-ECONOMY.JS
+
+**PURPOSE:** Business logic for settlement finances and prosperity calculation.
 
 **DEPENDENCIES:**
-  - settlement-state.js (SettlementState)
-  - settlement-queries.js (SettlementQueries)
-  - modals-core.js (_escapeHtml, _getIcon, _showToast)
+- `settlement-state.js` - `SettlementState`
+- `accessors.js` - `getPlaceById`, `getCurrentYear`
+- `government-queries.js` - `GovernmentQueries`
 
-**FUNCTIONS:**
+---
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementUI.renderSettlementList(containerId, options)                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Renders a list of settlements with filters and selection.                  │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   containerId (string) - DOM element ID                                    │
-│   options.searchTerm (string) - Search term                                │
-│   options.onSelect (function) - Selection callback                         │
-│   options.selectedId (string) - Selected settlement ID                     │
-│   options.rankFilter (string) - Rank filter                                │
-│   options.prosperityFilter (string) - Prosperity filter                    │
-│   options.sortBy (string) - Sort field                                    │
-│   options.sortOrder (string) - 'asc' or 'desc'                            │
-│   options.limit (number) - Max results                                    │
-└─────────────────────────────────────────────────────────────────────────────┘
+## Income Calculations
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementUI.renderSettlementCard(locationId, options)                    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Renders a settlement as a card.                                            │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   options (Object) - Additional options                                    │
-│                                                                             │
-│ RETURNS: string - HTML for the card                                        │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementEconomy.calculateTaxIncome(locationId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementUI.renderSettlementTable(settlements, options)                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Renders settlements as a table.                                            │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   settlements (Array) - Settlement objects                                 │
-│   options.columns (Array) - Columns to show                                │
-│                                                                             │
-│ AVAILABLE COLUMNS:                                                          │
-│   name, rank, population, prosperity, wealth, debt, features, taxRate      │
-│                                                                             │
-│ RETURNS: string - HTML for the table                                       │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Calculates tax income for a settlement |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `number` |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ SettlementUI.renderFeatureList(containerId, locationId, options)          │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Renders a list of features at a settlement.                                │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   containerId (string) - DOM element ID                                    │
-│   locationId (string) - Location ID                                        │
-│   options.onSelect (function) - Selection callback                         │
-│   options.selectedId (string) - Selected feature ID                        │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `SettlementEconomy.calculateTradeIncome(locationId)`
 
+| Property | Value |
+|----------|-------|
+| **Description** | Calculates trade income for a settlement |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `number` |
 
-### 1.8 modals-settlement.js - Settlement UI Modals
+### `SettlementEconomy.calculateIndustryIncome(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Calculates industry tax income |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `number` |
+
+### `SettlementEconomy.calculateStateEnterpriseIncome(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Calculates state enterprise income |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `number` |
+
+### `SettlementEconomy.calculatePublicEnterpriseIncome(locationId)` (NEW)
+
+| Property | Value |
+|----------|-------|
+| **Description** | Calculates public enterprise income |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `number` |
+
+### `SettlementEconomy.calculateTotalIncome(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Calculates total income (includes public enterprises) |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `number` |
+
+---
+
+## Expense Calculations
+
+### `SettlementEconomy.calculateMaintenanceCosts(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Calculates feature maintenance costs |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `number` |
+
+### `SettlementEconomy.calculateWageCosts(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Calculates wage costs for state employees |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `number` |
+
+### `SettlementEconomy.calculateSpendingCosts(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Calculates spending costs |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `number` |
+
+### `SettlementEconomy.calculateGovernmentSalaryExpenses(locationId)` (NEW)
+
+| Property | Value |
+|----------|-------|
+| **Description** | Calculates government salary expenses from budget allocation |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `number` |
+
+### `SettlementEconomy.calculateTotalExpenses(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Calculates total expenses (includes government salaries) |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `number` |
+
+---
+
+## Surplus & Tax Calculations
+
+### `SettlementEconomy.calculateSurplus(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Calculates annual surplus |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `number` |
+
+### `SettlementEconomy.calculateTaxRevenue(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Calculates total tax revenue |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `number` |
+
+---
+
+## Employment Calculation
+
+### `SettlementEconomy.calculateEmployment(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Calculates employment statistics |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Object` - { totalWorkers, stateEmployed, privateEmployed, unemployed, averageWage, employmentRate } |
+
+---
+
+## Prosperity Calculation (CRITICAL)
+
+### `SettlementEconomy.calculateProsperity(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Calculates prosperity (0-100) with multi-factor weighting |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `number` - Prosperity value (0-100) |
+
+**Prosperity Factors:**
+
+| Factor | Weight | Source |
+|--------|--------|--------|
+| Rank population thresholds | ±2-5% | Settlement ranks |
+| Features | +1-12% each | Settlement features |
+| Specialization | +5-12% | Role system |
+| Tax rate | -1-3% | Tax management |
+| Crime rate | -2-5% | Justice system |
+| Literacy rate | +1-2% | Education system |
+| Employment rate | +3% | Industry system |
+| Debt ratio | -0-15% | Financial management |
+| **Role diversity** | +2-4% | **Role system** |
+| **Master concentration** | +1-3% | **Role system** |
+| **Average skill level** | +1-2% | **Role system** |
+| **Underserved roles** | -1-3% | **Role system** |
+| Government Leader | ±3-5% | Government system |
+| **Public Enterprises** | +1-3% | **Public enterprise profit (NEW)** |
+
+---
+
+## Crime Rate Calculation
+
+### `SettlementEconomy.calculateCrimeRate(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Calculates crime rate (0-0.8) |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `number` - Crime rate |
+
+**Crime Rate Factors:**
+- Prosperity effects
+- Tax rate effects
+- Watch size effects
+- Feature crime reduction
+- Unemployment effects
+- Military spending effects
+- Justice severity effects
+
+---
+
+## Specialization Bonuses
+
+### `SettlementEconomy.calculateSpecializationIncomeBonus(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Calculates income bonus from specialization |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `number` - Multiplier (0.5-3.0) |
+
+### `SettlementEconomy.calculateSpecializationProsperityBonus(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Calculates prosperity bonus from specialization |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `number` - Bonus value (0-12) |
+
+---
+
+## Literacy Statistics
+
+### `SettlementEconomy.getSettlementLiteracyStats(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets literacy statistics for a settlement |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Object` - Literacy stats |
+
+---
+
+## Financial Reporting
+
+### `SettlementEconomy.getFinancialReport(locationId, years)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets financial report for past N years |
+| **Parameters** | `locationId` (string), `years` (number, default 5) |
+| **Returns** | `Object` - { reports, summary } |
+
+### `SettlementEconomy.getEfficiencyScore(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets government efficiency score |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Object` - { efficiency, rating, income, expenses, surplus, population, incomePerCapita } |
+
+### `SettlementEconomy.getDebtRatio(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets debt ratio (debt/wealth) |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `number` - Percentage (0-100) |
+
+---
+
+# 5. SETTLEMENT-FEATURES.JS
+
+**PURPOSE:** Feature definitions and validation.
+
+**DEPENDENCIES:**
+- `settlement-state.js` - `SettlementState`
+
+---
+
+## Feature Definitions
+
+### `SettlementFeatures.getAllFeatures()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all available features |
+| **Returns** | `Array` - Feature objects |
+
+### `SettlementFeatures.getFeatureById(featureId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets a feature by ID |
+| **Parameters** | `featureId` (string) |
+| **Returns** | `Object|null` - Feature object |
+
+### `SettlementFeatures.getFeaturesByCategory(category)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets features by category |
+| **Parameters** | `category` (string) |
+| **Returns** | `Array` - Feature objects |
+
+### `SettlementFeatures.getPublicFeatures()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all public features |
+| **Returns** | `Array` - Feature objects |
+
+### `SettlementFeatures.getFeatureCategories()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets features grouped by category |
+| **Returns** | `Object` - { category: [features] } |
+
+---
+
+## Feature Validation
+
+### `SettlementFeatures.canAffordFeature(locationId, featureId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Checks if settlement can afford a feature |
+| **Parameters** | `locationId` (string), `featureId` (string) |
+| **Returns** | `boolean` |
+
+### `SettlementFeatures.wouldCreateDebt(locationId, featureId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Checks if building a feature would create debt |
+| **Parameters** | `locationId` (string), `featureId` (string) |
+| **Returns** | `boolean` |
+
+### `SettlementFeatures.hasPrerequisites(locationId, featureId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Checks if feature prerequisites are met |
+| **Parameters** | `locationId` (string), `featureId` (string) |
+| **Returns** | `boolean` |
+
+---
+
+## Feature Effects
+
+### `SettlementFeatures.getFeatureCost(featureId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets feature construction cost |
+| **Parameters** | `featureId` (string) |
+| **Returns** | `number` |
+
+### `SettlementFeatures.getFeatureMaintenance(featureId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets feature annual maintenance cost |
+| **Parameters** | `featureId` (string) |
+| **Returns** | `number` |
+
+### `SettlementFeatures.getFeatureProsperityBonus(featureId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets feature prosperity bonus |
+| **Parameters** | `featureId` (string) |
+| **Returns** | `number` |
+
+### `SettlementFeatures.getFeatureCrimeReduction(featureId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets feature crime reduction |
+| **Parameters** | `featureId` (string) |
+| **Returns** | `number` |
+
+### `SettlementFeatures.getFeatureEffects(featureId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all effects of a feature |
+| **Parameters** | `featureId` (string) |
+| **Returns** | `Object` - { prosperityBonus, crimeReduction, defenseBonus, tradeBonus, educationBonus, literacyBonus, maintenance, cost } |
+
+---
+
+# 6. SETTLEMENT-RANKS.JS
+
+**PURPOSE:** Rank definitions and upgrade logic.
+
+**DEPENDENCIES:**
+- `settlement-state.js` - `SettlementState`
+- `accessors.js` - `getPlaceById`, `getCurrentYear`
+
+---
+
+## Rank Definitions
+
+| Rank | ID | Min Population | Max Population | Base Tax | Order |
+|------|-----|----------------|----------------|----------|-------|
+| Hamlet | `hamlet` | 0 | 99 | 5 | 1 |
+| Village | `village` | 100 | 999 | 15 | 2 |
+| Town | `town` | 1000 | 4999 | 50 | 3 |
+| City | `city` | 5000 | 19999 | 150 | 4 |
+| Metropolis | `metropolis` | 20000 | 999999 | 400 | 5 |
+
+---
+
+## Rank Functions
+
+### `SettlementRanks.getAllRanks()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all rank definitions |
+| **Returns** | `Array` - Rank objects |
+
+### `SettlementRanks.getRankById(rankId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets a rank by ID |
+| **Parameters** | `rankId` (string) |
+| **Returns** | `Object|null` - Rank object |
+
+### `SettlementRanks.getRankFromPopulation(population)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets the rank for a population size |
+| **Parameters** | `population` (number) |
+| **Returns** | `Object|null` - Rank object |
+
+### `SettlementRanks.getSettlementRank(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets the rank of a settlement |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Object|null` - Rank object |
+
+### `SettlementRanks.getNextRank(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets the next rank for a settlement |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Object|null` - Rank object |
+
+### `SettlementRanks.canUpgrade(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Checks if a settlement can upgrade |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `boolean` |
+
+### `SettlementRanks.getUpgradeRequirements(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets upgrade requirements for a settlement |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Object` - { currentRank, nextRank, currentPopulation, canUpgrade, requirements } |
+
+---
+
+## Rank Effects
+
+### `SettlementRanks.getRankTaxBonus(rankId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets tax bonus for a rank |
+| **Parameters** | `rankId` (string) |
+| **Returns** | `number` |
+
+### `SettlementRanks.getRankProsperityModifier(rankId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets prosperity modifier for a rank |
+| **Parameters** | `rankId` (string) |
+| **Returns** | `number` |
+
+### `SettlementRanks.getRankPopulationModifier(rankId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets population growth modifier for a rank |
+| **Parameters** | `rankId` (string) |
+| **Returns** | `number` |
+
+---
+
+# 7. SETTLEMENT-UI-LIST.JS
+
+**PURPOSE:** UI rendering for settlement lists, cards, tables, features, and roles.
+
+**DEPENDENCIES:**
+- `settlement-state.js` - `SettlementState`
+- `settlement-queries.js` - `SettlementQueries`
+- `modals-core.js` - `_escapeHtml`, `_getIcon`, `_showToast`
+
+---
+
+### `SettlementUI.renderSettlementList(containerId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Renders a list of settlements with filters |
+| **Parameters** | `containerId` (string), `options` (Object) |
+| **Returns** | `boolean` - True if rendered |
+
+**Options:**
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `searchTerm` | string | '' | Search term |
+| `onSelect` | function | null | Callback when selected |
+| `selectedId` | string | null | Selected settlement ID |
+| `rankFilter` | string | 'all' | Filter by rank |
+| `prosperityFilter` | string | 'all' | 'thriving', 'stable', 'struggling' |
+| `sortBy` | string | 'name' | 'name', 'population', 'wealth', 'prosperity' |
+| `sortOrder` | string | 'asc' | 'asc' or 'desc' |
+| `limit` | number | 0 | Max results |
+
+### `SettlementUI.renderSettlementCard(locationId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Renders a settlement as a card |
+| **Parameters** | `locationId` (string), `options` (Object) |
+| **Returns** | `string` - HTML for the card |
+
+### `SettlementUI.renderSettlementTable(settlements, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Renders settlements as a table |
+| **Parameters** | `settlements` (Array), `options` (Object) |
+| **Returns** | `string` - HTML for the table |
+
+### `SettlementUI.renderFeatureList(containerId, locationId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Renders features built at a settlement |
+| **Parameters** | `containerId` (string), `locationId` (string), `options` (Object) |
+| **Returns** | `boolean` - True if rendered |
+
+### `SettlementUI.renderSettlementRoles(containerId, locationId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Renders role distribution at a settlement |
+| **Parameters** | `containerId` (string), `locationId` (string), `options` (Object) |
+| **Returns** | `boolean` - True if rendered |
+
+**Options:**
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `limit` | number | 10 | Max roles to show |
+| `showMasters` | boolean | true | Show master count |
+| `onRoleClick` | function | null | Callback when role clicked |
+
+### `SettlementUI.renderSettlementMasters(containerId, locationId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Renders masters at a settlement |
+| **Parameters** | `containerId` (string), `locationId` (string), `options` (Object) |
+| **Returns** | `boolean` - True if rendered |
+
+**Options:**
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `roleId` | string | null | Filter by role ID |
+| `limit` | number | 20 | Max masters to show |
+| `onSelect` | function | null | Callback when master selected |
+
+### `SettlementUI.renderSettlementApprenticeships(containerId, locationId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Renders apprenticeship density at a settlement |
+| **Parameters** | `containerId` (string), `locationId` (string), `options` (Object) |
+| **Returns** | `boolean` - True if rendered |
+
+**Options:**
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `limit` | number | 5 | Max roles to show |
+| `onMasterClick` | function | null | Callback when master clicked |
+
+### `SettlementUI.renderSettlementEducation(containerId, locationId, options)` (NEW)
+
+| Property | Value |
+|----------|-------|
+| **Description** | Renders education statistics at a settlement |
+| **Parameters** | `containerId` (string), `locationId` (string), `options` (Object) |
+| **Returns** | `boolean` - True if rendered |
+
+**Options:**
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `maxSchools` | number | 3 | Max schools to show |
+| `onSchoolClick` | function | null | Callback when school clicked |
+
+---
+
+# 8. MODALS-SETTLEMENT.JS
 
 **PURPOSE:** UI modals for settlement management.
 
 **DEPENDENCIES:**
-  - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
-  - settlement-state.js (SettlementState)
-  - settlement-commands.js (SettlementCommands)
-  - settlement-queries.js (SettlementQueries)
-  - accessors.js (getPlaceById, getLocationPopulationCount)
+- `modals-core.js` - `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon`
+- `settlement-state.js` - `SettlementState`
+- `settlement-commands.js` - `SettlementCommands`
+- `settlement-queries.js` - `SettlementQueries`
+- `settlement-economy.js` - `SettlementEconomy`
 
-**EXPORTS:**
+---
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ openManageFeaturesModal(locationId, onSuccess)                            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Opens modal to manage settlement features (add, remove, demolish).         │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   onSuccess (function) - Callback on success                               │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `openManageFeaturesModal(locationId, onSuccess)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ openUpgradeSettlementModal(locationId, onSuccess)                         │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Opens modal to upgrade a settlement.                                       │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   onSuccess (function) - Callback on success                               │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to manage public features (add/remove/demolish) |
+| **Parameters** | `locationId` (string), `onSuccess` (function) |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ openSettlementSpecializationModal(locationId, onSuccess)                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Opens modal to set settlement specialization.                              │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   onSuccess (function) - Callback on success                               │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `openUpgradeSettlementModal(locationId, onSuccess)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ openSettlementBudgetModal(locationId)                                     │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Opens modal to view settlement budget.                                     │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to upgrade a settlement |
+| **Parameters** | `locationId` (string), `onSuccess` (function) |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ openEmploymentManagementModal(locationId)                                 │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Opens modal to view employment statistics.                                 │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `openSettlementSpecializationModal(locationId, onSuccess)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ openStateEnterpriseManagementModal(locationId, onSuccess)                 │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Opens modal to manage state-owned enterprises.                             │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   onSuccess (function) - Callback on success                               │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to set settlement specialization |
+| **Parameters** | `locationId` (string), `onSuccess` (function) |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ openCreateStateEnterpriseModal(locationId, onSuccess)                     │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Opens modal to create a state-owned enterprise.                            │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   onSuccess (function) - Callback on success                               │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `openSettlementBudgetModal(locationId)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ openSettlementDetailsModal(locationId, onRefresh)                         │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Opens modal with settlement details and action buttons.                    │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   onRefresh (function) - Callback to refresh parent view                   │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal showing settlement budget |
+| **Parameters** | `locationId` (string) |
 
+### `openEmploymentManagementModal(locationId)`
 
-### 1.9 modals-settlement-economy.js - Economy UI Modals
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal showing employment data |
+| **Parameters** | `locationId` (string) |
 
-**PURPOSE:** UI modals for settlement economy management.
+### `openStateEnterpriseManagementModal(locationId, onSuccess)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to manage state enterprises |
+| **Parameters** | `locationId` (string), `onSuccess` (function) |
+
+### `openCreateStateEnterpriseModal(locationId, onSuccess)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to create a state enterprise |
+| **Parameters** | `locationId` (string), `onSuccess` (function) |
+
+### `openSettlementDetailsModal(locationId, onRefresh)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal with full settlement details and actions |
+| **Parameters** | `locationId` (string), `onRefresh` (function) |
+
+### `openSettlementRolesModal(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal showing settlement role distribution |
+| **Parameters** | `locationId` (string) |
+
+### `openSettlementApprenticeshipsModal(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal showing apprenticeship data |
+| **Parameters** | `locationId` (string) |
+
+### `openSettlementEducationModal(locationId)` (NEW)
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal showing education statistics |
+| **Parameters** | `locationId` (string) |
+
+---
+
+# 9. MODALS-SETTLEMENT-ECONOMY.JS
+
+**PURPOSE:** Economy-specific UI modals.
 
 **DEPENDENCIES:**
-  - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
-  - settlement-state.js (SettlementState)
-  - settlement-commands.js (SettlementCommands)
-  - settlement-queries.js (SettlementQueries)
-  - settlement-economy.js (SettlementEconomy)
+- `modals-core.js` - `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon`
+- `settlement-state.js` - `SettlementState`
+- `settlement-commands.js` - `SettlementCommands`
+- `settlement-queries.js` - `SettlementQueries`
+- `settlement-economy.js` - `SettlementEconomy`
 
-**EXPORTS:**
+---
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ openTaxRateManagementModal(locationId, onSuccess)                         │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Opens modal to manage tax rates and tariffs.                               │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   onSuccess (function) - Callback on success                               │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `openTaxRateManagementModal(locationId, onSuccess)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ openSpendingManagementModal(locationId, onSuccess)                        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Opens modal to manage spending allocations.                                │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   onSuccess (function) - Callback on success                               │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to manage tax rates |
+| **Parameters** | `locationId` (string), `onSuccess` (function) |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ openJusticeManagementModal(locationId, onSuccess)                         │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Opens modal to manage justice system and watch.                            │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   onSuccess (function) - Callback on success                               │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `openSpendingManagementModal(locationId, onSuccess)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ openFinancialReportModal(locationId)                                      │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Opens modal to view financial report.                                      │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to manage spending |
+| **Parameters** | `locationId` (string), `onSuccess` (function) |
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ openEfficiencyScoreModal(locationId)                                      │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Opens modal to view efficiency score.                                      │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-└─────────────────────────────────────────────────────────────────────────────┘
+### `openJusticeManagementModal(locationId, onSuccess)`
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ openDebtManagementModal(locationId, onSuccess)                            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Opens modal to manage debt repayment.                                      │
-│                                                                             │
-│ PARAMETERS:                                                                 │
-│   locationId (string) - Location ID                                        │
-│   onSuccess (function) - Callback on success                               │
-└─────────────────────────────────────────────────────────────────────────────┘
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to manage justice and watch |
+| **Parameters** | `locationId` (string), `onSuccess` (function) |
 
+### `openFinancialReportModal(locationId)`
 
-## 2. DEPENDENCY MAP
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal showing financial report |
+| **Parameters** | `locationId` (string) |
+
+### `openEfficiencyScoreModal(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal showing efficiency score |
+| **Parameters** | `locationId` (string) |
+
+### `openDebtManagementModal(locationId, onSuccess)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens modal to manage debt |
+| **Parameters** | `locationId` (string), `onSuccess` (function) |
+
+---
+
+# 10. SETTLEMENT DATA SCHEMA
+
+## Complete Settlement Data Object
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `rankId` | string | Current rank ID |
+| `specializationRoleId` | string | Specialization role ID |
+| `featureIds` | array | Built feature IDs |
+| `prosperity` | number | Prosperity (0-100) |
+| `wealth` | number | Wealth in gold |
+| `totalDebt` | number | Total debt |
+| `foundedYear` | number | Year founded |
+| `lastUpgraded` | number | Last upgrade year |
+| `budget` | object | Budget data |
+| `employment` | object | Employment data |
+| `stateEnterpriseIds` | array | State enterprise IDs |
+| `taxRate` | number | Tax rate (0-50) |
+| `tradeTariff` | number | Trade tariff (0-30) |
+| `industryTaxRate` | number | Industry tax rate (0-30) |
+| `militarySpending` | number | Military spending |
+| `infrastructureSpending` | number | Infrastructure spending |
+| `educationSpending` | number | Education spending |
+| `justiceSeverity` | string | 'lenient', 'medium', 'harsh', 'extreme' |
+| `crimeRate` | number | Crime rate (0-0.8) |
+| `hasWatch` | boolean | Has watch/guard |
+| `watchSize` | number | Watch size |
+| **`budgetAllocationYear`** | number | **Budget allocation year (NEW)** |
+| **`educationBudget`** | number | **Education budget (NEW)** |
+| **`governmentSalaryBudget`** | number | **Government salary budget (NEW)** |
+| **`infrastructureBudget`** | number | **Infrastructure budget (NEW)** |
+| **`militaryBudget`** | number | **Military budget (NEW)** |
+| **`publicEnterpriseIds`** | array | **Public enterprise IDs (NEW)** |
+| **`publicEnterpriseHistory`** | array | **Public enterprise history (NEW)** |
+| `history` | array | History entries |
+| `notes` | string | Notes |
+
+---
+
+## Feature Object Schema
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique identifier |
+| `name` | string | Feature name |
+| `icon` | string | Monochrome icon |
+| `cost` | number | Construction cost |
+| `maintenance` | number | Annual maintenance |
+| `prosperityBonus` | number | Prosperity bonus |
+| `crimeReduction` | number | Crime reduction |
+| `defense` | number | Defense bonus |
+| `tradeBonus` | number | Trade bonus |
+| `educationBonus` | number | Education bonus |
+| `literacyBonus` | number | Literacy bonus |
+| `category` | string | 'defensive', 'civic', 'military', 'aesthetic', 'infrastructure' |
+| `order` | number | Display order |
+| `isPublic` | boolean | Is publicly available |
+| `description` | string | Description |
+
+---
+
+## Rank Object Schema
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique identifier |
+| `name` | string | Rank name |
+| `icon` | string | Monochrome icon |
+| `minPopulation` | number | Minimum population |
+| `maxPopulation` | number | Maximum population |
+| `baseTax` | number | Base tax revenue |
+| `order` | number | Order (1-5) |
+| `description` | string | Description |
+
+---
+
+# 11. COMPLETE FUNCTION LIST
+
+## settlement-state.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `subscribe(callback)` | Command | Subscribe to changes |
+| `getSettlementData(locationId)` | Query | Get settlement data |
+| `getAllSettlements(options)` | Query | Get all settlements |
+| `getSettlementFeatures(locationId)` | Query | Get features |
+| `getSettlementBudget(locationId)` | Query | Get budget |
+| `getSettlementEmployment(locationId)` | Query | Get employment |
+| `getStateEnterpriseIds(locationId)` | Query | Get state enterprises |
+| `getSettlementHistory(locationId)` | Query | Get history |
+| `getUIState()` | Query | Get UI state |
+| `updateUIState(updates)` | Command | Update UI state |
+| `getSettlementBudgetAllocation(locationId)` | Query | **Get budget allocation (NEW)** |
+| `getGovernmentSalaryBudget(locationId)` | Query | **Get government salary budget (NEW)** |
+| `getEducationBudget(locationId)` | Query | **Get education budget (NEW)** |
+| `getPublicEnterpriseIds(locationId)` | Query | **Get public enterprise IDs (NEW)** |
+| `getPublicEnterprises(locationId)` | Query | **Get public enterprises (NEW)** |
+| `getPublicEnterpriseHistory(locationId)` | Query | **Get public enterprise history (NEW)** |
+
+---
+
+## settlement-commands.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `buildFeature(locationId, featureId)` | Command | Build feature |
+| `removeFeature(locationId, featureId)` | Command | Remove feature |
+| `demolishFeature(locationId, featureId)` | Command | Demolish feature |
+| `upgradeSettlement(locationId)` | Command | Upgrade settlement |
+| `setSpecialization(locationId, roleId)` | Command | Set specialization |
+| `updateWealth(locationId, delta, reason)` | Command | Update wealth |
+| `updateDebt(locationId, delta, reason)` | Command | Update debt |
+| `updateTaxRate(locationId, rate)` | Command | Update tax rate |
+| `updateTradeTariff(locationId, tariff)` | Command | Update trade tariff |
+| `updateIndustryTaxRate(locationId, rate)` | Command | Update industry tax |
+| `updateMilitarySpending(locationId, amount)` | Command | Update military spending |
+| `updateInfrastructureSpending(locationId, amount)` | Command | Update infrastructure spending |
+| `updateEducationSpending(locationId, amount)` | Command | Update education spending |
+| `updateJusticeSeverity(locationId, severity)` | Command | Update justice severity |
+| `updateWatch(locationId, hasWatch, size)` | Command | Update watch |
+| `createStateEnterprise(locationId, data)` | Command | Create state enterprise |
+| `removeStateEnterprise(locationId, enterpriseId)` | Command | Remove state enterprise |
+| `assignSettlementRole(locationId, characterId, roleId, options)` | Command | Assign role at settlement |
+| `removeSettlementRole(locationId, characterId, roleId)` | Command | Remove role from settlement |
+| `updateSettlementCharacterSkill(locationId, characterId, roleId, skillLevel)` | Command | Update skill at settlement |
+| `allocateGovernmentSalaryBudget(locationId, amount, year)` | Command | **Allocate government salary budget (NEW)** |
+| `allocateEducationBudget(locationId, amount, year)` | Command | **Allocate education budget (NEW)** |
+| `getGovernmentSalaryRequirements(locationId)` | Command | **Get government salary requirements (NEW)** |
+| `collectPublicEnterpriseProfits(locationId, year)` | Command | **Collect public enterprise profits (NEW)** |
+| `getPublicEnterpriseSummary(locationId)` | Command | **Get public enterprise summary (NEW)** |
+| `processAnnualSettlementUpdate(locationId)` | Command | Process annual update |
+| `processAllSettlements()` | Command | Process all settlements |
+
+---
+
+## settlement-queries.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `getSettlementSummary(locationId)` | Query | Get summary |
+| `getSettlementRank(locationId)` | Query | Get rank |
+| `getUpgradeInfo(locationId)` | Query | Get upgrade info |
+| `getSettlementFeatures(locationId)` | Query | Get features |
+| `getAllFeatures()` | Query | Get all features |
+| `getFeatureById(featureId)` | Query | Get feature by ID |
+| `canAffordFeature(locationId, featureId)` | Query | Check affordability |
+| `wouldCreateDebt(locationId, featureId)` | Query | Check debt creation |
+| `getSettlementBudget(locationId)` | Query | Get budget |
+| `getSettlementEmployment(locationId)` | Query | Get employment |
+| `getTradeStatus(locationId)` | Query | Get trade status |
+| `getSettlementIncome(locationId)` | Query | Get income |
+| `getSettlementExpenses(locationId)` | Query | Get expenses |
+| `getSettlementSurplus(locationId)` | Query | Get surplus |
+| `getSettlementLiteracyStats(locationId)` | Query | Get literacy stats |
+| `getSettlementRoles(locationId)` | Query | Get role distribution |
+| `getSettlementCharactersByRole(locationId, roleId, mastersOnly)` | Query | Get characters by role |
+| `getSettlementRoleStats(locationId)` | Query | Get role statistics |
+| `getSettlementMasterStats(locationId, roleId)` | Query | Get master stats |
+| `getSettlementApprenticeshipDensity(locationId)` | Query | **Get apprenticeship density (NEW)** |
+| `getSettlementMastersByRole(locationId, roleId)` | Query | **Get masters by role (NEW)** |
+| `getSettlementEducationStats(locationId)` | Query | **Get education stats (NEW)** |
+| `getSettlementSchools(locationId, filters)` | Query | **Get schools (NEW)** |
+| `getSettlementStudentDistribution(locationId, options)` | Query | **Get student distribution (NEW)** |
+| `getSettlementBudgetSummary(locationId)` | Query | **Get budget summary (NEW)** |
+| `getBudgetAllocationHistory(locationId, limit)` | Query | **Get budget allocation history (NEW)** |
+| `getSettlementBudgetAllocation(locationId)` | Query | **Get budget allocation (NEW)** |
+| `getGovernmentSalaryBudget(locationId)` | Query | **Get government salary budget (NEW)** |
+| `getEducationBudget(locationId)` | Query | **Get education budget (NEW)** |
+| `getPublicEnterprises(locationId)` | Query | **Get public enterprises (NEW)** |
+| `getPublicEnterpriseIds(locationId)` | Query | **Get public enterprise IDs (NEW)** |
+| `getPublicEnterpriseHistory(locationId)` | Query | **Get public enterprise history (NEW)** |
+| `getPublicEnterpriseSummary(locationId)` | Query | **Get public enterprise summary (NEW)** |
+| `getSettlementStatistics(locationId)` | Query | Get statistics |
+| `getGlobalSettlementStatistics()` | Query | Get global stats |
+| `getLargestSettlements(limit)` | Query | Get largest |
+| `getWealthiestSettlements(limit)` | Query | Get wealthiest |
+| `getMostProsperousSettlements(limit)` | Query | Get most prosperous |
+
+---
+
+## settlement-economy.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `calculateTaxIncome(locationId)` | Query | Calculate tax income |
+| `calculateTradeIncome(locationId)` | Query | Calculate trade income |
+| `calculateIndustryIncome(locationId)` | Query | Calculate industry income |
+| `calculateStateEnterpriseIncome(locationId)` | Query | Calculate state income |
+| `calculatePublicEnterpriseIncome(locationId)` | Query | **Calculate public enterprise income (NEW)** |
+| `calculateTotalIncome(locationId)` | Query | Calculate total income |
+| `calculateMaintenanceCosts(locationId)` | Query | Calculate maintenance |
+| `calculateWageCosts(locationId)` | Query | Calculate wages |
+| `calculateSpendingCosts(locationId)` | Query | Calculate spending |
+| `calculateGovernmentSalaryExpenses(locationId)` | Query | **Calculate government salary expenses (NEW)** |
+| `calculateTotalExpenses(locationId)` | Query | Calculate total expenses |
+| `calculateSurplus(locationId)` | Query | Calculate surplus |
+| `calculateTaxRevenue(locationId)` | Query | Calculate tax revenue |
+| `calculateEmployment(locationId)` | Query | Calculate employment |
+| `calculateProsperity(locationId)` | Query | Calculate prosperity (with role factors) |
+| `calculateCrimeRate(locationId)` | Query | Calculate crime rate |
+| `calculateSpecializationIncomeBonus(locationId)` | Query | Calculate specialization bonus |
+| `calculateSpecializationProsperityBonus(locationId)` | Query | Calculate prosperity bonus |
+| `getSettlementLiteracyStats(locationId)` | Query | Get literacy stats |
+| `getFinancialReport(locationId, years)` | Query | Get financial report |
+| `getEfficiencyScore(locationId)` | Query | Get efficiency score |
+| `getDebtRatio(locationId)` | Query | Get debt ratio |
+
+---
+
+## settlement-features.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `getAllFeatures()` | Query | Get all features |
+| `getFeatureById(featureId)` | Query | Get feature by ID |
+| `getFeaturesByCategory(category)` | Query | Get features by category |
+| `getPublicFeatures()` | Query | Get public features |
+| `getFeatureCategories()` | Query | Get feature categories |
+| `canAffordFeature(locationId, featureId)` | Query | Check affordability |
+| `wouldCreateDebt(locationId, featureId)` | Query | Check debt creation |
+| `hasPrerequisites(locationId, featureId)` | Query | Check prerequisites |
+| `getFeatureCost(featureId)` | Query | Get cost |
+| `getFeatureMaintenance(featureId)` | Query | Get maintenance |
+| `getFeatureProsperityBonus(featureId)` | Query | Get prosperity bonus |
+| `getFeatureCrimeReduction(featureId)` | Query | Get crime reduction |
+| `getFeatureDefenseBonus(featureId)` | Query | Get defense bonus |
+| `getFeatureTradeBonus(featureId)` | Query | Get trade bonus |
+| `getFeatureEducationBonus(featureId)` | Query | Get education bonus |
+| `getFeatureLiteracyBonus(featureId)` | Query | Get literacy bonus |
+| `getFeatureEffects(featureId)` | Query | Get all effects |
+
+---
+
+## settlement-ranks.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `getAllRanks()` | Query | Get all ranks |
+| `getRankById(rankId)` | Query | Get rank by ID |
+| `getRankFromPopulation(population)` | Query | Get rank from population |
+| `getSettlementRank(locationId)` | Query | Get settlement rank |
+| `getNextRank(locationId)` | Query | Get next rank |
+| `canUpgrade(locationId)` | Query | Check upgrade |
+| `getUpgradeRequirements(locationId)` | Query | Get upgrade requirements |
+| `getRankTaxBonus(rankId)` | Query | Get tax bonus |
+| `getRankProsperityModifier(rankId)` | Query | Get prosperity modifier |
+| `getRankPopulationModifier(rankId)` | Query | Get population modifier |
+
+---
+
+## settlement-ui-list.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `renderSettlementList(containerId, options)` | UI | Render settlement list |
+| `renderSettlementCard(locationId, options)` | UI | Render settlement card |
+| `renderSettlementTable(settlements, options)` | UI | Render settlement table |
+| `renderFeatureList(containerId, locationId, options)` | UI | Render feature list |
+| `renderSettlementRoles(containerId, locationId, options)` | UI | Render settlement roles |
+| `renderSettlementMasters(containerId, locationId, options)` | UI | Render settlement masters |
+| `renderSettlementApprenticeships(containerId, locationId, options)` | UI | **Render settlement apprenticeships (NEW)** |
+| `renderSettlementEducation(containerId, locationId, options)` | UI | **Render settlement education (NEW)** |
+
+---
+
+## modals-settlement.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `openManageFeaturesModal(locationId, onSuccess)` | UI | Manage features |
+| `openUpgradeSettlementModal(locationId, onSuccess)` | UI | Upgrade settlement |
+| `openSettlementSpecializationModal(locationId, onSuccess)` | UI | Set specialization |
+| `openSettlementBudgetModal(locationId)` | UI | View budget |
+| `openEmploymentManagementModal(locationId)` | UI | View employment |
+| `openStateEnterpriseManagementModal(locationId, onSuccess)` | UI | Manage state enterprises |
+| `openCreateStateEnterpriseModal(locationId, onSuccess)` | UI | Create state enterprise |
+| `openSettlementDetailsModal(locationId, onRefresh)` | UI | Settlement details |
+| `openSettlementRolesModal(locationId)` | UI | View settlement roles |
+| `openSettlementApprenticeshipsModal(locationId)` | UI | **View apprenticeships (NEW)** |
+| `openSettlementEducationModal(locationId)` | UI | **View education (NEW)** |
+
+---
+
+## modals-settlement-economy.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `openTaxRateManagementModal(locationId, onSuccess)` | UI | Manage tax rates |
+| `openSpendingManagementModal(locationId, onSuccess)` | UI | Manage spending |
+| `openJusticeManagementModal(locationId, onSuccess)` | UI | Manage justice and watch |
+| `openFinancialReportModal(locationId)` | UI | View financial report |
+| `openEfficiencyScoreModal(locationId)` | UI | View efficiency score |
+| `openDebtManagementModal(locationId, onSuccess)` | UI | Manage debt |
+
+---
+
+# 12. DEPENDENCY MAP
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    CORE DEPENDENCIES                                       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  modals-core.js ─────────────────────────────────────────────────────────┐ │
-│  ├── openModal()                                                         │ │
-│  ├── closeTopModal()                                                     │ │
-│  ├── _escapeHtml()                                                       │ │
-│  ├── _showToast()                                                        │ │
-│  ├── _getIcon()                                                          │ │
-│  ├── _getCurrentYear()                                                   │ │
-│  ├── _getPlaceById()                                                     │ │
-│  ├── _getPlaces()                                                        │ │
-│  ├── _getLocationTypeById()                                              │ │
-│  └── buildLocationDropdown()                                             │ │
-│                                                                             │
-│  accessors.js ──────────────────────────────────────────────────────────┐ │
-│  ├── getPlaceById()                                                      │ │
-│  ├── getPlaces()                                                         │ │
-│  ├── getCharacters()                                                     │ │
-│  ├── getRoles()                                                          │ │
-│  ├── getRoleById()                                                       │ │
-│  └── getCurrentYear()                                                    │ │
-│                                                                             │
-│  storage.js ────────────────────────────────────────────────────────────┐ │
-│  └── saveMasterData()                                                    │ │
-│                                                                             │
-│  eventLogger.js ────────────────────────────────────────────────────────┐ │
-│  └── logEvent()                                                          │ │
-│                                                                             │
-│  icons.js ──────────────────────────────────────────────────────────────┐ │
-│  └── Icons                                                               │ │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
+┌────────────────────────────────────────────────────────────────────────────┐
 │                    SETTLEMENT SYSTEM DEPENDENCIES                          │
-├─────────────────────────────────────────────────────────────────────────────┤
+├────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  settlement-state.js ────────────────────────────────────────────────────┐ │
-│  ├── accessors.js                                                        │ │
-│  └── storage.js                                                          │ │
+│  ├── accessors.js (getPlaceById, getPlaces, getCharacters)               │ │
+│  └── storage.js (saveMasterData)                                          │ │
 │                                                                             │
 │  settlement-commands.js ────────────────────────────────────────────────┐ │
-│  ├── settlement-state.js                                                 │ │
-│  ├── accessors.js                                                        │ │
-│  ├── eventLogger.js                                                      │ │
-│  └── storage.js                                                          │ │
+│  ├── settlement-state.js                                                  │ │
+│  ├── settlement-economy.js                                                │ │
+│  ├── accessors.js (getPlaceById, getCharacterById, getCurrentYear)       │ │
+│  ├── storage.js (saveMasterData)                                          │ │
+│  └── eventLogger.js (logEvent)                                            │ │
 │                                                                             │
-│  settlement-queries.js ─────────────────────────────────────────────────┐ │
-│  ├── settlement-state.js                                                 │ │
-│  └── accessors.js                                                        │ │
+│  settlement-queries.js ────────────────────────────────────────────────┐ │
+│  ├── settlement-state.js                                                  │ │
+│  ├── settlement-economy.js                                                │ │
+│  ├── accessors.js (getPlaceById, getPlaces, getCharacters)               │ │
+│  ├── location-state.js (getAllSubLocationIds)                            │ │
+│  └── education-state.js (getAllInstitutions)                              │ │
 │                                                                             │
-│  settlement-economy.js ─────────────────────────────────────────────────┐ │
-│  ├── settlement-state.js                                                 │ │
-│  ├── settlement-queries.js                                               │ │
-│  └── accessors.js                                                        │ │
-│                                                                             │
-│  settlement-ranks.js ───────────────────────────────────────────────────┐ │
-│  └── settlement-state.js                                                 │ │
+│  settlement-economy.js ────────────────────────────────────────────────┐ │
+│  ├── settlement-state.js                                                  │ │
+│  ├── accessors.js (getPlaceById, getCurrentYear, getCharacters)          │ │
+│  ├── government-queries.js (getCurrentLeader)                            │ │
+│  ├── industry-queries.js (getLocationEnterprisesSummary)                 │ │
+│  └── role-queries.js (getRoleById)                                        │ │
 │                                                                             │
 │  settlement-features.js ────────────────────────────────────────────────┐ │
-│  └── settlement-state.js                                                 │ │
+│  └── settlement-state.js                                                  │ │
 │                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    UI MODAL DEPENDENCIES                                   │
-├─────────────────────────────────────────────────────────────────────────────┤
+│  settlement-ranks.js ──────────────────────────────────────────────────┐ │
+│  └── settlement-state.js                                                  │ │
 │                                                                             │
-│  settlement-ui-list.js ─────────────────────────────────────────────────┐ │
-│  ├── settlement-state.js                                                 │ │
-│  ├── settlement-queries.js                                               │ │
-│  └── modals-core.js                                                      │ │
+│  settlement-ui-list.js ────────────────────────────────────────────────┐ │
+│  ├── settlement-state.js                                                  │ │
+│  ├── settlement-queries.js                                                │ │
+│  └── modals-core.js (_escapeHtml, _getIcon)                              │ │
 │                                                                             │
-│  modals-settlement.js ──────────────────────────────────────────────────┐ │
-│  ├── modals-core.js                                                      │ │
-│  ├── settlement-state.js                                                 │ │
-│  ├── settlement-commands.js                                              │ │
-│  ├── settlement-queries.js                                               │ │
-│  └── accessors.js                                                        │ │
+│  modals-settlement.js ────────────────────────────────────────────────┐ │
+│  ├── modals-core.js (openModal, _escapeHtml, _getIcon, _showToast)       │ │
+│  ├── settlement-state.js                                                  │ │
+│  ├── settlement-commands.js                                               │ │
+│  └── settlement-queries.js                                                │ │
 │                                                                             │
-│  modals-settlement-economy.js ──────────────────────────────────────────┐ │
-│  ├── modals-core.js                                                      │ │
-│  ├── settlement-state.js                                                 │ │
-│  ├── settlement-commands.js                                              │ │
-│  ├── settlement-queries.js                                               │ │
-│  ├── settlement-economy.js                                               │ │
-│  └── accessors.js                                                        │ │
+│  modals-settlement-economy.js ────────────────────────────────────────┐ │
+│  ├── modals-core.js (openModal, _escapeHtml, _getIcon, _showToast)       │ │
+│  ├── settlement-state.js                                                  │ │
+│  ├── settlement-commands.js                                               │ │
+│  ├── settlement-queries.js                                                │ │
+│  └── settlement-economy.js                                                │ │
 │                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+└────────────────────────────────────────────────────────────────────────────┘
 ```
 
+---
 
-## 3. RECURSION GUARDS
+# 13. RECURSION GUARDS
 
-All modules implement recursion guards to prevent infinite loops:
-
-| GUARD NAME | LOCATION | PURPOSE |
+| Guard Name | Location | Purpose |
 |------------|----------|---------|
 | `_processingCommand` | settlement-commands.js | Prevent command re-entry |
 | `_processingQuery` | settlement-queries.js | Prevent query re-entry |
 | `_processingEconomy` | settlement-economy.js | Prevent economy re-entry |
-| `_processingRanks` | settlement-ranks.js | Prevent rank processing re-entry |
-| `_processingFeatures` | settlement-features.js | Prevent feature processing re-entry |
-| `_rendering` | settlement-ui-list.js | Prevent rendering re-entry |
-| `_openingModal` | All modals files | Prevent modal re-entry |
-| `_initializingState` | settlement-state.js | Prevent state re-initialization |
-| `_notifyingSubscribers` | settlement-state.js | Prevent subscriber re-entry |
-
-
-## 4. ICON POLICY
-
-All icons must come from icons.js via the `_getIcon()` function:
-
-| RULE | DESCRIPTION |
-|------|-------------|
-| RULE 1 | NO emojis in code or UI |
-| RULE 2 | All icons from icons.js via `_getIcon()` |
-| RULE 3 | NO icons in confirm/cancel buttons (plain text only) |
-
-**AVAILABLE ICONS USED BY SETTLEMENT SYSTEM:**
-
-| CATEGORY | ICONS |
-|----------|-------|
-| Basic Shapes | CIRCLE, CIRCLE_DOT |
-| UI Elements | HOME, PERSON, LOCATION, GEAR, TRASH |
-| Status | SUCCESS, WARNING, DANGER |
-| Objects | COIN, STAR_4 |
-
-
-## 5. DATA STRUCTURES
-
-### Settlement Data Object
-```javascript
-{
-    rankId: string,                    // Rank ID (hamlet, village, town, city, metropolis)
-    specializationRoleId: string,      // Role ID for specialization
-    featureIds: [],                    // Array of feature IDs built
-    prosperity: number,                // 0-100
-    wealth: number,                    // Current wealth in gold
-    totalDebt: number,                 // Current debt in gold
-    foundedYear: number,               // Year founded
-    lastUpgraded: number,              // Year last upgraded
-    budget: {
-        income: {
-            taxes: number,
-            trade: number,
-            industry: number,
-            stateEnterprises: number,
-            other: number
-        },
-        expenses: {
-            maintenance: number,
-            wages: number,
-            construction: number,
-            military: number,
-            education: number,
-            infrastructure: number,
-            other: number
-        },
-        annualSurplus: number,
-        totalIncome: number,
-        totalExpenses: number
-    },
-    employment: {
-        totalWorkers: number,
-        stateEmployed: number,
-        privateEmployed: number,
-        unemployed: number,
-        averageWage: number,
-        employmentRate: number
-    },
-    stateEnterpriseIds: [],            // Array of enterprise IDs
-    taxRate: number,                   // Percentage (0-50)
-    tradeTariff: number,               // Percentage (0-30)
-    industryTaxRate: number,           // Percentage (0-30)
-    militarySpending: number,          // Gold/year
-    infrastructureSpending: number,    // Gold/year
-    educationSpending: number,         // Gold/year
-    justiceSeverity: string,           // 'lenient', 'medium', 'harsh', 'extreme'
-    crimeRate: number,                 // 0-1
-    hasWatch: boolean,
-    watchSize: number,
-    history: [],                       // Array of history entries
-    notes: string
-}
-```
-
-### Rank Object
-```javascript
-{
-    id: string,                        // 'hamlet', 'village', 'town', 'city', 'metropolis'
-    name: string,                      // Display name
-    icon: string,                      // Icon symbol
-    minPopulation: number,             // Minimum population
-    maxPopulation: number,             // Maximum population
-    baseTax: number,                   // Base tax income
-    order: number,                     // Order in hierarchy (1-5)
-    description: string                // Description
-}
-```
-
-### Feature Object
-```javascript
-{
-    id: string,                        // Unique feature ID
-    name: string,                      // Display name
-    icon: string,                      // Icon symbol
-    cost: number,                      // Build cost in gold
-    defense: number,                   // Defense bonus
-    maintenance: number,               // Annual maintenance cost
-    prosperityBonus: number,           // Prosperity bonus
-    crimeReduction: number,            // Crime reduction (0-1)
-    tradeBonus: number,                // Trade income multiplier
-    educationBonus: number,            // Education multiplier
-    literacyBonus: number,             // Literacy bonus
-    order: number,                     // Display order
-    category: string,                  // 'defensive', 'civic', 'military', 'aesthetic', 'infrastructure'
-    description: string,               // Description
-    isPublic: boolean                  // Whether it's a public feature
-}
-```
-
-
-## 6. INTEGRATION WITH OTHER SYSTEMS
-
-### Settlement → Industry
-
-| Function | Purpose |
-|----------|---------|
-| `calculateIndustryIncome()` | Calculates tax revenue from industry |
-| `calculateStateEnterpriseIncome()` | Calculates profit from state-owned enterprises |
-| `createStateEnterprise()` | Creates a state-owned enterprise |
-| `getStateEnterpriseIds()` | Gets state-owned enterprise IDs |
-
-### Settlement → Government
-
-| Function | Purpose |
-|----------|---------|
-| `justiceSeverity` | Affects crime rate and prosperity |
-| `taxRate` | Affects government revenue |
-| `industryTaxRate` | Affects government revenue from industry |
-| `militarySpending` | Affects defense and crime rate |
-
-### Settlement → Location
-
-| Function | Purpose |
-|----------|---------|
-| `getSettlementData(locationId)` | Gets settlement data for a location |
-| `getAllSettlements()` | Gets all settlements |
-| `getLocationPopulationCount()` | Used for rank calculation |
-
-### Settlement → Crime
-
-| Function | Purpose |
-|----------|---------|
-| `crimeRate` | Stored in settlement data |
-| `justiceSeverity` | Affects crime rate calculation |
-| `hasWatch` | Affects crime rate |
-| `watchSize` | Affects crime rate |
-
-### Settlement → Education
-
-| Function | Purpose |
-|----------|---------|
-| `educationSpending` | Affects literacy and education |
-| `school` feature | Built by settlement system |
+| `_processingFeatures` | settlement-features.js | Prevent feature re-entry |
+| `_processingRanks` | settlement-ranks.js | Prevent rank re-entry |
+| `_rendering` | settlement-ui-list.js | Prevent render re-entry |
+| `_openingModal` | modals-settlement.js | Prevent modal re-entry |
+| `_initializingState` | settlement-state.js | Prevent initialization re-entry |
+| `_notifyingSubscribers` | settlement-state.js | Prevent notification re-entry |
 
 ---
 
-**END OF DOCUMENTATION**
+# 14. INTEGRATION WITH OTHER SYSTEMS
+
+## Settlement ↔ Location Integration
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Settlement → Location | Data stored by `locationId` | ✅ Complete |
+| Location → Settlement | Queries use location hierarchy | ✅ Complete |
+| Settlement → Population | Uses location population | ✅ Complete |
+
+## Settlement ↔ Role Integration
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Settlement → Role | `getSettlementRoles()` | ✅ Complete |
+| Settlement → Role | `getSettlementCharactersByRole()` | ✅ Complete |
+| Settlement → Role | `getSettlementRoleStats()` | ✅ Complete |
+| Settlement → Role | `getSettlementMasterStats()` | ✅ Complete |
+| Role → Settlement | Prosperity calculation includes role diversity | ✅ Complete |
+| Role → Settlement | Master concentration affects prosperity | ✅ Complete |
+| Settlement → Role | `assignSettlementRole()` | ✅ Complete |
+| Settlement → Role | `removeSettlementRole()` | ✅ Complete |
+| Settlement → Role | `updateSettlementCharacterSkill()` | ✅ Complete |
+
+## Settlement ↔ Apprenticeship Integration
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Apprenticeship → Settlement | `getSettlementApprenticeshipDensity()` | ✅ Complete |
+| Apprenticeship → Settlement | `getSettlementMastersByRole()` | ✅ Complete |
+| Settlement → Apprenticeship | UI renders apprenticeship data | ✅ Complete |
+
+## Settlement ↔ Government Integration
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Government → Settlement | Leader traits affect prosperity | ✅ Complete |
+| Government → Settlement | Government type affects taxes | ✅ Complete |
+| Settlement → Government | `assignGovernment()` | ✅ Complete |
+| Settlement → Government | `allocateGovernmentSalaryBudget()` | ✅ Complete |
+| Government → Settlement | `getGovernmentSalaryRequirements()` | ✅ Complete |
+
+## Settlement ↔ Industry Integration
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Industry → Settlement | Employment from enterprises | ✅ Complete |
+| Industry → Settlement | Industry tax revenue | ✅ Complete |
+| Industry → Settlement | State enterprises | ✅ Complete |
+| Settlement → Industry | Creates state enterprises | ✅ Complete |
+| Settlement → Industry | Creates public enterprises | ✅ Complete |
+| Settlement → Industry | Sets tax rates | ✅ Complete |
+| Settlement → Industry | Collects public enterprise profits | ✅ Complete |
+
+## Settlement ↔ Education Integration
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Education → Settlement | Literacy stats | ✅ Complete |
+| Education → Settlement | School as feature | ✅ Complete |
+| Education → Settlement | Education statistics | ✅ Complete |
+| Settlement → Education | Education spending | ✅ Complete |
+| Settlement → Education | `allocateEducationBudget()` | ✅ Complete |
+
+---
+
+# 15. ICON POLICY
+
+All icons must come from `icons.js` via the `_getIcon()` function.
+
+| Rule | Description |
+|------|-------------|
+| **Rule 1** | NO emojis in code or UI |
+| **Rule 2** | All icons from icons.js via `_getIcon()` |
+| **Rule 3** | NO icons in confirm/cancel buttons (plain text only) |
+
+## Available Icons for Settlement System
+
+| Usage | Icon |
+|-------|------|
+| Settlement | LOCATION |
+| Rank | HOME |
+| Feature | GEAR |
+| Wealth | COIN |
+| Prosperity | STAR_4 |
+| Population | PERSON |
+| Employment | PERSON |
+| Debt | WARNING |
+| Edit | EDIT |
+| Delete | TRASH |
+| Add | PLUS |
+| Check | CHECK_SIMPLE |
+| Role | PERSON |
+| Master | CROWN |
+| Book | BOOK |
+| Circle | CIRCLE_DOT |
+
+---
+
+# 16. QUICK TEST COMMANDS
+
+```javascript
+// Get settlement summary
+var summary = SettlementQueries.getSettlementSummary('loc_123');
+console.log('Settlement:', summary.name, 'Rank:', summary.rank.name);
+
+// Get budget allocation
+var allocation = SettlementQueries.getSettlementBudgetAllocation('loc_123');
+console.log('Education budget:', allocation.educationBudget);
+console.log('Government salary budget:', allocation.governmentSalaryBudget);
+
+// Get public enterprise summary
+var publicSummary = SettlementQueries.getPublicEnterpriseSummary('loc_123');
+console.log('Public enterprises:', publicSummary.total);
+console.log('Total profit:', publicSummary.totalProfit);
+
+// Get education stats
+var eduStats = SettlementQueries.getSettlementEducationStats('loc_123');
+console.log('Schools:', eduStats.totalInstitutions);
+console.log('Students:', eduStats.totalStudents);
+console.log('Coverage:', eduStats.coverageRatio + '%');
+
+// Allocate education budget
+var result = SettlementCommands.allocateEducationBudget('loc_123', 500, 1250);
+console.log('Allocated 500 gold to education');
+
+// Collect public enterprise profits
+var profitResult = SettlementCommands.collectPublicEnterpriseProfits('loc_123', 1250);
+console.log('Collected:', profitResult.totalProfit, 'gold');
+
+// Process annual update
+var annualResult = SettlementCommands.processAnnualSettlementUpdate('loc_123');
+console.log('Prosperity:', annualResult.prosperity, 'Surplus:', annualResult.surplus);
+console.log('Public enterprise profit:', annualResult.publicEnterpriseProfit);
+```
+
+---
+
+# END OF DOCUMENTATION
+
+**Generated:** 2026-07-12
+**Version:** 3.0 (with Budget Allocation, Public Enterprises, and Education Integration)
+**File Count:** 9 core modules

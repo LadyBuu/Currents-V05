@@ -8,6 +8,7 @@
  * - Graduation readiness checks
  * - Enrollment age checks
  * - SCHOOL FINANCES - Public school funding + Private school profit
+ * - SETTLEMENT BUDGET PROCESSING (NEW)
  * 
  * DEPENDENCIES:
  *   - education-state.js (EducationState)
@@ -15,6 +16,7 @@
  *   - education-learning.js (EducationLearning)
  *   - accessors.js (getCharacterById)
  *   - time.js (getCurrentYearSafe)
+ *   - settlement-state.js (SettlementState) - for budget allocation
  * 
  * =============================================================================
  */
@@ -106,7 +108,32 @@
     }
 
     // =========================================================================
-    // 4. ANNUAL PROCESSING
+    // 4. SETTLEMENT BUDGET HELPERS (NEW)
+    // =========================================================================
+
+    function _getSettlementData(locationId) {
+        if (typeof window.SettlementState !== 'undefined' && window.SettlementState.getSettlementData) {
+            return window.SettlementState.getSettlementData(locationId);
+        }
+        return null;
+    }
+
+    function _getEducationBudget(locationId) {
+        if (typeof window.SettlementState !== 'undefined') {
+            return window.SettlementState.getEducationBudget(locationId);
+        }
+        return 0;
+    }
+
+    function _getSettlementBudgetAllocation(locationId) {
+        if (typeof window.SettlementState !== 'undefined') {
+            return window.SettlementState.getSettlementBudgetAllocation(locationId);
+        }
+        return null;
+    }
+
+    // =========================================================================
+    // 5. ANNUAL PROCESSING
     // =========================================================================
 
     function processAnnualEducation(year, options) {
@@ -127,6 +154,7 @@
                 skillGains: [],
                 readyForGraduation: [],
                 finances: null,
+                budgetProcessing: null,
                 year: year || _getCurrentYear(),
                 processedCount: 0
             };
@@ -255,7 +283,7 @@
             }
 
             // ================================================================
-            // 2. Process school finances
+            // 2. Process school finances (UPDATED with settlement budget)
             // ================================================================
 
             if (processFinances) {
@@ -265,6 +293,17 @@
                 } catch (err) {
                     results.finances = { error: err.message };
                 }
+            }
+
+            // ================================================================
+            // 3. Process settlement education budget (NEW)
+            // ================================================================
+
+            try {
+                var budgetResults = _processEducationBudgets(currentYear, { silent: true });
+                results.budgetProcessing = budgetResults;
+            } catch (err) {
+                results.budgetProcessing = { error: err.message };
             }
 
             _saveMasterData();
@@ -286,6 +325,11 @@
                 }
                 if (results.finances.totalProfit > 0) {
                     messages.push(results.finances.totalProfit + ' gold private profit');
+                }
+            }
+            if (results.budgetProcessing && results.budgetProcessing.success) {
+                if (results.budgetProcessing.totalBudget > 0) {
+                    messages.push(results.budgetProcessing.totalBudget + ' gold settlement budget allocated');
                 }
             }
 
@@ -486,7 +530,7 @@
     }
 
     // =========================================================================
-    // 5. SCHOOL FINANCE PROCESSING
+    // 6. SCHOOL FINANCE PROCESSING (UPDATED)
     // =========================================================================
 
     function _processSchoolFinances(year, options) {
@@ -584,6 +628,129 @@
         }
     }
 
+    // =========================================================================
+    // 7. SETTLEMENT BUDGET PROCESSING (NEW)
+    // =========================================================================
+
+    /**
+     * Processes education budgets from settlements
+     * Called during annual processing
+     * @param {number} year - Year to process
+     * @param {Object} options - Processing options
+     * @param {boolean} options.silent - Suppress notifications
+     * @returns {Object} Budget processing results
+     */
+    function _processEducationBudgets(year, options) {
+        if (_processingAnnual) {
+            return { success: false, reason: 'Already processing' };
+        }
+        _processingAnnual = true;
+
+        try {
+            options = options || {};
+            var silent = options.silent === true;
+            var currentYear = year || _getCurrentYear();
+
+            var places = typeof window.getPlaces === 'function' ? window.getPlaces() : [];
+            var results = {
+                success: true,
+                year: currentYear,
+                settlements: [],
+                totalBudget: 0,
+                totalInstitutions: 0,
+                errors: []
+            };
+
+            for (var i = 0; i < places.length; i++) {
+                var place = places[i];
+                try {
+                    var settlement = _getSettlementData(place.id);
+                    if (!settlement) continue;
+
+                    var educationBudget = settlement.educationBudget || 0;
+                    if (educationBudget <= 0) continue;
+
+                    // Get institutions in this settlement
+                    var institutions = EducationState.getInstitutionsByLocation(place.id);
+                    if (institutions.length === 0) {
+                        results.errors.push({
+                            locationId: place.id,
+                            locationName: place.displayName,
+                            error: 'No institutions to receive budget'
+                        });
+                        continue;
+                    }
+
+                    // Distribute budget equally among institutions
+                    var perInstitution = educationBudget / institutions.length;
+                    var distributed = 0;
+
+                    for (var j = 0; j < institutions.length; j++) {
+                        var inst = institutions[j];
+                        inst.governmentFunding = perInstitution;
+                        inst.governmentFundingYear = currentYear;
+                        inst.lastFunded = currentYear;
+
+                        EducationState._updateInstitution(inst.id, {
+                            governmentFunding: perInstitution,
+                            governmentFundingYear: currentYear,
+                            lastFunded: currentYear
+                        });
+
+                        distributed += perInstitution;
+
+                        _logEvent('education', 'institution_budget_allocation',
+                            'Institution ' + inst.name + ' received ' + Math.round(perInstitution) + 
+                            ' gold from settlement ' + place.displayName + ' budget',
+                            []);
+                    }
+
+                    results.settlements.push({
+                        locationId: place.id,
+                        locationName: place.displayName,
+                        budget: educationBudget,
+                        institutions: institutions.length,
+                        distributed: Math.round(distributed),
+                        perInstitution: Math.round(perInstitution)
+                    });
+
+                    results.totalBudget += educationBudget;
+                    results.totalInstitutions += institutions.length;
+
+                    _logEvent('education', 'settlement_budget_processed',
+                        'Settlement ' + place.displayName + ' allocated ' + educationBudget + 
+                        ' gold to ' + institutions.length + ' institutions',
+                        []);
+
+                } catch (e) {
+                    results.errors.push({
+                        locationId: place.id,
+                        locationName: place.displayName,
+                        error: e.message || 'Unknown error'
+                    });
+                }
+            }
+
+            if (!silent) {
+                var msg = 'Education budgets processed: ' + results.totalBudget + ' gold distributed to ' + 
+                          results.totalInstitutions + ' institutions';
+                if (results.errors.length > 0) {
+                    msg += ' (' + results.errors.length + ' errors)';
+                }
+                _showToast(msg, results.errors.length > 0 ? 'warning' : 'success');
+            }
+
+            return results;
+
+        } finally {
+            _processingAnnual = false;
+        }
+    }
+
+    // =========================================================================
+    // 8. HELPERS (Wrappers for EducationCommands)
+    // =========================================================================
+
     function _applyGovernmentFunding(institutionId, year) {
         if (typeof window.EducationCommands !== 'undefined' && window.EducationCommands.applyGovernmentFunding) {
             return window.EducationCommands.applyGovernmentFunding(institutionId, year);
@@ -605,26 +772,29 @@
     }
 
     // =========================================================================
-    // 6. EXPORTS
+    // 9. EXPORTS
     // =========================================================================
 
     window.EducationAnnual = {
         processAnnualEducation: processAnnualEducation,
         processAnnualInstitution: processAnnualInstitution,
         getStudentsReadyForGraduation: getStudentsReadyForGraduation,
-        _processSchoolFinances: _processSchoolFinances
+        _processSchoolFinances: _processSchoolFinances,
+        _processEducationBudgets: _processEducationBudgets
     };
 
     // Legacy aliases
     window._processAnnualEducation = processAnnualEducation;
     window._processSchoolFinances = _processSchoolFinances;
+    window._processEducationBudgets = _processEducationBudgets;
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
             processAnnualEducation: processAnnualEducation,
             processAnnualInstitution: processAnnualInstitution,
             getStudentsReadyForGraduation: getStudentsReadyForGraduation,
-            _processSchoolFinances: _processSchoolFinances
+            _processSchoolFinances: _processSchoolFinances,
+            _processEducationBudgets: _processEducationBudgets
         };
     }
 

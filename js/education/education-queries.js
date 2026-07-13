@@ -8,7 +8,11 @@
  * - Student/teacher/graduate lists
  * - Statistics and summaries
  * - Location-based queries
- * - ROLE-BASED FILTERING (NEW)
+ * - ROLE-BASED FILTERING
+ * - EDUCATION DEMAND BY SETTLEMENT
+ * - STUDENT DENSITY BY SETTLEMENT
+ * - EDUCATION BUDGET QUERIES
+ * - RELIGION-BASED FILTERING (NEW)
  * 
  * DEPENDENCIES:
  *   - education-state.js (EducationState)
@@ -113,8 +117,64 @@
         return null;
     }
 
+    function _getAllSubLocationIds(locationId) {
+        if (typeof LocationState !== 'undefined' && LocationState.getAllSubLocationIds) {
+            return LocationState.getAllSubLocationIds(locationId);
+        }
+        return [locationId];
+    }
+
+    function _getCurrentLocationId(character) {
+        if (!character) return null;
+
+        if (character.moves && character.moves.length > 0) {
+            var sortedMoves = character.moves.slice().sort(function(a, b) {
+                return (b.year || 0) - (a.year || 0);
+            });
+            var lastMove = sortedMoves[0];
+            if (lastMove && lastMove.locationId) {
+                return lastMove.locationId;
+            }
+        }
+
+        if (character.currentLocationId) return character.currentLocationId;
+        if (character.birthplaceId) return character.birthplaceId;
+
+        return null;
+    }
+
+    function _getEducationBudget(locationId) {
+        if (typeof window.SettlementState !== 'undefined') {
+            return window.SettlementState.getEducationBudget(locationId);
+        }
+        return 0;
+    }
+
+    function _getSettlementBudgetAllocation(locationId) {
+        if (typeof window.SettlementState !== 'undefined') {
+            return window.SettlementState.getSettlementBudgetAllocation(locationId);
+        }
+        return null;
+    }
+
+    function _getInstitution(id) {
+        if (typeof window.EducationState !== 'undefined' &&
+            typeof window.EducationState.getInstitution === 'function') {
+            return window.EducationState.getInstitution(id);
+        }
+        return null;
+    }
+
+    function _getAllInstitutions() {
+        if (typeof window.EducationState !== 'undefined' &&
+            typeof window.EducationState.getAllInstitutions === 'function') {
+            return window.EducationState.getAllInstitutions();
+        }
+        return [];
+    }
+
     // =========================================================================
-    // 3. INSTITUTION QUERIES
+    // 3. INSTITUTION QUERIES (with religion filtering)
     // =========================================================================
 
     function getInstitutions(filters) {
@@ -125,7 +185,7 @@
 
         try {
             filters = filters || {};
-            var institutions = EducationState.getAllInstitutions();
+            var institutions = _getAllInstitutions();
             var result = institutions.slice();
 
             if (filters.type) {
@@ -147,8 +207,21 @@
             }
 
             // ================================================================
-            // NEW: Role-based filters
+            // NEW: Religion-based filtering
             // ================================================================
+            if (filters.religionId) {
+                result = result.filter(function(inst) {
+                    return inst.religionId === filters.religionId;
+                });
+            }
+
+            if (filters.ownershipType) {
+                result = result.filter(function(inst) {
+                    return inst.ownershipType === filters.ownershipType;
+                });
+            }
+
+            // Role-based filters
             if (filters.taughtRole) {
                 result = result.filter(function(inst) {
                     return inst.taughtRoles && inst.taughtRoles.indexOf(filters.taughtRole) !== -1;
@@ -189,6 +262,12 @@
                 });
             }
 
+            if (filters.isReligiousSchool !== undefined) {
+                result = result.filter(function(inst) {
+                    return inst.isReligiousSchool === filters.isReligiousSchool;
+                });
+            }
+
             if (filters.search && typeof filters.search === 'string' && filters.search.trim()) {
                 var searchLower = filters.search.toLowerCase().trim();
                 result = result.filter(function(inst) {
@@ -215,7 +294,7 @@
         _processingQuery = true;
 
         try {
-            var institution = EducationState.getInstitution(id);
+            var institution = _getInstitution(id);
             if (!institution) return null;
 
             var students = [];
@@ -263,6 +342,20 @@
                 };
             }
 
+            var educationBudget = _getEducationBudget(institution.locationId);
+            var budgetAllocation = _getSettlementBudgetAllocation(institution.locationId);
+
+            // ================================================================
+            // NEW: Religion info
+            // ================================================================
+            var religionInfo = null;
+            if (institution.religionId && institution.religionName) {
+                religionInfo = {
+                    id: institution.religionId,
+                    name: institution.religionName
+                };
+            }
+
             return {
                 institution: institution,
                 students: students,
@@ -272,7 +365,11 @@
                 studentCount: students.length,
                 teacherCount: teachers.length,
                 graduateCount: graduates.length,
-                capacityUsed: institution.maxStudents ? Math.round((students.length / institution.maxStudents) * 100) : 0
+                capacityUsed: institution.maxStudents ? Math.round((students.length / institution.maxStudents) * 100) : 0,
+                educationBudget: educationBudget,
+                budgetAllocation: budgetAllocation,
+                religionInfo: religionInfo,  // NEW
+                isReligiousSchool: institution.isReligiousSchool || false
             };
 
         } finally {
@@ -297,7 +394,7 @@
                 }
             }
 
-            var institutions = EducationState.getAllInstitutions();
+            var institutions = _getAllInstitutions();
             var result = [];
             for (var i = 0; i < institutions.length; i++) {
                 var inst = institutions[i];
@@ -313,7 +410,85 @@
     }
 
     // =========================================================================
-    // 4. STUDENT QUERIES
+    // 4. RELIGIOUS SCHOOL QUERIES (NEW)
+    // =========================================================================
+
+    function getReligiousSchools(religionId, locationId) {
+        if (_processingQuery) {
+            return [];
+        }
+        _processingQuery = true;
+
+        try {
+            var institutions = _getAllInstitutions();
+            var result = [];
+
+            for (var i = 0; i < institutions.length; i++) {
+                var inst = institutions[i];
+                if (inst.ownershipType !== 'religious') continue;
+                if (religionId && inst.religionId !== religionId) continue;
+                if (locationId && inst.locationId !== locationId) continue;
+                result.push(inst);
+            }
+
+            return result;
+
+        } finally {
+            _processingQuery = false;
+        }
+    }
+
+    function getInstitutionsByReligion(religionId) {
+        if (_processingQuery) {
+            return [];
+        }
+        _processingQuery = true;
+
+        try {
+            if (!religionId) return [];
+
+            var institutions = _getAllInstitutions();
+            var result = [];
+
+            for (var i = 0; i < institutions.length; i++) {
+                if (institutions[i].religionId === religionId) {
+                    result.push(institutions[i]);
+                }
+            }
+
+            return result;
+
+        } finally {
+            _processingQuery = false;
+        }
+    }
+
+    function getReligiousSchoolsByLocation(locationId) {
+        if (_processingQuery) {
+            return [];
+        }
+        _processingQuery = true;
+
+        try {
+            var institutions = _getAllInstitutions();
+            var result = [];
+
+            for (var i = 0; i < institutions.length; i++) {
+                var inst = institutions[i];
+                if (inst.ownershipType === 'religious' && inst.locationId === locationId) {
+                    result.push(inst);
+                }
+            }
+
+            return result;
+
+        } finally {
+            _processingQuery = false;
+        }
+    }
+
+    // =========================================================================
+    // 5. STUDENT QUERIES
     // =========================================================================
 
     function getInstitutionStudents(institutionId, includeCharacterData) {
@@ -323,7 +498,7 @@
         _processingQuery = true;
 
         try {
-            var institution = EducationState.getInstitution(institutionId);
+            var institution = _getInstitution(institutionId);
             if (!institution || !institution.students) return [];
 
             if (includeCharacterData) {
@@ -349,7 +524,7 @@
         _processingQuery = true;
 
         try {
-            var institution = EducationState.getInstitution(institutionId);
+            var institution = _getInstitution(institutionId);
             if (!institution || !institution.graduates) return [];
 
             if (includeCharacterData) {
@@ -378,7 +553,7 @@
             var student = _getCharacterById(studentId);
             if (!student) return [];
 
-            var institutions = EducationState.getAllInstitutions();
+            var institutions = _getAllInstitutions();
             var result = [];
 
             for (var i = 0; i < institutions.length; i++) {
@@ -444,7 +619,7 @@
         _processingQuery = true;
 
         try {
-            var institution = EducationState.getInstitution(institutionId);
+            var institution = _getInstitution(institutionId);
             if (!institution || !institution.students) return false;
 
             for (var i = 0; i < institution.students.length; i++) {
@@ -460,7 +635,7 @@
     }
 
     // =========================================================================
-    // 5. TEACHER QUERIES
+    // 6. TEACHER QUERIES
     // =========================================================================
 
     function getInstitutionTeachers(institutionId, includeCharacterData) {
@@ -470,7 +645,7 @@
         _processingQuery = true;
 
         try {
-            var institution = EducationState.getInstitution(institutionId);
+            var institution = _getInstitution(institutionId);
             if (!institution || !institution.teachers) return [];
 
             if (includeCharacterData) {
@@ -490,7 +665,7 @@
     }
 
     // =========================================================================
-    // 6. HEADMASTER QUERIES
+    // 7. HEADMASTER QUERIES
     // =========================================================================
 
     function getHeadmaster(institutionId) {
@@ -500,7 +675,7 @@
         _processingQuery = true;
 
         try {
-            var institution = EducationState.getInstitution(institutionId);
+            var institution = _getInstitution(institutionId);
             if (!institution || !institution.headmaster) return null;
 
             return {
@@ -520,7 +695,7 @@
         _processingQuery = true;
 
         try {
-            var institution = EducationState.getInstitution(institutionId);
+            var institution = _getInstitution(institutionId);
             if (!institution) return [];
 
             var history = [];
@@ -547,7 +722,7 @@
     }
 
     // =========================================================================
-    // 7. STATISTICS QUERIES
+    // 8. STATISTICS QUERIES (with religion info)
     // =========================================================================
 
     function getInstitutionStatistics(institutionId) {
@@ -557,7 +732,7 @@
         _processingQuery = true;
 
         try {
-            var institution = EducationState.getInstitution(institutionId);
+            var institution = _getInstitution(institutionId);
             if (!institution) return {};
 
             var studentCount = institution.students ? institution.students.length : 0;
@@ -565,8 +740,6 @@
             var graduateCount = institution.graduates ? institution.graduates.length : 0;
 
             var capacityUsed = institution.maxStudents ? Math.round((studentCount / institution.maxStudents) * 100) : 0;
-
-            // No teacher skill calculation - removed
 
             var enrollmentByYear = {};
             if (institution.students) {
@@ -586,6 +759,8 @@
                 }
             }
 
+            var educationBudget = _getEducationBudget(institution.locationId);
+
             return {
                 institutionId: institutionId,
                 institutionName: institution.name,
@@ -594,7 +769,6 @@
                 graduateCount: graduateCount,
                 capacityUsed: capacityUsed,
                 capacity: institution.maxStudents || 0,
-                // avgTeacherSkill: REMOVED
                 reputation: institution.reputation || 50,
                 foundedYear: institution.foundedYear,
                 enrollmentByYear: enrollmentByYear,
@@ -602,7 +776,12 @@
                 isSpecialized: institution.isSpecialized || false,
                 specializationCategory: institution.specializationCategory || null,
                 taughtRoles: institution.taughtRoles || [],
-                curriculumCount: institution.curriculum ? institution.curriculum.length : 0
+                curriculumCount: institution.curriculum ? institution.curriculum.length : 0,
+                educationBudget: educationBudget,
+                // NEW: Religion info
+                isReligiousSchool: institution.isReligiousSchool || false,
+                religionId: institution.religionId || null,
+                religionName: institution.religionName || null
             };
 
         } finally {
@@ -627,6 +806,7 @@
             var totalGraduates = 0;
             var totalCapacity = 0;
             var totalReputation = 0;
+            var religiousSchools = 0;
 
             for (var i = 0; i < institutions.length; i++) {
                 var inst = institutions[i];
@@ -635,9 +815,13 @@
                 totalGraduates += inst.graduates ? inst.graduates.length : 0;
                 totalCapacity += inst.maxStudents || 0;
                 totalReputation += inst.reputation || 50;
+                if (inst.ownershipType === 'religious' || inst.isReligiousSchool) {
+                    religiousSchools++;
+                }
             }
 
             var institutionCount = institutions.length;
+            var educationBudget = _getEducationBudget(locationId);
 
             return {
                 locationId: locationId,
@@ -649,6 +833,8 @@
                 totalCapacity: totalCapacity,
                 averageReputation: institutionCount > 0 ? Math.round(totalReputation / institutionCount) : 0,
                 capacityUsed: totalCapacity > 0 ? Math.round((totalStudents / totalCapacity) * 100) : 0,
+                // NEW: Religious school count
+                religiousSchools: religiousSchools,
                 institutions: institutions.map(function(inst) {
                     return {
                         id: inst.id,
@@ -659,9 +845,14 @@
                         teacherCount: inst.teachers ? inst.teachers.length : 0,
                         capacity: inst.maxStudents || 0,
                         specializationCategory: inst.specializationCategory || null,
-                        taughtRoles: inst.taughtRoles || []
+                        taughtRoles: inst.taughtRoles || [],
+                        ownershipType: inst.ownershipType || 'public',
+                        isReligiousSchool: inst.isReligiousSchool || false,
+                        religionId: inst.religionId || null,
+                        religionName: inst.religionName || null
                     };
-                })
+                }),
+                educationBudget: educationBudget
             };
 
         } finally {
@@ -669,55 +860,162 @@
         }
     }
 
-    function getEducationHealthScore(locationId) {
+    // =========================================================================
+    // 9. EDUCATION DEMAND BY SETTLEMENT (with religion filter)
+    // =========================================================================
+
+    function getEducationDemandBySettlement(locationId, options) {
         if (_processingQuery) {
-            return {};
+            return null;
         }
         _processingQuery = true;
 
         try {
-            var summary = getLocationEducationSummary(locationId, true);
-            var population = _getLocationPopulationCount ? 
-                _getLocationPopulationCount(locationId) : 
-                0;
+            if (!locationId) return null;
 
-            var schoolAgePopulation = Math.round(population * 0.15);
+            options = options || {};
+            var includeProjections = options.includeProjections !== false;
+            var projectionYears = options.projectionYears || 5;
+            var religionFilter = options.religionId || null;
 
-            var score = 0;
-            var maxScore = 100;
+            var place = _getPlaceById(locationId);
+            if (!place) return null;
 
-            var coverageRatio = schoolAgePopulation > 0 ?
-                Math.min(100, Math.round((summary.totalCapacity / schoolAgePopulation) * 100)) :
-                0;
-            score += (coverageRatio / 100) * 40;
+            var locationIds = _getAllSubLocationIds(locationId);
+            var locationIdSet = new Set(locationIds);
+            var institutions = [];
 
-            var qualityScore = Math.min(100, (summary.averageReputation || 0) * 0.6);
-            score += (qualityScore / 100) * 30;
+            if (typeof EducationState !== 'undefined') {
+                var allInstitutions = EducationState.getAllInstitutions();
+                for (var i = 0; i < allInstitutions.length; i++) {
+                    var inst = allInstitutions[i];
+                    if (inst.locationId && locationIdSet.has(inst.locationId)) {
+                        // Filter by religion if specified
+                        if (religionFilter && inst.religionId !== religionFilter) continue;
+                        institutions.push(inst);
+                    }
+                }
+            }
 
-            var teacherStudentRatio = summary.totalStudents > 0 ?
-                Math.min(100, Math.round((summary.totalTeachers / summary.totalStudents) * 100)) :
-                0;
-            score += (teacherStudentRatio / 100) * 30;
+            var totalCapacity = 0;
+            var totalStudents = 0;
+            var totalTeachers = 0;
+            var byType = {};
+            var religiousInstitutions = 0;
 
-            score = Math.min(maxScore, Math.round(score));
+            for (var i = 0; i < institutions.length; i++) {
+                var inst = institutions[i];
+                totalCapacity += inst.maxStudents || 0;
+                totalStudents += inst.students ? inst.students.filter(function(s) { return !s.graduated; }).length : 0;
+                totalTeachers += inst.teachers ? inst.teachers.length : 0;
 
-            var recommendation = '';
-            if (score >= 80) recommendation = 'Excellent education infrastructure';
-            else if (score >= 60) recommendation = 'Good education, room for improvement';
-            else if (score >= 40) recommendation = 'Adequate education, needs attention';
-            else if (score >= 20) recommendation = 'Poor education, significant improvements needed';
-            else recommendation = 'Critical education crisis';
+                var typeName = inst.typeName || inst.type || 'unknown';
+                if (!byType[typeName]) byType[typeName] = 0;
+                byType[typeName]++;
+
+                if (inst.ownershipType === 'religious' || inst.isReligiousSchool) {
+                    religiousInstitutions++;
+                }
+            }
+
+            var schoolAgePopulation = 0;
+            if (typeof EducationLearning !== 'undefined') {
+                schoolAgePopulation = EducationLearning.getSchoolAgePopulation(locationId, 7, 16);
+            }
+
+            var population = _getLocationPopulationCount(locationId);
+            var growthRate = 0.02;
+            var growthData = [
+                { year: _getCurrentYear() - 10, population: Math.round(population * 0.82) },
+                { year: _getCurrentYear() - 5, population: Math.round(population * 0.91) },
+                { year: _getCurrentYear(), population: population }
+            ];
+
+            var currentCoverage = schoolAgePopulation > 0 ? 
+                Math.min(100, Math.round((totalCapacity / schoolAgePopulation) * 100)) : 0;
+            var currentGap = Math.max(0, schoolAgePopulation - totalCapacity);
+
+            var studentTeacherRatio = totalTeachers > 0 ? 
+                Math.round((totalStudents / totalTeachers) * 10) / 10 : 0;
+
+            var projections = [];
+            if (includeProjections) {
+                for (var i = 1; i <= projectionYears; i++) {
+                    var year = _getCurrentYear() + i;
+                    var projectedPop = Math.round(population * Math.pow(1 + growthRate, i));
+                    var projectedSchoolAge = Math.round(schoolAgePopulation * Math.pow(1 + growthRate, i));
+                    var projectedGap = Math.max(0, projectedSchoolAge - totalCapacity);
+                    var projectedCoverage = projectedSchoolAge > 0 ? 
+                        Math.min(100, Math.round((totalCapacity / projectedSchoolAge) * 100)) : 0;
+
+                    var teachersNeeded = studentTeacherRatio > 0 ? 
+                        Math.ceil(projectedSchoolAge / studentTeacherRatio) : 0;
+                    var additionalTeachersNeeded = Math.max(0, teachersNeeded - totalTeachers);
+
+                    projections.push({
+                        year: year,
+                        population: projectedPop,
+                        schoolAgePopulation: projectedSchoolAge,
+                        capacity: totalCapacity,
+                        gap: projectedGap,
+                        coverage: projectedCoverage,
+                        teachersNeeded: teachersNeeded,
+                        additionalTeachersNeeded: additionalTeachersNeeded,
+                        newSchoolsNeeded: Math.ceil(projectedGap / 50)
+                    });
+                }
+            }
+
+            var recommendations = [];
+            if (currentGap > 0) {
+                var schoolsNeeded = Math.ceil(currentGap / 50);
+                recommendations.push({
+                    type: 'capacity',
+                    message: 'Need ' + schoolsNeeded + ' new school(s) to accommodate ' + currentGap + ' more students',
+                    priority: currentGap > 100 ? 'high' : 'medium'
+                });
+            }
+
+            if (studentTeacherRatio > 25) {
+                recommendations.push({
+                    type: 'teachers',
+                    message: 'Student-teacher ratio is ' + studentTeacherRatio + ':1 (recommended < 20:1)',
+                    priority: studentTeacherRatio > 30 ? 'high' : 'medium'
+                });
+            }
+
+            if (institutions.length === 0 && schoolAgePopulation > 0) {
+                recommendations.push({
+                    type: 'infrastructure',
+                    message: 'No schools in this settlement',
+                    priority: 'critical'
+                });
+            }
+
+            var educationBudget = _getEducationBudget(locationId);
 
             return {
-                score: score,
-                coverageRatio: coverageRatio,
-                averageReputation: summary.averageReputation || 0,
-                teacherStudentRatio: teacherStudentRatio || 0,
+                settlementId: locationId,
+                settlementName: place.displayName,
+                population: population,
                 schoolAgePopulation: schoolAgePopulation,
-                totalCapacity: summary.totalCapacity || 0,
-                institutionCount: summary.institutionCount || 0,
-                recommendation: recommendation,
-                needsMoreSchools: coverageRatio < 50 && schoolAgePopulation > 0
+                totalInstitutions: institutions.length,
+                totalCapacity: totalCapacity,
+                totalStudents: totalStudents,
+                totalTeachers: totalTeachers,
+                currentCoverage: currentCoverage,
+                currentGap: currentGap,
+                studentTeacherRatio: studentTeacherRatio,
+                byType: byType,
+                growthRate: growthRate,
+                growthData: growthData,
+                projections: projections,
+                recommendations: recommendations,
+                needsMoreSchools: currentGap > 0,
+                needsMoreTeachers: studentTeacherRatio > 25,
+                educationBudget: educationBudget,
+                // NEW: Religious institution count
+                religiousInstitutions: religiousInstitutions
             };
 
         } finally {
@@ -725,139 +1023,162 @@
         }
     }
 
-    function recommendNewSchoolLocations(minDensity, minSchoolAgePop) {
+    // =========================================================================
+    // 10. STUDENT DENSITY BY SETTLEMENT (with religion filter)
+    // =========================================================================
+
+    function getStudentDensityBySettlement(locationId, options) {
         if (_processingQuery) {
-            return [];
+            return null;
         }
         _processingQuery = true;
 
         try {
-            minSchoolAgePop = minSchoolAgePop || 50;
-            var places = _getPlaces();
-            var recommendations = [];
+            if (!locationId) return null;
 
-            for (var i = 0; i < places.length; i++) {
-                var place = places[i];
-                var population = _getLocationPopulationCount ? 
-                    _getLocationPopulationCount(place.id) : 
-                    0;
+            options = options || {};
+            var byAgeGroup = options.byAgeGroup !== false;
+            var byGender = options.byGender !== false;
+            var bySchool = options.bySchool !== false;
+            var religionFilter = options.religionId || null;
 
-                var schoolAgePop = Math.round(population * 0.15);
+            var place = _getPlaceById(locationId);
+            if (!place) return null;
 
-                if (schoolAgePop < minSchoolAgePop) continue;
+            var locationIds = _getAllSubLocationIds(locationId);
+            var locationIdSet = new Set(locationIds);
+            var institutions = [];
 
-                var health = getEducationHealthScore(place.id);
-                if (!health.needsMoreSchools) continue;
-
-                var existingInstitutions = getInstitutionsInRegion(place.id, false);
-
-                recommendations.push({
-                    location: place,
-                    population: population,
-                    schoolAgePopulation: schoolAgePop,
-                    existingInstitutions: existingInstitutions.length,
-                    deficit: Math.max(0, schoolAgePop - (health.totalCapacity || 0)),
-                    priority: Math.min(100, Math.round((health.coverageRatio < 30 ? 80 : 50) + (schoolAgePop / 100))),
-                    healthScore: health.score,
-                    coverageRatio: health.coverageRatio
-                });
+            if (typeof EducationState !== 'undefined') {
+                var allInstitutions = EducationState.getAllInstitutions();
+                for (var i = 0; i < allInstitutions.length; i++) {
+                    var inst = allInstitutions[i];
+                    if (inst.locationId && locationIdSet.has(inst.locationId)) {
+                        if (religionFilter && inst.religionId !== religionFilter) continue;
+                        institutions.push(inst);
+                    }
+                }
             }
 
-            recommendations.sort(function(a, b) {
-                return b.priority - a.priority || b.deficit - a.deficit;
-            });
+            var totalStudents = 0;
+            var totalCapacity = 0;
+            var allStudents = [];
 
-            return recommendations.slice(0, 20);
+            for (var i = 0; i < institutions.length; i++) {
+                var inst = institutions[i];
+                totalCapacity += inst.maxStudents || 0;
 
-        } finally {
-            _processingQuery = false;
-        }
-    }
-
-    // =========================================================================
-    // 8. ROLE-BASED QUERIES (NEW)
-    // =========================================================================
-
-    function getInstitutionsByRole(roleId) {
-        if (_processingQuery) {
-            return [];
-        }
-        _processingQuery = true;
-
-        try {
-            return EducationState.getInstitutionsByTaughtRole(roleId);
-        } finally {
-            _processingQuery = false;
-        }
-    }
-
-    function getInstitutionsByRoleCategory(categoryId) {
-        if (_processingQuery) {
-            return [];
-        }
-        _processingQuery = true;
-
-        try {
-            return EducationState.getInstitutionsBySpecializationCategory(categoryId);
-        } finally {
-            _processingQuery = false;
-        }
-    }
-
-    function getInstitutionsTeachingRoleCategory(categoryId) {
-        if (_processingQuery) {
-            return [];
-        }
-        _processingQuery = true;
-
-        try {
-            return EducationState.getInstitutionsTeachingRoleCategory(categoryId);
-        } finally {
-            _processingQuery = false;
-        }
-    }
-
-    function getTaughtRolesByInstitution(institutionId) {
-        if (_processingQuery) {
-            return [];
-        }
-        _processingQuery = true;
-
-        try {
-            var institution = EducationState.getInstitution(institutionId);
-            if (!institution || !institution.taughtRoles) return [];
-
-            return institution.taughtRoles.map(function(roleId) {
-                return _getRoleById(roleId);
-            }).filter(function(role) { return role !== null; });
-
-        } finally {
-            _processingQuery = false;
-        }
-    }
-
-    function getAvailableRolesForInstitution(institutionId) {
-        if (_processingQuery) {
-            return [];
-        }
-        _processingQuery = true;
-
-        try {
-            var institution = EducationState.getInstitution(institutionId);
-            if (!institution) return [];
-
-            var category = institution.specializationCategory;
-            if (!category) return [];
-
-            // Get all roles from this category
-            if (typeof window.RoleState !== 'undefined' && window.RoleState.getAllRoles) {
-                var allRoles = window.RoleState.getAllRoles();
-                return allRoles.filter(function(role) {
-                    return role.category === category;
-                });
+                if (inst.students) {
+                    for (var j = 0; j < inst.students.length; j++) {
+                        var record = inst.students[j];
+                        if (!record.graduated) {
+                            var char = _getCharacterById(record.studentId);
+                            if (char) {
+                                allStudents.push({
+                                    id: char.id,
+                                    name: char.name,
+                                    surname: char.surname || '',
+                                    gender: char.gender || 'unknown',
+                                    birthYear: char.birthYear,
+                                    age: _calculateAge(char.birthYear, false, null),
+                                    institutionId: inst.id,
+                                    institutionName: inst.name,
+                                    enrollmentYear: record.enrollmentYear
+                                });
+                            }
+                        }
+                        totalStudents++;
+                    }
+                }
             }
 
-            return [];
+            var population = _getLocationPopulationCount(locationId);
+            var studentDensity = population > 0 ? 
+                Math.round((allStudents.length / population) * 1000) / 10 : 0;
+
+            var capacityUtilization = totalCapacity > 0 ? 
+                Math.round((allStudents.length / totalCapacity) * 100) : 0;
+
+            var result = {
+                settlementId: locationId,
+                settlementName: place.displayName,
+                totalStudents: allStudents.length,
+                totalCapacity: totalCapacity,
+                capacityUtilization: capacityUtilization,
+                studentDensity: studentDensity,
+                bySchool: [],
+                byAgeGroup: {},
+                byGender: { male: 0, female: 0, unknown: 0 },
+                byInstitution: [],
+                educationBudget: _getEducationBudget(locationId)
+            };
+
+            if (bySchool || byInstitution) {
+                var schoolMap = {};
+                for (var i = 0; i < institutions.length; i++) {
+                    var inst = institutions[i];
+                    var studentCount = inst.students ? inst.students.filter(function(s) { return !s.graduated; }).length : 0;
+                    schoolMap[inst.id] = {
+                        id: inst.id,
+                        name: inst.name,
+                        studentCount: studentCount,
+                        capacity: inst.maxStudents || 0,
+                        utilization: inst.maxStudents ? 
+                            Math.round((studentCount / inst.maxStudents) * 100) : 0,
+                        isReligious: inst.ownershipType === 'religious' || inst.isReligiousSchool,
+                        religionName: inst.religionName || null
+                    };
+                }
+
+                var schoolKeys = Object.keys(schoolMap);
+                for (var i = 0; i < schoolKeys.length; i++) {
+                    var key = schoolKeys[i];
+                    result.byInstitution.push(schoolMap[key]);
+                }
+            }
+
+            if (byAgeGroup) {
+                var ageGroups = {
+                    '5-10': { min: 5, max: 10, count: 0, students: [] },
+                    '11-15': { min: 11, max: 15, count: 0, students: [] },
+                    '16-18': { min: 16, max: 18, count: 0, students: [] },
+                    '19-25': { min: 19, max: 25, count: 0, students: [] },
+                    '25+': { min: 25, max: 200, count: 0, students: [] }
+                };
+
+                for (var i = 0; i < allStudents.length; i++) {
+                    var s = allStudents[i];
+                    var age = s.age || 0;
+                    for (var groupKey in ageGroups) {
+                        if (ageGroups.hasOwnProperty(groupKey)) {
+                            var g = ageGroups[groupKey];
+                            if (age >= g.min && age <= g.max) {
+                                g.count++;
+                                g.students.push(s.id);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                result.byAgeGroup = ageGroups;
+            }
+
+            if (byGender) {
+                for (var i = 0; i < allStudents.length; i++) {
+                    var s = allStudents[i];
+                    var gender = s.gender || 'unknown';
+                    if (result.byGender[gender] !== undefined) {
+                        result.byGender[gender]++;
+                    } else {
+                        result.byGender.unknown++;
+                    }
+                }
+            }
+
+            result.studentList = allStudents.slice(0, 50);
+
+            return result;
 
         } finally {
             _processingQuery = false;
@@ -865,7 +1186,7 @@
     }
 
     // =========================================================================
-    // 9. EDUCATION LEVELS HELPER
+    // 11. EDUCATION LEVELS HELPER
     // =========================================================================
 
     function _getEducationLevels() {
@@ -879,7 +1200,7 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 12. EXPORTS
     // =========================================================================
 
     window.EducationQueries = {
@@ -895,22 +1216,228 @@
         getHeadmasterHistory: getHeadmasterHistory,
         getInstitutionStatistics: getInstitutionStatistics,
         getLocationEducationSummary: getLocationEducationSummary,
-        getEducationHealthScore: getEducationHealthScore,
-        recommendNewSchoolLocations: recommendNewSchoolLocations,
+        getEducationHealthScore: function(locationId) {
+            if (_processingQuery) {
+                return {};
+            }
+            _processingQuery = true;
+
+            try {
+                var summary = getLocationEducationSummary(locationId, true);
+                var population = _getLocationPopulationCount ? 
+                    _getLocationPopulationCount(locationId) : 
+                    0;
+
+                var schoolAgePopulation = Math.round(population * 0.15);
+
+                var score = 0;
+                var maxScore = 100;
+
+                var coverageRatio = schoolAgePopulation > 0 ?
+                    Math.min(100, Math.round((summary.totalCapacity / schoolAgePopulation) * 100)) :
+                    0;
+                score += (coverageRatio / 100) * 40;
+
+                var qualityScore = Math.min(100, (summary.averageReputation || 0) * 0.6);
+                score += (qualityScore / 100) * 30;
+
+                var teacherStudentRatio = summary.totalStudents > 0 ?
+                    Math.min(100, Math.round((summary.totalTeachers / summary.totalStudents) * 100)) :
+                    0;
+                score += (teacherStudentRatio / 100) * 30;
+
+                score = Math.min(maxScore, Math.round(score));
+
+                var recommendation = '';
+                if (score >= 80) recommendation = 'Excellent education infrastructure';
+                else if (score >= 60) recommendation = 'Good education, room for improvement';
+                else if (score >= 40) recommendation = 'Adequate education, needs attention';
+                else if (score >= 20) recommendation = 'Poor education, significant improvements needed';
+                else recommendation = 'Critical education crisis';
+
+                var educationBudget = _getEducationBudget(locationId);
+
+                return {
+                    score: score,
+                    coverageRatio: coverageRatio,
+                    averageReputation: summary.averageReputation || 0,
+                    teacherStudentRatio: teacherStudentRatio || 0,
+                    schoolAgePopulation: schoolAgePopulation,
+                    totalCapacity: summary.totalCapacity || 0,
+                    institutionCount: summary.institutionCount || 0,
+                    recommendation: recommendation,
+                    needsMoreSchools: coverageRatio < 50 && schoolAgePopulation > 0,
+                    educationBudget: educationBudget,
+                    religiousSchools: summary.religiousSchools || 0
+                };
+
+            } finally {
+                _processingQuery = false;
+            }
+        },
+        recommendNewSchoolLocations: function(minDensity, minSchoolAgePop) {
+            if (_processingQuery) {
+                return [];
+            }
+            _processingQuery = true;
+
+            try {
+                minSchoolAgePop = minSchoolAgePop || 50;
+                var places = _getPlaces();
+                var recommendations = [];
+
+                for (var i = 0; i < places.length; i++) {
+                    var place = places[i];
+                    var population = _getLocationPopulationCount ? 
+                        _getLocationPopulationCount(place.id) : 
+                        0;
+
+                    var schoolAgePop = Math.round(population * 0.15);
+
+                    if (schoolAgePop < minSchoolAgePop) continue;
+
+                    var health = getEducationHealthScore(place.id);
+                    if (!health.needsMoreSchools) continue;
+
+                    var existingInstitutions = getInstitutionsInRegion(place.id, false);
+
+                    recommendations.push({
+                        location: place,
+                        population: population,
+                        schoolAgePopulation: schoolAgePop,
+                        existingInstitutions: existingInstitutions.length,
+                        deficit: Math.max(0, schoolAgePop - (health.totalCapacity || 0)),
+                        priority: Math.min(100, Math.round((health.coverageRatio < 30 ? 80 : 50) + (schoolAgePop / 100))),
+                        healthScore: health.score,
+                        coverageRatio: health.coverageRatio,
+                        educationBudget: _getEducationBudget(place.id),
+                        religiousSchools: health.religiousSchools || 0
+                    });
+                }
+
+                recommendations.sort(function(a, b) {
+                    return b.priority - a.priority || b.deficit - a.deficit;
+                });
+
+                return recommendations.slice(0, 20);
+
+            } finally {
+                _processingQuery = false;
+            }
+        },
         _getEducationLevels: _getEducationLevels,
 
-        // NEW: Role-based queries
-        getInstitutionsByRole: getInstitutionsByRole,
-        getInstitutionsByRoleCategory: getInstitutionsByRoleCategory,
-        getInstitutionsTeachingRoleCategory: getInstitutionsTeachingRoleCategory,
-        getTaughtRolesByInstitution: getTaughtRolesByInstitution,
-        getAvailableRolesForInstitution: getAvailableRolesForInstitution
+        // Role-based queries
+        getInstitutionsByRole: function(roleId) {
+            if (_processingQuery) {
+                return [];
+            }
+            _processingQuery = true;
+
+            try {
+                if (typeof window.EducationState !== 'undefined') {
+                    return window.EducationState.getInstitutionsByTaughtRole(roleId);
+                }
+                return [];
+            } finally {
+                _processingQuery = false;
+            }
+        },
+        getInstitutionsByRoleCategory: function(categoryId) {
+            if (_processingQuery) {
+                return [];
+            }
+            _processingQuery = true;
+
+            try {
+                if (typeof window.EducationState !== 'undefined') {
+                    return window.EducationState.getInstitutionsBySpecializationCategory(categoryId);
+                }
+                return [];
+            } finally {
+                _processingQuery = false;
+            }
+        },
+        getInstitutionsTeachingRoleCategory: function(categoryId) {
+            if (_processingQuery) {
+                return [];
+            }
+            _processingQuery = true;
+
+            try {
+                if (typeof window.EducationState !== 'undefined') {
+                    return window.EducationState.getInstitutionsTeachingRoleCategory(categoryId);
+                }
+                return [];
+            } finally {
+                _processingQuery = false;
+            }
+        },
+        getTaughtRolesByInstitution: function(institutionId) {
+            if (_processingQuery) {
+                return [];
+            }
+            _processingQuery = true;
+
+            try {
+                var institution = _getInstitution(institutionId);
+                if (!institution || !institution.taughtRoles) return [];
+
+                return institution.taughtRoles.map(function(roleId) {
+                    return _getRoleById(roleId);
+                }).filter(function(role) { return role !== null; });
+
+            } finally {
+                _processingQuery = false;
+            }
+        },
+        getAvailableRolesForInstitution: function(institutionId) {
+            if (_processingQuery) {
+                return [];
+            }
+            _processingQuery = true;
+
+            try {
+                var institution = _getInstitution(institutionId);
+                if (!institution) return [];
+
+                var category = institution.specializationCategory;
+                if (!category) return [];
+
+                if (typeof window.RoleState !== 'undefined' && window.RoleState.getAllRoles) {
+                    var allRoles = window.RoleState.getAllRoles();
+                    return allRoles.filter(function(role) {
+                        return role.category === category;
+                    });
+                }
+
+                return [];
+
+            } finally {
+                _processingQuery = false;
+            }
+        },
+
+        // NEW: Religious school queries
+        getReligiousSchools: getReligiousSchools,
+        getInstitutionsByReligion: getInstitutionsByReligion,
+        getReligiousSchoolsByLocation: getReligiousSchoolsByLocation,
+
+        // Education demand and student density
+        getEducationDemandBySettlement: getEducationDemandBySettlement,
+        getStudentDensityBySettlement: getStudentDensityBySettlement
     };
 
     // Legacy aliases
-    window._getInstitutionStudents = getInstitutionStudents;
-    window._getInstitutionTeachers = getInstitutionTeachers;
-    window._getInstitutionGraduates = getInstitutionGraduates;
+    window._getInstitutionStudents = function(institutionId, includeCharacterData) {
+        return getInstitutionStudents(institutionId, includeCharacterData);
+    };
+    window._getInstitutionTeachers = function(institutionId, includeCharacterData) {
+        return getInstitutionTeachers(institutionId, includeCharacterData);
+    };
+    window._getInstitutionGraduates = function(institutionId, includeCharacterData) {
+        return getInstitutionGraduates(institutionId, includeCharacterData);
+    };
     window._isStudentEnrolled = isStudentEnrolled;
     window._getHeadmaster = getHeadmaster;
     window._getHeadmasterHistory = getHeadmasterHistory;
@@ -918,18 +1445,41 @@
         return getLocationEducationSummary(locationId, false);
     };
     window._getInstitutionsInRegion = getInstitutionsInRegion;
-    window._getEducationHealthScore = getEducationHealthScore;
+    window._getEducationHealthScore = function(locationId) {
+        return getEducationHealthScore(locationId);
+    };
     window._recommendNewSchoolLocation = function(minDensity, minSchoolAgePop) {
         return recommendNewSchoolLocations(minDensity, minSchoolAgePop);
     };
     window._getEducationLevels = _getEducationLevels;
 
-    // NEW legacy aliases
-    window._getInstitutionsByRole = getInstitutionsByRole;
-    window._getInstitutionsByRoleCategory = getInstitutionsByRoleCategory;
-    window._getInstitutionsTeachingRoleCategory = getInstitutionsTeachingRoleCategory;
-    window._getTaughtRolesByInstitution = getTaughtRolesByInstitution;
-    window._getAvailableRolesForInstitution = getAvailableRolesForInstitution;
+    // Legacy aliases for role-based queries
+    window._getInstitutionsByRole = function(roleId) {
+        return getInstitutionsByRole(roleId);
+    };
+    window._getInstitutionsByRoleCategory = function(categoryId) {
+        return getInstitutionsByRoleCategory(categoryId);
+    };
+    window._getInstitutionsTeachingRoleCategory = function(categoryId) {
+        return getInstitutionsTeachingRoleCategory(categoryId);
+    };
+    window._getTaughtRolesByInstitution = function(institutionId) {
+        return getTaughtRolesByInstitution(institutionId);
+    };
+    window._getAvailableRolesForInstitution = function(institutionId) {
+        return getAvailableRolesForInstitution(institutionId);
+    };
+    window._getEducationDemandBySettlement = function(locationId, options) {
+        return getEducationDemandBySettlement(locationId, options);
+    };
+    window._getStudentDensityBySettlement = function(locationId, options) {
+        return getStudentDensityBySettlement(locationId, options);
+    };
+
+    // NEW: Religious school query aliases
+    window._getReligiousSchools = getReligiousSchools;
+    window._getInstitutionsByReligion = getInstitutionsByReligion;
+    window._getReligiousSchoolsByLocation = getReligiousSchoolsByLocation;
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
@@ -945,14 +1495,23 @@
             getHeadmasterHistory: getHeadmasterHistory,
             getInstitutionStatistics: getInstitutionStatistics,
             getLocationEducationSummary: getLocationEducationSummary,
-            getEducationHealthScore: getEducationHealthScore,
-            recommendNewSchoolLocations: recommendNewSchoolLocations,
+            getEducationHealthScore: function(locationId) {
+                return getEducationHealthScore(locationId);
+            },
+            recommendNewSchoolLocations: function(minDensity, minSchoolAgePop) {
+                return recommendNewSchoolLocations(minDensity, minSchoolAgePop);
+            },
             _getEducationLevels: _getEducationLevels,
             getInstitutionsByRole: getInstitutionsByRole,
             getInstitutionsByRoleCategory: getInstitutionsByRoleCategory,
             getInstitutionsTeachingRoleCategory: getInstitutionsTeachingRoleCategory,
             getTaughtRolesByInstitution: getTaughtRolesByInstitution,
-            getAvailableRolesForInstitution: getAvailableRolesForInstitution
+            getAvailableRolesForInstitution: getAvailableRolesForInstitution,
+            getEducationDemandBySettlement: getEducationDemandBySettlement,
+            getStudentDensityBySettlement: getStudentDensityBySettlement,
+            getReligiousSchools: getReligiousSchools,
+            getInstitutionsByReligion: getInstitutionsByReligion,
+            getReligiousSchoolsByLocation: getReligiousSchoolsByLocation
         };
     }
 

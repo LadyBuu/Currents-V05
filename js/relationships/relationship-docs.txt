@@ -1,4 +1,4 @@
-# STILL WATERS - RELATIONSHIP SYSTEM COMPLETE DOCUMENTATION
+# COMPLETE RELATIONSHIP SYSTEM DOCUMENTATION
 
 ## Version 3.0 | Generated: 2026-07-12
 
@@ -1805,3 +1805,4 @@ UI tool for finding relationships between two characters. Shows rank symbol, gen
 **Generated:** 2026-07-12
 **Version:** 3.0
 **File Count:** 13 core files
+**Total Size:** ~350 KB

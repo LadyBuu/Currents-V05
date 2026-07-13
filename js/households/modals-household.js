@@ -8,6 +8,7 @@
  * UI modals for household management - create, edit, detail, delete.
  * 
  * UPDATED: Added enterprise section to household detail modal
+ * UPDATED: Added ownership type indicators to enterprise display
  * UPDATED: Uses icons from icons.js (no emojis)
  * UPDATED: No icons in confirm/cancel buttons
  * 
@@ -110,11 +111,17 @@
         if (typeof window.closeTopModal === 'function') {
             window.closeTopModal();
         }
+        if (typeof window._closeTopModal === 'function') {
+            window._closeTopModal();
+        }
     }
 
     function _confirmDialog(message, title, onConfirm) {
         if (typeof window.confirmDialog === 'function') {
             return window.confirmDialog(message, title, onConfirm);
+        }
+        if (typeof window._confirmDialog === 'function') {
+            return window._confirmDialog(message, title, onConfirm);
         }
         if (confirm(message)) {
             onConfirm();
@@ -485,7 +492,7 @@
     }
 
     // =========================================================================
-    // 7. HOUSEHOLD DETAILS MODAL (Updated with Enterprise Section)
+    // 7. HOUSEHOLD DETAILS MODAL (UPDATED with Enterprise Ownership Indicators)
     // =========================================================================
 
     function openHouseholdDetailsModal(householdId, onSuccess) {
@@ -517,7 +524,7 @@
             var demographics = queries.getDemographics(householdId);
 
             // =========================================================================
-            // ENTERPRISE SECTION (NEW)
+            // ENTERPRISE SECTION (UPDATED with ownership indicators)
             // =========================================================================
 
             var enterpriseSection = '';
@@ -533,8 +540,12 @@
                         var statusColor = s.status === 'active' ? 'var(--success)' :
                                          s.status === 'bankrupt' ? 'var(--danger)' :
                                          'var(--warn)';
+                        // UPDATED: Added ownership type indicator
+                        var ownershipLabel = s.ownershipType === 'public' ?
+                            ' <span style="font-size:0.45rem;color:var(--accent);">(Public)</span>' :
+                            ' <span style="font-size:0.45rem;color:var(--dim);">(Private)</span>';
                         return '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:var(--bg);border-radius:4px;margin-bottom:2px;font-size:0.65rem;cursor:pointer;" class="enterprise-item" data-enterprise-id="' + _escapeHtml(s.id) + '">' +
-                            '<span>' + _escapeHtml(s.name) + ' <span style="color:' + statusColor + ';font-size:0.5rem;">(' + _escapeHtml(s.status) + ')</span></span>' +
+                            '<span>' + _escapeHtml(s.name) + ' <span style="color:' + statusColor + ';font-size:0.5rem;">(' + _escapeHtml(s.status) + ')</span>' + ownershipLabel + '</span>' +
                             '<span style="color:' + profitColor + ';">' + (s.annualProfit >= 0 ? '+' : '') + s.annualProfit + '</span>' +
                             '</div>';
                     }).join('');
@@ -542,11 +553,23 @@
                     var totalProfit = enterpriseStats.totalProfit || 0;
                     var profitColor = totalProfit >= 0 ? 'var(--success)' : 'var(--danger)';
 
+                    // UPDATED: Added ownership type breakdown
+                    var publicCount = enterpriseStats.publicCount || 0;
+                    var privateCount = enterpriseStats.privateCount || 0;
+                    var ownershipBreakdown = '';
+                    if (publicCount > 0 || privateCount > 0) {
+                        ownershipBreakdown = ' <span style="font-size:0.5rem;color:var(--dim);">(' +
+                            (publicCount > 0 ? publicCount + ' Public' : '') +
+                            (publicCount > 0 && privateCount > 0 ? ', ' : '') +
+                            (privateCount > 0 ? privateCount + ' Private' : '') +
+                            ')</span>';
+                    }
+
                     enterpriseSection = `
                         <div style="margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px;">
                             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
                                 <div style="font-size: 0.7rem; color: var(--accent);">
-                                    Owned Enterprises (${enterpriseSummaries.length})
+                                    Owned Enterprises (${enterpriseSummaries.length})${ownershipBreakdown}
                                 </div>
                                 <div style="font-size: 0.6rem; color: var(--dim);">
                                     Total Profit: <span style="color:${profitColor};font-weight:bold;">${totalProfit >= 0 ? '+' : ''}${totalProfit}</span>
@@ -675,7 +698,7 @@
                         </div>
                     </div>
 
-                    <!-- ENTERPRISE SECTION (NEW) -->
+                    <!-- ENTERPRISE SECTION (UPDATED) -->
                     ${enterpriseSection}
 
                     <!-- Notes -->
@@ -772,7 +795,7 @@
                 }
 
                 // =========================================================================
-                // ENTERPRISE BUTTONS (NEW)
+                // ENTERPRISE BUTTONS
                 // =========================================================================
 
                 // View Enterprises button

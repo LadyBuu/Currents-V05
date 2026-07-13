@@ -1,0 +1,1178 @@
+# CRIME & VENDETTA SYSTEM - COMPLETE DOCUMENTATION
+
+## SYSTEM OVERVIEW
+
+The Crime & Vendetta System manages all criminal activities, executions, blood feuds, and vendettas within the game world. It provides a complete API for recording crimes, tracking executions, managing vendettas between households, and analyzing crime statistics across locations.
+
+**Key Design Principles:**
+- **Single Source of Truth**: `crime-state.js` holds all crime and vendetta data
+- **Command-Query Separation**: Commands (writes) vs Queries (reads) separated
+- **Separation of Concerns**: State, commands, queries, constants, UI all separate
+- **Recursion Guards**: All public functions protected from infinite loops
+- **Household Integration**: Crimes affect household prestige, criminal counts, and victim counts
+- **Settlement Integration**: Crimes affect settlement crime rates and prosperity
+- **Vendetta Tracking**: Full tracking of blood feuds between households and characters
+- **Rich Crime Data**: Type, severity, reason, punishment, solution, witnesses, evidence
+
+---
+
+## FILE STRUCTURE
+
+```
+js/core/crime/
+├── crime-state.js              # Single source of truth + cache + notifications
+├── crime-commands.js           # All write operations (murder, execution, vendetta)
+├── crime-queries.js            # All read operations (stats, trends, filters)
+├── crime-constants.js          # All constants (types, severities, punishments)
+├── crime-ui-stats.js           # UI statistics rendering
+├── modals-crime.js             # UI modals (murder, execution, vendetta, details)
+└── vendetta-system.js          # Standalone vendetta management
+
+js/core/modals/
+├── modals-crime.js                 # Crime modals
+├── modals-char-select.js           # Character selector
+└── modals-household-selector.js    # Household selector
+```
+
+---
+
+# 1. CRIME-STATE.JS
+
+**PURPOSE:** Single source of truth for all crime and vendetta data. Manages caching, subscriptions, and data loading.
+
+**DEPENDENCIES:**
+- `ids.js` - `generateId`
+- `time.js` - `getCurrentYearSafe`
+- `accessors.js` - `getCharacterById`, `getHouseholdById`
+- `storage.js` - `saveMasterData`
+
+---
+
+## Data Schemas
+
+### Crime Object Schema
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique identifier |
+| `type` | string | Crime type (murder, execution, theft, etc.) |
+| `perpetratorId` | string | Character ID of perpetrator |
+| `perpetratorName` | string | Perpetrator name |
+| `victimId` | string | Character ID of victim |
+| `victimName` | string | Victim name |
+| `year` | number | Year of crime |
+| `reason` | string | Reason for crime |
+| `location` | string | Location name |
+| `locationId` | string | Location ID |
+| `witnesses` | array | Witness character IDs |
+| `evidence` | array | Evidence items |
+| `solved` | boolean | Whether crime is solved |
+| `solvedAt` | number | Year solved |
+| `solution` | string | Solution description |
+| `punishment` | string | Punishment applied |
+| `method` | string | Method used (for executions) |
+| `severity` | number | 1-10 severity rating |
+| `recordedAt` | number | Year recorded |
+| `notes` | string | Additional notes |
+| `metadata` | object | Additional metadata |
+
+### Vendetta Object Schema
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique identifier |
+| `householdAId` | string | First household ID |
+| `householdAName` | string | First household name |
+| `householdBId` | string | Second household ID |
+| `householdBName` | string | Second household name |
+| `characterAId` | string | Character from household A |
+| `characterAName` | string | Character A name |
+| `characterBId` | string | Character from household B |
+| `characterBName` | string | Character B name |
+| `cause` | string | Cause of vendetta |
+| `startedYear` | number | Year started |
+| `status` | string | 'active', 'escalated', 'resolved' |
+| `bodyCount` | number | Total deaths |
+| `deaths` | array | Death records |
+| `escalatedAt` | number | Year escalated |
+| `resolvedAt` | number | Year resolved |
+| `resolution` | string | Resolution description |
+| `notes` | string | Additional notes |
+| `createdAt` | number | Creation timestamp |
+| `updatedAt` | number | Last update timestamp |
+
+---
+
+## Data Access Functions
+
+### `CrimeState.getCrime(crimeId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets a crime by ID |
+| **Parameters** | `crimeId` (string) |
+| **Returns** | `Object|null` - Crime object or null |
+
+### `CrimeState.getAllCrimes()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all crimes |
+| **Returns** | `Array` - Array of crime objects |
+
+### `CrimeState.getCrimesByCharacter(characterId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets crimes involving a character (as perpetrator or victim) |
+| **Parameters** | `characterId` (string) |
+| **Returns** | `Array` - Array of crime objects |
+
+### `CrimeState.getCrimesByType(type)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets crimes by type |
+| **Parameters** | `type` (string) |
+| **Returns** | `Array` - Array of crime objects |
+
+### `CrimeState.getCrimesByLocation(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets crimes by location |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Array` - Array of crime objects |
+
+### `CrimeState.getUnsolvedCrimes()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all unsolved crimes |
+| **Returns** | `Array` - Array of crime objects |
+
+### `CrimeState.getCrimeCount()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets total crime count |
+| **Returns** | `number` |
+
+---
+
+## Crime Commands
+
+### `CrimeState.recordCrime(data)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Records a new crime |
+| **Parameters** | `data.type`, `data.perpetratorId`, `data.victimId`, `data.year`, `data.reason`, `data.locationId`, `data.solved`, `data.notes` |
+| **Returns** | `{ success: boolean, data: Object }` |
+
+### `CrimeState.solveCrime(crimeId, solution)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Marks a crime as solved |
+| **Parameters** | `crimeId` (string), `solution` (string) |
+| **Returns** | `{ success: boolean, data: Object }` |
+
+### `CrimeState.deleteCrime(crimeId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Deletes a crime |
+| **Parameters** | `crimeId` (string) |
+| **Returns** | `{ success: boolean }` |
+
+---
+
+## Vendetta Queries
+
+### `CrimeState.getVendetta(vendettaId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets a vendetta by ID |
+| **Parameters** | `vendettaId` (string) |
+| **Returns** | `Object|null` - Vendetta object or null |
+
+### `CrimeState.getAllVendettas(options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all vendettas |
+| **Parameters** | `options.includeResolved` (boolean) |
+| **Returns** | `Array` - Array of vendetta objects |
+
+### `CrimeState.getVendettasByHousehold(householdId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets vendettas involving a household |
+| **Parameters** | `householdId` (string), `options.includeResolved` (boolean) |
+| **Returns** | `Array` - Array of vendetta objects |
+
+### `CrimeState.getVendettasByCharacter(characterId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets vendettas involving a character |
+| **Parameters** | `characterId` (string), `options.includeResolved` (boolean) |
+| **Returns** | `Array` - Array of vendetta objects |
+
+### `CrimeState.getActiveVendettas(householdId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets active vendettas for a household |
+| **Parameters** | `householdId` (string) |
+| **Returns** | `Array` - Array of active vendetta objects |
+
+### `CrimeState.getVendettaCount()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets total vendetta count |
+| **Returns** | `number` |
+
+---
+
+## Vendetta Commands
+
+### `CrimeState.createVendetta(data)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Creates a new vendetta |
+| **Parameters** | `data.householdAId`, `data.householdBId`, `data.characterAId`, `data.characterBId`, `data.cause`, `data.year`, `data.notes` |
+| **Returns** | `{ success: boolean, data: Object }` |
+
+### `CrimeState.recordVendettaDeath(vendettaId, deathData)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Records a death in a vendetta |
+| **Parameters** | `vendettaId` (string), `deathData.victimId`, `deathData.killerId`, `deathData.year`, `deathData.reason` |
+| **Returns** | `{ success: boolean, data: Object }` |
+
+### `CrimeState.resolveVendetta(vendettaId, resolutionData)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Resolves a vendetta |
+| **Parameters** | `vendettaId` (string), `resolutionData.resolution`, `resolutionData.year`, `resolutionData.notes` |
+| **Returns** | `{ success: boolean, data: Object }` |
+
+### `CrimeState.deleteVendetta(vendettaId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Deletes a vendetta |
+| **Parameters** | `vendettaId` (string) |
+| **Returns** | `{ success: boolean }` |
+
+---
+
+## Subscription and Cache
+
+### `CrimeState.subscribe(callback)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Subscribes to state changes |
+| **Parameters** | `callback` (function) - Receives event object |
+| **Returns** | `function` - Unsubscribe function |
+
+### `CrimeState.invalidateCache()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Invalidates all caches |
+| **Returns** | `void` |
+
+---
+
+# 2. CRIME-COMMANDS.JS
+
+**PURPOSE:** High-level crime operations with integrated household and settlement effects.
+
+**DEPENDENCIES:**
+- `crime-state.js` - `CrimeState`
+- `accessors.js` - `getCharacterById`, `getHouseholdById`, `getPlaceById`
+- `time.js` - `getCurrentYearSafe`
+- `household-state.js` - `HouseholdState`
+- `settlement-state.js` - `SettlementState`
+- `settlement-economy.js` - `SettlementEconomy`
+
+---
+
+## Murder Command
+
+### `CrimeCommands.triggerMurder(victimId, killerId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Triggers a murder with full consequences |
+| **Parameters** | `victimId` (string), `killerId` (string), `options.year` (number), `options.reason` (string), `options.killerGotAway` (boolean), `options.startVendetta` (boolean), `options.locationId` (string), `options.notes` (string) |
+| **Returns** | `{ success: boolean, data: { victim, killer, murderReason, killerGotAway, year, crime, execution, vendetta, householdUpdates } }` |
+
+**Integration Effects:**
+- Records crime in CrimeState
+- Kills victim character
+- Executes killer if caught
+- Creates blood feud vendetta if requested
+- Updates victim's household (prestige loss, criminal count, victim count)
+- Updates killer's household (prestige loss, criminal count)
+- Updates settlement crime rate and prosperity
+
+### `CrimeCommands.triggerExecution(condemnedId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Triggers an execution |
+| **Parameters** | `condemnedId` (string), `options.year` (number), `options.reason` (string), `options.method` (string), `options.executionerId` (string), `options.locationId` (string), `options.isForMurder` (boolean), `options.victimId` (string), `options.endRelationships` (boolean), `options.notes` (string) |
+| **Returns** | `{ success: boolean, data: { condemned, reason, method, year, crime, householdId } }` |
+
+**Integration Effects:**
+- Records execution as a crime
+- Kills condemned character
+- Ends all active relationships if requested
+- Updates condemned's household (prestige loss, executed count)
+- Updates settlement crime rate
+
+### `CrimeCommands.createBloodFeud(victimId, killerId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Creates a blood feud from a murder |
+| **Parameters** | `victimId` (string), `killerId` (string), `options.year` (number), `options.cause` (string), `options.notes` (string) |
+| **Returns** | `{ success: boolean, data: Object }` |
+
+**Integration Effects:**
+- Creates or updates vendetta
+- Records first death in vendetta
+- Updates both households
+- Updates settlement crime rate
+
+---
+
+## Wrapper Functions
+
+### `CrimeCommands.recordCrime(data)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Wrapper for CrimeState.recordCrime |
+| **Returns** | `{ success: boolean, data: Object }` |
+
+### `CrimeCommands.solveCrime(crimeId, solution)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Wrapper for CrimeState.solveCrime |
+| **Returns** | `{ success: boolean, data: Object }` |
+
+### `CrimeCommands.createVendetta(data)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Wrapper for CrimeState.createVendetta |
+| **Returns** | `{ success: boolean, data: Object }` |
+
+### `CrimeCommands.recordVendettaDeath(vendettaId, deathData)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Wrapper for CrimeState.recordVendettaDeath |
+| **Returns** | `{ success: boolean, data: Object }` |
+
+### `CrimeCommands.resolveVendetta(vendettaId, resolutionData)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Wrapper for CrimeState.resolveVendetta |
+| **Returns** | `{ success: boolean, data: Object }` |
+
+---
+
+## Helper Functions
+
+### `CrimeCommands.getRandomMurderReason(category)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets a random murder reason (optionally by category) |
+| **Parameters** | `category` (string - 'political', 'personal', 'criminal', 'accidental', 'affair', 'conflict', 'other') |
+| **Returns** | `string` - Murder reason |
+
+### `CrimeCommands.getRandomExecutionReason(category)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets a random execution reason (optionally by category) |
+| **Parameters** | `category` (string - 'treason', 'murder', 'adultery', 'crime', 'military', 'religious', 'social', 'common') |
+| **Returns** | `string` - Execution reason |
+
+### `CrimeCommands.getRandomExecutionMethod()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets a random execution method |
+| **Returns** | `{ id: string, name: string }` |
+
+### `CrimeCommands.getCharacterCombatStrength(character)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Calculates a character's combat strength (0-100) |
+| **Parameters** | `character` (Object) |
+| **Returns** | `number` - Combat strength |
+
+---
+
+# 3. CRIME-QUERIES.JS
+
+**PURPOSE:** Read-only queries for crime and vendetta data.
+
+**DEPENDENCIES:**
+- `crime-state.js` - `CrimeState`
+- `accessors.js` - `getCharacterById`, `getPlaceById`, `getPlaces`
+- `time.js` - `getCurrentYearSafe`
+
+---
+
+## Crime Queries
+
+### `CrimeQueries.getCrime(crimeId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets a crime by ID |
+| **Returns** | `Object|null` |
+
+### `CrimeQueries.getAllCrimes()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all crimes |
+| **Returns** | `Array` |
+
+### `CrimeQueries.getCrimesByCharacter(characterId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets crimes involving a character |
+| **Returns** | `Array` |
+
+### `CrimeQueries.getCrimesByType(type)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets crimes by type |
+| **Returns** | `Array` |
+
+### `CrimeQueries.getCrimesByLocation(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets crimes by location |
+| **Returns** | `Array` |
+
+### `CrimeQueries.getUnsolvedCrimes()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all unsolved crimes |
+| **Returns** | `Array` |
+
+### `CrimeQueries.getCrimeCount()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets total crime count |
+| **Returns** | `number` |
+
+---
+
+## Vendetta Queries
+
+### `CrimeQueries.getVendetta(vendettaId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets a vendetta by ID |
+| **Returns** | `Object|null` |
+
+### `CrimeQueries.getAllVendettas(options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all vendettas |
+| **Parameters** | `options.includeResolved` (boolean) |
+| **Returns** | `Array` |
+
+### `CrimeQueries.getVendettasByHousehold(householdId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets vendettas involving a household |
+| **Returns** | `Array` |
+
+### `CrimeQueries.getVendettasByCharacter(characterId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets vendettas involving a character |
+| **Returns** | `Array` |
+
+### `CrimeQueries.getActiveVendettas(householdId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets active vendettas for a household |
+| **Returns** | `Array` |
+
+### `CrimeQueries.getVendettaCount()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets total vendetta count |
+| **Returns** | `number` |
+
+---
+
+## Statistics Functions
+
+### `CrimeQueries.getLocationCrimeStats(locationId, year)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets crime statistics for a location |
+| **Parameters** | `locationId` (string), `year` (number) |
+| **Returns** | `{ totalCrimes, recentCrimes, unsolvedCrimes, solvedRate, typeDistribution, yearlyTrends, severityBreakdown, crimeRatePerCapita, mostCommonCrime }` |
+
+### `CrimeQueries.getCrimeTrends(locationId, years)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets crime trends over time for a location |
+| **Parameters** | `locationId` (string), `years` (number) |
+| **Returns** | `Array` - [{ year, total, solved, unsolved, solveRate }] |
+
+### `CrimeQueries.getCrimeTypeDistribution(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets crime type distribution for a location |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Object` - { type: count } |
+
+### `CrimeQueries.getOverallCrimeStats()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets overall crime statistics |
+| **Returns** | `{ totalCrimes, recentCrimes, solvedRate, unsolvedCrimes, typeDistribution, severityBreakdown, locationsWithMostCrime, averageCrimeSeverity }` |
+
+### `CrimeQueries.getCrimeSeverityStats()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets crime severity statistics |
+| **Returns** | `{ bySeverity, average, median }` |
+
+### `CrimeQueries.getCrimeRateByLocation(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets crime rate per capita for a location |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `number` - Crime rate (0-1) |
+
+### `CrimeQueries.getCrimeClearanceRate()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets crime clearance rate statistics |
+| **Returns** | `{ overallClearanceRate, solvedCrimes, unsolvedCrimes, byType }` |
+
+### `CrimeQueries.getVendettaStats(householdId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets vendetta statistics |
+| **Parameters** | `householdId` (string) |
+| **Returns** | `{ total, active, escalated, resolved, totalDeaths, averageDeaths, byHousehold }` |
+
+---
+
+# 4. CRIME-CONSTANTS.JS
+
+**PURPOSE:** All crime and vendetta related constants.
+
+**DEPENDENCIES:** None (pure constants)
+
+---
+
+## Constants
+
+### `CRIME_TYPES`
+
+| Type | Description |
+|------|-------------|
+| MURDER | Premeditated killing |
+| EXECUTION | Legal execution |
+| CRIME_OF_PASSION | Passion-driven killing |
+| ADULTERY | Infidelity |
+| TREASON | Betrayal of state |
+| THEFT | Stealing |
+| ESPIONAGE | Spying |
+| BLASPHEMY | Religious offense |
+| WITCHCRAFT | Sorcery accusation |
+| ASSAULT | Physical attack |
+| VENDETTA | Blood feud violence |
+| VIOLENCE | General violence |
+| ROBBERY | Theft with force |
+| FRAUD | Deception |
+| FORGERY | Counterfeiting |
+| SMUGGLING | Illegal trade |
+
+### `CRIME_SEVERITY` (1-10)
+
+| Type | Severity |
+|------|----------|
+| theft | 3 |
+| robbery | 5 |
+| fraud | 4 |
+| forgery | 4 |
+| smuggling | 5 |
+| assault | 5 |
+| adultery | 7 |
+| blasphemy | 8 |
+| witchcraft | 9 |
+| espionage | 9 |
+| crime_of_passion | 8 |
+| violence | 6 |
+| treason | 10 |
+| murder | 10 |
+| vendetta | 9 |
+| execution | 10 |
+
+### `CRIME_PUNISHMENTS`
+
+| Type | Possible Punishments |
+|------|---------------------|
+| theft | Fine, Branding, Maiming, Execution |
+| robbery | Fine, Maiming, Exile, Execution |
+| fraud | Fine, Branding, Exile |
+| forgery | Fine, Maiming, Execution |
+| smuggling | Fine, Exile, Execution |
+| assault | Fine, Maiming, Exile, Execution |
+| adultery | Fine, Public Shaming, Exile, Execution |
+| blasphemy | Fine, Public Shaming, Exile, Execution |
+| witchcraft | Exile, Execution, Imprisonment |
+| espionage | Execution, Imprisonment, Exile |
+| crime_of_passion | Exile, Execution, Life Service |
+| violence | Fine, Maiming, Exile |
+| treason | Execution, Life Imprisonment, Exile |
+| murder | Execution, Exile, Blood Price, Life Imprisonment |
+| vendetta | Execution, Exile, Blood Feud |
+
+### `MURDER_REASONS`
+
+Categorized murder reasons:
+- **political**: Political rivalry, Treason, Espionage, Succession dispute, Religious conflict, Rebellion, Coup attempt, Court intrigue
+- **personal**: Personal vendetta, Jealousy, Revenge, Crime of passion, Honor killing, Blood feud, Love triangle, Family dispute, Betrayal, Insult or dishonor
+- **criminal**: Robbery gone wrong, Contract killing, Gang violence, Land dispute, Inheritance dispute, Debt collection, Banditry
+- **accidental**: Self-defense gone wrong, Accidental killing, Mistaken identity, Hunting accident, Bar fight gone wrong, Drunken brawl, Negligence
+- **affair**: Crime of passion - lover's quarrel, Spouse discovered affair, Lover murdered by jealous spouse, Affair partner eliminated, Blackmail, Love triangle murder
+- **conflict**: Escalated from argument/dispute/confrontation/fight, Feud escalation
+- **other**: Madness, Fear of exposure, Silencing a witness, Impersonation, Unknown perpetrator, Duel to the death
+
+### `EXECUTION_REASONS`
+
+Categorized execution reasons:
+- **treason**: Treason against the Crown, Regicide, Rebellion, Revolution, Coup attempt, Conspiracy
+- **murder**: Murder of a noble/clergy/child, Multiple murders, Brutal murder, Premeditated murder, Political assassination
+- **adultery**: Adultery with noble's spouse/clergy, Repeated adultery, Adultery resulting in bastard child
+- **crime**: Highway robbery, Counterfeiting, Arson, Espionage, Piracy, Smuggling, Large-scale theft
+- **military**: Desertion, Cowardice in battle, Insubordination, Abandoning post, Treasonous collaboration
+- **religious**: Blasphemy, Sacrilege, Witchcraft, Heresy, Violation of sacred grounds, Breaking a blood oath
+- **social**: Violation of taboos, Disrespecting a ruler, Incest, Breaking social customs, Illegal dueling
+- **common**: Murder, Treason, Rebellion, Adultery, Witchcraft, Cowardice, Desertion, Espionage, Blasphemy
+
+### `EXECUTION_METHODS`
+
+| Method | Name |
+|--------|------|
+| beheading | Beheading |
+| hanging | Hanging |
+| burning | Burning at the Stake |
+| breaking_wheel | Breaking Wheel |
+| quartering | Drawing and Quartering |
+| drowning | Drowning |
+| stoning | Stoning |
+| crushing | Crushing |
+| boiling | Boiling Alive |
+| impaling | Impaling |
+| guillotine | Guillotine |
+| firing_squad | Firing Squad |
+| exposure | Exposure |
+| starvation | Starvation |
+
+### `VENDETTA_STATUS`
+
+| Status | Description |
+|--------|-------------|
+| active | Ongoing vendetta |
+| escalated | Escalated vendetta (3+ deaths) |
+| resolved | Vendetta resolved |
+
+---
+
+# 5. CRIME-UI-STATS.JS
+
+**PURPOSE:** UI rendering for crime statistics.
+
+**DEPENDENCIES:**
+- `crime-queries.js` - `CrimeQueries`
+- `accessors.js` - `getCharacterById`, `getPlaceById`, `getPlaceName`
+- `formatting.js` - `escapeHtml`, `formatYear`
+- `modals-crime.js` - `CrimeModals`
+
+---
+
+## Render Functions
+
+### `CrimeStatsUI.renderStatsPanel(containerId, locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Renders a crime statistics panel |
+| **Parameters** | `containerId` (string), `locationId` (string) |
+| **Returns** | `boolean` - Success |
+
+**Displays:**
+- Total crimes
+- Solve rate
+- Unsolved count
+- Recent crimes (5 years)
+- Crime type distribution with bars
+- Severity breakdown
+- Most common crime
+
+### `CrimeStatsUI.renderCrimeList(containerId, crimes, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Renders a list of crimes |
+| **Parameters** | `containerId` (string), `crimes` (Array), `options.showActions` (boolean), `options.emptyMessage` (string) |
+| **Returns** | `boolean` - Success |
+
+### `CrimeStatsUI.renderVendettaList(containerId, vendettas, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Renders a list of vendettas |
+| **Parameters** | `containerId` (string), `vendettas` (Array), `options.showActions` (boolean), `options.emptyMessage` (string) |
+| **Returns** | `boolean` - Success |
+
+### `CrimeStatsUI.renderCrimeChart(containerId, data, type)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Renders a simple crime chart |
+| **Parameters** | `containerId` (string), `data` (Object), `type` (string - 'type' or 'yearly') |
+| **Returns** | `boolean` - Success |
+
+### `CrimeStatsUI.refreshAll(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Refreshes all crime UI components |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `void` |
+
+---
+
+# 6. MODALS-CRIME.JS
+
+**PURPOSE:** UI modals for crime and vendetta operations.
+
+**DEPENDENCIES:**
+- `modals-core.js` - `openModal`, `closeTopModal`, `_escapeHtml`, `_getIcon`, `_showToast`
+- `modals-char-select.js` - `openCharacterSelector`
+- `locationDropdown.js` - `getFilteredLocationOptions`
+- `modals-household-selector.js` - `openHouseholdSelector`
+- `crime-commands.js` - `CrimeCommands`
+- `crime-queries.js` - `CrimeQueries`
+- `accessors.js` - `getCharacterById`, `getPlaceById`, `getPlaceName`
+
+---
+
+## Modal Functions
+
+### `CrimeModals.openMurderModal(options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens the murder modal |
+| **Parameters** | `options.title`, `options.victimId`, `options.killerId`, `options.year`, `options.onComplete` |
+| **Returns** | `Object|null` - Modal reference |
+
+**Modal Fields:**
+- Victim (character selector)
+- Killer (character selector)
+- Year
+- Location
+- Reason
+- Start vendetta toggle
+- Notes
+
+### `CrimeModals.openExecutionModal(options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens the execution modal |
+| **Parameters** | `options.title`, `options.condemnedId`, `options.year`, `options.onComplete` |
+| **Returns** | `Object|null` - Modal reference |
+
+**Modal Fields:**
+- Condemned (character selector)
+- Year
+- Location
+- Reason
+- Method
+- Notes
+
+### `CrimeModals.openVendettaModal(options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens the vendetta modal |
+| **Parameters** | `options.title`, `options.householdAId`, `options.householdBId`, `options.year`, `options.onComplete` |
+| **Returns** | `Object|null` - Modal reference |
+
+**Modal Fields:**
+- Household A (household selector)
+- Household B (household selector)
+- Year
+- Cause
+- Notes
+
+### `CrimeModals.openCrimeDetailsModal(crimeId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens the crime details modal |
+| **Parameters** | `crimeId` (string) |
+| **Returns** | `Object|null` - Modal reference |
+
+**Displays:**
+- Type, year, location
+- Perpetrator, victim
+- Reason, solution (if solved)
+- Status, severity
+- Notes
+
+### `CrimeModals.openVendettaDetailsModal(vendettaId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens the vendetta details modal |
+| **Parameters** | `vendettaId` (string) |
+| **Returns** | `Object|null` - Modal reference |
+
+**Displays:**
+- Households involved
+- Started year, status, body count
+- Cause
+- Death records with details
+- Resolution (if resolved)
+- Notes
+
+### `CrimeModals.openCrimeStatsModal(locationId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Opens the crime statistics modal |
+| **Parameters** | `locationId` (string) |
+| **Returns** | `Object|null` - Modal reference |
+
+**Displays:**
+- Total crimes, solve rate, unsolved
+- Crime types distribution
+- Severity breakdown
+- Average severity
+- Most common crime
+
+---
+
+# 7. VENDETTA-SYSTEM.JS
+
+**PURPOSE:** Standalone vendetta and blood feud management system.
+
+**DEPENDENCIES:**
+- `accessors.js` - `getCharacterById`, `getCharacters`, `getCurrentYear`
+- `household-state.js` - `HouseholdState`
+- `eventLogger.js` - `logEvent`
+
+---
+
+## Core Functions
+
+### `VendettaSystem.createVendetta(data)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Creates a new vendetta |
+| **Parameters** | `data.householdAId`, `data.householdBId`, `data.characterAId`, `data.characterBId`, `data.cause`, `data.year`, `data.notes` |
+| **Returns** | `Object|null` - Created vendetta or null |
+
+### `VendettaSystem.getVendettaById(vendettaId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets a vendetta by ID |
+| **Parameters** | `vendettaId` (string) |
+| **Returns** | `Object|null` |
+
+### `VendettaSystem.getAllVendettas(options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets all vendettas |
+| **Parameters** | `options.includeResolved` (boolean) |
+| **Returns** | `Array` |
+
+### `VendettaSystem.getVendettasByHousehold(householdId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets vendettas involving a household |
+| **Parameters** | `householdId` (string), `options.includeResolved` (boolean) |
+| **Returns** | `Array` |
+
+### `VendettaSystem.getVendettasByCharacter(characterId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets vendettas involving a character |
+| **Parameters** | `characterId` (string), `options.includeResolved` (boolean) |
+| **Returns** | `Array` |
+
+### `VendettaSystem.getActiveVendettas(householdId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets active vendettas for a household |
+| **Parameters** | `householdId` (string) |
+| **Returns** | `Array` |
+
+### `VendettaSystem.recordVendettaDeath(vendettaId, deathData)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Records a death in a vendetta |
+| **Parameters** | `vendettaId` (string), `deathData.victimId`, `deathData.killerId`, `deathData.year`, `deathData.reason` |
+| **Returns** | `Object|null` - Updated vendetta or null |
+
+### `VendettaSystem.resolveVendetta(vendettaId, resolutionData)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Resolves a vendetta |
+| **Parameters** | `vendettaId` (string), `resolutionData.resolution`, `resolutionData.year`, `resolutionData.notes` |
+| **Returns** | `Object|null` - Updated vendetta or null |
+
+### `VendettaSystem.escalateVendetta(vendettaId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Escalates a vendetta manually |
+| **Parameters** | `vendettaId` (string), `options.year`, `options.reason` |
+| **Returns** | `Object|null` - Updated vendetta or null |
+
+### `VendettaSystem.createBloodFeud(victimId, killerId, options)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Creates a blood feud from a murder |
+| **Parameters** | `victimId` (string), `killerId` (string), `options.year`, `options.cause`, `options.notes` |
+| **Returns** | `Object|null` - Created vendetta or null |
+
+### `VendettaSystem.getVendettaStats(householdId)`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Gets vendetta statistics |
+| **Parameters** | `householdId` (string) |
+| **Returns** | `Object` - Statistics |
+
+### `VendettaSystem.clearVendettaCache()`
+
+| Property | Value |
+|----------|-------|
+| **Description** | Clears the vendetta cache |
+| **Returns** | `void` |
+
+---
+
+# 8. DEPENDENCY MAP
+
+## Core Dependencies
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    CORE DEPENDENCIES                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  modals-core.js ─────────────────────────────────────────────────────────┐ │
+│  ├── openModal()                                                         │ │
+│  ├── closeTopModal()                                                     │ │
+│  ├── _escapeHtml()                                                       │ │
+│  ├── _showToast()                                                        │ │
+│  ├── _getIcon()                                                          │ │
+│  └── _getCurrentYear()                                                   │ │
+│                                                                             │
+│  accessors.js ──────────────────────────────────────────────────────────┐ │
+│  ├── getCharacterById()                                                  │ │
+│  ├── getCharacters()                                                     │ │
+│  ├── getHouseholdById()                                                  │ │
+│  ├── getPlaceById()                                                      │ │
+│  ├── getPlaces()                                                         │ │
+│  ├── getCurrentYear()                                                    │ │
+│  └── getCurrentLocation()                                                │ │
+│                                                                             │
+│  storage.js ────────────────────────────────────────────────────────────┐ │
+│  └── saveMasterData()                                                    │ │
+│                                                                             │
+│  ids.js ────────────────────────────────────────────────────────────────┐ │
+│  └── generateId()                                                        │ │
+│                                                                             │
+│  household-system.js ──────────────────────────────────────────────────┐ │
+│  ├── HouseholdState.getHousehold()                                       │ │
+│  ├── HouseholdState.getCharacterHousehold()                              │ │
+│  └── HouseholdState.updateHousehold()                                    │ │
+│                                                                             │
+│  settlement-system.js ──────────────────────────────────────────────────┐ │
+│  ├── SettlementState.getSettlementData()                                 │ │
+│  ├── SettlementState._updateSettlementData()                             │ │
+│  └── SettlementEconomy.calculateCrimeRate()                              │ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+## Crime System Dependencies
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    CRIME SYSTEM DEPENDENCIES                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  crime-state.js ─────────────────────────────────────────────────────────┐ │
+│  ├── accessors.js                                                        │ │
+│  └── storage.js                                                          │ │
+│                                                                             │
+│  crime-commands.js ─────────────────────────────────────────────────────┐ │
+│  ├── crime-state.js                                                      │ │
+│  ├── crime-constants.js                                                  │ │
+│  ├── accessors.js                                                        │ │
+│  ├── household-state.js                                                  │ │
+│  ├── settlement-state.js                                                 │ │
+│  └── settlement-economy.js                                               │ │
+│                                                                             │
+│  crime-queries.js ──────────────────────────────────────────────────────┐ │
+│  ├── crime-state.js                                                      │ │
+│  └── accessors.js                                                        │ │
+│                                                                             │
+│  vendetta-system.js ────────────────────────────────────────────────────┐ │
+│  ├── accessors.js                                                        │ │
+│  └── household-state.js                                                  │ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+# 9. INTEGRATION WITH OTHER SYSTEMS
+
+## Crime ↔ Household Integration
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Crime → Household Prestige | `_updateHouseholdFromCrime()` | ✅ Integrated |
+| Crime → Criminal Count | `_updateHouseholdFromCrime()` | ✅ Integrated |
+| Crime → Victim Count | `_updateHouseholdFromCrime()` | ✅ Integrated |
+| Crime → Executed Count | `_updateHouseholdFromCrime()` | ✅ Integrated |
+| Crime → Crime History | `_updateHouseholdFromCrime()` | ✅ Integrated |
+| Vendetta → Household Count | `_updateHouseholdFromCrime()` | ✅ Integrated |
+
+## Crime ↔ Settlement Integration
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Crime → Crime Rate | `_updateSettlementAfterCrime()` | ✅ Integrated |
+| Crime → Prosperity | `_updateSettlementAfterCrime()` | ✅ Integrated |
+| Crime → Settlement History | `_updateSettlementAfterCrime()` | ✅ Integrated |
+
+## Crime ↔ Character Integration
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Murder → Character Death | `_killCharacter()` | ✅ Integrated |
+| Execution → Character Death | `_killCharacter()` | ✅ Integrated |
+| Crime → Character Record | `CrimeState.recordCrime()` | ✅ Integrated |
+
+---
+
+# 10. RECURSION GUARDS
+
+| Guard Name | Location | Purpose |
+|------------|----------|---------|
+| `_processingState` | crime-state.js | Prevent state update re-entry |
+| `_processingCommand` | crime-commands.js | Prevent command re-entry |
+| `_processingQuery` | crime-queries.js | Prevent query re-entry |
+| `_processingRender` | crime-ui-stats.js | Prevent render re-entry |
+| `_processingModal` | modals-crime.js | Prevent modal re-entry |
+| `_processingVendetta` | vendetta-system.js | Prevent vendetta re-entry |
+
+---
+
+# 11. ICON POLICY
+
+All icons must come from `icons.js` via the `_getIcon()` function.
+
+## Available Icons for Crime System
+
+| Usage | Icon |
+|-------|------|
+| Crime | WARNING |
+| Murder | X_HEAVY |
+| Execution | X_HEAVY |
+| Vendetta | FLAG |
+| Victim | PERSON |
+| Perpetrator | PERSON |
+| Household | HOUSEHOLD |
+| Location | LOCATION |
+| Edit | EDIT |
+| Delete | X_HEAVY |
+
+---
+
+# END OF DOCUMENTATION
+
+**Generated:** 2026-07-12
+**Version:** 3.0
+**File Count:** 6 core modules + 1 modal file
+**Key Updates:**
+- Household integration (v3.0)
+- Settlement integration
+- Full vendetta lifecycle management
+- Crime statistics and analytics
+- Rich crime data (reasons, methods, punishments)
+- Blood feud creation from murder
+- Execution with consequences
+- Crime clearance rate tracking

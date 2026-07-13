@@ -7,6 +7,10 @@
  * 
  * All read operations for the industry system.
  * 
+ * UPDATED: Added getPublicEnterprises() and getPrivateEnterprises()
+ *          Added getEnterpriseOwnershipType()
+ *          Updated getEnterpriseSummary() to include ownership type
+ * 
  * DEPENDENCIES:
  *   - industry-state.js (IndustryState)
  *   - accessors.js (getCharacterById, getPlaceById, getHouseholdById)
@@ -146,7 +150,84 @@
     }
 
     // =========================================================================
-    // 4. ENTERPRISE SUMMARY
+    // 4. OWNERSHIP TYPE QUERIES (NEW)
+    // =========================================================================
+
+    /**
+     * Gets enterprises by ownership type (public or private)
+     * @param {string} ownershipType - 'public' or 'private'
+     * @param {string} locationId - Optional location filter
+     * @returns {Array} Array of enterprises
+     */
+    function getEnterprisesByOwnershipType(ownershipType, locationId) {
+        if (_processing) return [];
+        _processing = true;
+        try {
+            var state = window.IndustryState;
+            if (!state) return [];
+            var enterprises = state.getEnterprisesByOwnershipType(ownershipType);
+            if (locationId) {
+                return enterprises.filter(function(e) { return e.locationId === locationId; });
+            }
+            return enterprises;
+        } finally {
+            _processing = false;
+        }
+    }
+
+    /**
+     * Gets public enterprises
+     * @param {string} locationId - Optional location filter
+     * @returns {Array} Array of public enterprises
+     */
+    function getPublicEnterprises(locationId) {
+        if (_processing) return [];
+        _processing = true;
+        try {
+            var state = window.IndustryState;
+            if (!state) return [];
+            return state.getPublicEnterprises(locationId);
+        } finally {
+            _processing = false;
+        }
+    }
+
+    /**
+     * Gets private enterprises
+     * @param {string} locationId - Optional location filter
+     * @returns {Array} Array of private enterprises
+     */
+    function getPrivateEnterprises(locationId) {
+        if (_processing) return [];
+        _processing = true;
+        try {
+            var state = window.IndustryState;
+            if (!state) return [];
+            return state.getPrivateEnterprises(locationId);
+        } finally {
+            _processing = false;
+        }
+    }
+
+    /**
+     * Gets the ownership type of an enterprise
+     * @param {string} enterpriseId - Enterprise ID
+     * @returns {string} 'public' or 'private'
+     */
+    function getEnterpriseOwnershipType(enterpriseId) {
+        if (_processing) return 'private';
+        _processing = true;
+        try {
+            var enterprise = getEnterprise(enterpriseId);
+            if (!enterprise) return 'private';
+            return enterprise.ownershipType || 'private';
+        } finally {
+            _processing = false;
+        }
+    }
+
+    // =========================================================================
+    // 5. ENTERPRISE SUMMARY (UPDATED with ownership type)
     // =========================================================================
 
     function getEnterpriseSummary(enterpriseId) {
@@ -179,17 +260,24 @@
                 } else if (enterprise.ownerType === 'household') {
                     var household = window.getHouseholdById(enterprise.ownerId);
                     ownerName = household ? household.name : ownerName;
-                } else if (enterprise.ownerType === 'state') {
+                } else if (enterprise.ownerType === 'state' || enterprise.ownerType === 'settlement') {
                     var place = window.getPlaceById(enterprise.ownerId);
                     ownerName = place ? place.displayName : ownerName;
                 }
             }
+
+            // ================================================================
+            // UPDATED: Include ownership type in summary
+            // ================================================================
+            var ownershipType = enterprise.ownershipType || 'private';
 
             return {
                 id: enterprise.id,
                 name: enterprise.name,
                 type: enterprise.typeName,
                 category: enterprise.category,
+                ownershipType: ownershipType,
+                isPublic: ownershipType === 'public',
                 ownerType: enterprise.ownerType,
                 ownerId: enterprise.ownerId,
                 ownerName: ownerName || 'None',
@@ -279,11 +367,14 @@
                 byStatus: {},
                 byCategory: {},
                 byOwnerType: {},
+                byOwnershipType: {}, // NEW
                 totalWealth: 0,
                 totalDebt: 0,
                 totalWorkers: 0,
                 profitable: 0,
-                unprofitable: 0
+                unprofitable: 0,
+                publicCount: 0,
+                privateCount: 0
             };
 
             for (var i = 0; i < all.length; i++) {
@@ -293,6 +384,17 @@
                 stats.byStatus[e.status || 'active'] = (stats.byStatus[e.status || 'active'] || 0) + 1;
                 stats.byCategory[e.category || 'other'] = (stats.byCategory[e.category || 'other'] || 0) + 1;
                 stats.byOwnerType[e.ownerType || 'character'] = (stats.byOwnerType[e.ownerType || 'character'] || 0) + 1;
+
+                // ============================================================
+                // NEW: Track by ownership type
+                // ============================================================
+                var ownershipType = e.ownershipType || 'private';
+                stats.byOwnershipType[ownershipType] = (stats.byOwnershipType[ownershipType] || 0) + 1;
+                if (ownershipType === 'public') {
+                    stats.publicCount++;
+                } else {
+                    stats.privateCount++;
+                }
 
                 stats.totalWealth += summary.wealth;
                 stats.totalDebt += summary.debt;
@@ -309,7 +411,7 @@
     }
 
     // =========================================================================
-    // 5. EXPORTS
+    // 6. EXPORTS
     // =========================================================================
 
     window.IndustryQueries = {
@@ -325,7 +427,12 @@
         getOwnerEnterprisesSummary: getOwnerEnterprisesSummary,
         getLocationEnterprisesSummary: getLocationEnterprisesSummary,
         searchEnterprises: searchEnterprises,
-        getEnterpriseStatistics: getEnterpriseStatistics
+        getEnterpriseStatistics: getEnterpriseStatistics,
+        // NEW: Ownership type queries
+        getEnterprisesByOwnershipType: getEnterprisesByOwnershipType,
+        getPublicEnterprises: getPublicEnterprises,
+        getPrivateEnterprises: getPrivateEnterprises,
+        getEnterpriseOwnershipType: getEnterpriseOwnershipType
     };
 
     if (typeof module !== 'undefined' && module.exports) {

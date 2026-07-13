@@ -7,11 +7,14 @@
  *          income, expenses, economic events, trade, annual processing).
  * 
  * UPDATED: Added salary and tuition tracking display
+ * UPDATED: Added enterprise profit/loss summary section
+ * UPDATED: Added enterprise ownership type display
  * 
  * DEPENDS ON:
  *   - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
  *   - household-state.js (HouseholdState)
  *   - household-economy.js (HouseholdEconomy)
+ *   - household-queries.js (HouseholdQueries)
  * 
  * ICON POLICY:
  *   - All icons from icons.js via _getIcon()
@@ -262,7 +265,35 @@
     }
 
     // =========================================================================
-    // 2. SALARY AND TUITION WRAPPERS (NEW)
+    // 2. ENTERPRISE WRAPPERS (NEW)
+    // =========================================================================
+
+    function _getHouseholdEnterpriseSummaries(householdId) {
+        if (typeof window.HouseholdQueries !== 'undefined' && 
+            typeof window.HouseholdQueries.getHouseholdEnterpriseSummaries === 'function') {
+            return window.HouseholdQueries.getHouseholdEnterpriseSummaries(householdId);
+        }
+        return [];
+    }
+
+    function _getHouseholdEnterpriseStats(householdId) {
+        if (typeof window.HouseholdQueries !== 'undefined' && 
+            typeof window.HouseholdQueries.getHouseholdEnterpriseStats === 'function') {
+            return window.HouseholdQueries.getHouseholdEnterpriseStats(householdId);
+        }
+        return null;
+    }
+
+    function _getHouseholdEnterpriseValue(householdId) {
+        if (typeof window.HouseholdQueries !== 'undefined' && 
+            typeof window.HouseholdQueries.getHouseholdEnterpriseValue === 'function') {
+            return window.HouseholdQueries.getHouseholdEnterpriseValue(householdId);
+        }
+        return 0;
+    }
+
+    // =========================================================================
+    // 3. SALARY AND TUITION WRAPPERS
     // =========================================================================
 
     function _getSalaryIncome(householdId, year) {
@@ -317,7 +348,7 @@
     }
 
     // =========================================================================
-    // 3. HOUSEHOLD ECONOMIC SUMMARY MODAL (UPDATED with salary/tuition)
+    // 4. HOUSEHOLD ECONOMIC SUMMARY MODAL (UPDATED with Enterprise Section)
     // =========================================================================
 
     function openHouseholdEconomicSummaryModal(householdId) {
@@ -346,7 +377,7 @@
             var netChange = annualIncome - annualExpenses;
 
             // ================================================================
-            // NEW: Salary and tuition data
+            // Salary and tuition data
             // ================================================================
             var salaryIncome = _getSalaryIncome(householdId, currentYear);
             var totalSalaries = _getTotalSalariesReceived(householdId);
@@ -379,100 +410,158 @@
                 }).join('');
             }
 
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">' +
-                '<div style="font-size: 0.7rem;"><strong>' + _escapeHtml(household.name) + '</strong></div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Economic Summary</div>' +
-                '</div>' +
+            // ================================================================
+            // ENTERPRISE SECTION (NEW)
+            // ================================================================
+            var enterpriseSummaries = _getHouseholdEnterpriseSummaries(householdId);
+            var enterpriseStats = _getHouseholdEnterpriseStats(householdId);
+            var enterpriseValue = _getHouseholdEnterpriseValue(householdId);
 
-                // Wealth, Debt, Tier
-                '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px;">' +
-                '<div style="background: var(--bg2); padding: 8px; border-radius: 6px; text-align: center;">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Wealth</div>' +
-                '<div style="font-size: 1rem; font-weight: bold;">' + wealth + 'g</div>' +
-                '</div>' +
-                '<div style="background: var(--bg2); padding: 8px; border-radius: 6px; text-align: center;">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Debt</div>' +
-                '<div style="font-size: 1rem; font-weight: bold; color: ' + (debt > 0 ? '#c87040' : 'var(--text)') + ';">' + debt + 'g</div>' +
-                '</div>' +
-                '<div style="background: var(--bg2); padding: 8px; border-radius: 6px; text-align: center;">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Tier</div>' +
-                '<div style="font-size: 0.9rem;">' + _escapeHtml(tier.name) + '</div>' +
-                '</div>' +
-                '</div>' +
+            var enterpriseHtml = '';
+            if (enterpriseSummaries && enterpriseSummaries.length > 0) {
+                var totalEnterpriseProfit = 0;
+                var profitableCount = 0;
+                var unprofitableCount = 0;
+                var totalWorkers = 0;
+                var publicCount = 0;
+                var privateCount = 0;
 
-                // Resources
-                '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px;">' +
-                '<div style="background: var(--bg2); padding: 8px; border-radius: 6px; text-align: center;">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Food</div>' +
-                '<div style="font-size: 0.9rem;">' + (resources.food || 0) + '</div>' +
-                '</div>' +
-                '<div style="background: var(--bg2); padding: 8px; border-radius: 6px; text-align: center;">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Livestock</div>' +
-                '<div style="font-size: 0.9rem;">' + (resources.livestock || 0) + '</div>' +
-                '</div>' +
-                '<div style="background: var(--bg2); padding: 8px; border-radius: 6px; text-align: center;">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Goods</div>' +
-                '<div style="font-size: 0.9rem;">' + (resources.goods || 0) + '</div>' +
-                '</div>' +
-                '</div>' +
+                var enterpriseRows = enterpriseSummaries.slice(0, 5).map(function(s) {
+                    var profit = s.annualProfit || 0;
+                    totalEnterpriseProfit += profit;
+                    if (profit > 0) profitableCount++;
+                    else if (profit < 0) unprofitableCount++;
+                    totalWorkers += s.workerCount || 0;
+                    if (s.ownershipType === 'public') publicCount++;
+                    else privateCount++;
 
-                // Income & Expenses
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">' +
-                '<div style="background: var(--bg2); padding: 8px; border-radius: 6px; text-align: center;">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Annual Income</div>' +
-                '<div style="font-size: 0.9rem; color: #4a9e6a;">+' + annualIncome + 'g</div>' +
-                '</div>' +
-                '<div style="background: var(--bg2); padding: 8px; border-radius: 6px; text-align: center;">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Annual Expenses</div>' +
-                '<div style="font-size: 0.9rem; color: #c87040;">-' + annualExpenses + 'g</div>' +
-                '</div>' +
-                '</div>' +
+                    var profitColor = profit >= 0 ? '#4a9e6a' : '#c87040';
+                    var ownershipLabel = s.ownershipType === 'public' ? ' <span style="font-size:0.4rem;color:var(--accent);">(Public)</span>' : '';
+                    var statusText = s.status !== 'active' ? ' (' + s.status + ')' : '';
+                    return '<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border-light);font-size:0.5rem;">' +
+                        '<span>' + _escapeHtml(s.name) + ownershipLabel + statusText + '</span>' +
+                        '<span style="color:' + profitColor + ';">' + (profit >= 0 ? '+' : '') + profit + 'g</span>' +
+                        '</div>';
+                }).join('');
 
-                // ================================================================
-                // NEW: Salary Income Section
-                // ================================================================
-                (salaryIncome > 0 || totalSalaries > 0 ?
-                    '<div style="background: var(--bg2); padding: 8px; border-radius: 6px; margin-bottom: 12px;">' +
-                    '<div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 4px;">Salary Income</div>' +
-                    '<div style="display:flex;justify-content:space-between;font-size:0.65rem;">' +
-                    '<span>This year: <strong style="color:#4a9e6a;">+' + salaryIncome + 'g</strong></span>' +
-                    '<span>Total received: <strong>' + totalSalaries + 'g</strong></span>' +
-                    '</div>' +
-                    (salaryHistoryHtml ? '<div style="max-height:80px;overflow-y:auto;margin-top:4px;">' + salaryHistoryHtml + '</div>' : '') +
-                    '</div>' :
-                    ''
-                ) +
+                var ownershipBreakdown = '';
+                if (publicCount > 0 || privateCount > 0) {
+                    ownershipBreakdown = ' · ' +
+                        (publicCount > 0 ? publicCount + ' Public' : '') +
+                        (publicCount > 0 && privateCount > 0 ? ', ' : '') +
+                        (privateCount > 0 ? privateCount + ' Private' : '');
+                }
 
-                // ================================================================
-                // NEW: Tuition Expenses Section
-                // ================================================================
-                (tuitionExpenses > 0 ?
-                    '<div style="background: var(--bg2); padding: 8px; border-radius: 6px; margin-bottom: 12px;">' +
-                    '<div style="font-size: 0.6rem; color: var(--warn); margin-bottom: 4px;">Tuition Expenses</div>' +
-                    '<div style="display:flex;justify-content:space-between;font-size:0.65rem;">' +
-                    '<span>This year: <strong style="color:#c87040;">-' + tuitionExpenses + 'g</strong></span>' +
-                    '</div>' +
-                    (tuitionHistoryHtml ? '<div style="max-height:80px;overflow-y:auto;margin-top:4px;">' + tuitionHistoryHtml + '</div>' : '') +
-                    '</div>' :
-                    ''
-                ) +
+                enterpriseHtml = `
+                    <div style="background: var(--bg2); padding: 8px; border-radius: 6px; margin-bottom: 12px;">
+                        <div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 4px;">Enterprises (${enterpriseSummaries.length})${ownershipBreakdown}</div>
+                        <div style="display:flex;justify-content:space-between;font-size:0.55rem;flex-wrap:wrap;gap:4px;">
+                            <span>Total Profit: <strong style="color:${totalEnterpriseProfit >= 0 ? '#4a9e6a' : '#c87040'};">${totalEnterpriseProfit >= 0 ? '+' : ''}${totalEnterpriseProfit}g</strong></span>
+                            <span>Profitable: <strong style="color:#4a9e6a;">${profitableCount}</strong></span>
+                            <span>Unprofitable: <strong style="color:#c87040;">${unprofitableCount}</strong></span>
+                            <span>Workers: <strong>${totalWorkers}</strong></span>
+                            <span>Value: <strong>${enterpriseValue}g</strong></span>
+                        </div>
+                        ${enterpriseRows ? '<div style="max-height:80px;overflow-y:auto;margin-top:4px;">' + enterpriseRows + '</div>' : ''}
+                    </div>
+                `;
+            }
 
-                // Net Change
-                '<div style="text-align: center; padding: 8px; background: var(--bg); border-radius: 4px;">' +
-                '<span style="font-size: 0.8rem; font-weight: bold; color: ' + (netChange >= 0 ? '#4a9e6a' : '#c87040') + ';">' +
-                'Net Annual Change: ' + (netChange >= 0 ? '+' : '') + netChange + 'g' +
-                '</span>' +
-                '</div>' +
+            var modalContent = `
+                <div style="margin-bottom: 16px;">
+                    <div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">
+                        <div style="font-size: 0.7rem;"><strong>${_escapeHtml(household.name)}</strong></div>
+                        <div style="font-size: 0.55rem; color: var(--dim);">Economic Summary</div>
+                    </div>
 
-                // Year
-                '<div style="font-size:0.5rem;color:var(--dim);text-align:center;margin-top:8px;">' +
-                'Data for year ' + currentYear +
-                (salaryIncome > 0 ? ' · Includes salaries' : '') +
-                (tuitionExpenses > 0 ? ' · Includes tuition' : '') +
-                '</div>' +
-                '</div>';
+                    <!-- Wealth, Debt, Tier -->
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px;">
+                        <div style="background: var(--bg2); padding: 8px; border-radius: 6px; text-align: center;">
+                            <div style="font-size: 0.55rem; color: var(--dim);">Wealth</div>
+                            <div style="font-size: 1rem; font-weight: bold;">${wealth}g</div>
+                        </div>
+                        <div style="background: var(--bg2); padding: 8px; border-radius: 6px; text-align: center;">
+                            <div style="font-size: 0.55rem; color: var(--dim);">Debt</div>
+                            <div style="font-size: 1rem; font-weight: bold; color: ${debt > 0 ? '#c87040' : 'var(--text)'};">${debt}g</div>
+                        </div>
+                        <div style="background: var(--bg2); padding: 8px; border-radius: 6px; text-align: center;">
+                            <div style="font-size: 0.55rem; color: var(--dim);">Tier</div>
+                            <div style="font-size: 0.9rem;">${_escapeHtml(tier.name)}</div>
+                        </div>
+                    </div>
+
+                    <!-- Resources -->
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px;">
+                        <div style="background: var(--bg2); padding: 8px; border-radius: 6px; text-align: center;">
+                            <div style="font-size: 0.55rem; color: var(--dim);">Food</div>
+                            <div style="font-size: 0.9rem;">${resources.food || 0}</div>
+                        </div>
+                        <div style="background: var(--bg2); padding: 8px; border-radius: 6px; text-align: center;">
+                            <div style="font-size: 0.55rem; color: var(--dim);">Livestock</div>
+                            <div style="font-size: 0.9rem;">${resources.livestock || 0}</div>
+                        </div>
+                        <div style="background: var(--bg2); padding: 8px; border-radius: 6px; text-align: center;">
+                            <div style="font-size: 0.55rem; color: var(--dim);">Goods</div>
+                            <div style="font-size: 0.9rem;">${resources.goods || 0}</div>
+                        </div>
+                    </div>
+
+                    <!-- Income & Expenses -->
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">
+                        <div style="background: var(--bg2); padding: 8px; border-radius: 6px; text-align: center;">
+                            <div style="font-size: 0.55rem; color: var(--dim);">Annual Income</div>
+                            <div style="font-size: 0.9rem; color: #4a9e6a;">+${annualIncome}g</div>
+                        </div>
+                        <div style="background: var(--bg2); padding: 8px; border-radius: 6px; text-align: center;">
+                            <div style="font-size: 0.55rem; color: var(--dim);">Annual Expenses</div>
+                            <div style="font-size: 0.9rem; color: #c87040;">-${annualExpenses}g</div>
+                        </div>
+                    </div>
+
+                    <!-- ENTERPRISE SECTION (NEW) -->
+                    ${enterpriseHtml}
+
+                    <!-- Salary Income Section -->
+                    ${salaryIncome > 0 || totalSalaries > 0 ?
+                        '<div style="background: var(--bg2); padding: 8px; border-radius: 6px; margin-bottom: 12px;">' +
+                        '<div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 4px;">Salary Income</div>' +
+                        '<div style="display:flex;justify-content:space-between;font-size:0.65rem;">' +
+                        '<span>This year: <strong style="color:#4a9e6a;">+' + salaryIncome + 'g</strong></span>' +
+                        '<span>Total received: <strong>' + totalSalaries + 'g</strong></span>' +
+                        '</div>' +
+                        (salaryHistoryHtml ? '<div style="max-height:80px;overflow-y:auto;margin-top:4px;">' + salaryHistoryHtml + '</div>' : '') +
+                        '</div>' :
+                        ''
+                    }
+
+                    <!-- Tuition Expenses Section -->
+                    ${tuitionExpenses > 0 ?
+                        '<div style="background: var(--bg2); padding: 8px; border-radius: 6px; margin-bottom: 12px;">' +
+                        '<div style="font-size: 0.6rem; color: var(--warn); margin-bottom: 4px;">Tuition Expenses</div>' +
+                        '<div style="display:flex;justify-content:space-between;font-size:0.65rem;">' +
+                        '<span>This year: <strong style="color:#c87040;">-' + tuitionExpenses + 'g</strong></span>' +
+                        '</div>' +
+                        (tuitionHistoryHtml ? '<div style="max-height:80px;overflow-y:auto;margin-top:4px;">' + tuitionHistoryHtml + '</div>' : '') +
+                        '</div>' :
+                        ''
+                    }
+
+                    <!-- Net Change -->
+                    <div style="text-align: center; padding: 8px; background: var(--bg); border-radius: 4px;">
+                        <span style="font-size: 0.8rem; font-weight: bold; color: ${netChange >= 0 ? '#4a9e6a' : '#c87040'};">
+                            Net Annual Change: ${netChange >= 0 ? '+' : ''}${netChange}g
+                        </span>
+                    </div>
+
+                    <!-- Year -->
+                    <div style="font-size:0.5rem;color:var(--dim);text-align:center;margin-top:8px;">
+                        Data for year ${currentYear}
+                        ${salaryIncome > 0 ? ' · Includes salaries' : ''}
+                        ${tuitionExpenses > 0 ? ' · Includes tuition' : ''}
+                        ${enterpriseSummaries && enterpriseSummaries.length > 0 ? ' · Includes ' + enterpriseSummaries.length + ' enterprises' : ''}
+                    </div>
+                </div>
+            `;
 
             _openModal({
                 title: 'Economic Summary: ' + household.name,
@@ -492,7 +581,7 @@
     }
 
     // =========================================================================
-    // 4. HOUSEHOLD WEALTH MODAL (unchanged)
+    // 5. HOUSEHOLD WEALTH MODAL
     // =========================================================================
 
     function openHouseholdWealthModal(householdId, onSuccess) {
@@ -514,54 +603,51 @@
             var debt = _getHouseholdDebt(householdId);
             var tier = _getHouseholdEconomicTier(householdId);
 
-            // ================================================================
-            // NEW: Get salary and tuition data for display
-            // ================================================================
             var currentYear = _getCurrentYear();
             var salaryIncome = _getSalaryIncome(householdId, currentYear);
             var tuitionExpenses = _getTuitionExpenses(householdId, currentYear);
 
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">' +
-                '<div style="font-size: 0.7rem;"><strong>' + _escapeHtml(household.name) + '</strong></div>' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 8px;">' +
-                '<div><span style="color: var(--dim); font-size: 0.6rem;">Wealth</span><br><span style="font-size: 1.1rem; font-weight: bold;">' + wealth + 'g</span></div>' +
-                '<div><span style="color: var(--dim); font-size: 0.6rem;">Debt</span><br><span style="font-size: 1.1rem; font-weight: bold; color: ' + (debt > 0 ? '#c87040' : 'var(--text)') + ';">' + debt + 'g</span></div>' +
-                '<div><span style="color: var(--dim); font-size: 0.6rem;">Tier</span><br><span style="font-size: 0.9rem;">' + _escapeHtml(tier.name) + '</span></div>' +
-                '</div>' +
-                // NEW: Salary and tuition quick stats
-                (salaryIncome > 0 || tuitionExpenses > 0 ?
-                    '<div style="display:flex;justify-content:space-between;font-size:0.55rem;color:var(--dim);margin-top:6px;padding-top:6px;border-top:1px solid var(--border-light);">' +
-                    (salaryIncome > 0 ? '<span>Salary: <strong style="color:#4a9e6a;">+' + salaryIncome + 'g</strong></span>' : '') +
-                    (tuitionExpenses > 0 ? '<span>Tuition: <strong style="color:#c87040;">-' + tuitionExpenses + 'g</strong></span>' : '') +
-                    '</div>' :
-                    ''
-                ) +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Modify Wealth</label>' +
-                '<div style="display: flex; gap: 8px;">' +
-                '<input type="number" id="wealthDelta" value="0" style="flex: 1; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '<input type="text" id="wealthReason" placeholder="Reason" style="flex: 2; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div style="display: flex; gap: 4px; margin-top: 4px;">' +
-                '<button id="wealthAddBtn" class="btn small" style="padding: 2px 8px; font-size: 0.5rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 3px; cursor: pointer;">Add</button>' +
-                '<button id="wealthSubtractBtn" class="btn small" style="padding: 2px 8px; font-size: 0.5rem; background: #8a3020; border: none; color: white; border-radius: 3px; cursor: pointer;">Subtract</button>' +
-                '<button id="wealthSetBtn" class="btn small" style="padding: 2px 8px; font-size: 0.5rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 3px; cursor: pointer;">Set</button>' +
-                '</div>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Modify Debt</label>' +
-                '<div style="display: flex; gap: 8px;">' +
-                '<input type="number" id="debtDelta" value="0" style="flex: 1; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div style="display: flex; gap: 4px; margin-top: 4px;">' +
-                '<button id="debtAddBtn" class="btn small" style="padding: 2px 8px; font-size: 0.5rem; background: #8a3020; border: none; color: white; border-radius: 3px; cursor: pointer;">Add Debt</button>' +
-                '<button id="debtSubtractBtn" class="btn small" style="padding: 2px 8px; font-size: 0.5rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 3px; cursor: pointer;">Pay Debt</button>' +
-                '</div>' +
-                '</div>' +
-                '</div>';
+            var modalContent = `
+                <div style="margin-bottom: 16px;">
+                    <div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">
+                        <div style="font-size: 0.7rem;"><strong>${_escapeHtml(household.name)}</strong></div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 8px;">
+                            <div><span style="color: var(--dim); font-size: 0.6rem;">Wealth</span><br><span style="font-size: 1.1rem; font-weight: bold;">${wealth}g</span></div>
+                            <div><span style="color: var(--dim); font-size: 0.6rem;">Debt</span><br><span style="font-size: 1.1rem; font-weight: bold; color: ${debt > 0 ? '#c87040' : 'var(--text)'};">${debt}g</span></div>
+                            <div><span style="color: var(--dim); font-size: 0.6rem;">Tier</span><br><span style="font-size: 0.9rem;">${_escapeHtml(tier.name)}</span></div>
+                        </div>
+                        ${salaryIncome > 0 || tuitionExpenses > 0 ?
+                            '<div style="display:flex;justify-content:space-between;font-size:0.55rem;color:var(--dim);margin-top:6px;padding-top:6px;border-top:1px solid var(--border-light);">' +
+                            (salaryIncome > 0 ? '<span>Salary: <strong style="color:#4a9e6a;">+' + salaryIncome + 'g</strong></span>' : '') +
+                            (tuitionExpenses > 0 ? '<span>Tuition: <strong style="color:#c87040;">-' + tuitionExpenses + 'g</strong></span>' : '') +
+                            '</div>' :
+                            ''
+                        }
+                    </div>
+                    <div class="form-group" style="margin-bottom: 12px;">
+                        <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Modify Wealth</label>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="number" id="wealthDelta" value="0" style="flex: 1; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">
+                            <input type="text" id="wealthReason" placeholder="Reason" style="flex: 2; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">
+                        </div>
+                        <div style="display: flex; gap: 4px; margin-top: 4px;">
+                            <button id="wealthAddBtn" class="btn small" style="padding: 2px 8px; font-size: 0.5rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 3px; cursor: pointer;">Add</button>
+                            <button id="wealthSubtractBtn" class="btn small" style="padding: 2px 8px; font-size: 0.5rem; background: #8a3020; border: none; color: white; border-radius: 3px; cursor: pointer;">Subtract</button>
+                            <button id="wealthSetBtn" class="btn small" style="padding: 2px 8px; font-size: 0.5rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 3px; cursor: pointer;">Set</button>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 12px;">
+                        <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Modify Debt</label>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="number" id="debtDelta" value="0" style="flex: 1; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">
+                        </div>
+                        <div style="display: flex; gap: 4px; margin-top: 4px;">
+                            <button id="debtAddBtn" class="btn small" style="padding: 2px 8px; font-size: 0.5rem; background: #8a3020; border: none; color: white; border-radius: 3px; cursor: pointer;">Add Debt</button>
+                            <button id="debtSubtractBtn" class="btn small" style="padding: 2px 8px; font-size: 0.5rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 3px; cursor: pointer;">Pay Debt</button>
+                        </div>
+                    </div>
+                </div>
+            `;
 
             _openModal({
                 title: 'Wealth: ' + household.name,
@@ -678,7 +764,7 @@
     }
 
     // =========================================================================
-    // 5. HOUSEHOLD RESOURCES MODAL (unchanged)
+    // 6. HOUSEHOLD RESOURCES MODAL
     // =========================================================================
 
     function openHouseholdResourcesModal(householdId, onSuccess) {
@@ -729,14 +815,15 @@
                 '</div>' +
                 '</div>';
 
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">' +
-                '<div style="font-size: 0.7rem;"><strong>' + _escapeHtml(household.name) + '</strong></div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">Resources</div>' +
-                '</div>' +
-                resourcesHtml +
-                '</div>';
+            var modalContent = `
+                <div style="margin-bottom: 16px;">
+                    <div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">
+                        <div style="font-size: 0.7rem;"><strong>${_escapeHtml(household.name)}</strong></div>
+                        <div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">Resources</div>
+                    </div>
+                    ${resourcesHtml}
+                </div>
+            `;
 
             _openModal({
                 title: 'Resources: ' + household.name,
@@ -819,7 +906,7 @@
     }
 
     // =========================================================================
-    // 6. HOUSEHOLD INCOME MODAL (UNCHANGED)
+    // 7. HOUSEHOLD INCOME MODAL
     // =========================================================================
 
     function openHouseholdIncomeModal(householdId) {
@@ -840,9 +927,6 @@
             var annualIncome = _calculateAnnualIncome(householdId);
             var incomeSources = window.INCOME_SOURCES || {};
 
-            // ================================================================
-            // NEW: Get salary income
-            // ================================================================
             var currentYear = _getCurrentYear();
             var salaryIncome = _getSalaryIncome(householdId, currentYear);
 
@@ -868,7 +952,6 @@
                 });
             }
 
-            // Add salary income as a separate source
             if (salaryIncome > 0) {
                 breakdown.push({
                     source: { id: 'salary', name: 'Salary Income', icon: '⌇' },
@@ -893,24 +976,25 @@
                     '</div>';
             }).join('');
 
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">' +
-                '<div style="font-size: 0.7rem;"><strong>' + _escapeHtml(household.name) + '</strong></div>' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px;">' +
-                '<div><span style="color: var(--dim); font-size: 0.6rem;">Annual Income</span><br><span style="font-size: 1.1rem; font-weight: bold; color: #4a9e6a;">' + annualIncome + 'g</span></div>' +
-                '<div><span style="color: var(--dim); font-size: 0.6rem;">Total Sources</span><br><span style="font-size: 0.9rem;">' + breakdown.length + '</span></div>' +
-                '</div>' +
-                (salaryIncome > 0 ? '<div style="font-size:0.55rem;color:var(--accent);margin-top:4px;">Includes ' + salaryIncome + 'g from salaries</div>' : '') +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 4px;">Income Sources</div>' +
-                '<div style="background: var(--bg2); border-radius: 6px; padding: 8px;">' +
-                breakdownHtml +
-                '</div>' +
-                '</div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Based on household size, location, member professions, and salaries</div>' +
-                '</div>';
+            var modalContent = `
+                <div style="margin-bottom: 16px;">
+                    <div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">
+                        <div style="font-size: 0.7rem;"><strong>${_escapeHtml(household.name)}</strong></div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px;">
+                            <div><span style="color: var(--dim); font-size: 0.6rem;">Annual Income</span><br><span style="font-size: 1.1rem; font-weight: bold; color: #4a9e6a;">${annualIncome}g</span></div>
+                            <div><span style="color: var(--dim); font-size: 0.6rem;">Total Sources</span><br><span style="font-size: 0.9rem;">${breakdown.length}</span></div>
+                        </div>
+                        ${salaryIncome > 0 ? '<div style="font-size:0.55rem;color:var(--accent);margin-top:4px;">Includes ' + salaryIncome + 'g from salaries</div>' : ''}
+                    </div>
+                    <div style="margin-bottom: 12px;">
+                        <div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 4px;">Income Sources</div>
+                        <div style="background: var(--bg2); border-radius: 6px; padding: 8px;">
+                            ${breakdownHtml}
+                        </div>
+                    </div>
+                    <div style="font-size: 0.55rem; color: var(--dim);">Based on household size, location, member professions, and salaries</div>
+                </div>
+            `;
 
             _openModal({
                 title: 'Income: ' + household.name,
@@ -930,7 +1014,7 @@
     }
 
     // =========================================================================
-    // 7. HOUSEHOLD EXPENSES MODAL (UPDATED with tuition)
+    // 8. HOUSEHOLD EXPENSES MODAL
     // =========================================================================
 
     function openHouseholdExpensesModal(householdId) {
@@ -952,9 +1036,6 @@
             var expenseCategories = window.EXPENSE_CATEGORIES || {};
             var wealth = _getHouseholdWealth(householdId);
 
-            // ================================================================
-            // NEW: Get tuition expenses
-            // ================================================================
             var currentYear = _getCurrentYear();
             var tuitionExpenses = _getTuitionExpenses(householdId, currentYear);
 
@@ -964,7 +1045,7 @@
 
             for (var key in expenseCategories) {
                 var category = expenseCategories[key];
-                if (category.id === 'tuition') continue; // Skip tuition, we'll add it separately
+                if (category.id === 'tuition') continue;
                 var amount = category.baseExpense || 0;
                 if (category.id === 'food') {
                     amount = amount * memberCount;
@@ -998,7 +1079,6 @@
                 });
             }
 
-            // Add tuition expenses
             if (tuitionExpenses > 0) {
                 breakdown.push({
                     category: { id: 'tuition', name: 'Tuition', icon: '⌇' },
@@ -1015,24 +1095,25 @@
                     '</div>';
             }).join('');
 
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">' +
-                '<div style="font-size: 0.7rem;"><strong>' + _escapeHtml(household.name) + '</strong></div>' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px;">' +
-                '<div><span style="color: var(--dim); font-size: 0.6rem;">Annual Expenses</span><br><span style="font-size: 1.1rem; font-weight: bold; color: #c87040;">' + annualExpenses + 'g</span></div>' +
-                '<div><span style="color: var(--dim); font-size: 0.6rem;">Net Change</span><br><span style="font-size: 1.1rem; font-weight: bold; color: ' + (annualExpenses > 0 ? '#c87040' : '#4a9e6a') + ';">' + (annualExpenses > 0 ? '-' : '+') + Math.abs(annualExpenses) + 'g</span></div>' +
-                '</div>' +
-                (tuitionExpenses > 0 ? '<div style="font-size:0.55rem;color:var(--warn);margin-top:4px;">Includes ' + tuitionExpenses + 'g in tuition</div>' : '') +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 4px;">Expense Categories</div>' +
-                '<div style="background: var(--bg2); border-radius: 6px; padding: 8px;">' +
-                breakdownHtml +
-                '</div>' +
-                '</div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Based on household size, staff count, wealth, debt, and tuition</div>' +
-                '</div>';
+            var modalContent = `
+                <div style="margin-bottom: 16px;">
+                    <div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">
+                        <div style="font-size: 0.7rem;"><strong>${_escapeHtml(household.name)}</strong></div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px;">
+                            <div><span style="color: var(--dim); font-size: 0.6rem;">Annual Expenses</span><br><span style="font-size: 1.1rem; font-weight: bold; color: #c87040;">${annualExpenses}g</span></div>
+                            <div><span style="color: var(--dim); font-size: 0.6rem;">Net Change</span><br><span style="font-size: 1.1rem; font-weight: bold; color: ${annualExpenses > 0 ? '#c87040' : '#4a9e6a'};">${annualExpenses > 0 ? '-' : '+'}${Math.abs(annualExpenses)}g</span></div>
+                        </div>
+                        ${tuitionExpenses > 0 ? '<div style="font-size:0.55rem;color:var(--warn);margin-top:4px;">Includes ' + tuitionExpenses + 'g in tuition</div>' : ''}
+                    </div>
+                    <div style="margin-bottom: 12px;">
+                        <div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 4px;">Expense Categories</div>
+                        <div style="background: var(--bg2); border-radius: 6px; padding: 8px;">
+                            ${breakdownHtml}
+                        </div>
+                    </div>
+                    <div style="font-size: 0.55rem; color: var(--dim);">Based on household size, staff count, wealth, debt, and tuition</div>
+                </div>
+            `;
 
             _openModal({
                 title: 'Expenses: ' + household.name,
@@ -1052,7 +1133,7 @@
     }
 
     // =========================================================================
-    // 8. HOUSEHOLD ANNUAL PROCESSING MODAL (unchanged)
+    // 9. HOUSEHOLD ANNUAL PROCESSING MODAL
     // =========================================================================
 
     function openHouseholdAnnualProcessingModal(householdId, onSuccess) {
@@ -1076,37 +1157,35 @@
             var annualExpenses = _calculateAnnualExpenses(householdId);
             var netChange = annualIncome - annualExpenses;
 
-            // ================================================================
-            // NEW: Show salary and tuition breakdown
-            // ================================================================
             var currentYear = _getCurrentYear();
             var salaryIncome = _getSalaryIncome(householdId, currentYear);
             var tuitionExpenses = _getTuitionExpenses(householdId, currentYear);
 
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">' +
-                '<div style="font-size: 0.7rem;"><strong>' + _escapeHtml(household.name) + '</strong></div>' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 8px;">' +
-                '<div><span style="color: var(--dim); font-size: 0.55rem;">Current Wealth</span><br><span style="font-size: 0.9rem;">' + wealth + 'g</span></div>' +
-                '<div><span style="color: var(--dim); font-size: 0.55rem;">Income</span><br><span style="font-size: 0.9rem; color: #4a9e6a;">+' + annualIncome + 'g</span></div>' +
-                '<div><span style="color: var(--dim); font-size: 0.55rem;">Expenses</span><br><span style="font-size: 0.9rem; color: #c87040;">-' + annualExpenses + 'g</span></div>' +
-                '</div>' +
-                (salaryIncome > 0 ? '<div style="font-size:0.5rem;color:var(--accent);margin-top:4px;">Salary income: +' + salaryIncome + 'g</div>' : '') +
-                (tuitionExpenses > 0 ? '<div style="font-size:0.5rem;color:var(--warn);">Tuition expenses: -' + tuitionExpenses + 'g</div>' : '') +
-                '<div style="text-align: center; margin-top: 8px; padding: 6px; background: var(--bg); border-radius: 4px;">' +
-                '<span style="font-size: 0.8rem; font-weight: bold; color: ' + (netChange >= 0 ? '#4a9e6a' : '#c87040') + ';">' +
-                'Net Change: ' + (netChange >= 0 ? '+' : '') + netChange + 'g' +
-                '</span>' +
-                '</div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">' +
-                'New Wealth: ' + (wealth + netChange) + 'g' +
-                (debt > 0 ? ' · Debt: ' + debt + 'g' : '') +
-                '</div>' +
-                '</div>' +
-                '<div style="font-size: 0.6rem; color: var(--warn);">Processing will apply annual income and expenses to the household.</div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">This also consumes food based on member count.</div>' +
-                '</div>';
+            var modalContent = `
+                <div style="margin-bottom: 16px;">
+                    <div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">
+                        <div style="font-size: 0.7rem;"><strong>${_escapeHtml(household.name)}</strong></div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 8px;">
+                            <div><span style="color: var(--dim); font-size: 0.55rem;">Current Wealth</span><br><span style="font-size: 0.9rem;">${wealth}g</span></div>
+                            <div><span style="color: var(--dim); font-size: 0.55rem;">Income</span><br><span style="font-size: 0.9rem; color: #4a9e6a;">+${annualIncome}g</span></div>
+                            <div><span style="color: var(--dim); font-size: 0.55rem;">Expenses</span><br><span style="font-size: 0.9rem; color: #c87040;">-${annualExpenses}g</span></div>
+                        </div>
+                        ${salaryIncome > 0 ? '<div style="font-size:0.5rem;color:var(--accent);margin-top:4px;">Salary income: +' + salaryIncome + 'g</div>' : ''}
+                        ${tuitionExpenses > 0 ? '<div style="font-size:0.5rem;color:var(--warn);">Tuition expenses: -' + tuitionExpenses + 'g</div>' : ''}
+                        <div style="text-align: center; margin-top: 8px; padding: 6px; background: var(--bg); border-radius: 4px;">
+                            <span style="font-size: 0.8rem; font-weight: bold; color: ${netChange >= 0 ? '#4a9e6a' : '#c87040'};">
+                                Net Change: ${netChange >= 0 ? '+' : ''}${netChange}g
+                            </span>
+                        </div>
+                        <div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">
+                            New Wealth: ${wealth + netChange}g
+                            ${debt > 0 ? ' · Debt: ' + debt + 'g' : ''}
+                        </div>
+                    </div>
+                    <div style="font-size: 0.6rem; color: var(--warn);">Processing will apply annual income and expenses to the household.</div>
+                    <div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">This also consumes food based on member count.</div>
+                </div>
+            `;
 
             _openModal({
                 title: 'Process Annual Economy: ' + household.name,
@@ -1147,7 +1226,7 @@
     }
 
     // =========================================================================
-    // 9. HOUSEHOLD ECONOMIC EVENTS MODAL (unchanged)
+    // 10. HOUSEHOLD ECONOMIC EVENTS MODAL
     // =========================================================================
 
     function openHouseholdEconomicEventsModal(householdId, onSuccess) {
@@ -1177,16 +1256,17 @@
                     '</div>';
             }).join('');
 
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">' +
-                '<div style="font-size: 0.7rem;"><strong>' + _escapeHtml(household.name) + '</strong></div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">Trigger an economic event for this household</div>' +
-                '</div>' +
-                '<div style="max-height: 300px; overflow-y: auto;">' +
-                eventsHtml +
-                '</div>' +
-                '</div>';
+            var modalContent = `
+                <div style="margin-bottom: 16px;">
+                    <div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">
+                        <div style="font-size: 0.7rem;"><strong>${_escapeHtml(household.name)}</strong></div>
+                        <div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">Trigger an economic event for this household</div>
+                    </div>
+                    <div style="max-height: 300px; overflow-y: auto;">
+                        ${eventsHtml}
+                    </div>
+                </div>
+            `;
 
             _openModal({
                 title: 'Economic Events: ' + household.name,
@@ -1235,7 +1315,7 @@
     }
 
     // =========================================================================
-    // 10. HOUSEHOLD TRADE MODAL (unchanged)
+    // 11. HOUSEHOLD TRADE MODAL
     // =========================================================================
 
     function openHouseholdTradeModal(householdId, onSuccess) {
@@ -1267,37 +1347,38 @@
                 return '<option value="' + p.id + '">' + _escapeHtml(p.name) + ' (' + (p.members ? p.members.length : 0) + ' members)</option>';
             }).join('');
 
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">' +
-                '<div style="font-size: 0.7rem;"><strong>' + _escapeHtml(household.name) + '</strong></div>' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 8px; font-size: 0.6rem;">' +
-                '<div><span style="color: var(--dim);">Wealth</span><br>' + wealth + 'g</div>' +
-                '<div><span style="color: var(--dim);">Food</span><br>' + (resources.food || 0) + '</div>' +
-                '<div><span style="color: var(--dim);">Goods</span><br>' + (resources.goods || 0) + '</div>' +
-                '</div>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Trade Partner</label>' +
-                '<select id="tradePartnerSelect" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                '<option value="">Select a partner</option>' +
-                partnerOptions +
-                '</select>' +
-                '</div>' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">' +
-                '<div class="form-group">' +
-                '<label style="display: block; font-size: 0.6rem; color: var(--accent); margin-bottom: 4px;">Give</label>' +
-                '<input type="number" id="tradeGiveWealth" placeholder="Wealth" value="0" style="width: 100%; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 0.65rem;">' +
-                '<input type="number" id="tradeGiveGoods" placeholder="Goods" value="0" style="width: 100%; margin-top: 4px; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 0.65rem;">' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label style="display: block; font-size: 0.6rem; color: var(--accent); margin-bottom: 4px;">Receive</label>' +
-                '<input type="number" id="tradeReceiveWealth" placeholder="Wealth" value="0" style="width: 100%; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 0.65rem;">' +
-                '<input type="number" id="tradeReceiveGoods" placeholder="Goods" value="0" style="width: 100%; margin-top: 4px; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 0.65rem;">' +
-                '</div>' +
-                '</div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 8px;">Trade will be executed if both parties have sufficient resources.</div>' +
-                '</div>';
+            var modalContent = `
+                <div style="margin-bottom: 16px;">
+                    <div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">
+                        <div style="font-size: 0.7rem;"><strong>${_escapeHtml(household.name)}</strong></div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 8px; font-size: 0.6rem;">
+                            <div><span style="color: var(--dim);">Wealth</span><br>${wealth}g</div>
+                            <div><span style="color: var(--dim);">Food</span><br>${resources.food || 0}</div>
+                            <div><span style="color: var(--dim);">Goods</span><br>${resources.goods || 0}</div>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 12px;">
+                        <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Trade Partner</label>
+                        <select id="tradePartnerSelect" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">
+                            <option value="">Select a partner</option>
+                            ${partnerOptions}
+                        </select>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                        <div class="form-group">
+                            <label style="display: block; font-size: 0.6rem; color: var(--accent); margin-bottom: 4px;">Give</label>
+                            <input type="number" id="tradeGiveWealth" placeholder="Wealth" value="0" style="width: 100%; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 0.65rem;">
+                            <input type="number" id="tradeGiveGoods" placeholder="Goods" value="0" style="width: 100%; margin-top: 4px; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 0.65rem;">
+                        </div>
+                        <div class="form-group">
+                            <label style="display: block; font-size: 0.6rem; color: var(--accent); margin-bottom: 4px;">Receive</label>
+                            <input type="number" id="tradeReceiveWealth" placeholder="Wealth" value="0" style="width: 100%; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 0.65rem;">
+                            <input type="number" id="tradeReceiveGoods" placeholder="Goods" value="0" style="width: 100%; margin-top: 4px; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 0.65rem;">
+                        </div>
+                    </div>
+                    <div style="font-size: 0.55rem; color: var(--dim); margin-top: 8px;">Trade will be executed if both parties have sufficient resources.</div>
+                </div>
+            `;
 
             _openModal({
                 title: 'Trade: ' + household.name,
@@ -1354,7 +1435,7 @@
     }
 
     // =========================================================================
-    // 11. EXPORTS
+    // 12. EXPORTS
     // =========================================================================
 
     window.openHouseholdWealthModal = openHouseholdWealthModal;

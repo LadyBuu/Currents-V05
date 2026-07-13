@@ -107,6 +107,33 @@
                 var disaster = disasters[i];
                 if (!disaster || !disaster.id) continue;
 
+                // Ensure structuralDamage fields exist
+                if (!disaster.structuralDamage) {
+                    disaster.structuralDamage = {
+                        featuresDestroyed: 0,
+                        schoolsDestroyed: 0,
+                        enterprisesDestroyed: 0,
+                        residencesDemolished: 0,
+                        householdsDestroyed: 0,
+                        totalLoss: 0,
+                        destructionList: {
+                            features: [],
+                            schools: [],
+                            enterprises: [],
+                            residences: [],
+                            households: []
+                        }
+                    };
+                }
+
+                // Ensure convenience fields exist
+                if (disaster.featuresDestroyed === undefined) disaster.featuresDestroyed = 0;
+                if (disaster.schoolsDestroyed === undefined) disaster.schoolsDestroyed = 0;
+                if (disaster.enterprisesDestroyed === undefined) disaster.enterprisesDestroyed = 0;
+                if (disaster.residencesDemolished === undefined) disaster.residencesDemolished = 0;
+                if (disaster.householdsDestroyed === undefined) disaster.householdsDestroyed = 0;
+                if (disaster.totalLoss === undefined) disaster.totalLoss = 0;
+
                 _state.disasters.byId.set(disaster.id, disaster);
 
                 if (disaster.locationId) {
@@ -131,7 +158,7 @@
                 });
             }
 
-            // Sort year lists by year
+            // Sort year lists
             var sortedYears = Array.from(_state.disasters.byYear.keys()).sort();
             for (var i = 0; i < sortedYears.length; i++) {
                 var year = sortedYears[i];
@@ -258,7 +285,28 @@
                 description: disasterData.description || '',
                 actualDeaths: disasterData.actualDeaths || disasterData.deaths || 0,
                 metadata: disasterData.metadata || {},
-                createdAt: Date.now()
+                createdAt: Date.now(),
+                // NEW: Structural damage fields
+                structuralDamage: disasterData.structuralDamage || {
+                    featuresDestroyed: 0,
+                    schoolsDestroyed: 0,
+                    enterprisesDestroyed: 0,
+                    residencesDemolished: 0,
+                    householdsDestroyed: 0,
+                    totalLoss: 0,
+                    destructionList: {
+                        features: [],
+                        schools: [],
+                        enterprises: [],
+                        residences: [],
+                        households: []
+                    }
+                },
+                featuresDestroyed: disasterData.featuresDestroyed || 0,
+                enterprisesDestroyed: disasterData.enterprisesDestroyed || 0,
+                residencesDemolished: disasterData.residencesDemolished || 0,
+                householdsDestroyed: disasterData.householdsDestroyed || 0,
+                totalLoss: disasterData.totalLoss || 0
             };
 
             _state.disasters.all.push(newDisaster);
@@ -312,6 +360,51 @@
             var oldLocationId = disaster.locationId;
             var oldYear = disaster.year;
 
+            // Handle structuralDamage updates specially
+            if (updates.structuralDamage) {
+                if (!disaster.structuralDamage) {
+                    disaster.structuralDamage = {
+                        featuresDestroyed: 0,
+                        schoolsDestroyed: 0,
+                        enterprisesDestroyed: 0,
+                        residencesDemolished: 0,
+                        householdsDestroyed: 0,
+                        totalLoss: 0,
+                        destructionList: {
+                            features: [],
+                            schools: [],
+                            enterprises: [],
+                            residences: [],
+                            households: []
+                        }
+                    };
+                }
+                // Merge structuralDamage
+                for (var key in updates.structuralDamage) {
+                    if (updates.structuralDamage.hasOwnProperty(key)) {
+                        if (key === 'destructionList' && updates.structuralDamage[key]) {
+                            for (var listKey in updates.structuralDamage[key]) {
+                                if (updates.structuralDamage[key].hasOwnProperty(listKey)) {
+                                    disaster.structuralDamage.destructionList[listKey] = 
+                                        updates.structuralDamage[key][listKey] || [];
+                                }
+                            }
+                        } else {
+                            disaster.structuralDamage[key] = updates.structuralDamage[key];
+                        }
+                    }
+                }
+                // Update convenience fields
+                disaster.featuresDestroyed = disaster.structuralDamage.featuresDestroyed || 0;
+                disaster.schoolsDestroyed = disaster.structuralDamage.schoolsDestroyed || 0;
+                disaster.enterprisesDestroyed = disaster.structuralDamage.enterprisesDestroyed || 0;
+                disaster.residencesDemolished = disaster.structuralDamage.residencesDemolished || 0;
+                disaster.householdsDestroyed = disaster.structuralDamage.householdsDestroyed || 0;
+                disaster.totalLoss = disaster.structuralDamage.totalLoss || 0;
+                delete updates.structuralDamage;
+            }
+
+            // Apply other updates
             for (var key in updates) {
                 if (updates.hasOwnProperty(key)) {
                     disaster[key] = updates[key];

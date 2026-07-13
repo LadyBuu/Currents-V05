@@ -1,20 +1,21 @@
 /**
  * =============================================================================
- * HOUSEHOLD OVERVIEW TAB (householdOverviewTab.js)
+ * HOUSEHOLD OVERVIEW TAB
  * =============================================================================
  * 
- * UPDATED: Uses new HouseholdState/HouseholdCommands/HouseholdQueries system
+ * UPDATED: Full integration with HouseholdState, HouseholdCommands, 
+ *          HouseholdQueries, HouseholdEconomy, HouseholdAssignment,
+ *          HouseholdServant, and ResidenceSystem
  * 
  * DEPENDENCIES:
- *   - household-state.js (HouseholdState)
- *   - household-commands.js (HouseholdCommands)
- *   - household-queries.js (HouseholdQueries)
- *   - residence-system.js (ResidenceSystem)
- *   - modals-core.js (_escapeHtml, _showToast, _getIcon)
- *   - modals-char-select.js (openCharacterSelector)
- *   - modals-household-selector.js (openHouseholdSelector)
- *   - modals-residence.js (openResidenceDetailsModal, openEditResidenceModal, openRenameResidenceModal)
- *   - modals-residence-vacancy.js (openMarkResidenceVacantModal, openAssignResidenceToHouseholdModal)
+ *   - household-state.js
+ *   - household-commands.js
+ *   - household-queries.js
+ *   - household-economy.js
+ *   - household-assignment.js
+ *   - household-servant.js
+ *   - residence-system.js
+ *   - modals-core.js
  * 
  * =============================================================================
  */
@@ -33,75 +34,45 @@
     // =========================================================================
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
-        }
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
+        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
+        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
         if (!str) return '';
         return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     function _showToast(msg, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(msg, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(msg, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(msg, type);
-        }
+        if (typeof window._showToast === 'function') return window._showToast(msg, type);
+        if (typeof window.showToast === 'function') return window.showToast(msg, type);
+        console.log('[' + (type || 'info') + '] ' + msg);
     }
 
     function _getCurrentYear() {
-        if (typeof window._getCurrentYear === 'function') {
-            return window._getCurrentYear();
-        }
-        if (typeof window.getCurrentYearSafe === 'function') {
-            return window.getCurrentYearSafe();
-        }
-        if (typeof window.getCurrentYear === 'function') {
-            return window.getCurrentYear();
-        }
+        if (typeof window._getCurrentYear === 'function') return window._getCurrentYear();
+        if (typeof window.getCurrentYearSafe === 'function') return window.getCurrentYearSafe();
+        if (typeof window.getCurrentYear === 'function') return window.getCurrentYear();
         return 1250;
     }
 
     function _getIcon(name) {
-        if (typeof window._getIcon === 'function') {
-            return window._getIcon(name);
-        }
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
+        if (typeof window._getIcon === 'function') return window._getIcon(name);
+        if (window.Icons && window.Icons[name]) return window.Icons[name];
         return '';
     }
 
     function _openModal(options) {
-        if (typeof window.openModal === 'function') {
-            return window.openModal(options);
-        }
-        if (typeof window._openModal === 'function') {
-            return window._openModal(options);
-        }
+        if (typeof window.openModal === 'function') return window.openModal(options);
+        if (typeof window._openModal === 'function') return window._openModal(options);
         return null;
     }
 
     function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') {
-            window.closeTopModal();
-        }
-        if (typeof window._closeTopModal === 'function') {
-            window._closeTopModal();
-        }
+        if (typeof window.closeTopModal === 'function') window.closeTopModal();
+        if (typeof window._closeTopModal === 'function') window._closeTopModal();
     }
 
     function _confirmDialog(message, title, onConfirm, onCancel) {
-        if (typeof window.confirmDialog === 'function') {
-            return window.confirmDialog(message, title, onConfirm, onCancel);
-        }
-        if (typeof window._confirmDialog === 'function') {
-            return window._confirmDialog(message, title, onConfirm, onCancel);
-        }
+        if (typeof window.confirmDialog === 'function') return window.confirmDialog(message, title, onConfirm, onCancel);
+        if (typeof window._confirmDialog === 'function') return window._confirmDialog(message, title, onConfirm, onCancel);
         if (confirm(message)) {
             if (onConfirm) onConfirm();
         } else {
@@ -110,12 +81,8 @@
     }
 
     function _promptDialog(message, defaultValue, onConfirm, onCancel) {
-        if (typeof window.promptDialog === 'function') {
-            return window.promptDialog(message, defaultValue, onConfirm, onCancel);
-        }
-        if (typeof window._promptDialog === 'function') {
-            return window._promptDialog(message, defaultValue, onConfirm, onCancel);
-        }
+        if (typeof window.promptDialog === 'function') return window.promptDialog(message, defaultValue, onConfirm, onCancel);
+        if (typeof window._promptDialog === 'function') return window._promptDialog(message, defaultValue, onConfirm, onCancel);
         var result = prompt(message, defaultValue);
         if (result !== null && result.trim()) {
             if (onConfirm) onConfirm(result.trim());
@@ -125,26 +92,23 @@
     }
 
     function _openCharacterSelector(options) {
-        if (typeof window.openCharacterSelector === 'function') {
-            return window.openCharacterSelector(options);
-        }
-        if (typeof window.openUnifiedCharacterSelector === 'function') {
-            return window.openUnifiedCharacterSelector(options);
-        }
-        if (typeof window._openCharacterSelector === 'function') {
-            return window._openCharacterSelector(options);
-        }
+        if (typeof window.openCharacterSelector === 'function') return window.openCharacterSelector(options);
+        if (typeof window.openUnifiedCharacterSelector === 'function') return window.openUnifiedCharacterSelector(options);
+        if (typeof window._openCharacterSelector === 'function') return window._openCharacterSelector(options);
         _showToast('Character selector not available', 'error');
         return null;
     }
 
     // =========================================================================
-    // 2. STATE, COMMANDS, AND QUERIES REFERENCE
+    // 2. STATE, COMMANDS, QUERIES, ECONOMY, ASSIGNMENT, SERVANT, RESIDENCE
     // =========================================================================
 
     var _state = window.HouseholdState;
     var _commands = window.HouseholdCommands;
     var _queries = window.HouseholdQueries;
+    var _economy = window.HouseholdEconomy;
+    var _assignment = window.HouseholdAssignment;
+    var _servant = window.HouseholdServant;
     var _residence = window.ResidenceSystem;
 
     // =========================================================================
@@ -163,7 +127,7 @@
     }
 
     // =========================================================================
-    // 4. BUSINESS LOGIC WRAPPERS
+    // 4. BUSINESS LOGIC WRAPPERS - FULL INTEGRATION
     // =========================================================================
 
     function _getHousehold(householdId) {
@@ -171,30 +135,22 @@
     }
 
     function _getCharacterById(characterId) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(characterId);
-        }
+        if (typeof window.getCharacterById === 'function') return window.getCharacterById(characterId);
         return null;
     }
 
     function _getCharacters() {
-        if (typeof window.getCharacters === 'function') {
-            return window.getCharacters();
-        }
+        if (typeof window.getCharacters === 'function') return window.getCharacters();
         return [];
     }
 
     function _getPlaceById(placeId) {
-        if (typeof window.getPlaceById === 'function') {
-            return window.getPlaceById(placeId);
-        }
+        if (typeof window.getPlaceById === 'function') return window.getPlaceById(placeId);
         return null;
     }
 
     function _getPlaces() {
-        if (typeof window.getPlaces === 'function') {
-            return window.getPlaces();
-        }
+        if (typeof window.getPlaces === 'function') return window.getPlaces();
         return window.masterData?.data?.places || [];
     }
 
@@ -218,9 +174,32 @@
         return household ? (household.nameHistory || []) : [];
     }
 
+    function _getHouseholdNamePeriods(householdId) {
+        return _state ? _state.getHouseholdNamePeriods(householdId) : [];
+    }
+
+    function _getHouseholdNamePeriodForYear(householdId, year) {
+        return _state ? _state.getHouseholdNamePeriodForYear(householdId, year) : null;
+    }
+
     function _getHouseholdWealth(householdId) {
-        var household = _getHousehold(householdId);
-        return household ? (household.wealth || 0) : 0;
+        return _economy ? _economy.getHouseholdWealth(householdId) : 0;
+    }
+
+    function _getHouseholdDebt(householdId) {
+        return _economy ? _economy.getHouseholdDebt(householdId) : 0;
+    }
+
+    function _getHouseholdResources(householdId) {
+        return _economy ? _economy.getHouseholdResources(householdId) : { food: 0, livestock: 0, goods: 0 };
+    }
+
+    function _getHouseholdEconomicTier(householdId) {
+        if (_economy) {
+            var wealth = _economy.getHouseholdWealth(householdId);
+            return _economy.getEconomicTier(wealth);
+        }
+        return { id: 'moderate', name: 'Moderate', icon: '⌂' };
     }
 
     function _getHouseholdReputation(householdId) {
@@ -232,6 +211,14 @@
         return _state ? _state.getHouseholdStatus(householdId) : { status: 'active', statusMessage: 'Active' };
     }
 
+    function _getHouseholdPowerScore(householdId) {
+        if (typeof window.updateHouseholdPowerScore === 'function') {
+            return window.updateHouseholdPowerScore(householdId);
+        }
+        var household = _getHousehold(householdId);
+        return household ? (household.powerScore || 0) : 0;
+    }
+
     function _getHouseholdSnapshot(householdId, year) {
         if (typeof window.getHouseholdSnapshot === 'function') {
             return window.getHouseholdSnapshot(householdId, year);
@@ -239,87 +226,65 @@
         return null;
     }
 
-    function _updateHousehold(householdId, updates) {
-        return _state ? _state.updateHousehold(householdId, updates, { recordHistory: false }) : null;
+    function _getHouseholdHeirs(householdId, deceasedId, options) {
+        return _assignment ? _assignment.getHouseholdHeirs(householdId, deceasedId, options) : [];
+    }
+
+    function _getServants(employerId) {
+        return _servant ? _servant.getServants(employerId) : [];
+    }
+
+    function _getServiceBetween(employerId, servantId) {
+        return _servant ? _servant.getServiceBetween(employerId, servantId) : null;
+    }
+
+    function _getServiceQuality(relationshipId) {
+        return _servant ? _servant.getServiceQuality(relationshipId) : null;
+    }
+
+    function _calculateAnnualIncome(householdId) {
+        return _economy ? _economy.calculateAnnualIncome(householdId) : 0;
+    }
+
+    function _calculateAnnualExpenses(householdId) {
+        return _economy ? _economy.calculateAnnualExpenses(householdId) : 0;
+    }
+
+    function _computeNetAnnualChange(householdId) {
+        return _economy ? _economy.computeNetAnnualChange(householdId) : 0;
+    }
+
+    function _updateHouseholdWealth(householdId, delta, reason) {
+        return _economy ? _economy.updateHouseholdWealth(householdId, delta, reason) : 0;
+    }
+
+    function _modifyHouseholdDebt(householdId, delta) {
+        return _economy ? _economy.modifyHouseholdDebt(householdId, delta) : 0;
+    }
+
+    function _updateHouseholdResources(householdId, resourceType, delta) {
+        return _economy ? _economy.updateHouseholdResources(householdId, resourceType, delta) : 0;
+    }
+
+    function _processAnnualEconomy(householdId) {
+        return _economy ? _economy.processAnnualEconomy(householdId) : null;
+    }
+
+    function _isBankrupt(householdId) {
+        return _economy ? _economy.isBankrupt(householdId) : false;
+    }
+
+    function _handleBankruptcy(householdId) {
+        return _economy ? _economy.handleBankruptcy(householdId) : false;
     }
 
     // =========================================================================
-    // 5. RESIDENCE WRAPPERS
-    // =========================================================================
-
-    function _getResidencesByHousehold(householdId) {
-        return _residence ? _residence.getResidencesByHousehold(householdId) : [];
-    }
-
-    function _getResidenceById(residenceId) {
-        return _residence ? _residence.getResidenceById(residenceId) : null;
-    }
-
-    function _getVacantResidences(locationId) {
-        return _residence ? _residence.getVacantResidences(locationId) : [];
-    }
-
-    function _createResidence(data) {
-        return _residence ? _residence.createResidence(data.name, data.locationId, data.typeId, data) : null;
-    }
-
-    function _associateResidenceWithHousehold(residenceId, householdId, householdName, options) {
-        if (typeof window.associateResidenceWithHousehold === 'function') {
-            return window.associateResidenceWithHousehold(residenceId, householdId, householdName, options);
-        }
-        // Use assignHouseholdToVacantResidence as fallback
-        if (_residence && typeof _residence.assignHouseholdToVacantResidence === 'function') {
-            var year = (options && options.year) || _getCurrentYear();
-            return _residence.assignHouseholdToVacantResidence(residenceId, householdId, householdName, year, {
-                notes: (options && options.notes) || 'Associated with household'
-            });
-        }
-        return false;
-    }
-
-    function _disassociateResidenceFromHousehold(residenceId, reason, year) {
-        if (typeof window.disassociateResidenceFromHousehold === 'function') {
-            return window.disassociateResidenceFromHousehold(residenceId, reason, year);
-        }
-        if (_residence && typeof _residence.endResidenceAssociation === 'function') {
-            var residence = _getResidenceById(residenceId);
-            if (residence && residence.householdId) {
-                return _residence.endResidenceAssociation(residenceId, residence.householdId, year || _getCurrentYear(), reason || 'Disassociated');
-            }
-        }
-        return false;
-    }
-
-    function _updateResidence(residenceId, updates) {
-        return _residence ? _residence.updateResidence(residenceId, updates) : null;
-    }
-
-    function _getResidenceStatus(residence) {
-        if (typeof window.getResidenceStatus === 'function') {
-            return window.getResidenceStatus(residence);
-        }
-        if (!residence) return { status: 'unknown', label: 'Unknown', icon: '?', color: '#8a8a8a' };
-        var isVacant = residence.isVacant === true;
-        var hasHousehold = !!residence.householdId;
-        if (hasHousehold && !isVacant) {
-            return { status: 'occupied', label: 'Occupied', icon: '✓', color: '#4a9e6a' };
-        } else if (hasHousehold && isVacant) {
-            return { status: 'vacant', label: 'Vacant', icon: '⚠', color: '#c87040' };
-        } else {
-            return { status: 'empty', label: 'Empty', icon: '⌇', color: '#8a8a8a' };
-        }
-    }
-
-    // =========================================================================
-    // 6. MODAL WRAPPERS
+    // 5. MODAL WRAPPERS
     // =========================================================================
 
     function _openResidenceDetailsModal(residenceId, onRefresh) {
         if (typeof window.openResidenceDetailsModal === 'function') {
             return window.openResidenceDetailsModal(residenceId, onRefresh);
-        }
-        if (typeof window._openResidenceDetailsModal === 'function') {
-            return window._openResidenceDetailsModal(residenceId, onRefresh);
         }
         _showToast('Residence details modal not available', 'error');
         return null;
@@ -329,9 +294,6 @@
         if (typeof window.openEditResidenceModal === 'function') {
             return window.openEditResidenceModal(residenceId, onSuccess);
         }
-        if (typeof window._openEditResidenceModal === 'function') {
-            return window._openEditResidenceModal(residenceId, onSuccess);
-        }
         _showToast('Edit residence modal not available', 'error');
         return null;
     }
@@ -339,9 +301,6 @@
     function _openRenameResidenceModal(residenceId, onSuccess) {
         if (typeof window.openRenameResidenceModal === 'function') {
             return window.openRenameResidenceModal(residenceId, onSuccess);
-        }
-        if (typeof window._openRenameResidenceModal === 'function') {
-            return window._openRenameResidenceModal(residenceId, onSuccess);
         }
         _showToast('Rename residence modal not available', 'error');
         return null;
@@ -351,9 +310,6 @@
         if (typeof window.openMarkResidenceVacantModal === 'function') {
             return window.openMarkResidenceVacantModal(residenceId, onSuccess);
         }
-        if (typeof window._openMarkResidenceVacantModal === 'function') {
-            return window._openMarkResidenceVacantModal(residenceId, onSuccess);
-        }
         _showToast('Mark residence vacant modal not available', 'error');
         return null;
     }
@@ -361,9 +317,6 @@
     function _openAssignResidenceToHouseholdModal(householdId, onSuccess, options) {
         if (typeof window.openAssignResidenceToHouseholdModal === 'function') {
             return window.openAssignResidenceToHouseholdModal(householdId, onSuccess, options);
-        }
-        if (typeof window._openAssignResidenceToHouseholdModal === 'function') {
-            return window._openAssignResidenceToHouseholdModal(householdId, onSuccess, options);
         }
         _showToast('Assign residence modal not available', 'error');
         return null;
@@ -373,9 +326,6 @@
         if (typeof window.openAddResidenceModal === 'function') {
             return window.openAddResidenceModal(locationId, locationName, onSuccess);
         }
-        if (typeof window._openAddResidenceModal === 'function') {
-            return window._openAddResidenceModal(locationId, locationName, onSuccess);
-        }
         _showToast('Add residence modal not available', 'error');
         return null;
     }
@@ -383,9 +333,6 @@
     function _openEditHouseholdModal(householdId, onSuccess) {
         if (typeof window.openEditHouseholdModal === 'function') {
             return window.openEditHouseholdModal(householdId, onSuccess);
-        }
-        if (typeof window._openEditHouseholdModal === 'function') {
-            return window._openEditHouseholdModal(householdId, onSuccess);
         }
         _showToast('Edit household modal not available', 'error');
         return null;
@@ -395,9 +342,6 @@
         if (typeof window.openRenameHouseholdModal === 'function') {
             return window.openRenameHouseholdModal(householdId, onSuccess);
         }
-        if (typeof window._openRenameHouseholdModal === 'function') {
-            return window._openRenameHouseholdModal(householdId, onSuccess);
-        }
         _showToast('Rename household modal not available', 'error');
         return null;
     }
@@ -405,9 +349,6 @@
     function _openDeleteHouseholdModal(householdId, onSuccess) {
         if (typeof window.openDeleteHouseholdModal === 'function') {
             return window.openDeleteHouseholdModal(householdId, onSuccess);
-        }
-        if (typeof window._openDeleteHouseholdModal === 'function') {
-            return window._openDeleteHouseholdModal(householdId, onSuccess);
         }
         _showToast('Delete household modal not available', 'error');
         return null;
@@ -417,15 +358,44 @@
         if (typeof window.openAddMemberModal === 'function') {
             return window.openAddMemberModal(householdId, type, onSuccess);
         }
-        if (typeof window._openAddMemberModal === 'function') {
-            return window._openAddMemberModal(householdId, type, onSuccess);
-        }
         _showToast('Add member modal not available', 'error');
         return null;
     }
 
+    function _openWealthModal(householdId, onSuccess) {
+        if (typeof window.openHouseholdWealthModal === 'function') {
+            return window.openHouseholdWealthModal(householdId, onSuccess);
+        }
+        _showToast('Wealth modal not available', 'error');
+        return null;
+    }
+
+    function _openEconomicSummaryModal(householdId) {
+        if (typeof window.openHouseholdEconomicSummaryModal === 'function') {
+            return window.openHouseholdEconomicSummaryModal(householdId);
+        }
+        _showToast('Economic summary modal not available', 'error');
+        return null;
+    }
+
+    function _openAnnualProcessingModal(householdId, onSuccess) {
+        if (typeof window.openHouseholdAnnualProcessingModal === 'function') {
+            return window.openHouseholdAnnualProcessingModal(householdId, onSuccess);
+        }
+        _showToast('Annual processing modal not available', 'error');
+        return null;
+    }
+
+    function _openSnapshotModal(householdId, year, viewMode) {
+        if (typeof window.openHouseholdSnapshotModal === 'function') {
+            return window.openHouseholdSnapshotModal(householdId, year, viewMode);
+        }
+        _showToast('Snapshot modal not available', 'error');
+        return null;
+    }
+
     // =========================================================================
-    // 7. LOCATION SETTING HELPERS
+    // 6. LOCATION SETTING HELPERS
     // =========================================================================
 
     function buildLocationOptions(selectedId) {
@@ -440,9 +410,7 @@
             var country = countryId ? _getPlaceById(countryId) : null;
             var countryName = country ? country.displayName : 'Other Locations';
 
-            if (!placesByCountry[countryName]) {
-                placesByCountry[countryName] = [];
-            }
+            if (!placesByCountry[countryName]) placesByCountry[countryName] = [];
             placesByCountry[countryName].push(place);
         }
 
@@ -476,6 +444,7 @@
         }
 
         var locationOptions = buildLocationOptions(null);
+        var household = _getHousehold(householdId);
 
         var modalContent =
             '<div class="info-box" style="margin-bottom:16px;padding:12px;background:var(--bg3);border-radius:8px;font-size:0.65rem;">' +
@@ -500,49 +469,60 @@
                     return false;
                 }
 
-                var result = _updateHousehold(householdId, { locationId: locationId });
-                if (result) {
-                    _showToast('Household location set', 'success');
-                    _closeTopModal();
-                    if (onSuccess) onSuccess();
-                } else {
-                    _showToast('Failed to set location', 'error');
+                if (_state && typeof _state.updateHousehold === 'function') {
+                    var result = _state.updateHousehold(householdId, { locationId: locationId }, { recordHistory: false });
+                    if (result) {
+                        _showToast('Household location set', 'success');
+                        _closeTopModal();
+                        if (onSuccess) onSuccess();
+                        return true;
+                    }
                 }
-                return true;
+                _showToast('Failed to set location', 'error');
+                return false;
             }
         });
     }
 
     // =========================================================================
-    // 8. CREATE RESIDENCE MODAL
+    // 7. CREATE RESIDENCE MODAL
     // =========================================================================
 
     function openCreateResidenceModal(householdId, locationId, locationName, onSuccess) {
         var household = _getHousehold(householdId);
 
         _openAddResidenceModal(locationId, locationName, function(newResidenceId) {
-            if (newResidenceId) {
-                var result = _associateResidenceWithHousehold(
+            if (newResidenceId && _residence && typeof _residence.assignHouseholdToVacantResidence === 'function') {
+                var result = _residence.assignHouseholdToVacantResidence(
                     newResidenceId,
                     householdId,
                     household ? household.name : null,
+                    _getCurrentYear(),
                     {
-                        year: _getCurrentYear(),
-                        notes: 'Created for household'
+                        notes: 'Created for household',
+                        renameOnAssign: false
                     }
                 );
-                if (result) {
+                if (result && result.success) {
                     _showToast('Residence created and associated with household', 'success');
                 } else {
                     _showToast('Residence created but could not be associated with household', 'warning');
                 }
-                if (onSuccess) onSuccess(newResidenceId);
+            } else if (newResidenceId && _state && typeof _state.associateHouseholdWithResidence === 'function') {
+                _state.associateHouseholdWithResidence(householdId, newResidenceId, {
+                    residenceName: null,
+                    residenceType: null,
+                    year: _getCurrentYear(),
+                    notes: 'Created for household'
+                });
+                _showToast('Residence created and associated with household', 'success');
             }
+            if (onSuccess) onSuccess(newResidenceId);
         });
     }
 
     // =========================================================================
-    // 9. ASSIGN VACANT RESIDENCE MODAL
+    // 8. ASSIGN VACANT RESIDENCE MODAL
     // =========================================================================
 
     function openAssignVacantResidenceModal(householdId, locationId, locationName, onSuccess) {
@@ -566,11 +546,11 @@
     }
 
     // =========================================================================
-    // 10. RESIDENCE SECTION RENDERER
+    // 9. RENDER RESIDENCE SECTION
     // =========================================================================
 
     function renderResidenceSection(householdId, household, location) {
-        var residences = _getResidencesByHousehold(householdId);
+        var residences = _residence ? _residence.getResidencesByHousehold(householdId) : [];
         var currentResidence = residences.length > 0 ? residences[0] : null;
         var hasResidence = currentResidence !== null;
         var locationId = household.locationId;
@@ -589,47 +569,58 @@
             else if (res.condition === 'damaged') conditionIcon = '✗';
 
             var isVacant = res.isVacant === true;
-            var status = _getResidenceStatus(res);
+            var isDemolished = res.isDemolished === true;
+            var units = res.units || [];
+            var unitCount = units.length;
+            var occupiedUnits = 0;
+            for (var i = 0; i < units.length; i++) {
+                if (!units[i].isVacant && !units[i].isDemolished) occupiedUnits++;
+            }
+
+            var statusLabel = isDemolished ? 'Demolished' : (isVacant ? 'Vacant' : 'Occupied');
+            var statusColor = isDemolished ? '#8a2020' : (isVacant ? '#c87040' : '#4a9e6a');
 
             html += (
-                '<div style="background:var(--bg3);border-radius:8px;padding:12px;border-left:3px solid ' + (isVacant ? '#ff9800' : '#4caf50') + ';">' +
+                '<div style="background:var(--bg3);border-radius:8px;padding:12px;border-left:3px solid ' + statusColor + ';">' +
                 '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;">' +
                 '<div>' +
                 '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
                 (typeIcon ? '<span style="font-size:1rem;">' + typeIcon + '</span>' : '') +
                 '<strong style="font-size:0.8rem;">' + _escapeHtml(res.name) + '</strong>' +
                 '<span style="font-size:0.55rem;color:var(--accent);">' + _escapeHtml(res.typeName || res.typeId) + '</span>' +
-                (isVacant ? '<span style="font-size:0.55rem;color:#ff9800;">Vacant</span>' : '<span style="font-size:0.55rem;color:#4caf50;">Occupied</span>') +
+                (res.isMultiUnit ? '<span style="font-size:0.5rem;color:var(--accent-dim);">' + unitCount + ' units (' + occupiedUnits + ' occupied)</span>' : '') +
+                '<span style="font-size:0.55rem;color:' + statusColor + ';">' + statusLabel + '</span>' +
                 '</div>' +
                 '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' +
                 conditionIcon + ' ' + _escapeHtml(res.condition || 'good') + ' · ' +
                 'Value: ' + (res.estimatedValue || 0).toLocaleString() + ' gold' +
                 (res.builtYear ? ' · Built: ' + res.builtYear : '') +
+                (res.vacantYear ? ' · Vacant since: ' + res.vacantYear : '') +
                 '</div>' +
                 (res.description ? '<div style="font-size:0.55rem;color:var(--dim);margin-top:4px;">' + _escapeHtml(res.description) + '</div>' : '') +
-                (res.features && res.features.length > 0 ?
-                    '<div style="font-size:0.5rem;color:var(--dim);margin-top:4px;">Features: ' + res.features.join(', ') + '</div>' : '') +
                 '</div>' +
                 '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
                 '<button class="view-residence-btn btn small" data-res-id="' + res.id + '" style="padding:3px 8px;font-size:0.55rem;cursor:pointer;">View</button>' +
                 '<button class="edit-residence-btn btn small" data-res-id="' + res.id + '" style="padding:3px 8px;font-size:0.55rem;cursor:pointer;">Edit</button>' +
-                '<button class="disassociate-residence-btn btn small" data-res-id="' + res.id + '" style="padding:3px 8px;font-size:0.55rem;background:#8a3020;color:white;border:none;cursor:pointer;">Disassociate</button>' +
+                (!isDemolished ? '<button class="rename-residence-btn btn small" data-res-id="' + res.id + '" style="padding:3px 8px;font-size:0.55rem;cursor:pointer;">Rename</button>' : '') +
+                (!isDemolished ? '<button class="disassociate-residence-btn btn small" data-res-id="' + res.id + '" style="padding:3px 8px;font-size:0.55rem;background:#8a5a20;color:white;border:none;cursor:pointer;">Disassociate</button>' : '') +
                 '</div></div>' +
                 (res.notes ? '<div style="font-size:0.5rem;color:var(--dim);margin-top:6px;padding-top:6px;border-top:1px solid var(--border-light);">' + _escapeHtml(res.notes) + '</div>' : '') +
                 '</div>'
             );
 
-            if (isVacant) {
+            if (isVacant && !isDemolished) {
                 html += (
                     '<div style="margin-top:8px;display:flex;gap:8px;">' +
                     '<button id="assignHouseholdToResidenceBtn" class="btn small primary" style="padding:4px 12px;font-size:0.6rem;background:var(--accent);border:none;color:white;border-radius:4px;cursor:pointer;">Re-assign Household</button>' +
+                    '<button id="findHeirsBtn" class="btn small" style="padding:4px 12px;font-size:0.6rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">Find Heirs</button>' +
                     '</div>'
                 );
             }
 
         } else {
             if (locationId) {
-                var vacantResidences = _getVacantResidences(locationId);
+                var vacantResidences = _residence ? _residence.getVacantResidences(locationId) : [];
                 var hasVacant = vacantResidences.length > 0;
 
                 html += (
@@ -659,7 +650,95 @@
     }
 
     // =========================================================================
-    // 11. MAIN RENDER FUNCTION
+    // 10. RENDER ECONOMY SECTION
+    // =========================================================================
+
+    function renderEconomySection(householdId, household) {
+        var wealth = _getHouseholdWealth(householdId);
+        var debt = _getHouseholdDebt(householdId);
+        var tier = _getHouseholdEconomicTier(householdId);
+        var resources = _getHouseholdResources(householdId);
+        var annualIncome = _calculateAnnualIncome(householdId);
+        var annualExpenses = _calculateAnnualExpenses(householdId);
+        var netChange = annualIncome - annualExpenses;
+        var isBankrupt = _isBankrupt(householdId);
+
+        var html = '<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">';
+        html += '<div style="font-size:0.7rem;color:var(--accent);margin-bottom:12px;">Economy</div>';
+
+        html += '<div style="background:var(--bg3);border-radius:8px;padding:12px;">';
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;text-align:center;">';
+        html += '<div><div style="font-size:0.5rem;color:var(--dim);">Wealth</div><div style="font-size:0.9rem;font-weight:bold;' + (wealth < 0 ? 'color:var(--danger);' : 'color:var(--success);') + '">' + wealth.toLocaleString() + 'g</div></div>';
+        html += '<div><div style="font-size:0.5rem;color:var(--dim);">Debt</div><div style="font-size:0.9rem;font-weight:bold;' + (debt > 0 ? 'color:var(--warn);' : '') + '">' + debt.toLocaleString() + 'g</div></div>';
+        html += '<div><div style="font-size:0.5rem;color:var(--dim);">Tier</div><div style="font-size:0.8rem;font-weight:bold;">' + _escapeHtml(tier.name) + '</div></div>';
+        html += '<div><div style="font-size:0.5rem;color:var(--dim);">Net Change</div><div style="font-size:0.8rem;font-weight:bold;color:' + (netChange >= 0 ? 'var(--success)' : 'var(--danger)') + ';">' + (netChange >= 0 ? '+' : '') + netChange + 'g</div></div>';
+        html += '</div>';
+
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px;text-align:center;font-size:0.55rem;color:var(--dim);">';
+        html += '<div>Food: ' + (resources.food || 0) + '</div>';
+        html += '<div>Livestock: ' + (resources.livestock || 0) + '</div>';
+        html += '<div>Goods: ' + (resources.goods || 0) + '</div>';
+        html += '</div>';
+
+        if (isBankrupt) {
+            html += '<div style="margin-top:8px;padding:6px;background:rgba(244,67,54,0.2);border-radius:4px;color:#f44336;font-size:0.6rem;text-align:center;">⚠ BANKRUPT - Household has negative wealth</div>';
+        }
+
+        html += '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;justify-content:center;">';
+        html += '<button id="viewWealthBtn" class="btn small" style="padding:3px 10px;font-size:0.55rem;cursor:pointer;">Wealth</button>';
+        html += '<button id="viewEconomyBtn" class="btn small" style="padding:3px 10px;font-size:0.55rem;cursor:pointer;">Summary</button>';
+        html += '<button id="processEconomyBtn" class="btn small" style="padding:3px 10px;font-size:0.55rem;cursor:pointer;">Process Year</button>';
+        html += '</div></div></div>';
+
+        return html;
+    }
+
+    // =========================================================================
+    // 11. RENDER SUCCESSION SECTION
+    // =========================================================================
+
+    function renderSuccessionSection(householdId, household) {
+        var head = _getHouseholdHead(householdId);
+        if (!head) {
+            return '<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">' +
+                '<div style="font-size:0.7rem;color:var(--accent);margin-bottom:12px;">Succession</div>' +
+                '<div style="background:var(--bg3);border-radius:8px;padding:12px;text-align:center;color:var(--dim);font-size:0.6rem;">No head of household - succession not applicable</div></div>';
+        }
+
+        var heirs = _getHouseholdHeirs(householdId, head.id, {
+            includeExternal: true,
+            maxAge: 60,
+            minAge: 16
+        });
+
+        var html = '<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">';
+        html += '<div style="font-size:0.7rem;color:var(--accent);margin-bottom:12px;">Succession (' + heirs.length + ' heirs)</div>';
+
+        if (heirs.length === 0) {
+            html += '<div style="background:var(--bg3);border-radius:8px;padding:12px;text-align:center;color:var(--warn);font-size:0.6rem;">No eligible heirs found for this household</div>';
+        } else {
+            html += '<div style="background:var(--bg3);border-radius:8px;padding:12px;">';
+            var displayHeirs = heirs.slice(0, 5);
+            for (var i = 0; i < displayHeirs.length; i++) {
+                var h = displayHeirs[i];
+                var isPrimary = i === 0;
+                html += '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:' + (i < displayHeirs.length - 1 ? '1px solid var(--border-light);' : 'none;') + (isPrimary ? 'background:var(--accent-dim);border-radius:4px;padding:4px 8px;' : '') + '">';
+                html += '<span style="font-size:0.6rem;">' + (isPrimary ? '👑 ' : '') + _escapeHtml(h.name) + ' (' + h.age + ')</span>';
+                html += '<span style="font-size:0.5rem;color:var(--dim);">' + _escapeHtml(h.relation || 'Member') + '</span>';
+                html += '</div>';
+            }
+            if (heirs.length > 5) {
+                html += '<div style="font-size:0.5rem;color:var(--dim);text-align:center;padding-top:4px;">... and ' + (heirs.length - 5) + ' more</div>';
+            }
+            html += '</div>';
+        }
+
+        html += '</div>';
+        return html;
+    }
+
+    // =========================================================================
+    // 12. MAIN RENDER FUNCTION
     // =========================================================================
 
     function renderHouseholdOverviewTab(containerId, householdId) {
@@ -704,6 +783,8 @@
             var wealth = _getHouseholdWealth(householdId);
             var reputation = _getHouseholdReputation(householdId);
             var statusInfo = _getHouseholdStatus(householdId);
+            var powerScore = _getHouseholdPowerScore(householdId);
+            var tier = _getHouseholdEconomicTier(householdId);
 
             var familyMembers = [];
             var staffMembers = [];
@@ -738,6 +819,7 @@
             var statusColor = '#4a9e6a';
             if (statusInfo.status === 'vacant') statusColor = '#ff9800';
             else if (statusInfo.status === 'abandoned') statusColor = '#f44336';
+            else if (statusInfo.status === 'bankrupt') statusColor = '#f44336';
 
             // Build members HTML
             var membersHtml = '';
@@ -786,6 +868,8 @@
                         var m = displayStaff[i];
                         var char = _getCharacterById(m.characterId);
                         if (!char) continue;
+                        var serviceRel = head ? _getServiceBetween(head.id, char.id) : null;
+                        var wage = serviceRel && serviceRel.metadata ? serviceRel.metadata.wage : null;
                         membersHtml +=
                             '<div class="clickable-member" data-character-id="' + char.id + '" style="' +
                             'display:flex;' +
@@ -799,6 +883,7 @@
                             '<span style="font-size:0.65rem;">' + _escapeHtml(char.name) + ' ' + _escapeHtml(char.surname || '') + '</span>' +
                             '<span style="font-size:0.5rem;color:var(--dim);">' +
                             (m.role ? _escapeHtml(m.role) : 'Staff') +
+                            (wage !== null ? ' · ' + wage + 'g' : '') +
                             (m.joinedYear ? '· ' + m.joinedYear : '') +
                             '</span></div>';
                     }
@@ -810,13 +895,13 @@
             }
 
             var residenceHtml = renderResidenceSection(householdId, household, location);
+            var economyHtml = renderEconomySection(householdId, household);
+            var successionHtml = renderSuccessionSection(householdId, household);
 
             var periodIndicator = '';
             if (isNameHistoryActive && periodYear) {
                 var periodText = 'Current name period (since ' + periodYear;
-                if (periodEnd) {
-                    periodText += ' until ' + periodEnd;
-                }
+                if (periodEnd) periodText += ' until ' + periodEnd;
                 periodText += ')';
                 periodIndicator = '<div style="font-size:0.55rem;color:var(--accent-dim);margin-top:2px;">' + periodText + '</div>';
             } else if (totalPeriods > 0) {
@@ -839,10 +924,13 @@
                 'Status: <span style="color:' + statusColor + ';">' + statusInfo.statusMessage + '</span>' +
                 (household.abandonedYear ? ' · Abandoned: ' + household.abandonedYear : '') +
                 (totalPeriods > 1 ? ' · ' + totalPeriods + ' name periods' : '') +
+                ' · Power: ' + powerScore +
+                ' · Tier: ' + _escapeHtml(tier.name) +
                 '</div></div>' +
                 '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
                 '<button id="editHouseholdBtn" class="btn small" style="padding:4px 10px;">Edit</button>' +
                 '<button id="renameHouseholdBtn" class="btn small" style="padding:4px 10px;">Rename</button>' +
+                '<button id="snapshotBtn" class="btn small" style="padding:4px 10px;">Snapshot</button>' +
                 '<button id="deleteHouseholdBtn" class="btn small danger" style="padding:4px 10px;">Delete</button>' +
                 '</div></div>' +
 
@@ -859,15 +947,16 @@
                 '<div class="stat-label" style="font-size:0.55rem;color:var(--dim);">Wealth</div></div>' +
                 '<div class="stat-card" style="background:var(--bg3);padding:12px;border-radius:8px;text-align:center;">' +
                 '<div class="stat-value" style="font-size:1rem;font-weight:bold;color:var(--accent);">' + reputation + '</div>' +
-                '<div class="stat-label" style="font-size:0.55rem;color:var(--dim);">Reputation</div></div></div>' +
+                '<div class="stat-label" style="font-size:0.55rem;color:var(--dim);">Reputation</div></div>' +
+                '</div>' +
 
                 // Info Grid
                 '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px;">' +
                 '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
                 '<div><div style="font-size:0.55rem;color:var(--accent);">Location</div><div style="font-size:0.7rem;">' + (location ? _escapeHtml(location.displayName) : 'None') + '</div></div>' +
                 '<div><div style="font-size:0.55rem;color:var(--accent);">Founded</div><div style="font-size:0.7rem;">' + (household.foundedYear || 'Unknown') + '</div></div>' +
-                '<div><div style="font-size:0.55rem;color:var(--accent);">ID</div><div style="font-size:0.6rem;color:var(--dim);">' + (household.id ? household.id.slice(-8) : 'New') + '</div></div>' +
-                '<div><div style="font-size:0.55rem;color:var(--accent);">Departments</div><div style="font-size:0.7rem;">' + (household.departments ? household.departments.length : 0) + '</div></div>' +
+                '<div><div style="font-size:0.55rem;color:var(--accent);">Power Score</div><div style="font-size:0.7rem;">' + powerScore + '</div></div>' +
+                '<div><div style="font-size:0.55rem;color:var(--accent);">Economic Tier</div><div style="font-size:0.7rem;">' + _escapeHtml(tier.name) + '</div></div>' +
                 '</div></div>' +
 
                 // Members
@@ -883,6 +972,12 @@
 
                 // Residence
                 residenceHtml +
+
+                // Economy
+                economyHtml +
+
+                // Succession
+                successionHtml +
 
                 // Name History
                 historyHtml +
@@ -903,7 +998,7 @@
     }
 
     // =========================================================================
-    // 12. EVENT HANDLERS
+    // 13. EVENT HANDLERS
     // =========================================================================
 
     function _attachOverviewEventHandlers(container, containerId, householdId) {
@@ -924,6 +1019,14 @@
                 _openRenameHouseholdModal(householdId, function() {
                     renderHouseholdOverviewTab(containerId, householdId);
                 });
+            };
+        }
+
+        // Snapshot button
+        var snapshotBtn = document.getElementById('snapshotBtn');
+        if (snapshotBtn) {
+            snapshotBtn.onclick = function() {
+                _openSnapshotModal(householdId, _getCurrentYear(), 'all');
             };
         }
 
@@ -998,7 +1101,18 @@
                     excludeIds: existingMemberIds,
                     onSelect: function(character) {
                         if (character) {
+                            var head = _getHouseholdHead(householdId);
                             _openAddMemberModal(householdId, 'staff', function() {
+                                // Create service relationship for staff
+                                if (head && head.id && character.id && _servant) {
+                                    _servant.createServiceRelationship(head.id, character.id, {
+                                        serviceTypeId: 'household_staff',
+                                        wage: 5,
+                                        startYear: _getCurrentYear(),
+                                        initialQuality: 'average'
+                                    });
+                                    _showToast('Service contract created for ' + character.name, 'success');
+                                }
                                 renderHouseholdOverviewTab(containerId, householdId);
                             });
                         }
@@ -1035,23 +1149,42 @@
             });
         }
 
+        var renameResidenceBtns = container.querySelectorAll('.rename-residence-btn');
+        for (var i = 0; i < renameResidenceBtns.length; i++) {
+            var btn = renameResidenceBtns[i];
+            btn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var resId = this.dataset.resId;
+                _openRenameResidenceModal(resId, function() {
+                    renderHouseholdOverviewTab(containerId, householdId);
+                });
+            });
+        }
+
         var disassociateBtns = container.querySelectorAll('.disassociate-residence-btn');
         for (var i = 0; i < disassociateBtns.length; i++) {
             var btn = disassociateBtns[i];
             btn.addEventListener('click', function(e) {
                 e.stopPropagation();
                 var resId = this.dataset.resId;
-                var residence = _getResidenceById(resId);
+                var residence = _residence ? _residence.getResidenceById(resId) : null;
                 var resName = residence ? residence.name : 'this residence';
                 var household = _getHousehold(householdId);
 
                 _confirmDialog('Disassociate ' + resName + ' from ' + (household ? household.name : 'this household') + '?\n\nThe residence will become vacant.', 'Disassociate Residence', function() {
-                    var result = _disassociateResidenceFromHousehold(resId, 'household_disassociated', _getCurrentYear());
-                    if (result) {
-                        _showToast('Residence disassociated from ' + (household ? household.name : 'household'), 'success');
-                        renderHouseholdOverviewTab(containerId, householdId);
-                    } else {
-                        _showToast('Failed to disassociate residence', 'error');
+                    if (_residence && typeof _residence.endResidenceAssociation === 'function') {
+                        var result = _residence.endResidenceAssociation(
+                            resId,
+                            householdId,
+                            _getCurrentYear(),
+                            'household_disassociated'
+                        );
+                        if (result) {
+                            _showToast('Residence disassociated from ' + (household ? household.name : 'household'), 'success');
+                            renderHouseholdOverviewTab(containerId, householdId);
+                        } else {
+                            _showToast('Failed to disassociate residence', 'error');
+                        }
                     }
                 });
             });
@@ -1065,6 +1198,20 @@
                     _openAssignResidenceToHouseholdModal(householdId, function() {
                         renderHouseholdOverviewTab(containerId, householdId);
                     });
+                }
+            };
+        }
+
+        var findHeirsBtn = document.getElementById('findHeirsBtn');
+        if (findHeirsBtn) {
+            findHeirsBtn.onclick = function() {
+                if (typeof window.openResidenceHeirFinderModal === 'function') {
+                    var resId = this.dataset.resId;
+                    if (resId) {
+                        window.openResidenceHeirFinderModal(resId);
+                    }
+                } else {
+                    _showToast('Heir finder not available', 'error');
                 }
             };
         }
@@ -1106,6 +1253,35 @@
             };
         }
 
+        // =========================================================================
+        // ECONOMY EVENT HANDLERS
+        // =========================================================================
+
+        var viewWealthBtn = document.getElementById('viewWealthBtn');
+        if (viewWealthBtn) {
+            viewWealthBtn.onclick = function() {
+                _openWealthModal(householdId, function() {
+                    renderHouseholdOverviewTab(containerId, householdId);
+                });
+            };
+        }
+
+        var viewEconomyBtn = document.getElementById('viewEconomyBtn');
+        if (viewEconomyBtn) {
+            viewEconomyBtn.onclick = function() {
+                _openEconomicSummaryModal(householdId);
+            };
+        }
+
+        var processEconomyBtn = document.getElementById('processEconomyBtn');
+        if (processEconomyBtn) {
+            processEconomyBtn.onclick = function() {
+                _openAnnualProcessingModal(householdId, function() {
+                    renderHouseholdOverviewTab(containerId, householdId);
+                });
+            };
+        }
+
         // Clickable members
         var clickableMembers = container.querySelectorAll('.clickable-member');
         for (var i = 0; i < clickableMembers.length; i++) {
@@ -1134,7 +1310,7 @@
     }
 
     // =========================================================================
-    // 13. EXPORTS
+    // 14. EXPORTS
     // =========================================================================
 
     window.renderHouseholdOverviewTab = renderHouseholdOverviewTab;
@@ -1142,5 +1318,7 @@
     window.openCreateResidenceModal = openCreateResidenceModal;
     window.openAssignVacantResidenceModal = openAssignVacantResidenceModal;
     window.renderResidenceSection = renderResidenceSection;
+    window.renderEconomySection = renderEconomySection;
+    window.renderSuccessionSection = renderSuccessionSection;
 
 })();

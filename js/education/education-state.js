@@ -9,7 +9,7 @@
  * - UI state management
  * - NO business logic
  * 
- * UPDATED: Added specializationCategory, taughtRoles, and role-based caching
+ * UPDATED: Added religionId, religionName, isReligiousSchool fields
  * 
  * DEPENDENCIES:
  *   - accessors.js (getCharacters, getPlaces)
@@ -40,8 +40,9 @@
             byType: new Map(),
             byOwner: new Map(),
             byOwnershipType: new Map(),
-            byRole: new Map(),           // NEW: role ID → institutions
-            bySpecializationCategory: new Map()  // NEW: category → institutions
+            byRole: new Map(),
+            bySpecializationCategory: new Map(),
+            byReligion: new Map()  // NEW: religion ID → institutions
         },
         uiState: {
             selectedInstitutionId: null,
@@ -50,8 +51,9 @@
                 location: null,
                 minReputation: null,
                 ownershipType: null,
-                roleCategory: null,      // NEW: filter by category
-                taughtRole: null         // NEW: filter by specific role
+                roleCategory: null,
+                taughtRole: null,
+                religionId: null  // NEW: filter by religion
             },
             viewMode: 'list'
         },
@@ -133,14 +135,34 @@
         if (!institution.history) institution.history = [];
         if (!institution.headmasterHistory) institution.headmasterHistory = [];
 
-        // ================================================================
-        // NEW: Specialization fields
-        // ================================================================
+        // Specialization fields
         if (institution.specializationCategory === undefined) {
             institution.specializationCategory = null;
         }
         if (institution.isSpecialized === undefined) {
             institution.isSpecialized = false;
+        }
+
+        // ================================================================
+        // NEW: Religion fields
+        // ================================================================
+        if (institution.religionId === undefined) {
+            institution.religionId = null;
+        }
+        if (institution.religionName === undefined) {
+            institution.religionName = null;
+        }
+        if (institution.isReligiousSchool === undefined) {
+            institution.isReligiousSchool = false;
+        }
+        if (institution.clergyHeadId === undefined) {
+            institution.clergyHeadId = null;
+        }
+        if (institution.teachesDoctrine === undefined) {
+            institution.teachesDoctrine = false;
+        }
+        if (institution.hasMandatoryWorship === undefined) {
+            institution.hasMandatoryWorship = false;
         }
 
         // Tuition fields
@@ -199,6 +221,26 @@
         if (institution.studentCount === undefined) {
             institution.studentCount = institution.students ? institution.students.length : 0;
         }
+
+        // Demolition fields
+        if (institution.status === undefined) {
+            institution.status = 'active';
+        }
+        if (institution.demolishedAt === undefined) {
+            institution.demolishedAt = null;
+        }
+        if (institution.demolishedReason === undefined) {
+            institution.demolishedReason = null;
+        }
+        if (institution.destroyedBy === undefined) {
+            institution.destroyedBy = null;
+        }
+        if (institution.disasterId === undefined) {
+            institution.disasterId = null;
+        }
+        if (institution.demolishedRecord === undefined) {
+            institution.demolishedRecord = null;
+        }
     }
 
     function _rebuildCaches() {
@@ -207,8 +249,9 @@
         _state.cache.byType.clear();
         _state.cache.byOwner.clear();
         _state.cache.byOwnershipType.clear();
-        _state.cache.byRole.clear();              // NEW
-        _state.cache.bySpecializationCategory.clear();  // NEW
+        _state.cache.byRole.clear();
+        _state.cache.bySpecializationCategory.clear();
+        _state.cache.byReligion.clear();  // NEW
 
         for (var i = 0; i < _state.institutions.length; i++) {
             var inst = _state.institutions[i];
@@ -247,9 +290,7 @@
             }
             _state.cache.byOwnershipType.get(inst.ownershipType).push(inst);
 
-            // ================================================================
-            // NEW: By taught role
-            // ================================================================
+            // By taught role
             if (inst.taughtRoles && inst.taughtRoles.length > 0) {
                 for (var j = 0; j < inst.taughtRoles.length; j++) {
                     var roleId = inst.taughtRoles[j];
@@ -260,15 +301,23 @@
                 }
             }
 
-            // ================================================================
-            // NEW: By specialization category
-            // ================================================================
+            // By specialization category
             if (inst.specializationCategory) {
                 var cat = inst.specializationCategory;
                 if (!_state.cache.bySpecializationCategory.has(cat)) {
                     _state.cache.bySpecializationCategory.set(cat, []);
                 }
                 _state.cache.bySpecializationCategory.get(cat).push(inst);
+            }
+
+            // ================================================================
+            // NEW: By religion
+            // ================================================================
+            if (inst.religionId) {
+                if (!_state.cache.byReligion.has(inst.religionId)) {
+                    _state.cache.byReligion.set(inst.religionId, []);
+                }
+                _state.cache.byReligion.get(inst.religionId).push(inst);
             }
         }
     }
@@ -391,9 +440,31 @@
     }
 
     // ================================================================
-    // NEW: Role-based queries
+    // NEW: Religious school queries
     // ================================================================
 
+    function getReligiousSchools() {
+        return getInstitutionsByOwnershipType('religious');
+    }
+
+    function getInstitutionsByReligion(religionId) {
+        _initializeState();
+        if (!religionId) return [];
+        var result = _state.cache.byReligion.get(religionId) || [];
+        for (var i = 0; i < result.length; i++) {
+            _ensureInstitutionInitialized(result[i]);
+        }
+        return result;
+    }
+
+    function getReligiousSchoolsByReligion(religionId) {
+        var all = getInstitutionsByReligion(religionId);
+        return all.filter(function(inst) {
+            return inst.ownershipType === 'religious' || inst.isReligiousSchool === true;
+        });
+    }
+
+    // Role-based queries
     function getInstitutionsByTaughtRole(roleId) {
         _initializeState();
         if (!roleId) return [];
@@ -418,7 +489,6 @@
         _initializeState();
         if (!categoryId) return [];
 
-        // Find all institutions where ANY taught role belongs to the category
         var all = getAllInstitutions();
         var result = [];
 
@@ -426,7 +496,6 @@
             var inst = all[i];
             if (!inst.taughtRoles || inst.taughtRoles.length === 0) continue;
 
-            // Check if any taught role belongs to this category
             var hasRoleInCategory = inst.taughtRoles.some(function(roleId) {
                 var role = _getRoleById(roleId);
                 return role && role.category === categoryId;
@@ -440,7 +509,6 @@
         return result;
     }
 
-    // Helper to get role by ID (uses RoleState if available)
     function _getRoleById(roleId) {
         if (typeof window.RoleState !== 'undefined' && window.RoleState.getRole) {
             return window.RoleState.getRole(roleId);
@@ -485,8 +553,45 @@
         var institution = _state.cache.byId.get(id);
         if (!institution) return null;
 
+        // ================================================================
+        // NEW: Handle religion fields
+        // ================================================================
+        if (updates.religionId !== undefined) {
+            institution.religionId = updates.religionId;
+            // If religionId is set, auto-set isReligiousSchool
+            if (updates.religionId) {
+                institution.isReligiousSchool = true;
+            }
+        }
+
+        if (updates.religionName !== undefined) {
+            institution.religionName = updates.religionName;
+        }
+
+        if (updates.isReligiousSchool !== undefined) {
+            institution.isReligiousSchool = updates.isReligiousSchool;
+        }
+
+        if (updates.clergyHeadId !== undefined) {
+            institution.clergyHeadId = updates.clergyHeadId;
+        }
+
+        if (updates.teachesDoctrine !== undefined) {
+            institution.teachesDoctrine = updates.teachesDoctrine;
+        }
+
+        if (updates.hasMandatoryWorship !== undefined) {
+            institution.hasMandatoryWorship = updates.hasMandatoryWorship;
+        }
+
+        // Apply other updates
         for (var key in updates) {
             if (updates.hasOwnProperty(key)) {
+                // Skip religion fields already handled
+                if (['religionId', 'religionName', 'isReligiousSchool', 'clergyHeadId', 
+                     'teachesDoctrine', 'hasMandatoryWorship'].indexOf(key) !== -1) {
+                    continue;
+                }
                 institution[key] = updates[key];
             }
         }
@@ -545,6 +650,10 @@
         getInstitutionsByOwnershipType: getInstitutionsByOwnershipType,
         getPublicSchools: getPublicSchools,
         getPrivateSchools: getPrivateSchools,
+        // NEW: Religious school queries
+        getReligiousSchools: getReligiousSchools,
+        getInstitutionsByReligion: getInstitutionsByReligion,
+        getReligiousSchoolsByReligion: getReligiousSchoolsByReligion,
         getInstitutionsByTaughtRole: getInstitutionsByTaughtRole,
         getInstitutionsBySpecializationCategory: getInstitutionsBySpecializationCategory,
         getInstitutionsTeachingRoleCategory: getInstitutionsTeachingRoleCategory,
@@ -597,6 +706,9 @@
             getInstitutionsByOwnershipType: getInstitutionsByOwnershipType,
             getPublicSchools: getPublicSchools,
             getPrivateSchools: getPrivateSchools,
+            getReligiousSchools: getReligiousSchools,
+            getInstitutionsByReligion: getInstitutionsByReligion,
+            getReligiousSchoolsByReligion: getReligiousSchoolsByReligion,
             getInstitutionsByTaughtRole: getInstitutionsByTaughtRole,
             getInstitutionsBySpecializationCategory: getInstitutionsBySpecializationCategory,
             getInstitutionsTeachingRoleCategory: getInstitutionsTeachingRoleCategory

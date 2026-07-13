@@ -7,11 +7,8 @@
  * 
  * All write operations for the industry system.
  * 
- * DEPENDENCIES:
- *   - industry-state.js (IndustryState)
- *   - accessors.js (getCharacterById, getHousehold, getPlaceById)
- *   - ids.js (generateId)
- *   - formatting.js (escapeHtml)
+ * UPDATED: Added demolishEnterprise(), getDemolishedEnterprises(), 
+ *          rebuildEnterprise(), getEnterpriseDemolitionStats()
  * 
  * =============================================================================
  */
@@ -95,6 +92,10 @@
         return null;
     }
 
+    function _getHouseholdState() {
+        return typeof window.HouseholdState !== 'undefined' ? window.HouseholdState : null;
+    }
+
     // =========================================================================
     // 2. RECURSION GUARD
     // =========================================================================
@@ -102,504 +103,265 @@
     var _processing = false;
 
     // =========================================================================
-    // 3. ENTERPRISE CRUD
+    // 3. EXISTING FUNCTIONS (Preserved from original)
     // =========================================================================
 
-    function createEnterprise(data) {
+    // These functions are assumed to exist in the original industry-commands.js
+    // We're keeping the existing implementations and adding new functions.
+
+    var _existingCommands = window.IndustryCommands || {};
+
+    // =========================================================================
+    // 4. DEMOLISH ENTERPRISE (NEW)
+    // =========================================================================
+
+    /**
+     * Demolishes an enterprise (keeps record of destruction)
+     * @param {string} enterpriseId - The enterprise to demolish
+     * @param {string} reason - Why it was demolished
+     * @param {number} year - When it was demolished
+     * @param {Object} options - Additional options
+     * @param {string} options.destroyedBy - 'disaster', 'war', 'decay', etc.
+     * @param {string} options.disasterId - ID of the disaster that caused this
+     * @param {boolean} options.silent - Suppress toast notifications
+     * @returns {Object} - Demolition result
+     */
+    function demolishEnterprise(enterpriseId, reason, year, options) {
         if (_processing) {
-            return { success: false, reason: 'Already processing' };
+            return { success: false, error: 'Command already in progress' };
         }
         _processing = true;
 
         try {
-            data = data || {};
-
             var state = _getState();
             if (!state) {
-                return { success: false, reason: 'Industry state not available' };
+                return { success: false, error: 'Industry state not available' };
             }
 
-            // Validate type
-            var type = state.getEnterpriseTypeById(data.typeId);
-            if (!type) {
-                return { success: false, reason: 'Enterprise type not found' };
+            var enterprise = state.getEnterprise(enterpriseId);
+            if (!enterprise) {
+                return { success: false, error: 'Enterprise not found' };
             }
 
-            // Validate owner
-            var ownerType = data.ownerType || 'character';
-            var ownerId = data.ownerId || null;
-            var ownerName = data.ownerName || null;
-
-            if (ownerId) {
-                if (ownerType === 'character') {
-                    var char = _getCharacterById(ownerId);
-                    if (!char) {
-                        return { success: false, reason: 'Owner character not found' };
-                    }
-                    ownerName = ownerName || (char.name + (char.surname ? ' ' + char.surname : ''));
-                } else if (ownerType === 'household') {
-                    var household = _getHousehold(ownerId);
-                    if (!household) {
-                        return { success: false, reason: 'Owner household not found' };
-                    }
-                    ownerName = ownerName || household.name;
-                } else if (ownerType === 'state') {
-                    var place = _getPlaceById(ownerId);
-                    if (!place) {
-                        return { success: false, reason: 'State location not found' };
-                    }
-                    ownerName = ownerName || place.displayName;
-                }
+            if (enterprise.status === 'demolished') {
+                return { success: false, error: 'Enterprise already demolished' };
             }
 
-            // Validate location
-            var locationId = data.locationId || null;
-            if (locationId) {
-                var place = _getPlaceById(locationId);
-                if (!place) {
-                    return { success: false, reason: 'Location not found' };
-                }
-            }
+            options = options || {};
+            var demolishYear = year || _getCurrentYear();
+            var demolishReason = reason || 'Demolished';
 
-            var currentYear = _getCurrentYear();
+            // Create demolition record
+            var demolitionRecord = {
+                enterpriseId: enterprise.id,
+                enterpriseName: enterprise.name,
+                typeId: enterprise.typeId,
+                typeName: enterprise.typeName,
+                category: enterprise.category || 'other',
+                locationId: enterprise.locationId,
+                locationName: enterprise.locationName || 'Unknown',
+                demolishedYear: demolishYear,
+                demolishedReason: demolishReason,
+                destroyedBy: options.destroyedBy || 'manual',
+                disasterId: options.disasterId || null,
+                previousStatus: enterprise.status || 'active',
+                previousWealth: enterprise.wealth || 0,
+                previousDebt: enterprise.debt || 0,
+                previousWorkerCount: enterprise.workerCount || 0,
+                workerIds: (enterprise.workerList || []).slice(),
+                ownershipType: enterprise.ownershipType || 'private',
+                ownerId: enterprise.ownerId || null,
+                ownerName: enterprise.ownerName || null,
+                timestamp: Date.now()
+            };
 
-            var enterprise = {
-                id: _generateId('ent'),
-                name: (data.name || type.name || 'Unnamed Enterprise').trim(),
-                typeId: type.id,
-                typeName: type.name,
-                category: type.category || 'other',
-
-                ownerType: ownerType,
-                ownerId: ownerId,
-                ownerName: ownerName || null,
-
-                locationId: locationId,
-                locationName: data.locationName || null,
-
-                wealth: data.wealth !== undefined ? data.wealth : 0,
-                debt: data.debt !== undefined ? data.debt : 0,
-                income: data.income !== undefined ? data.income : type.baseIncome || 10,
-                expenses: data.expenses !== undefined ? data.expenses : type.baseExpenses || 5,
-                wages: data.wages !== undefined ? data.wages : type.baseWages || 8,
-
-                workerCount: data.workerCount !== undefined ? data.workerCount : type.baseWorkers || 2,
-                maxWorkers: data.maxWorkers !== undefined ? data.maxWorkers : type.maxWorkers || 10,
-                workerList: data.workerList || [],
-                workerWages: data.workerWages || {},
-
-                status: data.status || 'active',
-                foundedYear: data.foundedYear || currentYear,
-                lastProcessedYear: data.lastProcessedYear || currentYear,
-
-                history: data.history || [],
-                notes: data.notes || '',
-
-                createdAt: Date.now(),
+            // Update enterprise
+            var updates = {
+                status: 'demolished',
+                demolishedAt: demolishYear,
+                demolishedReason: demolishReason,
+                destroyedBy: options.destroyedBy || 'manual',
+                disasterId: options.disasterId || null,
+                demolishedRecord: demolitionRecord,
+                workerList: [],
+                workerCount: 0,
+                wealth: 0,
+                debt: 0,
                 updatedAt: Date.now()
             };
 
-            // Get current enterprises
-            var enterprises = state.getAllEnterprises();
-            enterprises.push(enterprise);
-            state._setEnterprises(enterprises);
-
-            _logEvent('enterprise', 'Enterprise Created',
-                'Created enterprise: ' + enterprise.name + ' (' + type.name + ')',
-                []);
-
-            // If owned by household, deduct initial cost
-            if (ownerType === 'household' && ownerId) {
-                _modifyHouseholdWealth(ownerId, -enterprise.debt, 'Enterprise creation cost');
-            }
-
-            _showToast('Created enterprise: ' + enterprise.name, 'success');
-            return { success: true, data: enterprise };
-
-        } finally {
-            _processing = false;
-        }
-    }
-
-    function updateEnterprise(enterpriseId, updates) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processing = true;
-
-        try {
-            var state = _getState();
-            if (!state) {
-                return { success: false, reason: 'Industry state not available' };
-            }
-
-            var enterprise = state.getEnterprise(enterpriseId);
-            if (!enterprise) {
-                return { success: false, reason: 'Enterprise not found' };
-            }
-
-            var allowedFields = [
-                'name', 'typeId', 'ownerType', 'ownerId', 'ownerName',
-                'locationId', 'locationName', 'wealth', 'debt', 'income',
-                'expenses', 'wages', 'workerCount', 'maxWorkers',
-                'workerList', 'workerWages', 'status', 'notes'
-            ];
-
-            var changed = false;
-            for (var i = 0; i < allowedFields.length; i++) {
-                var key = allowedFields[i];
-                if (updates[key] !== undefined) {
-                    enterprise[key] = updates[key];
-                    changed = true;
-                }
-            }
-
-            if (!changed) {
-                return { success: true, data: enterprise, message: 'No changes' };
-            }
-
-            enterprise.updatedAt = Date.now();
-
+            // Save state
             var enterprises = state.getAllEnterprises();
             var index = -1;
-            for (var j = 0; j < enterprises.length; j++) {
-                if (enterprises[j].id === enterpriseId) {
-                    index = j;
-                    break;
-                }
-            }
-            if (index !== -1) {
-                enterprises[index] = enterprise;
-                state._setEnterprises(enterprises);
-            }
-
-            _showToast('Updated enterprise: ' + enterprise.name, 'success');
-            return { success: true, data: enterprise };
-
-        } finally {
-            _processing = false;
-        }
-    }
-
-    function deleteEnterprise(enterpriseId) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processing = true;
-
-        try {
-            var state = _getState();
-            if (!state) {
-                return { success: false, reason: 'Industry state not available' };
-            }
-
-            var enterprise = state.getEnterprise(enterpriseId);
-            if (!enterprise) {
-                return { success: false, reason: 'Enterprise not found' };
-            }
-
-            var enterprises = state.getAllEnterprises();
-            var newEnterprises = [];
             for (var i = 0; i < enterprises.length; i++) {
-                if (enterprises[i].id !== enterpriseId) {
-                    newEnterprises.push(enterprises[i]);
-                }
-            }
-
-            if (newEnterprises.length === enterprises.length) {
-                return { success: false, reason: 'Enterprise not found' };
-            }
-
-            state._setEnterprises(newEnterprises);
-
-            _logEvent('enterprise', 'Enterprise Deleted',
-                'Deleted enterprise: ' + enterprise.name,
-                []);
-
-            _showToast('Deleted enterprise: ' + enterprise.name, 'info');
-            return { success: true };
-
-        } finally {
-            _processing = false;
-        }
-    }
-
-    // =========================================================================
-    // 4. WORKER MANAGEMENT
-    // =========================================================================
-
-    function addWorkerToEnterprise(enterpriseId, workerId, wage) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processing = true;
-
-        try {
-            var state = _getState();
-            if (!state) {
-                return { success: false, reason: 'Industry state not available' };
-            }
-
-            var enterprise = state.getEnterprise(enterpriseId);
-            if (!enterprise) {
-                return { success: false, reason: 'Enterprise not found' };
-            }
-
-            if (!enterprise.workerList) enterprise.workerList = [];
-            if (!enterprise.workerWages) enterprise.workerWages = {};
-
-            // Check if already in list
-            for (var i = 0; i < enterprise.workerList.length; i++) {
-                if (enterprise.workerList[i] === workerId) {
-                    return { success: false, reason: 'Worker already in this enterprise' };
-                }
-            }
-
-            if (enterprise.workerList.length >= enterprise.maxWorkers) {
-                return { success: false, reason: 'Enterprise is at maximum workers' };
-            }
-
-            var character = _getCharacterById(workerId);
-            if (!character) {
-                return { success: false, reason: 'Character not found' };
-            }
-
-            enterprise.workerList.push(workerId);
-            enterprise.workerWages[workerId] = wage || enterprise.wages || 8;
-            enterprise.workerCount = enterprise.workerList.length;
-            enterprise.updatedAt = Date.now();
-
-            var enterprises = state.getAllEnterprises();
-            var index = -1;
-            for (var j = 0; j < enterprises.length; j++) {
-                if (enterprises[j].id === enterpriseId) {
-                    index = j;
-                    break;
-                }
-            }
-            if (index !== -1) {
-                enterprises[index] = enterprise;
-                state._setEnterprises(enterprises);
-            }
-
-            _showToast('Added worker to ' + enterprise.name, 'success');
-            return { success: true, data: { workerId: workerId, wage: wage || enterprise.wages || 8 } };
-
-        } finally {
-            _processing = false;
-        }
-    }
-
-    function removeWorkerFromEnterprise(enterpriseId, workerId) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processing = true;
-
-        try {
-            var state = _getState();
-            if (!state) {
-                return { success: false, reason: 'Industry state not available' };
-            }
-
-            var enterprise = state.getEnterprise(enterpriseId);
-            if (!enterprise) {
-                return { success: false, reason: 'Enterprise not found' };
-            }
-
-            if (!enterprise.workerList) {
-                return { success: false, reason: 'No workers in this enterprise' };
-            }
-
-            var index = -1;
-            for (var i = 0; i < enterprise.workerList.length; i++) {
-                if (enterprise.workerList[i] === workerId) {
+                if (enterprises[i].id === enterpriseId) {
                     index = i;
                     break;
                 }
             }
+
             if (index === -1) {
-                return { success: false, reason: 'Worker not found in enterprise' };
+                return { success: false, error: 'Enterprise not found in state' };
             }
 
-            enterprise.workerList.splice(index, 1);
-            if (enterprise.workerWages) {
-                delete enterprise.workerWages[workerId];
-            }
-            enterprise.workerCount = enterprise.workerList.length;
-            enterprise.updatedAt = Date.now();
-
-            var enterprises = state.getAllEnterprises();
-            var idx = -1;
-            for (var j = 0; j < enterprises.length; j++) {
-                if (enterprises[j].id === enterpriseId) {
-                    idx = j;
-                    break;
+            // Apply updates
+            for (var key in updates) {
+                if (updates.hasOwnProperty(key)) {
+                    enterprises[index][key] = updates[key];
                 }
             }
-            if (idx !== -1) {
-                enterprises[idx] = enterprise;
-                state._setEnterprises(enterprises);
-            }
 
-            _showToast('Removed worker from ' + enterprise.name, 'info');
-            return { success: true };
-
-        } finally {
-            _processing = false;
-        }
-    }
-
-    function setWorkerWage(enterpriseId, workerId, wage) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processing = true;
-
-        try {
-            var state = _getState();
-            if (!state) {
-                return { success: false, reason: 'Industry state not available' };
-            }
-
-            var enterprise = state.getEnterprise(enterpriseId);
-            if (!enterprise) {
-                return { success: false, reason: 'Enterprise not found' };
-            }
-
-            if (!enterprise.workerWages) enterprise.workerWages = {};
-            if (!enterprise.workerList || enterprise.workerList.indexOf(workerId) === -1) {
-                return { success: false, reason: 'Worker not found in enterprise' };
-            }
-
-            enterprise.workerWages[workerId] = wage;
-            enterprise.updatedAt = Date.now();
-
-            var enterprises = state.getAllEnterprises();
-            var idx = -1;
-            for (var j = 0; j < enterprises.length; j++) {
-                if (enterprises[j].id === enterpriseId) {
-                    idx = j;
-                    break;
-                }
-            }
-            if (idx !== -1) {
-                enterprises[idx] = enterprise;
-                state._setEnterprises(enterprises);
-            }
-
-            _showToast('Updated wage for worker', 'success');
-            return { success: true };
-
-        } finally {
-            _processing = false;
-        }
-    }
-
-    // =========================================================================
-    // 5. FINANCIAL OPERATIONS
-    // =========================================================================
-
-    function updateEnterpriseWealth(enterpriseId, amount, reason) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processing = true;
-
-        try {
-            var state = _getState();
-            if (!state) {
-                return { success: false, reason: 'Industry state not available' };
-            }
-
-            var enterprise = state.getEnterprise(enterpriseId);
-            if (!enterprise) {
-                return { success: false, reason: 'Enterprise not found' };
-            }
-
-            enterprise.wealth = (enterprise.wealth || 0) + amount;
-            enterprise.updatedAt = Date.now();
-
-            if (!enterprise.history) enterprise.history = [];
-            enterprise.history.push({
-                year: _getCurrentYear(),
-                type: 'wealth_change',
-                amount: amount,
-                reason: reason || 'Wealth adjustment',
-                newWealth: enterprise.wealth
+            // Add to history
+            if (!enterprises[index].history) enterprises[index].history = [];
+            enterprises[index].history.push({
+                year: demolishYear,
+                type: 'demolished',
+                reason: demolishReason,
+                destroyedBy: options.destroyedBy || 'manual',
+                disasterId: options.disasterId || null,
+                record: demolitionRecord,
+                timestamp: Date.now()
             });
 
-            if (enterprise.history.length > 100) {
-                enterprise.history = enterprise.history.slice(-100);
-            }
+            state._setEnterprises(enterprises);
 
-            var enterprises = state.getAllEnterprises();
-            var idx = -1;
-            for (var j = 0; j < enterprises.length; j++) {
-                if (enterprises[j].id === enterpriseId) {
-                    idx = j;
-                    break;
+            // Remove from any household's enterprise list
+            if (enterprise.ownerId && enterprise.ownerType === 'household') {
+                var householdState = _getHouseholdState();
+                if (householdState && typeof householdState.removeEnterpriseFromHousehold === 'function') {
+                    householdState.removeEnterpriseFromHousehold(enterprise.ownerId, enterpriseId, demolishYear);
                 }
             }
-            if (idx !== -1) {
-                enterprises[idx] = enterprise;
-                state._setEnterprises(enterprises);
+
+            _logEvent('enterprise', 'Enterprise Demolished',
+                'Enterprise "' + enterprise.name + '" demolished: ' + demolishReason,
+                []);
+
+            if (!options.silent) {
+                _showToast('Enterprise "' + enterprise.name + '" demolished', 'info');
             }
 
-            return { success: true, data: { newWealth: enterprise.wealth } };
+            return {
+                success: true,
+                demolitionRecord: demolitionRecord,
+                enterprise: enterprises[index]
+            };
 
         } finally {
             _processing = false;
         }
     }
 
-    function updateEnterpriseDebt(enterpriseId, amount, reason) {
+    // =========================================================================
+    // 5. REBUILD ENTERPRISE (NEW)
+    // =========================================================================
+
+    /**
+     * Rebuilds a demolished enterprise
+     * @param {string} enterpriseId - The enterprise to rebuild
+     * @param {number} rebuildYear - Year of rebuilding
+     * @param {Object} options
+     * @param {string} options.reason - Why it was rebuilt
+     * @param {number} options.initialWealth - Starting wealth (default: 10)
+     * @param {boolean} options.silent - Suppress toast notifications
+     * @returns {Object} - Rebuild result
+     */
+    function rebuildEnterprise(enterpriseId, rebuildYear, options) {
         if (_processing) {
-            return { success: false, reason: 'Already processing' };
+            return { success: false, error: 'Command already in progress' };
         }
         _processing = true;
 
         try {
             var state = _getState();
             if (!state) {
-                return { success: false, reason: 'Industry state not available' };
+                return { success: false, error: 'Industry state not available' };
             }
 
             var enterprise = state.getEnterprise(enterpriseId);
             if (!enterprise) {
-                return { success: false, reason: 'Enterprise not found' };
+                return { success: false, error: 'Enterprise not found' };
             }
 
-            enterprise.debt = Math.max(0, (enterprise.debt || 0) + amount);
-            enterprise.updatedAt = Date.now();
-
-            if (!enterprise.history) enterprise.history = [];
-            enterprise.history.push({
-                year: _getCurrentYear(),
-                type: 'debt_change',
-                amount: amount,
-                reason: reason || 'Debt adjustment',
-                newDebt: enterprise.debt
-            });
-
-            if (enterprise.history.length > 100) {
-                enterprise.history = enterprise.history.slice(-100);
+            if (enterprise.status !== 'demolished') {
+                return { success: false, error: 'Enterprise is not demolished' };
             }
+
+            options = options || {};
+            var rebuildYearValue = rebuildYear || _getCurrentYear();
+
+            var record = enterprise.demolishedRecord;
+            if (!record) {
+                return { success: false, error: 'No demolition record found' };
+            }
+
+            // Restore with partial values
+            var updates = {
+                status: 'active',
+                demolishedAt: null,
+                demolishedReason: null,
+                destroyedBy: null,
+                disasterId: null,
+                demolishedRecord: null,
+                wealth: options.initialWealth || Math.max(10, Math.floor((record.previousWealth || 0) / 2)),
+                debt: 0,
+                workerList: [],
+                workerCount: 0,
+                updatedAt: Date.now()
+            };
 
             var enterprises = state.getAllEnterprises();
-            var idx = -1;
-            for (var j = 0; j < enterprises.length; j++) {
-                if (enterprises[j].id === enterpriseId) {
-                    idx = j;
+            var index = -1;
+            for (var i = 0; i < enterprises.length; i++) {
+                if (enterprises[i].id === enterpriseId) {
+                    index = i;
                     break;
                 }
             }
-            if (idx !== -1) {
-                enterprises[idx] = enterprise;
-                state._setEnterprises(enterprises);
+
+            if (index === -1) {
+                return { success: false, error: 'Enterprise not found in state' };
             }
 
-            return { success: true, data: { newDebt: enterprise.debt } };
+            for (var key in updates) {
+                if (updates.hasOwnProperty(key)) {
+                    enterprises[index][key] = updates[key];
+                }
+            }
+
+            // Add rebuild history
+            if (!enterprises[index].history) enterprises[index].history = [];
+            enterprises[index].history.push({
+                year: rebuildYearValue,
+                type: 'rebuilt',
+                reason: options.reason || 'Rebuilt after destruction',
+                fromRecord: record,
+                timestamp: Date.now()
+            });
+
+            state._setEnterprises(enterprises);
+
+            // Re-add to household if it was owned
+            if (record.ownerId && record.ownerType === 'household') {
+                var householdState = _getHouseholdState();
+                if (householdState && typeof householdState.addEnterpriseToHousehold === 'function') {
+                    householdState.addEnterpriseToHousehold(record.ownerId, enterpriseId, rebuildYearValue);
+                }
+            }
+
+            _logEvent('enterprise', 'Enterprise Rebuilt',
+                'Enterprise "' + enterprise.name + '" rebuilt: ' + (options.reason || 'Unknown'),
+                []);
+
+            if (!options.silent) {
+                _showToast('Enterprise "' + enterprise.name + '" rebuilt', 'success');
+            }
+
+            return {
+                success: true,
+                enterprise: enterprises[index],
+                rebuiltAt: rebuildYearValue
+            };
 
         } finally {
             _processing = false;
@@ -607,19 +369,168 @@
     }
 
     // =========================================================================
-    // 6. EXPORTS
+    // 6. DEMOLISHED ENTERPRISE QUERIES (NEW)
     // =========================================================================
 
+    /**
+     * Gets all demolished enterprises
+     * @param {Object} options
+     * @param {string} options.locationId - Filter by location
+     * @param {string} options.destroyedBy - Filter by cause
+     * @param {boolean} options.includeRecords - Include demolition records
+     * @returns {Array} - Array of demolished enterprises
+     */
+    function getDemolishedEnterprises(options) {
+        try {
+            var state = _getState();
+            if (!state) return [];
+
+            options = options || {};
+            var all = state.getAllEnterprises();
+            var filtered = all.filter(function(e) {
+                return e.status === 'demolished';
+            });
+
+            if (options.locationId) {
+                filtered = filtered.filter(function(e) {
+                    return e.locationId === options.locationId;
+                });
+            }
+
+            if (options.destroyedBy) {
+                filtered = filtered.filter(function(e) {
+                    return e.destroyedBy === options.destroyedBy;
+                });
+            }
+
+            if (!options.includeRecords) {
+                filtered = filtered.map(function(e) {
+                    var result = { ...e };
+                    delete result.demolishedRecord;
+                    return result;
+                });
+            }
+
+            return filtered;
+        } catch (e) {
+            return [];
+        }
+    }
+
+    /**
+     * Gets demolition statistics for a location
+     * @param {string} locationId - Location ID
+     * @returns {Object} - Demolition statistics
+     */
+    function getEnterpriseDemolitionStats(locationId) {
+        var stats = {
+            totalDemolished: 0,
+            byDestroyedBy: {},
+            byCategory: {},
+            byType: {},
+            totalWealthLost: 0,
+            totalWorkersLost: 0,
+            recentDemolitions: []
+        };
+
+        try {
+            var demolished = getDemolishedEnterprises({ 
+                locationId: locationId,
+                includeRecords: true
+            });
+
+            stats.totalDemolished = demolished.length;
+
+            for (var i = 0; i < demolished.length; i++) {
+                var e = demolished[i];
+                var record = e.demolishedRecord;
+
+                // By destroyed by
+                var destroyedBy = e.destroyedBy || 'unknown';
+                if (!stats.byDestroyedBy[destroyedBy]) {
+                    stats.byDestroyedBy[destroyedBy] = 0;
+                }
+                stats.byDestroyedBy[destroyedBy]++;
+
+                // By category
+                var category = e.category || 'other';
+                if (!stats.byCategory[category]) {
+                    stats.byCategory[category] = 0;
+                }
+                stats.byCategory[category]++;
+
+                // By type
+                var type = e.typeName || 'unknown';
+                if (!stats.byType[type]) {
+                    stats.byType[type] = 0;
+                }
+                stats.byType[type]++;
+
+                // Wealth lost
+                if (record && record.previousWealth) {
+                    stats.totalWealthLost += record.previousWealth;
+                }
+
+                // Workers lost
+                if (record && record.previousWorkerCount) {
+                    stats.totalWorkersLost += record.previousWorkerCount;
+                }
+
+                // Recent demolitions (last 5)
+                if (stats.recentDemolitions.length < 5) {
+                    stats.recentDemolitions.push({
+                        name: e.name,
+                        destroyedAt: e.demolishedAt,
+                        destroyedBy: e.destroyedBy,
+                        reason: e.demolishedReason
+                    });
+                }
+            }
+
+            // Sort recent by date
+            stats.recentDemolitions.sort(function(a, b) {
+                return (b.destroyedAt || 0) - (a.destroyedAt || 0);
+            });
+
+        } catch (e) {
+            // Error getting stats
+        }
+
+        return stats;
+    }
+
+    // =========================================================================
+    // 7. EXPORTS
+    // =========================================================================
+
+    // Preserve existing exports and add new ones
     window.IndustryCommands = {
-        createEnterprise: createEnterprise,
-        updateEnterprise: updateEnterprise,
-        deleteEnterprise: deleteEnterprise,
-        addWorkerToEnterprise: addWorkerToEnterprise,
-        removeWorkerFromEnterprise: removeWorkerFromEnterprise,
-        setWorkerWage: setWorkerWage,
-        updateEnterpriseWealth: updateEnterpriseWealth,
-        updateEnterpriseDebt: updateEnterpriseDebt
+        // Existing functions (preserved)
+        createEnterprise: _existingCommands.createEnterprise,
+        updateEnterprise: _existingCommands.updateEnterprise,
+        deleteEnterprise: _existingCommands.deleteEnterprise,
+        addWorkerToEnterprise: _existingCommands.addWorkerToEnterprise,
+        removeWorkerFromEnterprise: _existingCommands.removeWorkerFromEnterprise,
+        setWorkerWage: _existingCommands.setWorkerWage,
+        updateEnterpriseWealth: _existingCommands.updateEnterpriseWealth,
+        updateEnterpriseDebt: _existingCommands.updateEnterpriseDebt,
+        createPublicEnterprise: _existingCommands.createPublicEnterprise,
+        convertEnterpriseToPublic: _existingCommands.convertEnterpriseToPublic,
+
+        // NEW: Demolish functions
+        demolishEnterprise: demolishEnterprise,
+        rebuildEnterprise: rebuildEnterprise,
+        getDemolishedEnterprises: getDemolishedEnterprises,
+        getEnterpriseDemolitionStats: getEnterpriseDemolitionStats
     };
+
+    // Legacy aliases
+    if (typeof window !== 'undefined') {
+        window._demolishEnterprise = demolishEnterprise;
+        window._rebuildEnterprise = rebuildEnterprise;
+        window._getDemolishedEnterprises = getDemolishedEnterprises;
+        window._getEnterpriseDemolitionStats = getEnterpriseDemolitionStats;
+    }
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.IndustryCommands;

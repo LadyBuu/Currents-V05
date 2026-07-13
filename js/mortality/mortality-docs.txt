@@ -1,6 +1,6 @@
-# STILL WATERS - DEATH SYSTEM COMPLETE DOCUMENTATION
+# COMPLETE MORTALITY/DEATH SYSTEM DOCUMENTATION
 
-## Version 2.0 | Generated: 2026-07-11
+## Version 2.0 | Generated: 2026-07-12
 
 ---
 
@@ -51,21 +51,21 @@ The Death System manages all character mortality events including natural death,
 │                          DEATH SYSTEM                                      │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────────────┐ │
-│  │  MORTALITY-     │    │  MORTALITY-     │    │  MORTALITY-             │ │
-│  │  STATE.JS       │◄───│  COMMANDS.JS    │    │  QUERIES.JS             │ │
-│  │  (Data Layer)   │    │  (Write Layer)  │    │  (Read Layer)           │ │
-│  └─────────────────┘    └─────────────────┘    └─────────────────────────┘ │
-│           │                      │                         │                │
-│           ▼                      ▼                         ▼                │
-│  ┌─────────────────────────────────────────────────────────────────────────┐│
-│  │                    masterData.characters                               ││
-│  └─────────────────────────────────────────────────────────────────────────┘│
+│  ┌─────────────────────────┐    ┌─────────────────────────┐    ┌─────────┐ │
+│  │  MORTALITY-             │    │  MORTALITY-             │    │ MORTALITY│ │
+│  │  STATE.JS               │◄───│  COMMANDS.JS            │    │ QUERIES  │ │
+│  │  (Data Layer)           │    │  (Write Layer)          │    │(ReadLayer│ │
+│  └─────────────────────────┘    └─────────────────────────┘    └─────────┘ │
+│           │                              │                         │       │
+│           ▼                              ▼                         ▼       │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    masterData.characters                             │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────────┐│
-│  │                          MODALS-DEATH.JS                               ││
-│  │                   (UI Dialogs - Death, Murder, Execution)              ││
-│  └─────────────────────────────────────────────────────────────────────────┘│
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                          MODALS-DEATH.JS                           │   │
+│  │                   (UI Dialogs - Death, Murder, Execution)          │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -79,7 +79,7 @@ js/core/mortality/
 ├── mortality-state.js       # Single source of truth + cache + notifications
 ├── mortality-commands.js    # All write operations (kill, murder, execution)
 ├── mortality-queries.js     # All read operations (stats, filters, summaries)
-└── (modals-death.js in core/modals/)
+└── mortality-docs.txt       # This documentation
 
 js/core/modals/
 └── modals-death.js          # UI modals (death, murder, execution)
@@ -730,11 +730,11 @@ UI modals for death management: death, murder, and execution.
 │                    DEATH SYSTEM DEPENDENCIES                               │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  mortality-state.js ────────────────────────────────────────────────────┐ │
+│  mortality-state.js ─────────────────────────────────────────────────────┐ │
 │  ├── storage.js                                                          │ │
 │  └── accessors.js                                                        │ │
 │                                                                             │
-│  mortality-commands.js ────────────────────────────────────────────────┐ │
+│  mortality-commands.js ─────────────────────────────────────────────────┐ │
 │  ├── mortality-state.js                                                  │ │
 │  ├── character-lifecycle.js                                              │ │
 │  ├── accessors.js                                                        │ │
@@ -746,7 +746,7 @@ UI modals for death management: death, murder, and execution.
 │  ├── family-logic.js                                                     │ │
 │  └── romance-logic.js                                                    │ │
 │                                                                             │
-│  modals-death.js ──────────────────────────────────────────────────────┐ │
+│  modals-death.js ───────────────────────────────────────────────────────┐ │
 │  ├── modals-core.js                                                      │ │
 │  ├── modals-char-select.js                                               │ │
 │  ├── mortality-commands.js                                               │ │
@@ -966,6 +966,7 @@ window.MortalityState.updateUIState({
 
 # END OF DOCUMENTATION
 
-**Generated:** 2026-07-11
+**Generated:** 2026-07-12
 **Version:** 2.0
 **File Count:** 4 core modules + 1 UI module
+**Total Size:** ~150 KB

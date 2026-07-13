@@ -3,18 +3,21 @@
  * STILL WATERS - APPRENTICESHIP MODALS (modals-apprenticeship.js)
  * =============================================================================
  * 
- * LOCATION: js/core/modals/modals-apprenticeship.js
+ * This file contains ALL apprenticeship-related UI modals:
+ * - Create Apprenticeship
+ * - Edit Apprenticeship
+ * - Apprenticeship Details
+ * - View Master Tree
+ * - FIND MASTER BY LOCATION (NEW)
  * 
- * This file contains ALL apprenticeship UI modals.
- * This is the UI LAYER - it only handles rendering and user interaction.
- * All business logic is delegated to ApprenticeshipCommands and ApprenticeshipQueries.
- * 
- * UPDATED:
- * - NO TRUST SYSTEM - completely removed all trust-related code
- * - NO emojis - uses SVG icons from icons.js
- * - Uses unified character selector from modals-char-select.js
- * - Uses AGE_GROUPS from constants.js
- * - Uses ApprenticeshipCommands and ApprenticeshipQueries
+ * DEPENDENCIES:
+ *   - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
+ *   - modals-char-select.js (openCharacterSelector)
+ *   - apprenticeship-system.js (all apprenticeship functions)
+ *   - accessors.js (getCharacterById, getCharacters, getRoleById)
+ *   - constants.js (AGE_GROUPS, AGE_GROUPS_MAP)
+ *   - world.js (getCurrentLocation, getLocationTypeById)
+ *   - households/ (Household management functions)
  * 
  * =============================================================================
  */
@@ -23,13 +26,14 @@
     'use strict';
 
     // =========================================================================
-    // 1. RECURSION GUARDS
+    // 1. RECURSION GUARD
     // =========================================================================
 
+    var _openingModal = false;
     var _processingModal = false;
 
     // =========================================================================
-    // 2. ICON HELPERS (using icons.js - NO EMOJIS)
+    // 2. ICON HELPERS (using icons.js)
     // =========================================================================
 
     function _getIcon(name) {
@@ -39,47 +43,16 @@
         if (window.Icons && window.Icons.CIRCLE) {
             return window.Icons.CIRCLE;
         }
-        return '<svg viewBox="0 0 20 20" width="1em" height="1em" style="display:inline-block;fill:currentColor;stroke:currentColor;vertical-align:middle;"><circle cx="10" cy="10" r="5.71" fill="currentColor"/></svg>';
-    }
-
-    function _getIconHTML(name, size) {
-        var icon = _getIcon(name);
-        if (!size) size = '1em';
-        if (icon) {
-            return icon.replace(/width="[^"]*"/, 'width="' + size + '"').replace(/height="[^"]*"/, 'height="' + size + '"');
-        }
         return '';
     }
 
     // =========================================================================
-    // 3. AGE GROUPS FROM CONSTANTS.JS
-    // =========================================================================
-
-    function _getAgeGroups() {
-        if (window.AGE_GROUPS && Array.isArray(window.AGE_GROUPS)) {
-            return window.AGE_GROUPS;
-        }
-        return ['0-10', '11-20', '21-30', '31-40', '41-50', '51-60', '61-70', '71-80', '81-90', '91+'];
-    }
-
-    function _getAgeGroupLabel(group) {
-        if (window.AGE_GROUPS_MAP && window.AGE_GROUPS_MAP[group]) {
-            return window.AGE_GROUPS_MAP[group].label;
-        }
-        return group + ' years';
-    }
-
-    // =========================================================================
-    // 4. DEPENDENCY WRAPPERS
+    // 3. DEPENDENCY WRAPPERS
     // =========================================================================
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
-        }
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
+        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
+        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
         if (!str) return '';
         return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
@@ -117,36 +90,21 @@
     }
 
     function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(id);
-        }
-        return null;
+        return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
     }
 
     function _getCharacters() {
-        if (typeof window.getCharacters === 'function') {
-            return window.getCharacters();
-        }
-        return [];
+        return typeof window.getCharacters === 'function' ? window.getCharacters() : [];
     }
 
     function _getRoleById(id) {
-        if (typeof window.getRoleById === 'function') {
-            return window.getRoleById(id);
-        }
-        return null;
+        return typeof window.getRoleById === 'function' ? window.getRoleById(id) : null;
     }
 
     function _getCurrentYear() {
-        if (typeof window._getCurrentYear === 'function') {
-            return window._getCurrentYear();
-        }
-        if (typeof window.getCurrentYearSafe === 'function') {
-            return window.getCurrentYearSafe();
-        }
-        if (typeof window.getCurrentYear === 'function') {
-            return window.getCurrentYear();
-        }
+        if (typeof window._getCurrentYear === 'function') return window._getCurrentYear();
+        if (typeof window.getCurrentYearSafe === 'function') return window.getCurrentYearSafe();
+        if (typeof window.getCurrentYear === 'function') return window.getCurrentYear();
         return 1250;
     }
 
@@ -167,130 +125,69 @@
         return 'Unknown';
     }
 
-    function _getActiveRankDisplay(character) {
-        if (typeof window.getActiveRankDisplay === 'function') {
-            return window.getActiveRankDisplay(character);
+    function _getCurrentLocationId(character) {
+        if (typeof window.getCurrentLocationId === 'function') {
+            return window.getCurrentLocationId(character.id);
         }
         return null;
+    }
+
+    function _getPlaceById(id) {
+        return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
     }
 
     function _getLocationTypeById(id) {
-        if (typeof window.getLocationTypeById === 'function') {
-            return window.getLocationTypeById(id);
-        }
-        return null;
+        return typeof window.getLocationTypeById === 'function' ? window.getLocationTypeById(id) : null;
     }
 
-    function _getPlaces() {
-        if (typeof window.getPlaces === 'function') {
-            return window.getPlaces();
+    function _getLocationPopulationCount(locationId) {
+        if (typeof window.getLocationPopulationCount === 'function') {
+            return window.getLocationPopulationCount(locationId);
+        }
+        return 0;
+    }
+
+    function _getAllSubLocationIds(locationId) {
+        if (typeof LocationState !== 'undefined' && LocationState.getAllSubLocationIds) {
+            return LocationState.getAllSubLocationIds(locationId);
+        }
+        return [locationId];
+    }
+
+    function _getSettlementMastersByRole(locationId, roleId) {
+        if (typeof SettlementQueries !== 'undefined' && SettlementQueries.getSettlementMastersByRole) {
+            return SettlementQueries.getSettlementMastersByRole(locationId, roleId);
         }
         return [];
     }
 
-    function _getPlaceById(id) {
-        if (typeof window.getPlaceById === 'function') {
-            return window.getPlaceById(id);
+    function _openCharacterSelector(options) {
+        if (typeof window.openUnifiedCharacterSelector === 'function') {
+            return window.openUnifiedCharacterSelector(options);
+        }
+        if (typeof window.openCharacterSelector === 'function') {
+            return window.openCharacterSelector(options);
         }
         return null;
     }
 
     // =========================================================================
-    // 5. CHARACTER SELECTOR
+    // 4. APPRENTICESHIP SYSTEM WRAPPERS
     // =========================================================================
 
-    function _openCharacterSelectorForApprenticeship(title, onSelect, options) {
-        options = options || {};
-
-        if (typeof window.openCharacterSelector === 'function') {
-            window.openCharacterSelector({
-                title: title || 'Select Character',
-                targetId: options.targetId || null,
-                onSelect: onSelect,
-                filters: {
-                    gender: options.gender || 'all',
-                    status: options.status || 'all',
-                    showDeceased: options.showDeceased || false,
-                    location: options.locationFilter || 'all',
-                    ageMin: options.ageMin || null,
-                    ageMax: options.ageMax || null
-                },
-                preset: options.preset || null
-            });
-            return;
-        }
-
-        if (typeof window.openUnifiedCharacterSelector === 'function') {
-            window.openUnifiedCharacterSelector({
-                title: title || 'Select Character',
-                targetId: options.targetId || null,
-                onSelect: onSelect,
-                filters: {
-                    gender: options.gender || 'all',
-                    status: options.status || 'all',
-                    showDeceased: options.showDeceased || false,
-                    location: options.locationFilter || 'all',
-                    ageMin: options.ageMin || null,
-                    ageMax: options.ageMax || null
-                },
-                preset: options.preset || null
-            });
-            return;
-        }
-
-        _showToast('Character selector not available', 'error');
-    }
-
-    // =========================================================================
-    // 6. LOCATION DROPDOWN
-    // =========================================================================
-
-    function _getLocationOptions(selectedId, placeholderText, includeAll) {
-        placeholderText = placeholderText || '-- Select a location --';
-        includeAll = includeAll !== undefined ? includeAll : true;
-
-        if (typeof window.buildLocationDropdown === 'function') {
-            return window.buildLocationDropdown(selectedId, placeholderText, includeAll);
-        }
-
-        var places = _getPlaces();
-        var html = '';
-        if (placeholderText) {
-            html += '<option value="">' + _escapeHtml(placeholderText) + '</option>';
-        }
-        if (includeAll) {
-            html += '<option value="all">All Locations</option>';
-        }
-        for (var i = 0; i < places.length; i++) {
-            var selected = (selectedId === places[i].id) ? 'selected' : '';
-            var type = _getLocationTypeById(places[i].typeId);
-            var icon = (type && type.icon) ? type.icon : '⌂';
-            html += '<option value="' + places[i].id + '" ' + selected + '>' +
-                icon + ' ' + _escapeHtml(places[i].displayName) +
-                (type ? ' (' + _escapeHtml(type.displayName) + ')' : '') +
-                '</option>';
-        }
-        html += '<option value="unknown" ' + (selectedId === 'unknown' ? 'selected' : '') + '>Unknown Location</option>';
-        return html;
-    }
-
-    // =========================================================================
-    // 7. APPRENTICESHIP HELPERS (Using ApprenticeshipQueries)
-    // =========================================================================
-
-    function _getMaster(characterId) {
-        if (typeof window.ApprenticeshipQueries !== 'undefined') {
-            return window.ApprenticeshipQueries.getMaster(characterId);
+    function _getMaster(charId) {
+        if (typeof window.ApprenticeshipSystem !== 'undefined') {
+            return window.ApprenticeshipSystem.getMaster(charId);
         }
         if (typeof window.getMaster === 'function') {
-            return window.getMaster(characterId);
+            return window.getMaster(charId);
         }
         return null;
     }
 
     function _getApprentices(masterId, activeOnly) {
-        if (typeof window.ApprenticeshipQueries !== 'undefined') {
-            return window.ApprenticeshipQueries.getApprentices(masterId, activeOnly);
+        if (typeof window.ApprenticeshipSystem !== 'undefined') {
+            return window.ApprenticeshipSystem.getApprentices(masterId, activeOnly);
         }
         if (typeof window.getApprentices === 'function') {
             return window.getApprentices(masterId, activeOnly);
@@ -298,19 +195,39 @@
         return [];
     }
 
-    function _getSkillLevel(characterId, roleId) {
-        if (typeof window.ApprenticeshipQueries !== 'undefined') {
-            return window.ApprenticeshipQueries.getSkillLevel(characterId, roleId);
+    function _isApprentice(charId) {
+        if (typeof window.ApprenticeshipSystem !== 'undefined') {
+            return window.ApprenticeshipSystem.isApprentice(charId);
+        }
+        if (typeof window.isApprentice === 'function') {
+            return window.isApprentice(charId);
+        }
+        return false;
+    }
+
+    function _isMaster(charId) {
+        if (typeof window.ApprenticeshipSystem !== 'undefined') {
+            return window.ApprenticeshipSystem.isMaster(charId);
+        }
+        if (typeof window.isMaster === 'function') {
+            return window.isMaster(charId);
+        }
+        return false;
+    }
+
+    function _getSkillLevel(charId, roleId) {
+        if (typeof window.ApprenticeshipSystem !== 'undefined') {
+            return window.ApprenticeshipSystem.getSkillLevel(charId, roleId);
         }
         if (typeof window.getSkillLevel === 'function') {
-            return window.getSkillLevel(characterId, roleId);
+            return window.getSkillLevel(charId, roleId);
         }
         return 0;
     }
 
     function _getSkillLevelName(level) {
-        if (typeof window.ApprenticeshipQueries !== 'undefined') {
-            return window.ApprenticeshipQueries.getSkillLevelName(level);
+        if (typeof window.ApprenticeshipSystem !== 'undefined') {
+            return window.ApprenticeshipSystem.getSkillLevelName(level);
         }
         if (typeof window.getSkillLevelName === 'function') {
             return window.getSkillLevelName(level);
@@ -323,39 +240,89 @@
         return 'Untrained';
     }
 
-    function _getApprenticeshipStage(characterId, roleId) {
-        if (typeof window.ApprenticeshipQueries !== 'undefined') {
-            return window.ApprenticeshipQueries.getApprenticeshipStage(characterId, roleId);
-        }
-        if (typeof window.getApprenticeshipStage === 'function') {
-            return window.getApprenticeshipStage(characterId, roleId);
-        }
-        return { id: 'novice', name: 'Novice', minLevel: 0, maxLevel: 25 };
-    }
-
-    function _getApprenticeshipProgress(characterId, roleId) {
-        if (typeof window.ApprenticeshipQueries !== 'undefined') {
-            return window.ApprenticeshipQueries.getApprenticeshipProgress(characterId, roleId);
-        }
-        if (typeof window.getApprenticeshipProgress === 'function') {
-            return window.getApprenticeshipProgress(characterId, roleId);
-        }
-        return 0;
-    }
-
-    function _getApprenticeshipRole(characterId) {
-        if (typeof window.ApprenticeshipQueries !== 'undefined') {
-            return window.ApprenticeshipQueries.getApprenticeshipRole(characterId);
+    function _getApprenticeshipRole(charId) {
+        if (typeof window.ApprenticeshipSystem !== 'undefined') {
+            return window.ApprenticeshipSystem.getApprenticeshipRole(charId);
         }
         if (typeof window.getApprenticeshipRole === 'function') {
-            return window.getApprenticeshipRole(characterId);
+            return window.getApprenticeshipRole(charId);
         }
         return null;
     }
 
+    function _getApprenticeship(masterId, apprenticeId) {
+        if (typeof window.ApprenticeshipSystem !== 'undefined') {
+            return window.ApprenticeshipSystem.getApprenticeship(masterId, apprenticeId);
+        }
+        if (typeof window.getApprenticeship === 'function') {
+            return window.getApprenticeship(masterId, apprenticeId);
+        }
+        return null;
+    }
+
+    function _createApprenticeship(masterId, apprenticeId, options) {
+        if (typeof window.ApprenticeshipSystem !== 'undefined') {
+            return window.ApprenticeshipSystem.createApprenticeship(masterId, apprenticeId, options);
+        }
+        if (typeof window.createApprenticeship === 'function') {
+            return window.createApprenticeship(masterId, apprenticeId, options);
+        }
+        return null;
+    }
+
+    function _updateApprenticeship(masterId, apprenticeId, updates) {
+        if (typeof window.ApprenticeshipSystem !== 'undefined') {
+            return window.ApprenticeshipSystem.updateApprenticeship(masterId, apprenticeId, updates);
+        }
+        if (typeof window.updateApprenticeship === 'function') {
+            return window.updateApprenticeship(masterId, apprenticeId, updates);
+        }
+        return null;
+    }
+
+    function _progressApprenticeship(masterId, apprenticeId, amount) {
+        if (typeof window.ApprenticeshipSystem !== 'undefined') {
+            return window.ApprenticeshipSystem.progressApprenticeship(masterId, apprenticeId, amount);
+        }
+        if (typeof window.progressApprenticeship === 'function') {
+            return window.progressApprenticeship(masterId, apprenticeId, amount);
+        }
+        return null;
+    }
+
+    function _completeApprenticeship(masterId, apprenticeId, finalSkillLevel) {
+        if (typeof window.ApprenticeshipSystem !== 'undefined') {
+            return window.ApprenticeshipSystem.completeApprenticeship(masterId, apprenticeId, finalSkillLevel);
+        }
+        if (typeof window.completeApprenticeship === 'function') {
+            return window.completeApprenticeship(masterId, apprenticeId, finalSkillLevel);
+        }
+        return null;
+    }
+
+    function _terminateApprenticeship(masterId, apprenticeId, reason) {
+        if (typeof window.ApprenticeshipSystem !== 'undefined') {
+            return window.ApprenticeshipSystem.terminateApprenticeship(masterId, apprenticeId, reason);
+        }
+        if (typeof window.terminateApprenticeship === 'function') {
+            return window.terminateApprenticeship(masterId, apprenticeId, reason);
+        }
+        return null;
+    }
+
+    function _getTeachableSkills(masterId, minSkillLevel) {
+        if (typeof window.ApprenticeshipSystem !== 'undefined') {
+            return window.ApprenticeshipSystem.getTeachableSkills(masterId, minSkillLevel);
+        }
+        if (typeof window.getTeachableSkills === 'function') {
+            return window.getTeachableSkills(masterId, minSkillLevel);
+        }
+        return [];
+    }
+
     function _findPotentialMasters(roleId, locationId, minSkillLevel) {
-        if (typeof window.ApprenticeshipQueries !== 'undefined') {
-            return window.ApprenticeshipQueries.findPotentialMasters(roleId, locationId, minSkillLevel);
+        if (typeof window.ApprenticeshipSystem !== 'undefined') {
+            return window.ApprenticeshipSystem.findPotentialMasters(roleId, locationId, minSkillLevel);
         }
         if (typeof window.findPotentialMasters === 'function') {
             return window.findPotentialMasters(roleId, locationId, minSkillLevel);
@@ -363,879 +330,541 @@
         return [];
     }
 
-    function _canTeach(characterId, roleId, minSkillLevel) {
-        if (typeof window.ApprenticeshipQueries !== 'undefined') {
-            return window.ApprenticeshipQueries.canTeach(characterId, roleId, minSkillLevel);
+    function _teachSkill(masterId, apprenticeId, method) {
+        if (typeof window.ApprenticeshipSystem !== 'undefined') {
+            return window.ApprenticeshipSystem.teachSkill(masterId, apprenticeId, method);
         }
-        if (typeof window.canTeach === 'function') {
-            return window.canTeach(characterId, roleId, minSkillLevel);
-        }
-        return false;
-    }
-
-    function _getTeachableSkills(characterId, minSkillLevel) {
-        if (typeof window.ApprenticeshipQueries !== 'undefined') {
-            return window.ApprenticeshipQueries.getTeachableSkills(characterId, minSkillLevel);
-        }
-        if (typeof window.getTeachableSkills === 'function') {
-            return window.getTeachableSkills(characterId, minSkillLevel);
-        }
-        return [];
-    }
-
-    // =========================================================================
-    // 8. APPRENTICESHIP COMMAND WRAPPERS
-    // =========================================================================
-
-    function _createApprenticeship(masterId, apprenticeId, options) {
-        if (typeof window.ApprenticeshipCommands !== 'undefined') {
-            return window.ApprenticeshipCommands.createApprenticeship(masterId, apprenticeId, options);
-        }
-        if (typeof window.createApprenticeship === 'function') {
-            return window.createApprenticeship(masterId, apprenticeId, options);
-        }
-        _showToast('Create apprenticeship not available', 'error');
-        return null;
-    }
-
-    function _updateApprenticeship(masterId, apprenticeId, updates) {
-        if (typeof window.ApprenticeshipCommands !== 'undefined') {
-            return window.ApprenticeshipCommands.updateApprenticeship(masterId, apprenticeId, updates);
-        }
-        if (typeof window.updateApprenticeship === 'function') {
-            return window.updateApprenticeship(masterId, apprenticeId, updates);
-        }
-        _showToast('Update apprenticeship not available', 'error');
-        return false;
-    }
-
-    function _progressApprenticeship(masterId, apprenticeId, amount) {
-        if (typeof window.ApprenticeshipCommands !== 'undefined') {
-            return window.ApprenticeshipCommands.progressApprenticeship(masterId, apprenticeId, amount);
-        }
-        if (typeof window.progressApprenticeship === 'function') {
-            return window.progressApprenticeship(masterId, apprenticeId, amount);
-        }
-        _showToast('Progress apprenticeship not available', 'error');
-        return null;
-    }
-
-    function _completeApprenticeship(masterId, apprenticeId, finalSkillLevel) {
-        if (typeof window.ApprenticeshipCommands !== 'undefined') {
-            return window.ApprenticeshipCommands.completeApprenticeship(masterId, apprenticeId, finalSkillLevel);
-        }
-        if (typeof window.completeApprenticeship === 'function') {
-            return window.completeApprenticeship(masterId, apprenticeId, finalSkillLevel);
-        }
-        _showToast('Complete apprenticeship not available', 'error');
-        return false;
-    }
-
-    function _endApprenticeship(masterId, apprenticeId, options) {
-        if (typeof window.ApprenticeshipCommands !== 'undefined') {
-            return window.ApprenticeshipCommands.endApprenticeship(masterId, apprenticeId, options);
-        }
-        if (typeof window.endApprenticeship === 'function') {
-            return window.endApprenticeship(masterId, apprenticeId, options);
-        }
-        _showToast('End apprenticeship not available', 'error');
-        return false;
-    }
-
-    function _setSkillLevel(masterId, apprenticeId, level) {
-        if (typeof window.ApprenticeshipCommands !== 'undefined') {
-            return window.ApprenticeshipCommands.setSkillLevel(masterId, apprenticeId, level);
-        }
-        if (typeof window.setSkillLevel === 'function') {
-            return window.setSkillLevel(masterId, apprenticeId, level);
-        }
-        _showToast('Set skill level not available', 'error');
-        return false;
-    }
-
-    // =========================================================================
-    // 9. HOUSEHOLD HELPERS (NO TRUST)
-    // =========================================================================
-
-    function _getAllHouseholds() {
-        if (typeof window.getAllHouseholds === 'function') {
-            return window.getAllHouseholds();
-        }
-        return window.masterData?.data?.households || [];
-    }
-
-    function _getHousehold(id) {
-        if (typeof window.getHousehold === 'function') {
-            return window.getHousehold(id);
-        }
-        if (!id) return null;
-        var households = _getAllHouseholds();
-        for (var i = 0; i < households.length; i++) {
-            if (households[i].id === id) return households[i];
-        }
-        return null;
-    }
-
-    function _findCharacterHousehold(characterId) {
-        if (typeof window.findCharacterHousehold === 'function') {
-            return window.findCharacterHousehold(characterId);
-        }
-        var households = _getAllHouseholds();
-        for (var i = 0; i < households.length; i++) {
-            var h = households[i];
-            if (h.members) {
-                for (var j = 0; j < h.members.length; j++) {
-                    if (h.members[j].characterId === characterId) {
-                        return h;
-                    }
-                }
-            }
-        }
-        return null;
-    }
-
-    function _removeHouseholdMember(householdId, characterId) {
-        if (typeof window.removeHouseholdMember === 'function') {
-            return window.removeHouseholdMember(householdId, characterId);
-        }
-        return false;
-    }
-
-    function _addHouseholdMember(householdId, characterId, type, options) {
-        if (typeof window.addHouseholdMember === 'function') {
-            return window.addHouseholdMember(householdId, characterId, type, options);
-        }
-        return false;
-    }
-
-    function _recordMove(character, year, locationId, note) {
-        if (typeof window.recordMove === 'function') {
-            return window.recordMove(character, year, locationId, note);
-        }
-        return false;
-    }
-
-    function _getLocationIdByName(locationName) {
-        if (typeof window.getLocationIdByName === 'function') {
-            return window.getLocationIdByName(locationName);
-        }
-        var places = _getPlaces();
-        for (var i = 0; i < places.length; i++) {
-            if (places[i].displayName === locationName) return places[i].id;
-        }
-        return null;
-    }
-
-    function _findHouseholdByLocation(locationName) {
-        if (typeof window.findHouseholdByLocation === 'function') {
-            return window.findHouseholdByLocation(locationName);
-        }
-        var households = _getAllHouseholds();
-        var locationId = _getLocationIdByName(locationName);
-        for (var i = 0; i < households.length; i++) {
-            var h = households[i];
-            if (h.locationName === locationName || h.locationId === locationId) {
-                return h;
-            }
+        if (typeof window.teachSkill === 'function') {
+            return window.teachSkill(masterId, apprenticeId, method);
         }
         return null;
     }
 
     // =========================================================================
-    // 10. CREATE APPRENTICESHIP MODAL
+    // 5. CREATE APPRENTICESHIP MODAL
     // =========================================================================
 
     function openCreateApprenticeshipModal(master, candidate, onSuccess) {
-        if (_processingModal) {
+        if (_openingModal) {
+            _showToast('Modal is already opening', 'warning');
             return;
         }
-        _processingModal = true;
+        _openingModal = true;
 
         try {
             if (!master || !candidate) {
-                _showToast('Invalid master or candidate', 'error');
+                _showToast('Master and candidate are required', 'error');
                 return;
             }
 
             var currentYear = _getCurrentYear();
+            var masterAge = _calculateAge(master.birthYear, false, null);
             var candidateAge = _calculateAge(candidate.birthYear, false, null);
+
+            var teachableSkills = _getTeachableSkills(master.id, 51);
             var masterLocation = _getCurrentLocation(master);
             var candidateLocation = _getCurrentLocation(candidate);
-            var sameLocation = masterLocation === candidateLocation;
-
-            var masterProfessions = _getTeachableSkills(master.id, 51);
-
-            var defaultProfessionId = null;
-            for (var i = 0; i < masterProfessions.length; i++) {
-                if (masterProfessions[i].primary) {
-                    defaultProfessionId = masterProfessions[i].role.id;
-                    break;
-                }
-            }
-            if (!defaultProfessionId && masterProfessions.length > 0) {
-                defaultProfessionId = masterProfessions[0].role.id;
-            }
-
-            var suggestedAge = Math.max(0, candidateAge);
-            var suggestedYear = candidate.birthYear ? candidate.birthYear + suggestedAge : currentYear;
 
             var personIcon = _getIcon('PERSON');
-            var infoIcon = _getIcon('CIRCLE_DOT');
-            var warningIcon = _getIcon('WARNING');
             var locationIcon = _getIcon('LOCATION');
-            var householdIcon = _getIcon('HOUSEHOLD');
-            var checkIcon = _getIcon('CHECK_SIMPLE');
-            var masterIcon = _getIcon('CROWN');
+            var infoIcon = _getIcon('CIRCLE_DOT');
 
-            var moveOptionsHtml = '';
-            if (!sameLocation) {
-                moveOptionsHtml = '<div class="form-group" style="margin-bottom: 12px;">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Move Options</label>' +
-                    '<select id="apprenticeMoveChoice" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-                        '<option value="apprentice">' + householdIcon + ' Move Apprentice to ' + _escapeHtml(masterLocation) + '</option>' +
-                        '<option value="master">' + householdIcon + ' Move Master to ' + _escapeHtml(candidateLocation) + '</option>' +
-                        '<option value="separate">' + infoIcon + ' Keep separate residences</option>' +
-                    '</select>' +
-                    '<small style="font-size: 0.55rem; color: var(--dim);">Traditionally, the apprentice moves to the master\'s location.</small>' +
-                '</div>';
-            } else {
-                moveOptionsHtml = '<input type="hidden" id="apprenticeMoveChoice" value="separate">';
-            }
-
-            var professionsHtml = '';
-            if (masterProfessions.length > 0) {
-                var profNames = [];
-                for (var i = 0; i < masterProfessions.length; i++) {
-                    profNames.push(masterProfessions[i].role.name + ' (' + _getSkillLevelName(masterProfessions[i].skillLevel) + ')');
+            // Build skill options
+            var skillOptions = '';
+            if (teachableSkills && teachableSkills.length > 0) {
+                for (var i = 0; i < teachableSkills.length; i++) {
+                    var skill = teachableSkills[i];
+                    var roleName = skill.name || skill.id;
+                    skillOptions += '<option value="' + skill.id + '">' + _escapeHtml(roleName) + ' (Skill: ' + (skill.skillLevel || 0) + ')</option>';
                 }
-                professionsHtml = '<br>' + infoIcon + ' Professions: ' + profNames.join(', ');
             } else {
-                professionsHtml = '<br><span style="color: var(--warn);">' + warningIcon + ' No professions</span>';
+                skillOptions += '<option value="">No teachable skills (master needs 51+ skill)</option>';
             }
 
-            var modalContent = '<div class="info-box" style="background: var(--bg3); padding: 12px; border-radius: 8px; margin-bottom: 16px;">' +
-                '<div style="margin-bottom: 8px;">' +
-                    '<strong>' + masterIcon + ' Master: ' + _escapeHtml(master.name) + ' ' + _escapeHtml(master.surname || '') + '</strong><br>' +
-                    locationIcon + ' Location: ' + _escapeHtml(masterLocation) +
-                    professionsHtml +
-                '</div>' +
-                '<div style="margin-bottom: 8px;">' +
-                    '<strong>' + personIcon + ' Candidate: ' + _escapeHtml(candidate.name) + ' ' + _escapeHtml(candidate.surname || '') + '</strong><br>' +
-                    locationIcon + ' Location: ' + _escapeHtml(candidateLocation) + '<br>' +
-                    infoIcon + ' Age: ' + candidateAge + ' years (born ' + candidate.birthYear + ')' +
-                '</div>' +
-                (!sameLocation ? '<div style="margin-top: 8px; padding: 6px; background: rgba(200, 112, 64, 0.15); border-radius: 6px; font-size: 0.65rem; color: var(--warn);">' + warningIcon + ' Different locations! One will need to move.</div>' : '<div style="margin-top: 8px; color: var(--success);">' + checkIcon + ' Both in same location</div>') +
-            '</div>' +
+            var content =
+                '<div style="max-height: 500px; overflow-y: auto; padding: 4px;">' +
 
-            '<div class="form-group" style="margin-bottom: 12px;">' +
+                // Master and candidate info
+                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">' +
+                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px;">' +
+                '<div style="font-size: 0.55rem; color: var(--accent);">Master</div>' +
+                '<div style="font-weight: bold; font-size: 0.9rem;">' + personIcon + ' ' + _escapeHtml(master.name) + ' ' + _escapeHtml(master.surname || '') + '</div>' +
+                '<div style="font-size: 0.6rem; color: var(--dim);">' + masterAge + ' years · ' + _escapeHtml(masterLocation) + '</div>' +
+                '</div>' +
+                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px;">' +
+                '<div style="font-size: 0.55rem; color: var(--accent);">Candidate</div>' +
+                '<div style="font-weight: bold; font-size: 0.9rem;">' + personIcon + ' ' + _escapeHtml(candidate.name) + ' ' + _escapeHtml(candidate.surname || '') + '</div>' +
+                '<div style="font-size: 0.6rem; color: var(--dim);">' + candidateAge + ' years · ' + _escapeHtml(candidateLocation) + '</div>' +
+                '</div>' +
+                '</div>' +
+
+                // Form fields
+                '<div class="form-group" style="margin-bottom: 12px;">' +
                 '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Profession to Learn</label>' +
-                '<select id="apprenticeProfession" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">';
-
-            for (var i = 0; i < masterProfessions.length; i++) {
-                var p = masterProfessions[i];
-                modalContent += '<option value="' + p.role.id + '" ' + (p.role.id === defaultProfessionId ? 'selected' : '') + '>' +
-                    p.role.name + ' (' + _getSkillLevelName(p.skillLevel) + ')' + (p.primary ? ' ★' : '') +
-                '</option>';
-            }
-            if (masterProfessions.length === 0) {
-                modalContent += '<option value="">No professions available</option>';
-            }
-
-            modalContent += '</select>' +
-            '</div>' +
-
-            '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">' +
-                '<div class="form-group">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Apprentice Age at Start</label>' +
-                    '<input type="number" id="apprenticeStartAge" value="' + suggestedAge + '" min="0" max="150" step="1" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-                '</div>' +
-                '<div class="form-group">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Start Year</label>' +
-                    '<input type="number" id="apprenticeStartYear" value="' + suggestedYear + '" min="' + candidate.birthYear + '" max="' + (currentYear + 10) + '" step="1" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-                '</div>' +
-            '</div>' +
-
-            '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Initial Skill Level (0-100)</label>' +
-                '<input type="range" id="initialSkillLevel" min="0" max="100" value="10" step="1" style="width: 100%;">' +
-                '<div style="display: flex; justify-content: space-between; margin-top: 4px;">' +
-                    '<span>0</span>' +
-                    '<span id="initialSkillDisplay">10 (Novice)</span>' +
-                    '<span>100</span>' +
-                '</div>' +
-                '<small style="font-size: 0.55rem; color: var(--dim);">Starting skill level. Will increase automatically over time.</small>' +
-            '</div>' +
-
-            moveOptionsHtml +
-
-            '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Household Assignment</label>' +
-                '<select id="apprenticeHouseholdChoice" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-                    '<option value="master">' + householdIcon + ' Move apprentice to master\'s household</option>' +
-                    '<option value="separate">' + infoIcon + ' Keep independent household</option>' +
-                    '<option value="none">' + infoIcon + ' No household change</option>' +
+                '<select id="appRoleSelect" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
+                skillOptions +
                 '</select>' +
-                '<small style="font-size: 0.55rem; color: var(--dim);">Where will the apprentice live during training?</small>' +
-            '</div>' +
+                '</div>' +
 
-            '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes (optional)</label>' +
-                '<textarea id="apprenticeNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);" placeholder="e.g., Family arrangement, Guild requirement..."></textarea>' +
-            '</div>' +
+                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">' +
+                '<div class="form-group">' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Start Year</label>' +
+                '<input type="number" id="appStartYear" value="' + currentYear + '" min="1" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
+                '</div>' +
+                '<div class="form-group">' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Initial Skill Level</label>' +
+                '<input type="number" id="appInitialSkill" value="10" min="0" max="100" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
+                '</div>' +
+                '</div>' +
 
-            '<div class="info-note" style="margin-top: 12px; padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.6rem;">' +
-                infoIcon + ' The apprentice will gain the master\'s profession and begin their training. Skill increases automatically each year.' +
-                (!sameLocation ? ' ' + infoIcon + ' If the apprentice moves, they will also be transferred to any household at the master\'s location.' : '') +
-            '</div>';
+                '<div class="form-group" style="margin-bottom: 12px;">' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Move Options</label>' +
+                '<select id="appMoveOption" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
+                '<option value="apprentice">Move Apprentice to Master\'s Location</option>' +
+                '<option value="master">Move Master to Candidate\'s Location</option>' +
+                '<option value="separate">Keep Separate Residences</option>' +
+                '</select>' +
+                '</div>' +
+
+                '<div class="form-group" style="margin-bottom: 12px;">' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Household Assignment</label>' +
+                '<select id="appHouseholdOption" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
+                '<option value="master">Move Apprentice to Master\'s Household</option>' +
+                '<option value="separate">Keep Independent Household</option>' +
+                '<option value="none">No Household Change</option>' +
+                '</select>' +
+                '</div>' +
+
+                '<div class="form-group" style="margin-bottom: 12px;">' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes</label>' +
+                '<textarea id="appNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;" placeholder="Terms of apprenticeship..."></textarea>' +
+                '</div>' +
+
+                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
+                infoIcon + ' Apprenticeship will be recorded. Skill progresses annually based on teaching sessions.' +
+                '</div>' +
+                '</div>';
 
             _openModal({
-                title: 'Create Apprenticeship',
-                content: modalContent,
+                title: 'Create Apprenticeship: ' + master.name + ' → ' + candidate.name,
+                content: content,
                 confirmText: 'Create Apprenticeship',
                 cancelText: 'Cancel',
                 onConfirm: function() {
-                    var professionId = document.getElementById('apprenticeProfession') ? document.getElementById('apprenticeProfession').value : null;
-                    if (!professionId && masterProfessions.length > 0) {
-                        _showToast('Please select a profession', 'error');
-                        return;
+                    var roleId = document.getElementById('appRoleSelect').value;
+                    if (!roleId) {
+                        _showToast('Please select a profession to learn', 'error');
+                        return false;
                     }
 
-                    var startAge = parseInt(document.getElementById('apprenticeStartAge') ? document.getElementById('apprenticeStartAge').value : 0);
-                    var startYear = parseInt(document.getElementById('apprenticeStartYear') ? document.getElementById('apprenticeStartYear').value : 0);
-                    var moveChoice = document.getElementById('apprenticeMoveChoice') ? document.getElementById('apprenticeMoveChoice').value : null;
-                    var householdChoice = document.getElementById('apprenticeHouseholdChoice') ? document.getElementById('apprenticeHouseholdChoice').value : 'master';
-                    var notes = document.getElementById('apprenticeNotes') ? document.getElementById('apprenticeNotes').value : null;
-                    var initialSkill = parseInt(document.getElementById('initialSkillLevel') ? document.getElementById('initialSkillLevel').value : 10);
-
-                    if (isNaN(startAge)) startAge = 0;
-                    startAge = Math.max(0, startAge);
-
-                    if (isNaN(startYear)) startYear = candidate.birthYear + startAge;
-
-                    if (startYear < candidate.birthYear) {
-                        _showToast('Start year cannot be before candidate\'s birth year (' + candidate.birthYear + ')', 'error');
-                        return;
+                    var startYear = parseInt(document.getElementById('appStartYear').value);
+                    if (isNaN(startYear)) {
+                        _showToast('Invalid start year', 'error');
+                        return false;
                     }
 
-                    // Handle move
-                    if (moveChoice && moveChoice !== 'separate') {
-                        var places = _getPlaces();
-                        if (moveChoice === 'apprentice') {
-                            var targetPlace = null;
-                            for (var i = 0; i < places.length; i++) {
-                                if (places[i].displayName === masterLocation) {
-                                    targetPlace = places[i];
-                                    break;
-                                }
-                            }
-                            if (targetPlace) {
-                                _recordMove(candidate, startYear, targetPlace.id, 'Moved to become apprentice to ' + master.name);
-
-                                if (householdChoice === 'master') {
-                                    var sourceHousehold = _findCharacterHousehold(candidate.id);
-                                    var targetHousehold = _findHouseholdByLocation(masterLocation);
-
-                                    if (sourceHousehold && targetHousehold && sourceHousehold.id !== targetHousehold.id) {
-                                        _removeHouseholdMember(sourceHousehold.id, candidate.id);
-                                        _addHouseholdMember(targetHousehold.id, candidate.id, 'staff', {
-                                            role: 'Apprentice to ' + master.name,
-                                            joinedYear: startYear,
-                                            notes: 'Apprenticeship under ' + master.name + (notes ? ': ' + notes : '')
-                                        });
-                                        _showToast(candidate.name + ' transferred to household at ' + masterLocation, 'info');
-                                    } else if (!sourceHousehold && targetHousehold) {
-                                        _addHouseholdMember(targetHousehold.id, candidate.id, 'staff', {
-                                            role: 'Apprentice to ' + master.name,
-                                            joinedYear: startYear,
-                                            notes: 'Apprenticeship under ' + master.name
-                                        });
-                                        _showToast(candidate.name + ' added to household at ' + masterLocation, 'info');
-                                    }
-                                }
-                            }
-                        } else if (moveChoice === 'master') {
-                            var targetPlace = null;
-                            for (var i = 0; i < places.length; i++) {
-                                if (places[i].displayName === candidateLocation) {
-                                    targetPlace = places[i];
-                                    break;
-                                }
-                            }
-                            if (targetPlace) {
-                                _recordMove(master, startYear, targetPlace.id, 'Moved to become master of ' + candidate.name);
-                            }
-                        }
-                    } else if (householdChoice === 'master' && !moveChoice) {
-                        var sourceHousehold = _findCharacterHousehold(candidate.id);
-                        var targetHousehold = _findCharacterHousehold(master.id);
-
-                        if (sourceHousehold && targetHousehold && sourceHousehold.id !== targetHousehold.id) {
-                            _removeHouseholdMember(sourceHousehold.id, candidate.id);
-                            _addHouseholdMember(targetHousehold.id, candidate.id, 'staff', {
-                                role: 'Apprentice to ' + master.name,
-                                joinedYear: startYear,
-                                notes: 'Apprenticeship under ' + master.name + ' (same location)'
-                            });
-                            _showToast(candidate.name + ' transferred to ' + master.name + '\'s household', 'info');
-                        }
+                    var initialSkill = parseInt(document.getElementById('appInitialSkill').value);
+                    if (isNaN(initialSkill) || initialSkill < 0 || initialSkill > 100) {
+                        _showToast('Skill level must be between 0 and 100', 'error');
+                        return false;
                     }
+
+                    var moveOption = document.getElementById('appMoveOption').value;
+                    var householdOption = document.getElementById('appHouseholdOption').value;
+                    var notes = document.getElementById('appNotes').value;
 
                     var result = _createApprenticeship(master.id, candidate.id, {
-                        roleId: professionId,
+                        roleId: roleId,
                         startYear: startYear,
                         initialSkill: initialSkill,
-                        notes: notes || 'Apprenticeship created'
+                        notes: notes,
+                        moveOption: moveOption,
+                        householdOption: householdOption
                     });
 
-                    if (result) {
-                        _showToast(candidate.name + ' is now apprenticed to ' + master.name, 'success');
-                        if (onSuccess) onSuccess(result);
+                    if (result && result.success) {
+                        _showToast('Apprenticeship created successfully!', 'success');
                         _closeTopModal();
+                        if (onSuccess) onSuccess(result);
+                        return true;
                     } else {
-                        _showToast('Failed to create apprenticeship', 'error');
+                        _showToast('Failed to create apprenticeship: ' + (result?.reason || 'Unknown error'), 'error');
+                        return false;
                     }
                 }
             });
 
-            setTimeout(function() {
-                var ageInput = document.getElementById('apprenticeStartAge');
-                var yearInput = document.getElementById('apprenticeStartYear');
-                var skillSlider = document.getElementById('initialSkillLevel');
-                var skillDisplay = document.getElementById('initialSkillDisplay');
-
-                if (skillSlider && skillDisplay) {
-                    skillSlider.addEventListener('input', function() {
-                        var val = parseInt(skillSlider.value);
-                        skillDisplay.textContent = val + ' (' + _getSkillLevelName(val) + ')';
-                    });
-                }
-
-                if (ageInput && yearInput && candidate.birthYear) {
-                    ageInput.addEventListener('input', function() {
-                        var age = parseInt(ageInput.value);
-                        if (!isNaN(age) && age >= 0) {
-                            yearInput.value = candidate.birthYear + age;
-                        }
-                    });
-
-                    yearInput.addEventListener('input', function() {
-                        var year = parseInt(yearInput.value);
-                        if (!isNaN(year)) {
-                            var newAge = year - candidate.birthYear;
-                            if (newAge >= 0) {
-                                ageInput.value = newAge;
-                            }
-                        }
-                    });
-                }
-            }, 50);
-
         } finally {
-            _processingModal = false;
+            _openingModal = false;
         }
     }
 
     // =========================================================================
-    // 11. EDIT APPRENTICESHIP MODAL
+    // 6. EDIT APPRENTICESHIP MODAL
     // =========================================================================
 
     function openEditApprenticeshipModal(masterId, apprenticeId, onSuccess) {
-        if (_processingModal) {
+        if (_openingModal) {
+            _showToast('Modal is already opening', 'warning');
             return;
         }
-        _processingModal = true;
+        _openingModal = true;
 
         try {
             var master = _getCharacterById(masterId);
             var apprentice = _getCharacterById(apprenticeId);
-            var currentYear = _getCurrentYear();
-
-            if (!master || !apprentice) {
-                _showToast('Character not found', 'error');
-                return;
-            }
-
             var apprenticeship = _getApprenticeship(masterId, apprenticeId);
-            if (!apprenticeship) {
-                _showToast('No apprenticeship found', 'error');
+
+            if (!master || !apprentice || !apprenticeship) {
+                _showToast('Apprenticeship not found', 'error');
                 return;
             }
 
-            var metadata = apprenticeship.metadata || {};
-            var startYear = apprenticeship.startYear || currentYear;
-            var skillLevel = metadata.skillLevel || 0;
-            var notes = metadata.notes || '';
-            var roleId = metadata.roleId || '';
+            var currentSkill = apprenticeship.metadata?.skillLevel || 0;
+            var roleId = apprenticeship.metadata?.roleId || '';
             var role = roleId ? _getRoleById(roleId) : null;
+            var notes = apprenticeship.metadata?.notes || '';
             var status = apprenticeship.status || 'ongoing';
-
-            var masterProfessions = _getTeachableSkills(master.id, 51);
-            var skillName = _getSkillLevelName(skillLevel);
+            var startYear = apprenticeship.startYear || _getCurrentYear();
 
             var personIcon = _getIcon('PERSON');
             var infoIcon = _getIcon('CIRCLE_DOT');
-            var masterIcon = _getIcon('CROWN');
-            var editIcon = _getIcon('EDIT');
-            var checkIcon = _getIcon('CHECK_SIMPLE');
-            var statusActiveIcon = _getIcon('STATUS_ACTIVE');
-            var statusEndedIcon = _getIcon('STATUS_ENDED');
-            var xHeavyIcon = _getIcon('X_HEAVY');
 
-            var modalContent = '<div class="info-box" style="margin-bottom: 16px; background: var(--bg2); padding: 12px; border-radius: 8px;">' +
-                '<div><strong>' + masterIcon + ' Master: ' + _escapeHtml(master.name) + '</strong></div>' +
-                '<div><strong>' + personIcon + ' Apprentice: ' + _escapeHtml(apprentice.name) + '</strong></div>' +
-                '<div style="font-size: 0.65rem; color: var(--dim); margin-top: 4px;">' +
-                    infoIcon + ' Current Skill: ' + skillLevel + ' (' + skillName + ')' +
+            var content =
+                '<div style="max-height: 500px; overflow-y: auto; padding: 4px;">' +
+
+                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">' +
+                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px;">' +
+                '<div style="font-size: 0.55rem; color: var(--accent);">Master</div>' +
+                '<div style="font-weight: bold; font-size: 0.9rem;">' + personIcon + ' ' + _escapeHtml(master.name) + ' ' + _escapeHtml(master.surname || '') + '</div>' +
                 '</div>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">Since ' + startYear + '</div>' +
-            '</div>' +
+                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px;">' +
+                '<div style="font-size: 0.55rem; color: var(--accent);">Apprentice</div>' +
+                '<div style="font-weight: bold; font-size: 0.9rem;">' + personIcon + ' ' + _escapeHtml(apprentice.name) + ' ' + _escapeHtml(apprentice.surname || '') + '</div>' +
+                '</div>' +
+                '</div>' +
 
-            '<div class="form-group" style="margin-bottom: 12px;">' +
+                '<div style="background: var(--bg3); padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; display: flex; justify-content: space-between; font-size: 0.65rem;">' +
+                '<span>Current Skill: <strong>' + currentSkill + ' (' + _getSkillLevelName(currentSkill) + ')</strong></span>' +
+                '<span>Status: <strong style="color: ' + (status === 'ongoing' ? 'var(--success)' : 'var(--warn)') + ';">' + status + '</strong></span>' +
+                '</div>' +
+
+                '<div class="form-group" style="margin-bottom: 12px;">' +
                 '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Profession</label>' +
-                '<select id="editApprenticeProfession" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">';
-
-            for (var i = 0; i < masterProfessions.length; i++) {
-                var p = masterProfessions[i];
-                modalContent += '<option value="' + p.role.id + '" ' + (p.role.id === roleId ? 'selected' : '') + '>' +
-                    _escapeHtml(p.role.name) + ' (' + _getSkillLevelName(p.skillLevel) + ')' + (p.primary ? ' ★' : '') +
-                '</option>';
-            }
-            if (masterProfessions.length === 0) {
-                modalContent += '<option value="">No professions available</option>';
-            }
-
-            modalContent += '</select>' +
-            '</div>' +
-
-            '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Start Year</label>' +
-                '<input type="number" id="editApprenticeStartYear" value="' + startYear + '" min="1" max="' + (currentYear + 10) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-            '</div>' +
-
-            '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Skill Level (0-100)</label>' +
-                '<input type="range" id="editApprenticeSkillLevel" min="0" max="100" value="' + skillLevel + '" step="1" style="width: 100%;">' +
-                '<div style="display: flex; justify-content: space-between; margin-top: 4px;">' +
-                    '<span>0</span>' +
-                    '<span id="skillLevelDisplay">' + skillLevel + ' (' + skillName + ')</span>' +
-                    '<span>100</span>' +
+                '<input type="text" value="' + (role ? _escapeHtml(role.name) : 'Unknown') + '" disabled style="width: 100%; padding: 8px; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; color: var(--dim);">' +
                 '</div>' +
-            '</div>' +
 
-            '<div class="form-group" style="margin-bottom: 12px;">' +
+                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">' +
+                '<div class="form-group">' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Start Year</label>' +
+                '<input type="number" id="editStartYear" value="' + startYear + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
+                '</div>' +
+                '<div class="form-group">' +
+                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Skill Level</label>' +
+                '<input type="number" id="editSkillLevel" value="' + currentSkill + '" min="0" max="100" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
+                '</div>' +
+                '</div>' +
+
+                '<div class="form-group" style="margin-bottom: 12px;">' +
                 '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Status</label>' +
-                '<select id="editApprenticeStatus" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-                    '<option value="ongoing" ' + (status === 'ongoing' ? 'selected' : '') + '>' + statusActiveIcon + ' Active</option>' +
-                    '<option value="ended" ' + (status === 'ended' ? 'selected' : '') + '>' + statusEndedIcon + ' Terminated</option>' +
-                    '<option value="completed" ' + (status === 'completed' ? 'selected' : '') + '>' + checkIcon + ' Completed</option>' +
+                '<select id="editStatus" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
+                '<option value="ongoing" ' + (status === 'ongoing' ? 'selected' : '') + '>Ongoing</option>' +
+                '<option value="completed" ' + (status === 'completed' ? 'selected' : '') + '>Completed</option>' +
+                '<option value="ended" ' + (status === 'ended' ? 'selected' : '') + '>Ended</option>' +
                 '</select>' +
-            '</div>' +
+                '</div>' +
 
-            '<div class="form-group" style="margin-bottom: 12px;">' +
+                '<div class="form-group" style="margin-bottom: 12px;">' +
                 '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes</label>' +
-                '<textarea id="editApprenticeNotes" rows="3" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' + _escapeHtml(notes) + '</textarea>' +
-            '</div>';
+                '<textarea id="editNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' + _escapeHtml(notes) + '</textarea>' +
+                '</div>' +
 
-            if (status === 'ongoing') {
-                modalContent += '<div class="action-buttons" style="display: flex; gap: 8px; margin-top: 12px;">' +
-                    '<button id="progressSkillBtn" class="btn small" style="background: var(--accent-dim); border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; color: var(--text);">Progress Skill (+5)</button>' +
-                    '<button id="completeApprenticeshipBtn" class="btn small" style="background: #4a9060; border: none; color: white; padding: 6px 12px; border-radius: 6px; cursor: pointer;">Complete</button>' +
+                '<div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px;">' +
+                '<button id="progressSkillBtn" class="btn primary" style="font-size: 0.6rem; padding: 4px 12px;">+5 Skill</button>' +
+                '<button id="completeBtn" class="btn success" style="font-size: 0.6rem; padding: 4px 12px;">Complete</button>' +
+                '</div>' +
+
+                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim); margin-top: 8px;">' +
+                infoIcon + ' Changing skill level manually or use +5 to progress. Completion grants the profession.' +
+                '</div>' +
                 '</div>';
-            }
 
             _openModal({
                 title: 'Edit Apprenticeship: ' + apprentice.name,
-                content: modalContent,
+                content: content,
                 confirmText: 'Save Changes',
                 cancelText: 'Cancel',
                 onConfirm: function() {
-                    var newRoleId = document.getElementById('editApprenticeProfession') ? document.getElementById('editApprenticeProfession').value : null;
-                    var newStartYear = parseInt(document.getElementById('editApprenticeStartYear') ? document.getElementById('editApprenticeStartYear').value : 0);
-                    var newStatus = document.getElementById('editApprenticeStatus') ? document.getElementById('editApprenticeStatus').value : 'ongoing';
-                    var newSkillLevel = parseInt(document.getElementById('editApprenticeSkillLevel') ? document.getElementById('editApprenticeSkillLevel').value : 0);
-                    var newNotes = document.getElementById('editApprenticeNotes') ? document.getElementById('editApprenticeNotes').value : '';
+                    var startYear = parseInt(document.getElementById('editStartYear').value);
+                    var skillLevel = parseInt(document.getElementById('editSkillLevel').value);
+                    var status = document.getElementById('editStatus').value;
+                    var notes = document.getElementById('editNotes').value;
 
-                    if (isNaN(newStartYear)) {
+                    if (isNaN(startYear)) {
                         _showToast('Invalid start year', 'error');
-                        return;
+                        return false;
+                    }
+                    if (isNaN(skillLevel) || skillLevel < 0 || skillLevel > 100) {
+                        _showToast('Skill level must be between 0 and 100', 'error');
+                        return false;
                     }
 
-                    var updates = {
-                        startYear: newStartYear,
-                        roleId: newRoleId || null,
-                        notes: newNotes,
-                        status: newStatus,
-                        skillLevel: newSkillLevel
-                    };
+                    var result = _updateApprenticeship(masterId, apprenticeId, {
+                        startYear: startYear,
+                        skillLevel: skillLevel,
+                        status: status,
+                        notes: notes
+                    });
 
-                    var success = _updateApprenticeship(masterId, apprenticeId, updates);
-
-                    if (success) {
-                        _showToast('Updated apprenticeship for ' + apprentice.name, 'success');
-                        if (onSuccess) onSuccess();
+                    if (result && result.success) {
+                        _showToast('Apprenticeship updated', 'success');
                         _closeTopModal();
+                        if (onSuccess) onSuccess(result);
+                        return true;
                     } else {
                         _showToast('Failed to update apprenticeship', 'error');
+                        return false;
                     }
                 }
             });
 
+            // Attach button handlers
             setTimeout(function() {
-                var skillSlider = document.getElementById('editApprenticeSkillLevel');
-                var skillDisplay = document.getElementById('skillLevelDisplay');
-
-                if (skillSlider && skillDisplay) {
-                    var updateSkillDisplay = function() {
-                        var val = parseInt(skillSlider.value);
-                        skillDisplay.textContent = val + ' (' + _getSkillLevelName(val) + ')';
-                    };
-                    skillSlider.addEventListener('input', updateSkillDisplay);
-                }
-
                 var progressBtn = document.getElementById('progressSkillBtn');
                 if (progressBtn) {
                     progressBtn.addEventListener('click', function() {
                         var result = _progressApprenticeship(masterId, apprenticeId, 5);
                         if (result && result.success) {
-                            _showToast(apprentice.name + ' progressed to ' + result.newStage + ' (' + result.newLevel + ')', 'success');
-                            _closeTopModal();
-                            if (onSuccess) onSuccess();
+                            _showToast('Skill progressed by 5', 'success');
+                            var skillInput = document.getElementById('editSkillLevel');
+                            if (skillInput) {
+                                var newVal = parseInt(skillInput.value) + 5;
+                                skillInput.value = Math.min(100, newVal);
+                            }
                         } else {
                             _showToast('Failed to progress skill', 'error');
                         }
                     });
                 }
 
-                var completeBtn = document.getElementById('completeApprenticeshipBtn');
+                var completeBtn = document.getElementById('completeBtn');
                 if (completeBtn) {
                     completeBtn.addEventListener('click', function() {
-                        var role = _getRoleById(roleId);
-                        _confirmDialog('Complete ' + apprentice.name + '\'s apprenticeship?\n\nThis will mark them as a fully trained ' + (role ? role.name : 'professional') + '.', 'Complete Apprenticeship', function() {
-                            var success = _completeApprenticeship(masterId, apprenticeId);
-                            if (success) {
-                                _showToast(apprentice.name + ' completed their apprenticeship!', 'success');
-                                _closeTopModal();
-                                if (onSuccess) onSuccess();
-                            } else {
-                                _showToast('Failed to complete apprenticeship', 'error');
-                            }
-                        });
-                    });
-                }
-            }, 50);
-
-        } finally {
-            _processingModal = false;
-        }
-    }
-
-    // =========================================================================
-    // 12. APPRENTICESHIP DETAILS MODAL
-    // =========================================================================
-
-    function openApprenticeshipDetailsModal(masterId, apprenticeId, onSave, onDelete) {
-        if (_processingModal) {
-            return;
-        }
-        _processingModal = true;
-
-        try {
-            var master = _getCharacterById(masterId);
-            var apprentice = _getCharacterById(apprenticeId);
-
-            if (!master || !apprentice) {
-                _showToast('Character not found', 'error');
-                return;
-            }
-
-            var apprenticeship = _getApprenticeship(masterId, apprenticeId);
-            if (!apprenticeship) {
-                _showToast('No apprenticeship found', 'error');
-                return;
-            }
-
-            var metadata = apprenticeship.metadata || {};
-            var startYear = apprenticeship.startYear || '?';
-            var currentYear = _getCurrentYear();
-            var duration = startYear !== '?' ? currentYear - startYear : '?';
-            var skillLevel = metadata.skillLevel || 0;
-            var notes = metadata.notes || '';
-            var roleId = metadata.roleId || '';
-            var role = roleId ? _getRoleById(roleId) : null;
-            var specializationsTaught = metadata.specializationsTaught || [];
-            var status = apprenticeship.status || 'ongoing';
-
-            var skillIcon = _getIcon('CIRCLE_DOT');
-            var skillName = _getSkillLevelName(skillLevel);
-
-            var statusBadge = '';
-            var statusActiveIcon = _getIcon('STATUS_ACTIVE');
-            var checkIcon = _getIcon('CHECK_SIMPLE');
-            var xHeavyIcon = _getIcon('X_HEAVY');
-
-            if (status === 'ongoing') statusBadge = '<span style="background: #4a9060; padding: 2px 8px; border-radius: 12px; font-size: 0.6rem; color: white;">' + statusActiveIcon + ' Active</span>';
-            else if (status === 'completed') statusBadge = '<span style="background: #c8a844; padding: 2px 8px; border-radius: 12px; font-size: 0.6rem; color: white;">' + checkIcon + ' Completed</span>';
-            else statusBadge = '<span style="background: #8a3020; padding: 2px 8px; border-radius: 12px; font-size: 0.6rem; color: white;">' + xHeavyIcon + ' Terminated</span>';
-
-            var personIcon = _getIcon('PERSON');
-            var masterIcon = _getIcon('CROWN');
-            var infoIcon = _getIcon('CIRCLE_DOT');
-            var locationIcon = _getIcon('LOCATION');
-            var editIcon = _getIcon('EDIT');
-            var circleDotIcon = _getIcon('CIRCLE_DOT');
-
-            var modalContent = '<div class="info-box" style="margin-bottom: 16px; background: var(--bg2); padding: 12px; border-radius: 8px;">' +
-                '<div><strong>' + masterIcon + ' Master: ' + _escapeHtml(master.name) + '</strong></div>' +
-                '<div><strong>' + personIcon + ' Apprentice: ' + _escapeHtml(apprentice.name) + '</strong></div>' +
-                '<div style="margin-top: 8px; display: flex; justify-content: space-between; align-items: center;">' +
-                    '<div>' + infoIcon + ' Profession: ' + (role ? _escapeHtml(role.name) : 'Unknown') + '</div>' +
-                    statusBadge +
-                '</div>' +
-                '<div style="margin-top: 4px;">' +
-                    skillIcon + ' Skill Level: ' + skillLevel + ' (' + skillName + ')' +
-                '</div>' +
-            '</div>' +
-
-            '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Start Year</label>' +
-                '<div class="info-value" style="font-size: 0.7rem;">' + startYear + '</div>' +
-            '</div>' +
-
-            '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Duration</label>' +
-                '<div class="info-value" style="font-size: 0.7rem;">' + duration + ' years</div>' +
-            '</div>';
-
-            if (apprenticeship.endYear) {
-                modalContent += '<div class="form-group" style="margin-bottom: 12px;">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">End Year</label>' +
-                    '<div class="info-value" style="font-size: 0.7rem;">' + apprenticeship.endYear + '</div>' +
-                '</div>';
-            }
-
-            if (specializationsTaught.length > 0) {
-                var specsHtml = '';
-                for (var i = 0; i < specializationsTaught.length; i++) {
-                    specsHtml += '<span style="background: var(--bg3); padding: 2px 8px; border-radius: 12px; font-size: 0.7rem;">' + _escapeHtml(specializationsTaught[i]) + '</span>';
-                }
-                modalContent += '<div class="form-group" style="margin-bottom: 12px;">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Specializations Taught</label>' +
-                    '<div class="specs-list" style="display: flex; flex-wrap: wrap; gap: 4px;">' + specsHtml + '</div>' +
-                '</div>';
-            }
-
-            modalContent += '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes</label>' +
-                '<textarea id="apprenticeshipDetailsNotes" rows="3" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px;">' + _escapeHtml(notes) + '</textarea>' +
-            '</div>' +
-
-            '<div class="action-buttons" style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;">' +
-                '<button id="editApprenticeshipBtn" class="btn primary" style="background: var(--accent); border: none; color: white; padding: 6px 12px; border-radius: 6px; cursor: pointer;">Edit Apprenticeship</button>';
-
-            if (status === 'ongoing') {
-                modalContent += '<button id="progressSkillDetailsBtn" class="btn" style="background: var(--accent-dim); border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; color: var(--text);">Progress Skill (+5)</button>' +
-                    '<button id="completeApprenticeshipDetailsBtn" class="btn" style="background: #4a9060; border: none; color: white; padding: 6px 12px; border-radius: 6px; cursor: pointer;">Complete</button>' +
-                    '<button id="terminateApprenticeshipBtn" class="btn danger" style="background: #8a3020; border: none; color: white; padding: 6px 12px; border-radius: 6px; cursor: pointer;">Terminate</button>';
-            }
-
-            modalContent += '</div>';
-
-            _openModal({
-                title: 'Apprenticeship: ' + apprentice.name,
-                content: modalContent,
-                confirmText: 'Save Notes',
-                cancelText: 'Close',
-                onConfirm: function() {
-                    var newNotes = document.getElementById('apprenticeshipDetailsNotes') ? document.getElementById('apprenticeshipDetailsNotes').value : null;
-                    if (newNotes !== null) {
-                        _updateApprenticeship(masterId, apprenticeId, { notes: newNotes });
-                        _showToast('Notes saved', 'success');
-                        if (onSave) onSave();
-                    }
-                }
-            });
-
-            setTimeout(function() {
-                var editBtn = document.getElementById('editApprenticeshipBtn');
-                if (editBtn) {
-                    editBtn.addEventListener('click', function() {
-                        _closeTopModal();
-                        openEditApprenticeshipModal(masterId, apprenticeId, function() {
-                            if (onSave) onSave();
-                        });
-                    });
-                }
-
-                var progressBtn = document.getElementById('progressSkillDetailsBtn');
-                if (progressBtn) {
-                    progressBtn.addEventListener('click', function() {
-                        var result = _progressApprenticeship(masterId, apprenticeId, 5);
-                        if (result && result.success) {
-                            _showToast(apprentice.name + ' progressed to ' + result.newStage + ' (' + result.newLevel + ')', 'success');
-                            _closeTopModal();
-                            if (onSave) onSave();
-                        } else {
-                            _showToast('Failed to progress skill', 'error');
-                        }
-                    });
-                }
-
-                var completeBtn = document.getElementById('completeApprenticeshipDetailsBtn');
-                if (completeBtn) {
-                    completeBtn.addEventListener('click', function() {
-                        var role = _getRoleById(metadata.roleId);
-                        _confirmDialog('Complete ' + apprentice.name + '\'s apprenticeship?\n\nThis will mark them as a fully trained ' + (role ? role.name : 'professional') + '.', 'Complete Apprenticeship', function() {
-                            var success = _completeApprenticeship(masterId, apprenticeId);
-                            if (success) {
-                                _showToast(apprentice.name + ' completed their apprenticeship!', 'success');
-                                _closeTopModal();
-                                if (onSave) onSave();
-                            } else {
-                                _showToast('Failed to complete apprenticeship', 'error');
-                            }
-                        });
-                    });
-                }
-
-                var terminateBtn = document.getElementById('terminateApprenticeshipBtn');
-                if (terminateBtn) {
-                    terminateBtn.addEventListener('click', function() {
-                        _confirmDialog('Remove ' + apprentice.name + ' from ' + master.name + '\'s apprenticeship?\n\nThis will end the training relationship.', 'Confirm Termination', function() {
-                            var success = _endApprenticeship(masterId, apprenticeId, { reason: 'Terminated by user' });
-                            if (success) {
-                                var masterHousehold = _findCharacterHousehold(masterId);
-                                var apprenticeHousehold = _findCharacterHousehold(apprenticeId);
-
-                                if (apprenticeHousehold && masterHousehold && apprenticeHousehold.id === masterHousehold.id) {
-                                    _removeHouseholdMember(masterHousehold.id, apprenticeId);
-                                    _showToast(apprentice.name + ' removed from ' + master.name + '\'s household', 'info');
+                        _confirmDialog(
+                            'Complete this apprenticeship? The apprentice will be granted the profession.',
+                            'Complete Apprenticeship',
+                            function() {
+                                var skillInput = document.getElementById('editSkillLevel');
+                                var skill = skillInput ? parseInt(skillInput.value) : 50;
+                                var result = _completeApprenticeship(masterId, apprenticeId, skill);
+                                if (result && result.success) {
+                                    _showToast('Apprenticeship completed!', 'success');
+                                    _closeTopModal();
+                                    if (onSuccess) onSuccess(result);
+                                } else {
+                                    _showToast('Failed to complete apprenticeship', 'error');
                                 }
-
-                                _showToast('Apprenticeship terminated for ' + apprentice.name, 'info');
-                                _closeTopModal();
-                                if (onDelete) onDelete();
-                            } else {
-                                _showToast('Failed to terminate apprenticeship', 'error');
                             }
-                        });
+                        );
                     });
                 }
             }, 100);
 
         } finally {
-            _processingModal = false;
+            _openingModal = false;
         }
     }
 
     // =========================================================================
-    // 13. VIEW MASTER TREE MODAL
+    // 7. APPRENTICESHIP DETAILS MODAL
+    // =========================================================================
+
+    function openApprenticeshipDetailsModal(masterId, apprenticeId, onSave, onDelete) {
+        if (_openingModal) {
+            _showToast('Modal is already opening', 'warning');
+            return;
+        }
+        _openingModal = true;
+
+        try {
+            var master = _getCharacterById(masterId);
+            var apprentice = _getCharacterById(apprenticeId);
+            var apprenticeship = _getApprenticeship(masterId, apprenticeId);
+
+            if (!master || !apprentice || !apprenticeship) {
+                _showToast('Apprenticeship not found', 'error');
+                return;
+            }
+
+            var skillLevel = apprenticeship.metadata?.skillLevel || 0;
+            var roleId = apprenticeship.metadata?.roleId || '';
+            var role = roleId ? _getRoleById(roleId) : null;
+            var notes = apprenticeship.metadata?.notes || '';
+            var status = apprenticeship.status || 'ongoing';
+            var startYear = apprenticeship.startYear || _getCurrentYear();
+            var endYear = apprenticeship.endYear || null;
+
+            var personIcon = _getIcon('PERSON');
+            var infoIcon = _getIcon('CIRCLE_DOT');
+
+            var statusColor = status === 'ongoing' ? 'var(--success)' :
+                             status === 'completed' ? 'var(--accent)' : 'var(--danger)';
+
+            var duration = endYear ? (endYear - startYear) : (_getCurrentYear() - startYear);
+
+            var content =
+                '<div style="max-height: 500px; overflow-y: auto; padding: 4px;">' +
+
+                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; margin-bottom: 16px;">' +
+                '<div style="display: flex; justify-content: space-between; align-items: center;">' +
+                '<div>' +
+                '<div style="font-weight: bold; font-size: 0.9rem;">' + personIcon + ' ' + _escapeHtml(apprentice.name) + ' ' + _escapeHtml(apprentice.surname || '') + '</div>' +
+                '<div style="font-size: 0.6rem; color: var(--dim);">Apprentice to ' + _escapeHtml(master.name) + ' ' + _escapeHtml(master.surname || '') + '</div>' +
+                '</div>' +
+                '<span style="font-size: 0.6rem; background: ' + statusColor + '; padding: 2px 10px; border-radius: 12px; color: white;">' + status.toUpperCase() + '</span>' +
+                '</div>' +
+                '</div>' +
+
+                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">' +
+                '<div style="background: var(--bg3); padding: 8px 12px; border-radius: 6px;">' +
+                '<div style="font-size: 0.55rem; color: var(--dim);">Profession</div>' +
+                '<div style="font-size: 0.8rem; font-weight: bold;">' + (role ? _escapeHtml(role.name) : 'Unknown') + '</div>' +
+                '</div>' +
+                '<div style="background: var(--bg3); padding: 8px 12px; border-radius: 6px;">' +
+                '<div style="font-size: 0.55rem; color: var(--dim);">Skill Level</div>' +
+                '<div style="font-size: 0.8rem; font-weight: bold;">' + skillLevel + ' (' + _getSkillLevelName(skillLevel) + ')</div>' +
+                '</div>' +
+                '<div style="background: var(--bg3); padding: 8px 12px; border-radius: 6px;">' +
+                '<div style="font-size: 0.55rem; color: var(--dim);">Started</div>' +
+                '<div style="font-size: 0.8rem;">' + startYear + '</div>' +
+                '</div>' +
+                '<div style="background: var(--bg3); padding: 8px 12px; border-radius: 6px;">' +
+                '<div style="font-size: 0.55rem; color: var(--dim);">Duration</div>' +
+                '<div style="font-size: 0.8rem;">' + duration + ' years' + (endYear ? ' (ended ' + endYear + ')' : '') + '</div>' +
+                '</div>' +
+                '</div>' +
+
+                (notes ? '<div style="background: var(--bg3); padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; font-size: 0.6rem;">' +
+                '<div style="color: var(--dim); font-size: 0.55rem;">Notes</div>' +
+                _escapeHtml(notes) +
+                '</div>' : '') +
+
+                '<div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px;">' +
+                '<button id="editAppBtn" class="btn primary" style="font-size: 0.6rem; padding: 4px 12px;">Edit</button>' +
+                '<button id="progressBtn" class="btn" style="font-size: 0.6rem; padding: 4px 12px;">+5 Skill</button>' +
+                (status === 'ongoing' ? '<button id="completeAppBtn" class="btn success" style="font-size: 0.6rem; padding: 4px 12px;">Complete</button>' : '') +
+                (status === 'ongoing' ? '<button id="terminateAppBtn" class="btn danger" style="font-size: 0.6rem; padding: 4px 12px;">Terminate</button>' : '') +
+                '<button id="deleteAppBtn" class="btn danger" style="font-size: 0.6rem; padding: 4px 12px;">Delete</button>' +
+                '</div>' +
+
+                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim); margin-top: 8px;">' +
+                infoIcon + ' Skill 51+ = Journeyman (can teach). Skill 76+ = Expert. Skill 91+ = Master.' +
+                '</div>' +
+                '</div>';
+
+            _openModal({
+                title: 'Apprenticeship Details',
+                content: content,
+                confirmText: 'Close',
+                cancelText: '',
+                onConfirm: function() {}
+            });
+
+            setTimeout(function() {
+                var editBtn = document.getElementById('editAppBtn');
+                if (editBtn) {
+                    editBtn.addEventListener('click', function() {
+                        _closeTopModal();
+                        openEditApprenticeshipModal(masterId, apprenticeId, function(result) {
+                            if (onSave) onSave(result);
+                        });
+                    });
+                }
+
+                var progressBtn = document.getElementById('progressBtn');
+                if (progressBtn) {
+                    progressBtn.addEventListener('click', function() {
+                        var result = _progressApprenticeship(masterId, apprenticeId, 5);
+                        if (result && result.success) {
+                            _showToast('Skill progressed by 5', 'success');
+                            _closeTopModal();
+                            openApprenticeshipDetailsModal(masterId, apprenticeId, onSave, onDelete);
+                        } else {
+                            _showToast('Failed to progress skill', 'error');
+                        }
+                    });
+                }
+
+                var completeBtn = document.getElementById('completeAppBtn');
+                if (completeBtn) {
+                    completeBtn.addEventListener('click', function() {
+                        _confirmDialog(
+                            'Complete this apprenticeship? The apprentice will be granted the profession.',
+                            'Complete Apprenticeship',
+                            function() {
+                                var result = _completeApprenticeship(masterId, apprenticeId, skillLevel);
+                                if (result && result.success) {
+                                    _showToast('Apprenticeship completed!', 'success');
+                                    _closeTopModal();
+                                    if (onSave) onSave(result);
+                                } else {
+                                    _showToast('Failed to complete apprenticeship', 'error');
+                                }
+                            }
+                        );
+                    });
+                }
+
+                var terminateBtn = document.getElementById('terminateAppBtn');
+                if (terminateBtn) {
+                    terminateBtn.addEventListener('click', function() {
+                        _confirmDialog(
+                            'Terminate this apprenticeship? This cannot be undone.',
+                            'Terminate Apprenticeship',
+                            function() {
+                                var result = _terminateApprenticeship(masterId, apprenticeId, 'Terminated by user');
+                                if (result && result.success) {
+                                    _showToast('Apprenticeship terminated', 'info');
+                                    _closeTopModal();
+                                    if (onSave) onSave(result);
+                                } else {
+                                    _showToast('Failed to terminate apprenticeship', 'error');
+                                }
+                            }
+                        );
+                    });
+                }
+
+                var deleteBtn = document.getElementById('deleteAppBtn');
+                if (deleteBtn) {
+                    deleteBtn.addEventListener('click', function() {
+                        _confirmDialog(
+                            'Delete this apprenticeship record? This cannot be undone.',
+                            'Delete Apprenticeship',
+                            function() {
+                                if (onDelete) onDelete();
+                                _closeTopModal();
+                            }
+                        );
+                    });
+                }
+            }, 100);
+
+        } finally {
+            _openingModal = false;
+        }
+    }
+
+    // =========================================================================
+    // 8. VIEW MASTER TREE MODAL
     // =========================================================================
 
     function openViewMasterTreeModal(masterId, onRefresh) {
-        if (_processingModal) {
+        if (_openingModal) {
+            _showToast('Modal is already opening', 'warning');
             return;
         }
-        _processingModal = true;
+        _openingModal = true;
 
         try {
             var master = _getCharacterById(masterId);
@@ -1246,252 +875,240 @@
 
             var apprentices = _getApprentices(masterId, false);
             var personIcon = _getIcon('PERSON');
-            var masterIcon = _getIcon('CROWN');
+            var crownIcon = _getIcon('CROWN');
             var infoIcon = _getIcon('CIRCLE_DOT');
-            var locationIcon = _getIcon('LOCATION');
-            var checkIcon = _getIcon('CHECK_SIMPLE');
-            var xIcon = _getIcon('X_HEAVY');
 
-            function renderTree(apps, level) {
-                level = level || 0;
-                if (!apps || apps.length === 0) return '';
+            var content =
+                '<div style="max-height: 500px; overflow-y: auto; padding: 4px;">' +
 
-                var indent = level * 24;
-                var html = '';
-                for (var i = 0; i < apps.length; i++) {
-                    var app = apps[i];
-                    var skillIcon = _getIcon('CIRCLE_DOT');
-                    var statusIcon = app.status === 'completed' ? checkIcon : (app.status === 'ended' ? xIcon : infoIcon);
-
-                    html += '<div style="margin-left: ' + indent + 'px; margin-bottom: 8px;">' +
-                        '<div class="tree-node" data-apprentice-id="' + app.character.id + '" style="' +
-                            'background: var(--bg3);' +
-                            'border-left: 2px solid ' + (app.status === 'completed' ? '#4a9060' : (app.status === 'ended' ? '#8a3020' : 'var(--accent)')) + ';' +
-                            'border-radius: 4px;' +
-                            'padding: 6px 10px;' +
-                            'margin-bottom: 4px;' +
-                            'cursor: pointer;' +
-                            'transition: all 0.1s;' +
-                        '">' +
-                            '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">' +
-                                '<div>' +
-                                    '<strong>' + _escapeHtml(app.character.name) + ' ' + _escapeHtml(app.character.surname || '') + '</strong>' +
-                                    '<span style="font-size: 0.55rem; color: var(--dim); margin-left: 8px;">' + skillIcon + ' ' + app.skillLevel + '</span>' +
-                                    '<span style="font-size: 0.55rem; color: var(--accent); margin-left: 8px;">' + (app.roleName || 'Unknown') + '</span>' +
-                                    '<span style="font-size: 0.55rem; color: ' + (app.status === 'completed' ? '#4a9060' : 'var(--dim)') + ';">' + statusIcon + ' ' + app.status + '</span>' +
-                                '</div>' +
-                                '<div style="font-size: 0.55rem; color: var(--dim);">' +
-                                    locationIcon + ' ' + _escapeHtml(_getCurrentLocation(app.character)) + ' · Started: ' + app.startYear +
-                                '</div>' +
-                            '</div>' +
-                        '</div>' +
-                    '</div>';
-                }
-                return html;
-            }
-
-            var totalApprentices = 0;
-
-            function countApps(apps) {
-                var count = apps.length;
-                return count;
-            }
-            totalApprentices = countApps(apprentices);
-
-            var modalContent = '<div class="info-box" style="margin-bottom: 16px; background: var(--bg2); padding: 12px; border-radius: 8px;">' +
-                '<div><strong>' + masterIcon + ' ' + _escapeHtml(master.name) + ' ' + _escapeHtml(master.surname || '') + '</strong></div>' +
-                '<div>' + locationIcon + ' ' + _escapeHtml(_getCurrentLocation(master)) + '</div>' +
-                '<div>' + infoIcon + ' Apprentices: ' + totalApprentices + ' total</div>' +
-            '</div>' +
-
-            '<div id="masterTreeContainer" style="max-height: 500px; overflow-y: auto;">' +
-                (apprentices.length === 0 ? '<div style="text-align: center; padding: 40px; color: var(--dim);">' + infoIcon + ' No apprentices found</div>' : renderTree(apprentices)) +
-            '</div>' +
-
-            '<div class="info-note" style="margin-top: 12px; padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
-                infoIcon + ' Click on any apprentice to view their details' +
-            '</div>';
-
-            _openModal({
-                title: 'Apprentice Tree: ' + master.name,
-                content: modalContent,
-                confirmText: 'Close',
-                cancelText: ''
-            });
-
-            setTimeout(function() {
-                var nodes = document.querySelectorAll('.tree-node');
-                for (var i = 0; i < nodes.length; i++) {
-                    var node = nodes[i];
-                    node.addEventListener('click', function() {
-                        var apprenticeId = this.dataset.apprenticeId;
-                        var apprentice = _getCharacterById(apprenticeId);
-                        if (apprentice) {
-                            _closeTopModal();
-                            if (typeof window.openCharacterDetailsModal === 'function') {
-                                window.openCharacterDetailsModal(apprenticeId, function() {
-                                    if (onRefresh) onRefresh();
-                                });
-                            } else {
-                                _showToast('Selected: ' + apprentice.name, 'info');
-                            }
-                        }
-                    });
-                }
-            }, 100);
-
-        } finally {
-            _processingModal = false;
-        }
-    }
-
-    // =========================================================================
-    // 14. FIND MASTER MODAL (NEW)
-    // =========================================================================
-
-    function openFindMasterModal(characterId, roleId, onSuccess) {
-        if (_processingModal) {
-            return;
-        }
-        _processingModal = true;
-
-        try {
-            var character = _getCharacterById(characterId);
-            if (!character) {
-                _showToast('Character not found', 'error');
-                return;
-            }
-
-            var role = roleId ? _getRoleById(roleId) : null;
-            if (!role) {
-                _showToast('Role not found', 'error');
-                return;
-            }
-
-            var currentYear = _getCurrentYear();
-            var location = _getCurrentLocation(character);
-            var locationId = _getLocationIdByName(location);
-
-            var masters = _findPotentialMasters(roleId, locationId, 51);
-
-            if (masters.length === 0) {
-                _showToast('No potential masters found for ' + role.name, 'info');
-                return;
-            }
-
-            var personIcon = _getIcon('PERSON');
-            var masterIcon = _getIcon('CROWN');
-            var locationIcon = _getIcon('LOCATION');
-            var infoIcon = _getIcon('CIRCLE_DOT');
-            var searchIcon = _getIcon('SEARCH');
-
-            var mastersHtml = masters.map(function(m) {
-                var age = _calculateAge(m.character.birthYear, false, null);
-                var rank = _getActiveRankDisplay(m.character);
-                var rankDisplay = rank ? rank.display + ' ' : '';
-                var sameLocation = m.sameLocation ? ' <span style="color: var(--success); font-size: 0.5rem;">(Same Location)</span>' : '';
-
-                return '<div class="master-item" data-master-id="' + m.character.id + '" style="' +
-                    'background: var(--bg3);' +
-                    'border: 1px solid var(--border);' +
-                    'border-radius: 8px;' +
-                    'padding: 10px 12px;' +
-                    'margin-bottom: 8px;' +
-                    'cursor: pointer;' +
-                    'transition: all 0.2s;' +
-                '">' +
-                    '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">' +
-                        '<div>' +
-                            '<strong>' + rankDisplay + _escapeHtml(m.character.name) + ' ' + _escapeHtml(m.character.surname || '') + '</strong>' +
-                            '<span style="font-size: 0.55rem; color: var(--dim); margin-left: 8px;">' + age + ' years</span>' +
-                            sameLocation +
-                        '</div>' +
-                        '<div style="text-align: right;">' +
-                            '<div style="font-size: 0.65rem; color: var(--accent);">' + m.skillTier + ' (' + m.skillLevel + ')</div>' +
-                            '<div style="font-size: 0.5rem; color: var(--dim);">' + m.apprenticeCount + ' apprentices</div>' +
-                            '<div style="font-size: 0.5rem; color: var(--dim);">Score: ' + Math.round(m.score || 0) + '</div>' +
-                        '</div>' +
-                    '</div>' +
+                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; margin-bottom: 16px;">' +
+                '<div style="font-weight: bold; font-size: 0.9rem;">' + crownIcon + ' ' + _escapeHtml(master.name) + ' ' + _escapeHtml(master.surname || '') + '</div>' +
+                '<div style="font-size: 0.6rem; color: var(--dim);">' + apprentices.length + ' apprentices</div>' +
                 '</div>';
-            }).join('');
 
-            var modalContent = '<div style="margin-bottom: 16px; padding: 12px; background: var(--bg2); border-radius: 8px;">' +
-                '<strong>' + searchIcon + ' Finding Master for ' + _escapeHtml(character.name) + '</strong>' +
-                '<div style="font-size: 0.65rem; color: var(--dim); margin-top: 4px;">' +
-                    'Role: ' + _escapeHtml(role.name) + ' · Location: ' + _escapeHtml(location) +
+            if (apprentices.length === 0) {
+                content += '<div style="text-align: center; padding: 20px; color: var(--dim);">No apprentices</div>';
+            } else {
+                content += '<div style="display: flex; flex-direction: column; gap: 4px;">';
+                for (var i = 0; i < apprentices.length; i++) {
+                    var app = apprentices[i];
+                    var appChar = typeof app === 'string' ? _getCharacterById(app) : app;
+                    if (!appChar) continue;
+
+                    var skill = _getSkillLevel(appChar.id, null) || 0;
+                    var role = _getApprenticeshipRole(appChar.id);
+                    var roleName = role ? (typeof role === 'string' ? role : role.name) : 'Unknown';
+                    var status = app.status || 'ongoing';
+                    var statusColor = status === 'ongoing' ? 'var(--success)' :
+                                     status === 'completed' ? 'var(--accent)' : 'var(--danger)';
+
+                    content +=
+                        '<div class="apprentice-item" data-char-id="' + appChar.id + '" style="' +
+                        'background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; ' +
+                        'padding: 8px 12px; cursor: pointer; transition: all 0.1s;' +
+                        '">' +
+                        '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 4px;">' +
+                        '<div>' +
+                        '<span>' + personIcon + ' ' + _escapeHtml(appChar.name) + ' ' + _escapeHtml(appChar.surname || '') + '</span>' +
+                        '<span style="font-size: 0.55rem; color: var(--dim); margin-left: 8px;">' + _escapeHtml(roleName) + '</span>' +
+                        '</div>' +
+                        '<div style="display: flex; gap: 8px; align-items: center;">' +
+                        '<span style="font-size: 0.55rem;">Skill: ' + skill + '</span>' +
+                        '<span style="font-size: 0.5rem; color: ' + statusColor + '; padding: 2px 6px; border-radius: 8px; background: ' + statusColor + '22;">' + status + '</span>' +
+                        '</div>' +
+                        '</div>' +
+                        '</div>';
+                }
+                content += '</div>';
+            }
+
+            content +=
+                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim); margin-top: 12px;">' +
+                infoIcon + ' Click an apprentice to view their details.' +
                 '</div>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">' + masters.length + ' potential masters found</div>' +
-            '</div>' +
-
-            '<div id="mastersList" style="max-height: 400px; overflow-y: auto;">' +
-                mastersHtml +
-            '</div>' +
-
-            '<div class="info-note" style="margin-top: 12px; padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
-                infoIcon + ' Click on a master to select them' +
-            '</div>';
+                '</div>';
 
             _openModal({
-                title: 'Find Master for ' + role.name,
-                content: modalContent,
+                title: 'Master Tree: ' + master.name,
+                content: content,
                 confirmText: 'Close',
                 cancelText: '',
                 onConfirm: function() {}
             });
 
             setTimeout(function() {
-                document.querySelectorAll('.master-item').forEach(function(item) {
-                    item.addEventListener('click', function() {
-                        var masterId = this.dataset.masterId;
-                        var master = _getCharacterById(masterId);
-                        if (master && onSuccess) {
-                            _closeTopModal();
-                            onSuccess(master);
-                        }
-                    });
-
-                    item.addEventListener('mouseenter', function() {
-                        this.style.background = 'var(--accent-dim)';
-                        this.style.borderColor = 'var(--accent)';
-                    });
-
-                    item.addEventListener('mouseleave', function() {
-                        this.style.background = 'var(--bg3)';
-                        this.style.borderColor = 'var(--border)';
-                    });
-                });
+                var items = document.querySelectorAll('.apprentice-item');
+                for (var i = 0; i < items.length; i++) {
+                    (function(item) {
+                        item.addEventListener('click', function() {
+                            var charId = this.dataset.charId;
+                            var char = _getCharacterById(charId);
+                            if (char) {
+                                _closeTopModal();
+                                // Find the master of this apprentice
+                                var masterOf = _getMaster(charId);
+                                if (masterOf) {
+                                    var masterId = typeof masterOf === 'object' ? masterOf.id : masterOf;
+                                    openApprenticeshipDetailsModal(masterId, charId, null, null);
+                                }
+                            }
+                        });
+                        item.addEventListener('mouseenter', function() {
+                            this.style.background = 'var(--bg2)';
+                            this.style.borderColor = 'var(--accent)';
+                        });
+                        item.addEventListener('mouseleave', function() {
+                            this.style.background = 'var(--bg3)';
+                            this.style.borderColor = 'var(--border)';
+                        });
+                    })(items[i]);
+                }
             }, 100);
 
         } finally {
-            _processingModal = false;
+            _openingModal = false;
         }
     }
 
     // =========================================================================
-    // 15. EXPORTS
+    // 9. FIND MASTER BY LOCATION MODAL (NEW)
+    // =========================================================================
+
+    /**
+     * Opens modal to find masters in a settlement
+     * @param {string} locationId - Settlement location ID
+     * @param {string} roleId - Role ID filter (optional)
+     * @param {Function} onSuccess - Callback when master selected
+     */
+    function openFindMasterByLocationModal(locationId, roleId, onSuccess) {
+        if (_openingModal) {
+            _showToast('Modal is already opening', 'warning');
+            return;
+        }
+        _openingModal = true;
+
+        try {
+            var place = _getPlaceById(locationId);
+            if (!place) {
+                _showToast('Location not found', 'error');
+                return;
+            }
+
+            var masters = _getSettlementMastersByRole(locationId, roleId);
+
+            if (masters.length === 0) {
+                var roleName = roleId ? ' for that role' : '';
+                _showToast('No masters found in ' + place.displayName + roleName, 'info');
+                _openingModal = false;
+                return;
+            }
+
+            var personIcon = _getIcon('PERSON');
+            var crownIcon = _getIcon('CROWN');
+            var locationIcon = _getIcon('LOCATION');
+
+            var role = roleId ? _getRoleById(roleId) : null;
+            var title = role ? 'Find ' + role.name + ' Masters' : 'Find Masters';
+
+            var content = '<div style="max-height: 500px; overflow-y: auto; padding: 4px;">';
+
+            content += '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; margin-bottom: 16px;">' +
+                '<strong>' + crownIcon + ' ' + _escapeHtml(title) + '</strong>' +
+                '<div style="font-size: 0.65rem; color: var(--dim);">' + locationIcon + ' ' + _escapeHtml(place.displayName) + '</div>' +
+                '<div style="font-size: 0.6rem; color: var(--dim); margin-top: 4px;">' + masters.length + ' masters available</div>' +
+                '</div>';
+
+            for (var i = 0; i < masters.length; i++) {
+                var m = masters[i];
+                var char = m.character;
+                var age = _calculateAge(char.birthYear, false, null);
+
+                // Get master's primary profession
+                var primaryProf = '';
+                if (char.professions) {
+                    for (var j = 0; j < char.professions.length; j++) {
+                        if (char.professions[j].primary) {
+                            primaryProf = char.professions[j].name || '';
+                            break;
+                        }
+                    }
+                    if (!primaryProf && char.professions.length > 0) {
+                        primaryProf = char.professions[0].name || '';
+                    }
+                }
+
+                content +=
+                    '<div class="master-item" data-char-id="' + char.id + '" style="' +
+                    'background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; ' +
+                    'padding: 10px 12px; margin-bottom: 6px; cursor: pointer; transition: all 0.1s;' +
+                    '">' +
+                    '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 4px;">' +
+                    '<div>' +
+                    '<strong>' + _escapeHtml(char.name) + ' ' + _escapeHtml(char.surname || '') + '</strong>' +
+                    '<span style="font-size: 0.6rem; color: var(--dim); margin-left: 8px;">' + age + ' years</span>' +
+                    (primaryProf ? '<span style="font-size: 0.55rem; color: var(--accent); margin-left: 8px;">' + _escapeHtml(primaryProf) + '</span>' : '') +
+                    '</div>' +
+                    '<div style="font-size: 0.55rem; color: var(--dim);">' +
+                    personIcon + ' ' + m.apprenticeCount + ' apprentices' +
+                    '</div>' +
+                    '</div>' +
+                    '</div>';
+            }
+
+            content += '<div style="margin-top: 12px; padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
+                'Click on a master to select them for apprenticeship.' +
+                '</div>';
+
+            content += '</div>';
+
+            _openModal({
+                title: title + ' in ' + place.displayName,
+                content: content,
+                confirmText: 'Cancel',
+                cancelText: '',
+                onConfirm: function() {
+                    _openingModal = false;
+                }
+            });
+
+            setTimeout(function() {
+                var items = document.querySelectorAll('.master-item');
+                for (var i = 0; i < items.length; i++) {
+                    (function(item) {
+                        item.addEventListener('click', function() {
+                            var charId = this.dataset.charId;
+                            var char = _getCharacterById(charId);
+                            if (char && onSuccess) {
+                                _closeTopModal();
+                                _openingModal = false;
+                                onSuccess(char);
+                            }
+                        });
+                        item.addEventListener('mouseenter', function() {
+                            this.style.background = 'var(--bg2)';
+                            this.style.borderColor = 'var(--accent)';
+                        });
+                        item.addEventListener('mouseleave', function() {
+                            this.style.background = 'var(--bg3)';
+                            this.style.borderColor = 'var(--border)';
+                        });
+                    })(items[i]);
+                }
+            }, 100);
+
+        } finally {
+            // Don't reset _openingModal here - it's reset in the modal close handlers
+        }
+    }
+
+    // =========================================================================
+    // 10. EXPORTS
     // =========================================================================
 
     window.openCreateApprenticeshipModal = openCreateApprenticeshipModal;
     window.openEditApprenticeshipModal = openEditApprenticeshipModal;
     window.openApprenticeshipDetailsModal = openApprenticeshipDetailsModal;
     window.openViewMasterTreeModal = openViewMasterTreeModal;
-    window.openFindMasterModal = openFindMasterModal;
-
-    // Legacy aliases
-    window._openCreateApprenticeshipModal = openCreateApprenticeshipModal;
-    window._openEditApprenticeshipModal = openEditApprenticeshipModal;
-    window._openApprenticeshipDetailsModal = openApprenticeshipDetailsModal;
-    window._openViewMasterTreeModal = openViewMasterTreeModal;
-    window._openFindMasterModal = openFindMasterModal;
-
-    if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            openCreateApprenticeshipModal: openCreateApprenticeshipModal,
-            openEditApprenticeshipModal: openEditApprenticeshipModal,
-            openApprenticeshipDetailsModal: openApprenticeshipDetailsModal,
-            openViewMasterTreeModal: openViewMasterTreeModal,
-            openFindMasterModal: openFindMasterModal
-        };
-    }
+    window.openFindMasterByLocationModal = openFindMasterByLocationModal; // NEW
 
 })();

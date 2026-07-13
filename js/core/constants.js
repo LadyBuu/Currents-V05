@@ -329,11 +329,21 @@ window.STORAGE_KEYS = {
     
     // Custom data
     CUSTOM_FEATURES: 'stillwaters_custom_features',
-    ADOPTION_AGENCY_STATE: 'adoption_agency_state'
+    ADOPTION_AGENCY_STATE: 'adoption_agency_state',
+    
+    // ===== CENSUS STORAGE KEYS =====
+    CENSUS_PRESETS: 'census_presets',
+    CENSUS_CURRENT_VIEW: 'census_current_view',
+    CENSUS_SELECTED_LOCATION: 'census_selected_location',
+    CENSUS_FILTERS_COLLAPSED: 'census_filters_collapsed',
+    
+    // ===== TIMELINE STORAGE KEYS =====
+    TIMELINE_FILTERS: 'timeline_filters',
+    TIMELINE_COLLAPSED: 'timeline_collapsed'
 };
 
 // =============================================================================
-// 7. ROLE CATEGORY CONSTANTS
+// 6. ROLE CATEGORY CONSTANTS
 // =============================================================================
 
 window.DEFAULT_ROLE_CATEGORIES = {
@@ -349,7 +359,7 @@ window.DEFAULT_ROLE_CATEGORIES = {
 };
 
 // =============================================================================
-// 6. HELPER FUNCTIONS (optional utilities)
+// 7. HELPER FUNCTIONS (optional utilities)
 // =============================================================================
 
 /**
@@ -383,7 +393,7 @@ window.getGenderIcon = function(gender) {
 }
 
 // =============================================================================
-// 7. EXPORTS (for ES module compatibility)
+// 8. EXPORTS (for ES module compatibility)
 // =============================================================================
 
 if (typeof module !== 'undefined' && module.exports) {
