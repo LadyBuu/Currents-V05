@@ -5,13 +5,14 @@
  * 
  * PURPOSE: Business logic for residence management. Handles CRUD operations,
  *          units, vacancy management, name history, timeline, association
- *          history, rehabilitation, and recommendations.
+ *          history, rehabilitation, recommendations, AND RENTAL MANAGEMENT.
  * 
- * UPDATED: Added role integration for staff positions
- *          Added staff assignment to residence units
- *          Added role requirement for staff positions
- *          Added demolishResidence(), getDemolishedResidences(),
- *          getResidenceDamageHistory(), getResidenceDemolitionStats()
+ * UPDATED: Added rental system - owner/renter fields, rent amount, rent income/expenses
+ *          Added setResidenceOwner(), setResidenceRenter(), endResidenceRental()
+ *          Added updateResidenceRent(), getResidenceRentalHistory()
+ *          Added getResidencesByOwner(), getResidencesByRenter()
+ *          Added getTotalRentIncome(), getTotalRentExpenses()
+ *          Added recordRentPayment(), getRentPayments()
  * 
  * DEPENDS ON:
  *   - household-state.js (HouseholdState)
@@ -44,9 +45,10 @@
  *   20. CONDITION HELPERS
  *   21. UNIT STATS HELPERS
  *   22. STAFF POSITION FUNCTIONS
- *   23. DEMOLISH FUNCTIONS (NEW)
- *   24. CACHE MANAGEMENT
- *   25. EXPORTS
+ *   23. DEMOLISH FUNCTIONS
+ *   24. RENTAL FUNCTIONS (NEW)
+ *   25. CACHE MANAGEMENT
+ *   26. EXPORTS
  * 
  * ICON POLICY:
  *   - All icons from icons.js via _getIcon()
@@ -90,6 +92,16 @@
         DEMOLISHED: 'demolished',
         UNDER_CONSTRUCTION: 'under_construction',
         RENOVATING: 'renovating'
+    };
+
+    // =========================================================================
+    // 1a. RENTAL CONSTANTS (NEW)
+    // =========================================================================
+
+    var RENTAL_STATUS = {
+        OWNER_OCCUPIED: 'owner_occupied',
+        RENTED: 'rented',
+        VACANT: 'vacant'
     };
 
     // =========================================================================
@@ -259,6 +271,10 @@
         return window.HouseholdCommands;
     }
 
+    function _getHouseholdState() {
+        return window.HouseholdState;
+    }
+
     // =========================================================================
     // 3. STATE REFERENCE
     // =========================================================================
@@ -328,6 +344,7 @@
         if (!residence.staffAssignments) residence.staffAssignments = [];
         if (residence.foundedYear === undefined) residence.foundedYear = _getCurrentYear();
         if (residence.lastUpdated === undefined) residence.lastUpdated = _getCurrentYear();
+
         // DEMOLITION FIELDS
         if (residence.isDemolished === undefined) residence.isDemolished = false;
         if (residence.demolishedAt === undefined) residence.demolishedAt = null;
@@ -336,6 +353,26 @@
         if (residence.disasterId === undefined) residence.disasterId = null;
         if (residence.demolishedRecord === undefined) residence.demolishedRecord = null;
         if (residence.damageHistory === undefined) residence.damageHistory = [];
+
+        // ================================================================
+        // RENTAL FIELDS (NEW)
+        // ================================================================
+        if (residence.ownerType === undefined) residence.ownerType = null;
+        if (residence.ownerId === undefined) residence.ownerId = null;
+        if (residence.ownerName === undefined) residence.ownerName = null;
+        if (residence.ownerSince === undefined) residence.ownerSince = null;
+
+        if (residence.renterType === undefined) residence.renterType = null;
+        if (residence.renterId === undefined) residence.renterId = null;
+        if (residence.renterName === undefined) residence.renterName = null;
+        if (residence.rentAmount === undefined) residence.rentAmount = 0;
+        if (residence.rentStartYear === undefined) residence.rentStartYear = null;
+        if (residence.rentEffectiveYear === undefined) residence.rentEffectiveYear = null;
+        if (residence.rentalStatus === undefined) residence.rentalStatus = RENTAL_STATUS.VACANT;
+
+        if (residence.ownershipHistory === undefined) residence.ownershipHistory = [];
+        if (residence.rentalHistory === undefined) residence.rentalHistory = [];
+        if (residence.rentPayments === undefined) residence.rentPayments = [];
     }
 
     // =========================================================================
@@ -417,7 +454,27 @@
                 maxUnits: options.maxUnits || 20,
                 suppressVacancyAlerts: false,
                 staffPositions: options.staffPositions || [],
-                staffAssignments: options.staffAssignments || []
+                staffAssignments: options.staffAssignments || [],
+
+                // ============================================================
+                // RENTAL FIELDS (NEW)
+                // ============================================================
+                ownerType: options.ownerType || null,
+                ownerId: options.ownerId || null,
+                ownerName: options.ownerName || null,
+                ownerSince: options.ownerSince || null,
+
+                renterType: null,
+                renterId: null,
+                renterName: null,
+                rentAmount: 0,
+                rentStartYear: null,
+                rentEffectiveYear: null,
+                rentalStatus: RENTAL_STATUS.VACANT,
+
+                ownershipHistory: [],
+                rentalHistory: [],
+                rentPayments: []
             };
 
             if (type.isMultiUnit) {
@@ -586,7 +643,7 @@
                 return null;
             }
 
-            var allowedUpdates = ['name', 'locationId', 'notes', 'status', 'foundedYear', 'builtYear', 'condition', 'description', 'features', 'estimatedValue', 'isDemolished', 'demolishedAt', 'demolishedReason', 'destroyedBy', 'disasterId', 'demolishedRecord', 'damageHistory'];
+            var allowedUpdates = ['name', 'locationId', 'notes', 'status', 'foundedYear', 'builtYear', 'condition', 'description', 'features', 'estimatedValue', 'isDemolished', 'demolishedAt', 'demolishedReason', 'destroyedBy', 'disasterId', 'demolishedRecord', 'damageHistory', 'ownerType', 'ownerId', 'ownerName', 'ownerSince', 'renterType', 'renterId', 'renterName', 'rentAmount', 'rentStartYear', 'rentEffectiveYear', 'rentalStatus'];
             for (var i = 0; i < allowedUpdates.length; i++) {
                 var key = allowedUpdates[i];
                 if (updates[key] !== undefined && updates[key] !== null) {
@@ -2691,20 +2748,9 @@
     }
 
     // =========================================================================
-    // 24. DEMOLISH RESIDENCE (NEW - Full Implementation)
+    // 24. DEMOLISH RESIDENCE
     // =========================================================================
 
-    /**
-     * Demolishes a full residence (keeps record of destruction)
-     * @param {string} residenceId - The residence to demolish
-     * @param {string} reason - Why it was demolished
-     * @param {number} year - When it was demolished
-     * @param {Object} options
-     * @param {string} options.destroyedBy - 'disaster', 'war', 'decay', etc.
-     * @param {string} options.disasterId - ID of the disaster that caused this
-     * @param {boolean} options.silent - Suppress toast notifications
-     * @returns {Object} - Demolition result
-     */
     function demolishResidence(residenceId, reason, year, options) {
         if (_processingResidence) {
             return { success: false, error: 'Operation already in progress' };
@@ -2725,7 +2771,6 @@
             var demolishYear = year || _getCurrentYear();
             var demolishReason = reason || 'Demolished';
 
-            // Create demolition record
             var demolitionRecord = {
                 residenceId: residence.id,
                 residenceName: residence.name,
@@ -2746,7 +2791,6 @@
                 timestamp: Date.now()
             };
 
-            // Demolish all units first
             var units = (residence.units || []).slice();
             var unitsDemolished = 0;
 
@@ -2767,7 +2811,6 @@
                 }
             }
 
-            // Demolish the residence itself
             var updates = {
                 status: RESIDENCE_STATUS.DEMOLISHED,
                 isDemolished: true,
@@ -2785,7 +2828,6 @@
                 lastUpdated: Date.now()
             };
 
-            // Add to damage history
             if (!residence.damageHistory) residence.damageHistory = [];
             residence.damageHistory.push({
                 year: demolishYear,
@@ -2799,7 +2841,6 @@
 
             updateResidence(residenceId, updates);
 
-            // Add history
             addResidenceHistory(residenceId, 'demolished', demolishReason, null);
             addResidenceTimelineEvent(residenceId, {
                 year: demolishYear,
@@ -2808,7 +2849,6 @@
                 householdName: residence.householdName || null
             });
 
-            // Save
             _saveMasterData();
             _invalidateAccessorCaches();
 
@@ -2829,18 +2869,6 @@
         }
     }
 
-    // =========================================================================
-    // 25. DEMOLISHED RESIDENCE QUERIES (NEW)
-    // =========================================================================
-
-    /**
-     * Gets demolished residences
-     * @param {Object} options
-     * @param {string} options.locationId - Filter by location
-     * @param {string} options.destroyedBy - Filter by cause
-     * @param {boolean} options.includeRecords - Include demolition records
-     * @returns {Array} - Array of demolished residences
-     */
     function getDemolishedResidences(options) {
         try {
             var residences = getResidences();
@@ -2876,12 +2904,6 @@
         }
     }
 
-    /**
-     * Gets damage history for a residence
-     * @param {string} residenceId - The residence ID
-     * @param {number} limit - Max entries to return
-     * @returns {Array} - Damage history entries
-     */
     function getResidenceDamageHistory(residenceId, limit) {
         try {
             var residence = getResidenceById(residenceId);
@@ -2897,11 +2919,6 @@
         }
     }
 
-    /**
-     * Gets demolition statistics for a location
-     * @param {string} locationId - Location ID
-     * @returns {Object} - Demolition statistics
-     */
     function getResidenceDemolitionStats(locationId) {
         var stats = {
             totalDemolished: 0,
@@ -2963,6 +2980,543 @@
     }
 
     // =========================================================================
+    // 25. RENTAL FUNCTIONS (NEW)
+    // =========================================================================
+
+    /**
+     * Helper: Gets owner/renter name from type and ID
+     */
+    function _getOwnerName(type, id) {
+        if (type === 'household') {
+            var household = _getHousehold(id);
+            return household ? household.name : 'Unknown Household';
+        } else if (type === 'character') {
+            var character = _getCharacterById(id);
+            return character ? (character.name + (character.surname ? ' ' + character.surname : '')) : 'Unknown Character';
+        }
+        return 'Unknown';
+    }
+
+    /**
+     * Sets the owner of a residence
+     */
+    function setResidenceOwner(residenceId, ownerType, ownerId, options) {
+        if (_processingResidence) {
+            _showToast('Already processing a residence operation', 'warning');
+            return null;
+        }
+        _processingResidence = true;
+
+        try {
+            options = options || {};
+            var residence = getResidenceById(residenceId);
+            if (!residence) {
+                _showToast('Residence not found', 'error');
+                return null;
+            }
+
+            // Validate owner exists
+            if (ownerType === 'household') {
+                var household = _getHousehold(ownerId);
+                if (!household) {
+                    _showToast('Household not found', 'error');
+                    return null;
+                }
+            } else if (ownerType === 'character') {
+                var character = _getCharacterById(ownerId);
+                if (!character) {
+                    _showToast('Character not found', 'error');
+                    return null;
+                }
+            } else {
+                _showToast('Invalid owner type. Must be "household" or "character"', 'error');
+                return null;
+            }
+
+            var oldOwnerId = residence.ownerId;
+            var oldOwnerType = residence.ownerType;
+            var oldOwnerName = residence.ownerName;
+
+            residence.ownerType = ownerType;
+            residence.ownerId = ownerId;
+            residence.ownerName = options.ownerName || _getOwnerName(ownerType, ownerId);
+            residence.ownerSince = options.ownerSince || _getCurrentYear();
+
+            // Update rental status if no renter and owner is the occupant
+            if (!residence.renterId && !residence.isVacant) {
+                residence.rentalStatus = RENTAL_STATUS.OWNER_OCCUPIED;
+            }
+
+            if (!residence.ownershipHistory) residence.ownershipHistory = [];
+            residence.ownershipHistory.push({
+                ownerType: ownerType,
+                ownerId: ownerId,
+                ownerName: residence.ownerName,
+                year: residence.ownerSince,
+                action: 'set_owner',
+                previousOwnerId: oldOwnerId,
+                previousOwnerType: oldOwnerType,
+                previousOwnerName: oldOwnerName,
+                timestamp: Date.now()
+            });
+
+            residence.lastUpdated = _getCurrentYear();
+
+            addResidenceHistory(residenceId, 'owner_set',
+                'Owner set to ' + residence.ownerName + ' (' + ownerType + ')');
+
+            addResidenceTimelineEvent(residenceId, {
+                year: _getCurrentYear(),
+                type: 'ownership_changed',
+                details: 'Owner set to ' + residence.ownerName,
+                householdName: residence.ownerName
+            });
+
+            _saveMasterData();
+            _invalidateAccessorCaches();
+
+            _showToast('Owner set to ' + residence.ownerName, 'success');
+            return residence;
+
+        } finally {
+            _processingResidence = false;
+        }
+    }
+
+    /**
+     * Gets the owner of a residence
+     */
+    function getResidenceOwner(residenceId) {
+        var residence = getResidenceById(residenceId);
+        if (!residence) return null;
+
+        return {
+            ownerType: residence.ownerType || null,
+            ownerId: residence.ownerId || null,
+            ownerName: residence.ownerName || 'None',
+            ownerSince: residence.ownerSince || null
+        };
+    }
+
+    /**
+     * Sets the renter of a residence with annual rent amount
+     */
+    function setResidenceRenter(residenceId, renterType, renterId, rentAmount, options) {
+        if (_processingResidence) {
+            _showToast('Already processing a residence operation', 'warning');
+            return null;
+        }
+        _processingResidence = true;
+
+        try {
+            options = options || {};
+            var residence = getResidenceById(residenceId);
+            if (!residence) {
+                _showToast('Residence not found', 'error');
+                return null;
+            }
+
+            // Validate renter exists
+            if (renterType === 'household') {
+                var household = _getHousehold(renterId);
+                if (!household) {
+                    _showToast('Household not found', 'error');
+                    return null;
+                }
+            } else if (renterType === 'character') {
+                var character = _getCharacterById(renterId);
+                if (!character) {
+                    _showToast('Character not found', 'error');
+                    return null;
+                }
+            } else {
+                _showToast('Invalid renter type. Must be "household" or "character"', 'error');
+                return null;
+            }
+
+            if (!residence.ownerId) {
+                _showToast('Residence must have an owner before it can be rented', 'error');
+                return null;
+            }
+
+            if (rentAmount < 0) {
+                _showToast('Rent amount cannot be negative', 'error');
+                return null;
+            }
+
+            // Check if renter can afford rent (if household)
+            if (renterType === 'household') {
+                var renterHousehold = _getHousehold(renterId);
+                if (renterHousehold && (renterHousehold.wealth || 0) < rentAmount) {
+                    if (!confirm(renterHousehold.name + ' has only ' + (renterHousehold.wealth || 0) + 
+                        ' gold but annual rent is ' + rentAmount + ' gold. Continue?')) {
+                        return null;
+                    }
+                }
+            }
+
+            var oldRenterId = residence.renterId;
+            var oldRenterType = residence.renterType;
+            var oldRenterName = residence.renterName;
+            var oldRentAmount = residence.rentAmount;
+
+            residence.renterType = renterType;
+            residence.renterId = renterId;
+            residence.renterName = options.renterName || _getOwnerName(renterType, renterId);
+            residence.rentAmount = rentAmount;
+            residence.rentalStatus = RENTAL_STATUS.RENTED;
+            residence.rentStartYear = options.rentStartYear || _getCurrentYear();
+            residence.isVacant = false;
+
+            // Update household assignment if renter is a household
+            if (renterType === 'household' && _state && typeof _state.associateHouseholdWithResidence === 'function') {
+                _state.associateHouseholdWithResidence(renterId, residenceId, {
+                    residenceName: residence.name,
+                    residenceType: residence.typeId,
+                    year: residence.rentStartYear,
+                    unitNumber: options.unitNumber || null,
+                    notes: 'Rented from ' + (residence.ownerName || 'Unknown owner') + ' for ' + rentAmount + 'g/year'
+                });
+            }
+
+            if (!residence.rentalHistory) residence.rentalHistory = [];
+            residence.rentalHistory.push({
+                renterType: renterType,
+                renterId: renterId,
+                renterName: residence.renterName,
+                rentAmount: rentAmount,
+                startYear: residence.rentStartYear,
+                endYear: null,
+                action: 'rent_started',
+                previousRenterId: oldRenterId,
+                previousRenterName: oldRenterName,
+                timestamp: Date.now()
+            });
+
+            residence.lastUpdated = _getCurrentYear();
+
+            addResidenceHistory(residenceId, 'renter_set',
+                'Renter set to ' + residence.renterName + ' (' + renterType + ') with annual rent ' + rentAmount + ' gold');
+
+            addResidenceTimelineEvent(residenceId, {
+                year: _getCurrentYear(),
+                type: 'rental_started',
+                details: residence.renterName + ' rented for ' + rentAmount + ' gold/year',
+                householdName: residence.renterName
+            });
+
+            // Record in household activity log
+            if (renterType === 'household' && typeof _addHouseholdActivityLog === 'function') {
+                _addHouseholdActivityLog(renterId, 'residence_rented',
+                    'Rented "' + residence.name + '" for ' + rentAmount + 'g/year from ' + (residence.ownerName || 'Unknown owner'));
+            }
+
+            _saveMasterData();
+            _invalidateAccessorCaches();
+
+            _showToast('Renter set to ' + residence.renterName + ' (Rent: ' + rentAmount + 'g/year)', 'success');
+            return residence;
+
+        } finally {
+            _processingResidence = false;
+        }
+    }
+
+    /**
+     * Gets the renter of a residence
+     */
+    function getResidenceRenter(residenceId) {
+        var residence = getResidenceById(residenceId);
+        if (!residence) return null;
+
+        return {
+            renterType: residence.renterType || null,
+            renterId: residence.renterId || null,
+            renterName: residence.renterName || 'None',
+            rentAmount: residence.rentAmount || 0,
+            rentStartYear: residence.rentStartYear || null,
+            rentalStatus: residence.rentalStatus || RENTAL_STATUS.VACANT
+        };
+    }
+
+    /**
+     * Ends a rental agreement
+     */
+    function endResidenceRental(residenceId, endYear, reason) {
+        if (_processingResidence) {
+            _showToast('Already processing a residence operation', 'warning');
+            return null;
+        }
+        _processingResidence = true;
+
+        try {
+            var residence = getResidenceById(residenceId);
+            if (!residence) {
+                _showToast('Residence not found', 'error');
+                return null;
+            }
+
+            if (!residence.renterId) {
+                _showToast('Residence has no renter', 'warning');
+                return null;
+            }
+
+            var endYearValue = endYear || _getCurrentYear();
+            var reasonValue = reason || 'Rental ended';
+
+            var oldRenterId = residence.renterId;
+            var oldRenterName = residence.renterName;
+
+            // Record in rental history
+            if (residence.rentalHistory) {
+                for (var i = residence.rentalHistory.length - 1; i >= 0; i--) {
+                    if (residence.rentalHistory[i].renterId === oldRenterId && 
+                        !residence.rentalHistory[i].endYear) {
+                        residence.rentalHistory[i].endYear = endYearValue;
+                        residence.rentalHistory[i].reason = reasonValue;
+                        break;
+                    }
+                }
+            }
+
+            // Disassociate from renter household
+            if (residence.renterType === 'household' && residence.renterId) {
+                if (_state && typeof _state.disassociateHouseholdFromResidence === 'function') {
+                    _state.disassociateHouseholdFromResidence(residence.renterId, residenceId, reasonValue, endYearValue);
+                }
+                if (typeof _addHouseholdActivityLog === 'function') {
+                    _addHouseholdActivityLog(residence.renterId, 'residence_rental_ended',
+                        'Rental ended for "' + residence.name + '": ' + reasonValue);
+                }
+            }
+
+            residence.renterType = null;
+            residence.renterId = null;
+            residence.renterName = null;
+            residence.rentAmount = 0;
+            residence.rentalStatus = RENTAL_STATUS.VACANT;
+            residence.isVacant = true;
+            residence.vacantYear = endYearValue;
+            residence.vacantReason = 'Rental ended: ' + reasonValue;
+
+            residence.lastUpdated = _getCurrentYear();
+
+            addResidenceHistory(residenceId, 'rental_ended',
+                'Rental ended for ' + oldRenterName + ': ' + reasonValue);
+
+            addResidenceTimelineEvent(residenceId, {
+                year: endYearValue,
+                type: 'rental_ended',
+                details: oldRenterName + ' rental ended: ' + reasonValue,
+                householdName: oldRenterName
+            });
+
+            _saveMasterData();
+            _invalidateAccessorCaches();
+
+            _showToast('Rental ended for ' + oldRenterName, 'info');
+            return residence;
+
+        } finally {
+            _processingResidence = false;
+        }
+    }
+
+    /**
+     * Updates annual rent amount for a residence
+     */
+    function updateResidenceRent(residenceId, newRentAmount, effectiveYear, reason) {
+        if (_processingResidence) {
+            _showToast('Already processing a residence operation', 'warning');
+            return null;
+        }
+        _processingResidence = true;
+
+        try {
+            var residence = getResidenceById(residenceId);
+            if (!residence) {
+                _showToast('Residence not found', 'error');
+                return null;
+            }
+
+            if (!residence.renterId) {
+                _showToast('Residence has no renter', 'error');
+                return null;
+            }
+
+            if (newRentAmount < 0) {
+                _showToast('Rent amount cannot be negative', 'error');
+                return null;
+            }
+
+            var oldRent = residence.rentAmount;
+            var effectiveYearValue = effectiveYear || _getCurrentYear();
+
+            residence.rentAmount = newRentAmount;
+            residence.rentEffectiveYear = effectiveYearValue;
+            residence.lastUpdated = _getCurrentYear();
+
+            if (!residence.rentalHistory) residence.rentalHistory = [];
+            residence.rentalHistory.push({
+                renterId: residence.renterId,
+                renterName: residence.renterName,
+                oldRentAmount: oldRent,
+                newRentAmount: newRentAmount,
+                year: effectiveYearValue,
+                reason: reason || 'Rent adjustment',
+                action: 'rent_adjusted',
+                timestamp: Date.now()
+            });
+
+            addResidenceHistory(residenceId, 'rent_adjusted',
+                'Rent adjusted from ' + oldRent + ' to ' + newRentAmount + ' gold');
+
+            addResidenceTimelineEvent(residenceId, {
+                year: effectiveYearValue,
+                type: 'rent_adjusted',
+                details: 'Rent adjusted from ' + oldRent + ' to ' + newRentAmount + ' gold',
+                householdName: residence.renterName
+            });
+
+            // Record in household activity log
+            if (residence.renterType === 'household' && typeof _addHouseholdActivityLog === 'function') {
+                _addHouseholdActivityLog(residence.renterId, 'rent_adjusted',
+                    'Rent for "' + residence.name + '" changed from ' + oldRent + ' to ' + newRentAmount + 'g/year');
+            }
+
+            _saveMasterData();
+            _invalidateAccessorCaches();
+
+            _showToast('Rent updated to ' + newRentAmount + 'g/year', 'success');
+            return residence;
+
+        } finally {
+            _processingResidence = false;
+        }
+    }
+
+    /**
+     * Gets rental history for a residence
+     */
+    function getResidenceRentalHistory(residenceId, limit) {
+        var residence = getResidenceById(residenceId);
+        if (!residence || !residence.rentalHistory) return [];
+
+        limit = limit || 20;
+        var history = residence.rentalHistory.slice();
+        history.sort(function(a, b) { return (b.year || 0) - (a.year || 0); });
+        return history.slice(0, limit);
+    }
+
+    /**
+     * Gets residences owned by a household/character
+     */
+    function getResidencesByOwner(ownerId, ownerType) {
+        if (!ownerId) return [];
+        var residences = getResidences();
+        var result = [];
+
+        for (var i = 0; i < residences.length; i++) {
+            var r = residences[i];
+            if (r.ownerId === ownerId && r.ownerType === ownerType) {
+                if (!r.isDemolished) {
+                    result.push(r);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * Gets residences rented by a household/character
+     */
+    function getResidencesByRenter(renterId, renterType) {
+        if (!renterId) return [];
+        var residences = getResidences();
+        var result = [];
+
+        for (var i = 0; i < residences.length; i++) {
+            var r = residences[i];
+            if (r.renterId === renterId && r.renterType === renterType) {
+                if (!r.isDemolished) {
+                    result.push(r);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * Gets total annual rent income for an owner
+     */
+    function getTotalRentIncome(ownerId, ownerType) {
+        var residences = getResidencesByOwner(ownerId, ownerType);
+        var total = 0;
+
+        for (var i = 0; i < residences.length; i++) {
+            if (residences[i].renterId && residences[i].rentAmount) {
+                total += residences[i].rentAmount;
+            }
+        }
+
+        return total;
+    }
+
+    /**
+     * Gets total annual rent expenses for a renter
+     */
+    function getTotalRentExpenses(renterId, renterType) {
+        var residences = getResidencesByRenter(renterId, renterType);
+        var total = 0;
+
+        for (var i = 0; i < residences.length; i++) {
+            if (residences[i].rentAmount) {
+                total += residences[i].rentAmount;
+            }
+        }
+
+        return total;
+    }
+
+    /**
+     * Records a rent payment
+     */
+    function recordRentPayment(residenceId, renterId, amount, year) {
+        var residence = getResidenceById(residenceId);
+        if (!residence) return false;
+
+        if (!residence.rentPayments) residence.rentPayments = [];
+
+        residence.rentPayments.push({
+            renterId: renterId,
+            renterName: residence.renterName,
+            amount: amount,
+            year: year || _getCurrentYear(),
+            paid: true,
+            timestamp: Date.now()
+        });
+
+        residence.lastUpdated = _getCurrentYear();
+        _saveMasterData();
+        return true;
+    }
+
+    /**
+     * Gets rent payment history for a residence
+     */
+    function getRentPayments(residenceId, limit) {
+        var residence = getResidenceById(residenceId);
+        if (!residence || !residence.rentPayments) return [];
+
+        limit = limit || 20;
+        var payments = residence.rentPayments.slice();
+        payments.sort(function(a, b) { return (b.year || 0) - (a.year || 0); });
+        return payments.slice(0, limit);
+    }
+
+    // =========================================================================
     // 26. CACHE MANAGEMENT
     // =========================================================================
 
@@ -2981,11 +3535,13 @@
 
     window.RESIDENCE_TYPES = RESIDENCE_TYPES;
     window.RESIDENCE_STATUS = RESIDENCE_STATUS;
+    window.RENTAL_STATUS = RENTAL_STATUS;
 
     window.ResidenceSystem = {
         // Constants
         RESIDENCE_TYPES: RESIDENCE_TYPES,
         RESIDENCE_STATUS: RESIDENCE_STATUS,
+        RENTAL_STATUS: RENTAL_STATUS,
 
         // CRUD
         createResidence: createResidence,
@@ -3082,11 +3638,28 @@
         endResidenceStaffAssignment: endResidenceStaffAssignment,
         getResidenceStaffAssignments: getResidenceStaffAssignments,
 
-        // NEW: Demolish functions
+        // Demolish
         demolishResidence: demolishResidence,
         getDemolishedResidences: getDemolishedResidences,
         getResidenceDamageHistory: getResidenceDamageHistory,
         getResidenceDemolitionStats: getResidenceDemolitionStats,
+
+        // ================================================================
+        // RENTAL FUNCTIONS (NEW)
+        // ================================================================
+        setResidenceOwner: setResidenceOwner,
+        getResidenceOwner: getResidenceOwner,
+        setResidenceRenter: setResidenceRenter,
+        getResidenceRenter: getResidenceRenter,
+        endResidenceRental: endResidenceRental,
+        updateResidenceRent: updateResidenceRent,
+        getResidenceRentalHistory: getResidenceRentalHistory,
+        getResidencesByOwner: getResidencesByOwner,
+        getResidencesByRenter: getResidencesByRenter,
+        getTotalRentIncome: getTotalRentIncome,
+        getTotalRentExpenses: getTotalRentExpenses,
+        recordRentPayment: recordRentPayment,
+        getRentPayments: getRentPayments,
 
         // Cache
         clearCache: clearCache

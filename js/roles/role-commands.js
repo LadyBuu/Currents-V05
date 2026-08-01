@@ -8,9 +8,8 @@
  * - Category management
  * - Role assignment to characters
  * - Skill management
- * 
- * UPDATED: Added salary management functions
- * UPDATED: Added literacy requirement management functions
+ * - Profession skill updates (direct)
+ * - Role specialization management (NEW)
  * 
  * DEPENDENCIES:
  *   - role-state.js (RoleState)
@@ -39,6 +38,9 @@
         if (typeof window.getCharacterById === 'function') {
             return window.getCharacterById(id);
         }
+        if (typeof window._getCharacterById === 'function') {
+            return window._getCharacterById(id);
+        }
         return null;
     }
 
@@ -46,12 +48,18 @@
         if (typeof window.getCharacters === 'function') {
             return window.getCharacters();
         }
+        if (typeof window._getCharacters === 'function') {
+            return window._getCharacters();
+        }
         return [];
     }
 
     function _getRoleById(id) {
         if (typeof window.getRoleById === 'function') {
             return window.getRoleById(id);
+        }
+        if (typeof window._getRoleById === 'function') {
+            return window._getRoleById(id);
         }
         return null;
     }
@@ -63,6 +71,9 @@
         if (typeof window.getCurrentYear === 'function') {
             return window.getCurrentYear();
         }
+        if (typeof window._getCurrentYear === 'function') {
+            return window._getCurrentYear();
+        }
         return 1250;
     }
 
@@ -70,12 +81,18 @@
         if (typeof window.generateId === 'function') {
             return window.generateId(prefix);
         }
+        if (typeof window._generateId === 'function') {
+            return window._generateId(prefix);
+        }
         return prefix + '_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
     }
 
     function _logEvent(category, type, message, subjects) {
         if (typeof window.logEvent === 'function') {
             window.logEvent(category, type, message, subjects);
+        }
+        if (typeof window._logEvent === 'function') {
+            window._logEvent(category, type, message, subjects);
         }
     }
 
@@ -89,28 +106,26 @@
         }
     }
 
-    function _addProfession(characterId, roleId, options) {
-        if (typeof window.addProfession === 'function') {
-            return window.addProfession(characterId, roleId, options);
-        }
-        return { success: false };
-    }
-
-    function _updateProfessionSkill(characterId, roleId, skillLevel) {
-        if (typeof window.updateProfessionSkill === 'function') {
-            return window.updateProfessionSkill(characterId, roleId, skillLevel);
-        }
-        return false;
-    }
-
     function _saveMasterData() {
         if (typeof window.saveMasterData === 'function') {
             window.saveMasterData();
+        }
+        if (typeof window._saveMasterData === 'function') {
+            window._saveMasterData();
         }
     }
 
     function _getBaseSalaryByCategory(category) {
         return window.BASE_SALARY_BY_CATEGORY?.[category] || window.DEFAULT_SALARY || 10;
+    }
+
+    function _invalidateAccessorCaches() {
+        if (typeof window.invalidateAccessorCaches === 'function') {
+            window.invalidateAccessorCaches();
+        }
+        if (typeof window._invalidateAccessorCaches === 'function') {
+            window._invalidateAccessorCaches();
+        }
     }
 
     // =========================================================================
@@ -158,7 +173,7 @@
                 id: _generateId('role'),
                 name: data.name.trim(),
                 category: category,
-                icon: data.icon || '◉',
+                icon: data.icon || 'CIRCLE',
                 specializations: data.specializations || [],
                 notes: data.notes || '',
                 genderRestriction: data.genderRestriction || 'both',
@@ -172,7 +187,8 @@
             _logEvent('role', 'Role Created', 'Created role: ' + newRole.name, []);
 
             var salaryMsg = newRole.baseSalary > 0 ? ' (Salary: ' + newRole.baseSalary + ' gold)' : '';
-            _showToast('Role "' + newRole.name + '" created' + salaryMsg, 'success');
+            var literacyMsg = requiresLiteracy ? ' (Requires: ' + (window.LITERACY_LEVEL_NAMES?.[literacyLevel] || literacyLevel) + ')' : '';
+            _showToast('Role "' + newRole.name + '" created' + salaryMsg + literacyMsg, 'success');
 
             if (typeof window.dispatchEvent === 'function') {
                 window.dispatchEvent(new CustomEvent('rolesUpdated', {}));
@@ -470,7 +486,7 @@
     }
 
     // =========================================================================
-    // 5. SALARY MANAGEMENT (NEW)
+    // 5. SALARY MANAGEMENT
     // =========================================================================
 
     function updateRoleSalary(roleId, newSalary, reason) {
@@ -575,8 +591,188 @@
     }
 
     // =========================================================================
-    // 6. ROLE ASSIGNMENT
+    // 6. ROLE SPECIALIZATION MANAGEMENT (NEW)
     // =========================================================================
+
+    /**
+     * Gets all specializations for a role
+     * @param {string} roleId - Role ID
+     * @returns {Array} Array of specialization names
+     */
+    function getRoleSpecializations(roleId) {
+        var role = RoleState.getRole(roleId);
+        if (!role) return [];
+        return role.specializations || [];
+    }
+
+    /**
+     * Adds a specialization to a role
+     * @param {string} roleId - Role ID
+     * @param {string} specialization - Specialization name
+     * @returns {Object} Result object
+     */
+    function addRoleSpecialization(roleId, specialization) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Already processing' };
+        }
+        _processingCommand = true;
+
+        try {
+            var role = RoleState.getRole(roleId);
+            if (!role) {
+                return { success: false, reason: 'Role not found' };
+            }
+
+            if (!specialization || typeof specialization !== 'string' || specialization.trim() === '') {
+                return { success: false, reason: 'Specialization name is required' };
+            }
+
+            var spec = specialization.trim();
+            if (!role.specializations) {
+                role.specializations = [];
+            }
+
+            if (role.specializations.indexOf(spec) !== -1) {
+                return { success: false, reason: 'Specialization already exists on this role' };
+            }
+
+            role.specializations.push(spec);
+            RoleState._updateRole(roleId, { specializations: role.specializations });
+            _saveMasterData();
+            _invalidateAccessorCaches();
+
+            _showToast('Specialization "' + spec + '" added to role', 'success');
+
+            if (typeof window.dispatchEvent === 'function') {
+                window.dispatchEvent(new CustomEvent('rolesUpdated', {}));
+            }
+
+            return { success: true, role: role, specialization: spec };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    /**
+     * Removes a specialization from a role
+     * @param {string} roleId - Role ID
+     * @param {string} specialization - Specialization name
+     * @returns {Object} Result object
+     */
+    function removeRoleSpecialization(roleId, specialization) {
+        if (_processingCommand) {
+            return { success: false, reason: 'Already processing' };
+        }
+        _processingCommand = true;
+
+        try {
+            var role = RoleState.getRole(roleId);
+            if (!role) {
+                return { success: false, reason: 'Role not found' };
+            }
+
+            if (!role.specializations || role.specializations.length === 0) {
+                return { success: false, reason: 'Role has no specializations' };
+            }
+
+            var idx = role.specializations.indexOf(specialization);
+            if (idx === -1) {
+                return { success: false, reason: 'Specialization not found on this role' };
+            }
+
+            role.specializations.splice(idx, 1);
+            RoleState._updateRole(roleId, { specializations: role.specializations });
+            _saveMasterData();
+            _invalidateAccessorCaches();
+
+            _showToast('Specialization "' + specialization + '" removed from role', 'info');
+
+            if (typeof window.dispatchEvent === 'function') {
+                window.dispatchEvent(new CustomEvent('rolesUpdated', {}));
+            }
+
+            return { success: true, role: role };
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    /**
+     * Gets all unique specializations across all roles
+     * @returns {Array} Array of unique specialization names
+     */
+    function getAllRoleSpecializations() {
+        var roles = RoleState.getAllRoles();
+        var allSpecs = [];
+        for (var i = 0; i < roles.length; i++) {
+            var specs = roles[i].specializations || [];
+            for (var j = 0; j < specs.length; j++) {
+                if (allSpecs.indexOf(specs[j]) === -1) {
+                    allSpecs.push(specs[j]);
+                }
+            }
+        }
+        return allSpecs.sort();
+    }
+
+    // =========================================================================
+    // 7. ROLE ASSIGNMENT
+    // =========================================================================
+
+    function _addProfessionDirect(characterId, roleId, options) {
+        // Direct manipulation of character data
+        var char = _getCharacterById(characterId);
+        if (!char) {
+            return { success: false, reason: 'Character not found' };
+        }
+
+        var role = _getRoleById(roleId);
+        if (!role) {
+            return { success: false, reason: 'Role not found' };
+        }
+
+        if (!char.professions) {
+            char.professions = [];
+        }
+
+        // Check if already exists
+        for (var i = 0; i < char.professions.length; i++) {
+            if (char.professions[i].id === roleId) {
+                // Update existing
+                if (options.skillLevel !== undefined) {
+                    char.professions[i].skillLevel = Math.min(100, Math.max(0, options.skillLevel));
+                }
+                if (options.startYear !== undefined) {
+                    char.professions[i].startYear = options.startYear;
+                }
+                if (options.notes !== undefined) {
+                    char.professions[i].notes = options.notes;
+                }
+                if (options.primary !== undefined) {
+                    char.professions[i].primary = options.primary;
+                }
+                _saveMasterData();
+                return { success: true, character: char, role: role, wasExisting: true };
+            }
+        }
+
+        // Add new profession
+        var newProf = {
+            id: roleId,
+            name: role.name,
+            skillLevel: options.skillLevel !== undefined ? Math.min(100, Math.max(0, options.skillLevel)) : 0,
+            startYear: options.startYear || _getCurrentYear(),
+            notes: options.notes || '',
+            specs: [],
+            primary: options.primary || false
+        };
+        char.professions.push(newProf);
+        _saveMasterData();
+
+        return { success: true, character: char, role: role, wasExisting: false };
+    }
 
     function assignRoleToCharacter(characterId, roleId, options) {
         if (_processingCommand) {
@@ -613,6 +809,22 @@
             if (character.professions) {
                 for (var i = 0; i < character.professions.length; i++) {
                     if (character.professions[i].id === roleId) {
+                        // If they already have it, just update the skill
+                        var result = _addProfessionDirect(characterId, roleId, {
+                            skillLevel: options.skillLevel !== undefined ? options.skillLevel : character.professions[i].skillLevel,
+                            startYear: options.startYear || character.professions[i].startYear || _getCurrentYear(),
+                            notes: options.notes || character.professions[i].notes || '',
+                            primary: options.primary !== undefined ? options.primary : character.professions[i].primary
+                        });
+                        if (result && result.success) {
+                            _logEvent('role', 'Role Updated', character.name + ' updated role: ' + role.name, [character]);
+                            _showToast(character.name + '\'s ' + role.name + ' skill updated', 'success');
+                            if (typeof window.dispatchEvent === 'function') {
+                                window.dispatchEvent(new CustomEvent('rolesUpdated', {}));
+                                window.dispatchEvent(new CustomEvent('characterUpdated', {}));
+                            }
+                            return { success: true, character: character, role: role, wasUpdated: true };
+                        }
                         return { success: false, reason: 'Character already has this role' };
                     }
                 }
@@ -622,7 +834,8 @@
             var startYear = options.startYear || _getCurrentYear();
             var notes = options.notes || 'Assigned ' + role.name;
 
-            var result = _addProfession(characterId, roleId, {
+            // Use direct profession addition
+            var result = _addProfessionDirect(characterId, roleId, {
                 skillLevel: Math.min(100, Math.max(0, skillLevel)),
                 startYear: startYear,
                 primary: options.primary || false,
@@ -630,10 +843,11 @@
             });
 
             if (result && result.success) {
-                var updatedCharacter = _getCharacterById(characterId);
-                if (updatedCharacter && updatedCharacter.professions) {
-                    for (var j = 0; j < updatedCharacter.professions.length; j++) {
-                        var prof = updatedCharacter.professions[j];
+                // Add salary fields if this is a new profession
+                var updatedChar = _getCharacterById(characterId);
+                if (updatedChar && updatedChar.professions) {
+                    for (var j = 0; j < updatedChar.professions.length; j++) {
+                        var prof = updatedChar.professions[j];
                         if (prof.id === roleId) {
                             if (prof.baseSalary === undefined || prof.baseSalary === null) {
                                 prof.baseSalary = role.baseSalary || 10;
@@ -661,10 +875,12 @@
                     [character]);
 
                 var salaryMsg = role.baseSalary > 0 ? ' (Base salary: ' + role.baseSalary + ' gold)' : '';
-                _showToast(character.name + ' now has ' + role.name + salaryMsg, 'success');
+                var literacyMsg = role.requiresLiteracy ? ' (Requires literacy)' : '';
+                _showToast(character.name + ' now has ' + role.name + salaryMsg + literacyMsg, 'success');
 
                 if (typeof window.dispatchEvent === 'function') {
                     window.dispatchEvent(new CustomEvent('rolesUpdated', {}));
+                    window.dispatchEvent(new CustomEvent('characterUpdated', {}));
                 }
 
                 return { success: true, character: character, role: role };
@@ -752,13 +968,17 @@
 
             var boundedLevel = Math.min(100, Math.max(0, skillLevel));
 
-            var result = _updateProfessionSkill(characterId, roleId, boundedLevel);
+            // Use direct update
+            var result = _addProfessionDirect(characterId, roleId, {
+                skillLevel: boundedLevel
+            });
 
-            if (result) {
+            if (result && result.success) {
                 _showToast(character.name + '\'s ' + role.name + ' skill updated to ' + boundedLevel, 'success');
 
                 if (typeof window.dispatchEvent === 'function') {
                     window.dispatchEvent(new CustomEvent('rolesUpdated', {}));
+                    window.dispatchEvent(new CustomEvent('characterUpdated', {}));
                 }
 
                 return { success: true, character: character, role: role, newLevel: boundedLevel };
@@ -812,26 +1032,69 @@
     }
 
     // =========================================================================
-    // 7. EXPORTS
+    // 8. PROFESSION SKILL MANAGEMENT (DIRECT UPDATE)
+    // =========================================================================
+
+    function updateProfessionSkill(characterId, roleId, skillLevel) {
+        if (_processingCommand) {
+            return false;
+        }
+        _processingCommand = true;
+
+        try {
+            var result = _addProfessionDirect(characterId, roleId, {
+                skillLevel: Math.min(100, Math.max(0, skillLevel))
+            });
+
+            if (result && result.success) {
+                if (typeof window.dispatchEvent === 'function') {
+                    window.dispatchEvent(new CustomEvent('characterUpdated', {}));
+                    window.dispatchEvent(new CustomEvent('rolesUpdated', {}));
+                }
+                return true;
+            }
+
+            return false;
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    // =========================================================================
+    // 9. EXPORTS
     // =========================================================================
 
     window.RoleCommands = {
+        // Role CRUD
         createRole: createRole,
         updateRole: updateRole,
         deleteRole: deleteRole,
         setRoles: setRoles,
 
+        // Category Management
         addCategory: addCategory,
         updateCategory: updateCategory,
         deleteCategory: deleteCategory,
 
+        // Role Specialization Management (NEW)
+        getRoleSpecializations: getRoleSpecializations,
+        addRoleSpecialization: addRoleSpecialization,
+        removeRoleSpecialization: removeRoleSpecialization,
+        getAllRoleSpecializations: getAllRoleSpecializations,
+
+        // Role Assignment
         assignRoleToCharacter: assignRoleToCharacter,
         removeRoleFromCharacter: removeRoleFromCharacter,
         updateCharacterSkill: updateCharacterSkill,
         bulkAssignRole: bulkAssignRole,
 
+        // Salary Management
         updateRoleSalary: updateRoleSalary,
-        updateRoleLiteracyRequirement: updateRoleLiteracyRequirement
+        updateRoleLiteracyRequirement: updateRoleLiteracyRequirement,
+
+        // Direct Skill Update
+        updateProfessionSkill: updateProfessionSkill
     };
 
     // Legacy aliases
@@ -848,6 +1111,11 @@
     window._bulkAssignRole = bulkAssignRole;
     window._updateRoleSalary = updateRoleSalary;
     window._updateRoleLiteracyRequirement = updateRoleLiteracyRequirement;
+    window._updateProfessionSkill = updateProfessionSkill;
+    window._getRoleSpecializations = getRoleSpecializations;
+    window._addRoleSpecialization = addRoleSpecialization;
+    window._removeRoleSpecialization = removeRoleSpecialization;
+    window._getAllRoleSpecializations = getAllRoleSpecializations;
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
@@ -858,12 +1126,17 @@
             addCategory: addCategory,
             updateCategory: updateCategory,
             deleteCategory: deleteCategory,
+            getRoleSpecializations: getRoleSpecializations,
+            addRoleSpecialization: addRoleSpecialization,
+            removeRoleSpecialization: removeRoleSpecialization,
+            getAllRoleSpecializations: getAllRoleSpecializations,
             assignRoleToCharacter: assignRoleToCharacter,
             removeRoleFromCharacter: removeRoleFromCharacter,
             updateCharacterSkill: updateCharacterSkill,
             bulkAssignRole: bulkAssignRole,
             updateRoleSalary: updateRoleSalary,
-            updateRoleLiteracyRequirement: updateRoleLiteracyRequirement
+            updateRoleLiteracyRequirement: updateRoleLiteracyRequirement,
+            updateProfessionSkill: updateProfessionSkill
         };
     }
 

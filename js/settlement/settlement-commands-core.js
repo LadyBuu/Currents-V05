@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * SETTLEMENT COMMANDS CORE - Infrastructure for settlement commands
+ * SETTLEMENT COMMANDS CORE - Infrastructure for settlement commands js/settlement/settlement-commands-core.js
  * =============================================================================
  * 
  * This file contains the core infrastructure for settlement commands:

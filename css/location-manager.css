@@ -1,0 +1,952 @@
+/**
+ * LOCATION MANAGER - Dark Blue Tron Theme
+ * No blur, no overlays - mobile-friendly
+ * Inspired by Tron: Legacy aesthetic
+ */
+
+/* ============================================================ */
+/* ROOT VARIABLES - Dark Blue Tron Theme                        */
+/* ============================================================ */
+:root {
+    /* Primary colors */
+    --tron-bg: #0a0e1a;
+    --tron-surface: #111827;
+    --tron-surface-light: #1a2332;
+    --tron-border: #1e3a5f;
+    --tron-border-glow: #00d4ff;
+
+    /* Accent colors - cyan/blue glow */
+    --tron-accent: #00d4ff;
+    --tron-accent-dim: rgba(0, 212, 255, 0.12);
+    --tron-accent-glow: #00d4ff;
+    --tron-accent-secondary: #4facfe;
+    --tron-accent-tertiary: #00e5ff;
+
+    /* Text colors */
+    --tron-text: #e8edf5;
+    --tron-text-dim: #7a8ba8;
+    --tron-text-bright: #ffffff;
+
+    /* Status colors */
+    --tron-success: #00e676;
+    --tron-success-dim: rgba(0, 230, 118, 0.12);
+    --tron-warning: #ffab00;
+    --tron-warning-dim: rgba(255, 171, 0, 0.12);
+    --tron-danger: #ff5252;
+    --tron-danger-dim: rgba(255, 82, 82, 0.12);
+    --tron-info: #448aff;
+
+    /* Borders */
+    --tron-border-subtle: rgba(0, 212, 255, 0.08);
+    --tron-border-active: rgba(0, 212, 255, 0.3);
+
+    /* Shadows - glow effects (no blur, just colored borders) */
+    --tron-glow-subtle: 0 0 0 1px rgba(0, 212, 255, 0.1);
+    --tron-glow-active: 0 0 0 2px rgba(0, 212, 255, 0.25);
+    --tron-glow-focus: 0 0 0 2px rgba(0, 212, 255, 0.4);
+
+    /* Sizing */
+    --tron-radius: 6px;
+    --tron-radius-lg: 10px;
+    --tron-transition: 0.15s ease;
+}
+
+/* ============================================================ */
+/* BASE RESET                                                   */
+/* ============================================================ */
+.location-manager {
+    background: var(--tron-bg);
+    color: var(--tron-text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    min-height: 100vh;
+    padding: 0;
+    margin: 0;
+    line-height: 1.5;
+}
+
+.location-manager * {
+    box-sizing: border-box;
+}
+
+/* ============================================================ */
+/* SCROLLBAR - Tron style                                        */
+/* ============================================================ */
+.location-manager ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+}
+.location-manager ::-webkit-scrollbar-track {
+    background: var(--tron-surface);
+}
+.location-manager ::-webkit-scrollbar-thumb {
+    background: var(--tron-border);
+    border-radius: 2px;
+}
+.location-manager ::-webkit-scrollbar-thumb:hover {
+    background: var(--tron-accent);
+}
+
+/* ============================================================ */
+/* TOP BAR                                                       */
+/* ============================================================ */
+.location-manager .topbar {
+    background: var(--tron-surface);
+    border-bottom: 1px solid var(--tron-border);
+    padding: 0.6rem 1.2rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+    position: sticky;
+    top: 0;
+    z-index: 40;
+}
+
+.location-manager .topbar-left {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+}
+
+.location-manager .topbar-title {
+    font-weight: 600;
+    font-size: 1.1rem;
+    color: var(--tron-text-bright);
+    letter-spacing: 0.02em;
+}
+
+.location-manager .topbar-title span {
+    color: var(--tron-accent);
+}
+
+.location-manager .topbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.location-manager .topbar-actions button,
+.location-manager .topbar-actions .year-input {
+    font-size: 0.7rem;
+    background: var(--tron-surface-light);
+    border: 1px solid var(--tron-border);
+    border-radius: var(--tron-radius);
+    padding: 0.3rem 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    color: var(--tron-text);
+    font-family: inherit;
+    transition: var(--tron-transition);
+}
+
+.location-manager .topbar-actions button:hover {
+    border-color: var(--tron-accent);
+    color: var(--tron-accent);
+    box-shadow: var(--tron-glow-subtle);
+}
+
+.location-manager .topbar-actions .year-input {
+    background: var(--tron-bg);
+    width: 110px;
+    cursor: text;
+    color: var(--tron-text-bright);
+}
+
+.location-manager .topbar-actions .year-input:focus {
+    outline: none;
+    border-color: var(--tron-accent);
+    box-shadow: var(--tron-glow-focus);
+}
+
+/* ============================================================ */
+/* BURGER MENU (mobile)                                          */
+/* ============================================================ */
+.location-manager .burger {
+    display: none;
+    background: transparent;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: var(--tron-text);
+    padding: 0 0.2rem;
+    line-height: 1;
+}
+
+.location-manager .burger:hover {
+    color: var(--tron-accent);
+}
+
+/* ============================================================ */
+/* SIDEBAR                                                       */
+/* ============================================================ */
+.location-manager .sidebar {
+    background: var(--tron-surface);
+    border-right: 1px solid var(--tron-border);
+    width: 250px;
+    flex-shrink: 0;
+    overflow-y: auto;
+    padding: 1rem 0.6rem;
+    transition: transform 0.25s ease;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+.location-manager .sidebar h3 {
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--tron-text-dim);
+    margin: 0.6rem 0 0.2rem 0.4rem;
+    font-weight: 500;
+}
+
+.location-manager .sidebar button.tab-btn {
+    background: transparent;
+    border: none;
+    border-radius: var(--tron-radius);
+    padding: 0.5rem 0.8rem;
+    text-align: left;
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: var(--tron-text-dim);
+    cursor: pointer;
+    transition: var(--tron-transition);
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    border-left: 2px solid transparent;
+}
+
+.location-manager .sidebar button.tab-btn:hover {
+    color: var(--tron-text);
+    background: var(--tron-surface-light);
+}
+
+.location-manager .sidebar button.tab-btn.active {
+    color: var(--tron-accent);
+    background: var(--tron-accent-dim);
+    border-left-color: var(--tron-accent);
+}
+
+.location-manager .sidebar button.tab-btn .badge {
+    margin-left: auto;
+    font-size: 0.55rem;
+    background: var(--tron-border);
+    padding: 0.05rem 0.5rem;
+    border-radius: 20px;
+    color: var(--tron-text-dim);
+}
+
+.location-manager .sidebar button.tab-btn.active .badge {
+    background: var(--tron-accent-dim);
+    color: var(--tron-accent);
+    border: 1px solid var(--tron-border-active);
+}
+
+.location-manager .sidebar hr {
+    border: 0;
+    border-top: 1px solid var(--tron-border);
+    margin: 0.6rem 0;
+}
+
+/* ============================================================ */
+/* CONTENT AREA                                                  */
+/* ============================================================ */
+.location-manager .content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.5rem 2rem;
+    background: var(--tron-bg);
+}
+
+.location-manager .tab-pane {
+    display: none;
+    animation: tronFade 0.25s ease;
+}
+
+.location-manager .tab-pane.active {
+    display: block;
+}
+
+@keyframes tronFade {
+    0% { opacity: 0.4; }
+    100% { opacity: 1; }
+}
+
+/* ============================================================ */
+/* PANE HEADER                                                   */
+/* ============================================================ */
+.location-manager .pane-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.2rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.location-manager .pane-header h2 {
+    font-weight: 600;
+    font-size: 1.25rem;
+    color: var(--tron-text-bright);
+    letter-spacing: -0.01em;
+}
+
+.location-manager .pane-header .subtitle {
+    font-size: 0.65rem;
+    color: var(--tron-text-dim);
+    margin-left: 0.5rem;
+    font-weight: 400;
+}
+
+.location-manager .pane-header .action-group {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.location-manager .pane-header .action-group button {
+    font-size: 0.7rem;
+    background: var(--tron-surface-light);
+    border: 1px solid var(--tron-border);
+    border-radius: var(--tron-radius);
+    padding: 0.3rem 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    color: var(--tron-text);
+    font-family: inherit;
+    transition: var(--tron-transition);
+}
+
+.location-manager .pane-header .action-group button:hover {
+    border-color: var(--tron-accent);
+    color: var(--tron-accent);
+}
+
+.location-manager .pane-header .action-group button.primary {
+    background: var(--tron-accent-dim);
+    border-color: var(--tron-accent);
+    color: var(--tron-accent);
+}
+
+.location-manager .pane-header .action-group button.primary:hover {
+    background: rgba(0, 212, 255, 0.2);
+    box-shadow: var(--tron-glow-subtle);
+}
+
+.location-manager .pane-header .location-label {
+    font-size: 0.65rem;
+    color: var(--tron-text-dim);
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.2rem 0.6rem;
+    border: 1px solid var(--tron-border-subtle);
+    border-radius: var(--tron-radius);
+}
+
+/* ============================================================ */
+/* CARDS & CONTAINERS                                            */
+/* ============================================================ */
+.location-manager .tron-card {
+    background: var(--tron-surface);
+    border: 1px solid var(--tron-border);
+    border-radius: var(--tron-radius-lg);
+    padding: 1rem 1.2rem;
+    margin-bottom: 0.5rem;
+}
+
+.location-manager .tron-card:hover {
+    border-color: var(--tron-border-active);
+}
+
+.location-manager .tron-card-selected {
+    border-color: var(--tron-accent);
+    box-shadow: var(--tron-glow-subtle);
+}
+
+/* ============================================================ */
+/* TABLES - Tron style                                           */
+/* ============================================================ */
+.location-manager .tron-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+}
+
+.location-manager .tron-table thead th {
+    text-align: left;
+    padding: 0.5rem 0.4rem;
+    color: var(--tron-text-dim);
+    font-weight: 500;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid var(--tron-border);
+}
+
+.location-manager .tron-table tbody td {
+    padding: 0.4rem 0.4rem;
+    border-bottom: 1px solid var(--tron-border-subtle);
+    color: var(--tron-text);
+}
+
+.location-manager .tron-table tbody tr:hover {
+    background: var(--tron-surface-light);
+}
+
+.location-manager .tron-table tbody tr.selected {
+    background: var(--tron-accent-dim);
+}
+
+.location-manager .tron-table tbody tr.selected td {
+    color: var(--tron-accent);
+}
+
+/* ============================================================ */
+/* LOCATION TREE - Hierarchical list                            */
+/* ============================================================ */
+.location-manager .loc-tree {
+    padding: 0.5rem;
+}
+
+.location-manager .loc-row {
+    display: flex;
+    align-items: center;
+    padding: 0.3rem 0.5rem;
+    border-radius: var(--tron-radius);
+    cursor: pointer;
+    transition: var(--tron-transition);
+    border-left: 2px solid transparent;
+    gap: 0.3rem;
+    font-size: 0.82rem;
+}
+
+.location-manager .loc-row:hover {
+    background: var(--tron-surface-light);
+}
+
+.location-manager .loc-row.selected {
+    background: var(--tron-accent-dim);
+    border-left-color: var(--tron-accent);
+}
+
+.location-manager .loc-row .loc-toggle {
+    display: inline-block;
+    width: 18px;
+    text-align: center;
+    cursor: pointer;
+    font-size: 0.55rem;
+    color: var(--tron-text-dim);
+    user-select: none;
+    flex-shrink: 0;
+}
+
+.location-manager .loc-row .loc-toggle:hover {
+    color: var(--tron-accent);
+}
+
+.location-manager .loc-row .loc-icon {
+    margin: 0 2px;
+    flex-shrink: 0;
+}
+
+.location-manager .loc-row .loc-name {
+    flex: 1;
+}
+
+.location-manager .loc-row .loc-badge {
+    font-size: 0.55rem;
+    padding: 0.05rem 0.4rem;
+    border-radius: 10px;
+    border: 1px solid var(--tron-border-subtle);
+    color: var(--tron-text-dim);
+}
+
+.location-manager .loc-row .loc-badge.capital {
+    color: var(--tron-warning);
+    border-color: var(--tron-warning-dim);
+}
+
+.location-manager .loc-row .loc-badge.status-disputed {
+    color: var(--tron-warning);
+    border-color: var(--tron-warning-dim);
+}
+
+.location-manager .loc-row .loc-badge.status-abandoned {
+    color: var(--tron-danger);
+    border-color: var(--tron-danger-dim);
+}
+
+.location-manager .loc-row .loc-population {
+    font-size: 0.6rem;
+    color: var(--tron-text-dim);
+    margin-left: auto;
+}
+
+/* ============================================================ */
+/* FEATURE CHIPS                                                */
+/* ============================================================ */
+.location-manager .feature-chip {
+    background: var(--tron-surface-light);
+    border: 1px solid var(--tron-border);
+    border-radius: 20px;
+    padding: 0.2rem 0.7rem;
+    font-size: 0.65rem;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    transition: var(--tron-transition);
+    color: var(--tron-text);
+}
+
+.location-manager .feature-chip:hover {
+    border-color: var(--tron-accent);
+    color: var(--tron-accent);
+}
+
+.location-manager .feature-chip.selected {
+    border-color: var(--tron-accent);
+    background: var(--tron-accent-dim);
+}
+
+.location-manager .feature-chip .remove-btn {
+    background: none;
+    border: none;
+    color: var(--tron-danger);
+    cursor: pointer;
+    font-size: 0.6rem;
+    padding: 0 2px;
+}
+
+.location-manager .feature-chip .remove-btn:hover {
+    color: #ff1744;
+}
+
+.location-manager .feature-add-btn {
+    background: var(--tron-surface-light);
+    border: 1px solid var(--tron-border);
+    border-radius: 20px;
+    padding: 0.2rem 0.7rem;
+    font-size: 0.65rem;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    transition: var(--tron-transition);
+    color: var(--tron-text);
+}
+
+.location-manager .feature-add-btn:hover {
+    border-color: var(--tron-success);
+    color: var(--tron-success);
+}
+
+.location-manager .feature-add-btn.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* ============================================================ */
+/* SETTLEMENT CARDS                                              */
+/* ============================================================ */
+.location-manager .settlement-card {
+    background: var(--tron-surface);
+    border: 1px solid var(--tron-border);
+    border-radius: var(--tron-radius-lg);
+    padding: 0.8rem 1rem;
+    cursor: pointer;
+    transition: var(--tron-transition);
+}
+
+.location-manager .settlement-card:hover {
+    border-color: var(--tron-border-active);
+}
+
+.location-manager .settlement-card.selected {
+    border-color: var(--tron-accent);
+    box-shadow: var(--tron-glow-subtle);
+}
+
+.location-manager .settlement-card .title-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.location-manager .settlement-card .title-row .name {
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.location-manager .settlement-card .title-row .rank-badge {
+    font-size: 0.6rem;
+    color: var(--tron-text-dim);
+    padding: 0.1rem 0.5rem;
+    border: 1px solid var(--tron-border-subtle);
+    border-radius: 12px;
+}
+
+.location-manager .settlement-card .title-row .prosperity-badge {
+    font-size: 0.6rem;
+    padding: 0.1rem 0.5rem;
+    border-radius: 12px;
+    border: 1px solid transparent;
+}
+
+.location-manager .settlement-card .title-row .prosperity-badge.thriving {
+    color: var(--tron-success);
+    border-color: var(--tron-success-dim);
+}
+
+.location-manager .settlement-card .title-row .prosperity-badge.stable {
+    color: var(--tron-warning);
+    border-color: var(--tron-warning-dim);
+}
+
+.location-manager .settlement-card .title-row .prosperity-badge.struggling {
+    color: var(--tron-danger);
+    border-color: var(--tron-danger-dim);
+}
+
+.location-manager .settlement-card .stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0.3rem;
+    margin-top: 0.4rem;
+    font-size: 0.65rem;
+    color: var(--tron-text-dim);
+}
+
+.location-manager .settlement-card .debt-warning {
+    font-size: 0.55rem;
+    color: var(--tron-danger);
+    margin-top: 0.2rem;
+}
+
+/* ============================================================ */
+/* ECONOMY GRID                                                  */
+/* ============================================================ */
+.location-manager .eco-grid {
+    display: grid;
+    gap: 0.5rem;
+}
+
+.location-manager .eco-grid-4 {
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+}
+
+.location-manager .eco-grid-3 {
+    grid-template-columns: 1fr 1fr 1fr;
+}
+
+.location-manager .eco-stat {
+    background: var(--tron-surface);
+    border: 1px solid var(--tron-border);
+    border-radius: var(--tron-radius);
+    padding: 0.6rem;
+    text-align: center;
+}
+
+.location-manager .eco-stat .label {
+    font-size: 0.55rem;
+    color: var(--tron-text-dim);
+}
+
+.location-manager .eco-stat .value {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--tron-text-bright);
+}
+
+.location-manager .eco-stat .value.positive {
+    color: var(--tron-success);
+}
+
+.location-manager .eco-stat .value.negative {
+    color: var(--tron-danger);
+}
+
+.location-manager .eco-stat .value.accent {
+    color: var(--tron-accent);
+}
+
+/* ============================================================ */
+/* PROGRESS BAR - Tron style                                     */
+/* ============================================================ */
+.location-manager .tron-progress {
+    background: var(--tron-surface);
+    border: 1px solid var(--tron-border);
+    border-radius: var(--tron-radius);
+    padding: 0.3rem 0.8rem;
+}
+
+.location-manager .tron-progress .bar-track {
+    width: 100%;
+    height: 6px;
+    background: var(--tron-surface-light);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-top: 0.2rem;
+}
+
+.location-manager .tron-progress .bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+.location-manager .tron-progress .bar-fill.good {
+    background: var(--tron-success);
+}
+.location-manager .tron-progress .bar-fill.warning {
+    background: var(--tron-warning);
+}
+.location-manager .tron-progress .bar-fill.danger {
+    background: var(--tron-danger);
+}
+.location-manager .tron-progress .bar-fill.accent {
+    background: var(--tron-accent);
+}
+
+/* ============================================================ */
+/* FILTERS & INPUTS                                              */
+/* ============================================================ */
+.location-manager .tron-input {
+    background: var(--tron-bg);
+    border: 1px solid var(--tron-border);
+    border-radius: var(--tron-radius);
+    padding: 0.3rem 0.6rem;
+    font-size: 0.75rem;
+    color: var(--tron-text);
+    font-family: inherit;
+    transition: var(--tron-transition);
+}
+
+.location-manager .tron-input:focus {
+    outline: none;
+    border-color: var(--tron-accent);
+    box-shadow: var(--tron-glow-focus);
+}
+
+.location-manager .tron-select {
+    background: var(--tron-bg);
+    border: 1px solid var(--tron-border);
+    border-radius: var(--tron-radius);
+    padding: 0.3rem 0.6rem;
+    font-size: 0.75rem;
+    color: var(--tron-text);
+    font-family: inherit;
+    cursor: pointer;
+    transition: var(--tron-transition);
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%237a8ba8'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.6rem center;
+    padding-right: 1.8rem;
+}
+
+.location-manager .tron-select:focus {
+    outline: none;
+    border-color: var(--tron-accent);
+    box-shadow: var(--tron-glow-focus);
+}
+
+.location-manager .tron-select option {
+    background: var(--tron-surface);
+    color: var(--tron-text);
+}
+
+/* ============================================================ */
+/* FILTER BAR                                                    */
+/* ============================================================ */
+.location-manager .filter-bar {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.8rem;
+}
+
+.location-manager .filter-bar .tron-input,
+.location-manager .filter-bar .tron-select {
+    flex: 0 1 auto;
+    min-width: 120px;
+}
+
+.location-manager .filter-bar .tron-input:first-child {
+    flex: 1;
+    min-width: 150px;
+}
+
+/* ============================================================ */
+/* EMPTY STATE                                                   */
+/* ============================================================ */
+.location-manager .empty-state {
+    padding: 2rem;
+    text-align: center;
+    color: var(--tron-text-dim);
+    border: 1px dashed var(--tron-border);
+    border-radius: var(--tron-radius-lg);
+}
+
+.location-manager .empty-state .icon {
+    font-size: 2rem;
+    display: block;
+    margin-bottom: 0.5rem;
+    opacity: 0.5;
+}
+
+.location-manager .empty-state .message {
+    font-size: 0.8rem;
+}
+
+/* ============================================================ */
+/* MOBILE RESPONSIVE                                             */
+/* ============================================================ */
+@media (max-width: 768px) {
+    .location-manager .burger {
+        display: inline-block;
+    }
+
+    .location-manager .sidebar {
+        position: fixed;
+        top: 58px;
+        left: 0;
+        bottom: 0;
+        width: 280px;
+        transform: translateX(-110%);
+        box-shadow: 2px 0 12px rgba(0, 0, 0, 0.4);
+        z-index: 50;
+        border-right: 1px solid var(--tron-border);
+    }
+
+    .location-manager .sidebar.open {
+        transform: translateX(0);
+    }
+
+    .location-manager .content {
+        padding: 1rem 0.8rem;
+    }
+
+    .location-manager .topbar-title {
+        font-size: 0.9rem;
+    }
+
+    .location-manager .eco-grid-4 {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .location-manager .eco-grid-3 {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .location-manager .settlement-card .stats {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .location-manager .filter-bar .tron-input,
+    .location-manager .filter-bar .tron-select {
+        min-width: 80px;
+        font-size: 0.7rem;
+    }
+
+    .location-manager .pane-header h2 {
+        font-size: 1rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .location-manager .eco-grid-4 {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .location-manager .eco-grid-3 {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .location-manager .settlement-card .stats {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .location-manager .topbar-actions button,
+    .location-manager .topbar-actions .year-input {
+        font-size: 0.6rem;
+        padding: 0.2rem 0.6rem;
+    }
+
+    .location-manager .topbar-actions .year-input {
+        width: 80px;
+    }
+
+    .location-manager .pane-header .action-group button {
+        font-size: 0.6rem;
+        padding: 0.2rem 0.6rem;
+    }
+
+    .location-manager .feature-chip,
+    .location-manager .feature-add-btn {
+        font-size: 0.55rem;
+        padding: 0.15rem 0.5rem;
+    }
+
+    .location-manager .loc-row {
+        font-size: 0.75rem;
+        padding: 0.2rem 0.4rem;
+    }
+}
+
+/* ============================================================ */
+/* LOADING STATE - Minimal, no blur                             */
+/* ============================================================ */
+.location-manager .loading {
+    padding: 2rem;
+    text-align: center;
+    color: var(--tron-text-dim);
+}
+
+.location-manager .loading .spinner {
+    display: inline-block;
+    width: 24px;
+    height: 24px;
+    border: 2px solid var(--tron-border);
+    border-top-color: var(--tron-accent);
+    border-radius: 50%;
+    animation: tronSpin 0.8s linear infinite;
+    margin-bottom: 0.5rem;
+}
+
+@keyframes tronSpin {
+    to { transform: rotate(360deg); }
+}
+
+/* ============================================================ */
+/* TOAST OVERRIDES - Minimal, no blur                           */
+/* ============================================================ */
+.location-manager .tron-toast {
+    background: var(--tron-surface);
+    border: 1px solid var(--tron-border);
+    border-radius: var(--tron-radius);
+    padding: 0.6rem 1rem;
+    color: var(--tron-text);
+    font-size: 0.8rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+.location-manager .tron-toast.success {
+    border-color: var(--tron-success);
+}
+.location-manager .tron-toast.error {
+    border-color: var(--tron-danger);
+}
+.location-manager .tron-toast.warning {
+    border-color: var(--tron-warning);
+}
+.location-manager .tron-toast.info {
+    border-color: var(--tron-accent);
+}

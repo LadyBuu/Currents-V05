@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * GOVERNMENT UI LIST (government-ui-list.js)
+ * GOVERNMENT UI LIST (js/government/government-ui-list.js)
  * =============================================================================
  * 
  * PURPOSE: UI list rendering for government departments, positions, and assignments.

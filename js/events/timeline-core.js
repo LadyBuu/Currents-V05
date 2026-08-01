@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * STILL WATERS - TIMELINE CORE (features/social/timelineCore.js)
+ * STILL WATERS - TIMELINE CORE (js/events/timeline-core.js)
  * =============================================================================
  * 
  * Pure business logic for timeline event collection and filtering.
@@ -9,7 +9,7 @@
  * DEPENDENCIES (canonical sources via thin wrappers):
  *   - accessors.js: getCharacters, getCharacterById, getPlaceById
  *   - time.js: getCurrentYearSafe
- *   - icons.js: _getIcon, Icons
+ *   - icons.js: Icons (via _getIcon)
  *   - constants.js: STORAGE_KEYS
  * 
  * ICON POLICY: NO emojis in text. Use _getIcon() for visual indicators.
@@ -90,14 +90,33 @@ function _getCurrentYear() {
     return 1250;
 }
 
+// =============================================================================
+// 3. ICON HELPERS (FIXED - NO RECURSION)
+// =============================================================================
+
+// FIXED: Direct reference to window.Icons, no recursion
 function _getIcon(name) {
-    if (typeof window._getIcon === 'function') return window._getIcon(name);
-    if (window.Icons && window.Icons[name]) return window.Icons[name];
-    return '';
+    // Try window.Icons first (the canonical source)
+    if (window.Icons && window.Icons[name]) {
+        return window.Icons[name];
+    }
+    
+    // Try window._getIcon if it exists and is NOT this function
+    if (typeof window._getIcon === 'function' && window._getIcon !== _getIcon) {
+        return window._getIcon(name);
+    }
+    
+    // Try window.getIcon if it exists
+    if (typeof window.getIcon === 'function') {
+        return window.getIcon(name);
+    }
+    
+    // Fallback: return a simple SVG icon
+    return '<svg viewBox="0 0 20 20" width="1em" height="1em" style="display:inline-block;fill:currentColor;stroke:currentColor;vertical-align:middle;"><circle cx="10" cy="10" r="5.71" fill="currentColor"/></svg>';
 }
 
 // =============================================================================
-// 3. ICON MAPPING - Event Type → Icon.js Name
+// 4. EVENT TYPE TO ICON MAPPING
 // =============================================================================
 
 var _EVENT_ICON_MAP = {
@@ -120,7 +139,7 @@ function _getEventIcon(type) {
 }
 
 // =============================================================================
-// 4. EVENT COLLECTION FUNCTIONS
+// 5. EVENT COLLECTION FUNCTIONS
 // =============================================================================
 
 function collectAllTimelineEvents() {
@@ -493,7 +512,7 @@ function _collectHouseholdEvents() {
 }
 
 // =============================================================================
-// 5. FILTER FUNCTIONS
+// 6. FILTER FUNCTIONS
 // =============================================================================
 
 function filterEventsByYearRange(events, minYear, maxYear) {
@@ -591,7 +610,7 @@ function getTimelineStats(events) {
 }
 
 // =============================================================================
-// 6. STORAGE HELPERS
+// 7. STORAGE HELPERS
 // =============================================================================
 
 function saveTimelineFilters(filters) {
@@ -635,7 +654,7 @@ function loadTimelineCollapsedState() {
 }
 
 // =============================================================================
-// 7. EXPORTS
+// 8. EXPORTS
 // =============================================================================
 
 // Core collection

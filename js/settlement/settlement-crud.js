@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * SETTLEMENT CRUD - Create, read, update settlement data
+ * SETTLEMENT CRUD - Create, read, update settlement data js/settlement/settlements-crud.js
  * =============================================================================
  * 
  * DEPENDENCIES:

@@ -7,9 +7,9 @@
  * 
  * Enterprise type registry management.
  * 
- * DEPENDENCIES:
- *   - industry-state.js (IndustryState)
- *   - ids.js (generateId)
+ * UPDATED: Ultra-broad generic enterprise types that work for ANY setting.
+ *          From 16th century Polynesia to 19th century France.
+ *          Only 7 broad categories with simple size/production levels.
  * 
  * =============================================================================
  */
@@ -47,53 +47,124 @@
     var _processing = false;
 
     // =========================================================================
-    // 3. DEFAULT TYPES
+    // 3. ULTRA-BROAD DEFAULT TYPES
+    // Only 7 types - distinguished purely by scale and production level
+    // Works for ANY setting from dirt-poor to industrial revolution
     // =========================================================================
 
     function getDefaultEnterpriseTypes() {
         return [
-            // Agricultural
-            { id: 'farm', name: 'Farm', category: 'agricultural', baseIncome: 20, baseExpenses: 8, baseWages: 15, baseWorkers: 3, baseCost: 100, maxWorkers: 10, description: 'Crop cultivation and harvest' },
-            { id: 'orchard', name: 'Orchard', category: 'agricultural', baseIncome: 15, baseExpenses: 6, baseWages: 10, baseWorkers: 2, baseCost: 80, maxWorkers: 8, description: 'Fruit tree cultivation' },
-            { id: 'vineyard', name: 'Vineyard', category: 'agricultural', baseIncome: 25, baseExpenses: 10, baseWages: 18, baseWorkers: 3, baseCost: 120, maxWorkers: 12, description: 'Grape cultivation and wine production' },
-            { id: 'plantation', name: 'Plantation', category: 'agricultural', baseIncome: 35, baseExpenses: 15, baseWages: 25, baseWorkers: 5, baseCost: 200, maxWorkers: 20, description: 'Large-scale cash crop cultivation' },
-            { id: 'fishery', name: 'Fishery', category: 'agricultural', baseIncome: 18, baseExpenses: 8, baseWages: 12, baseWorkers: 2, baseCost: 90, maxWorkers: 10, description: 'Fish catching and processing' },
-            { id: 'fish_pond', name: 'Fish Pond', category: 'agricultural', baseIncome: 12, baseExpenses: 5, baseWages: 8, baseWorkers: 1, baseCost: 60, maxWorkers: 6, description: 'Managed aquaculture' },
+            // ================================================================
+            // TYPE 1: HUT WORKSHOP - Dirt poor, minimal production
+            // ================================================================
+            {
+                id: 'hut_workshop',
+                name: 'Hut Workshop',
+                category: 'subsistence',
+                baseIncome: 3,
+                baseExpenses: 1,
+                baseWages: 2,
+                baseWorkers: 1,
+                baseCost: 10,
+                maxWorkers: 2,
+                description: 'A single person working from home - making basic goods for survival and local trade'
+            },
 
-            // Craft
-            { id: 'smithy', name: 'Smithy', category: 'craft', baseIncome: 22, baseExpenses: 12, baseWages: 16, baseWorkers: 2, baseCost: 150, maxWorkers: 8, description: 'Metalworking and blacksmithing' },
-            { id: 'weaving_workshop', name: 'Weaving Workshop', category: 'craft', baseIncome: 18, baseExpenses: 10, baseWages: 12, baseWorkers: 3, baseCost: 100, maxWorkers: 12, description: 'Textile production' },
-            { id: 'pottery', name: 'Pottery Works', category: 'craft', baseIncome: 15, baseExpenses: 8, baseWages: 10, baseWorkers: 2, baseCost: 80, maxWorkers: 8, description: 'Ceramic production' },
-            { id: 'carpentry', name: 'Carpentry Workshop', category: 'craft', baseIncome: 20, baseExpenses: 10, baseWages: 14, baseWorkers: 2, baseCost: 110, maxWorkers: 10, description: 'Woodworking and construction' },
-            { id: 'jewelry', name: 'Jewelry Workshop', category: 'craft', baseIncome: 30, baseExpenses: 20, baseWages: 20, baseWorkers: 2, baseCost: 200, maxWorkers: 6, description: 'Precious metal and gem work' },
-            { id: 'brewery', name: 'Brewery', category: 'craft', baseIncome: 25, baseExpenses: 15, baseWages: 16, baseWorkers: 3, baseCost: 150, maxWorkers: 10, description: 'Beer and ale production' },
-            { id: 'tannery', name: 'Tannery', category: 'craft', baseIncome: 20, baseExpenses: 12, baseWages: 14, baseWorkers: 2, baseCost: 130, maxWorkers: 8, description: 'Leather processing' },
+            // ================================================================
+            // TYPE 2: SMALL WORKSHOP - Poor, basic production
+            // ================================================================
+            {
+                id: 'small_workshop',
+                name: 'Small Workshop',
+                category: 'craft',
+                baseIncome: 8,
+                baseExpenses: 3,
+                baseWages: 4,
+                baseWorkers: 2,
+                baseCost: 30,
+                maxWorkers: 4,
+                description: 'A modest workshop with a few workers producing goods for local consumption and trade'
+            },
 
-            // Industrial
-            { id: 'factory', name: 'Factory', category: 'industrial', baseIncome: 50, baseExpenses: 30, baseWages: 40, baseWorkers: 10, baseCost: 500, maxWorkers: 50, description: 'Industrial production facility' },
-            { id: 'textile_mill', name: 'Textile Mill', category: 'industrial', baseIncome: 45, baseExpenses: 25, baseWages: 35, baseWorkers: 8, baseCost: 400, maxWorkers: 40, description: 'Mechanized textile production' },
-            { id: 'ironworks', name: 'Ironworks', category: 'industrial', baseIncome: 55, baseExpenses: 35, baseWages: 45, baseWorkers: 10, baseCost: 550, maxWorkers: 45, description: 'Iron production and processing' },
-            { id: 'steel_mill', name: 'Steel Mill', category: 'industrial', baseIncome: 60, baseExpenses: 40, baseWages: 50, baseWorkers: 12, baseCost: 600, maxWorkers: 50, description: 'Steel production facility' },
-            { id: 'coal_mine', name: 'Coal Mine', category: 'industrial', baseIncome: 40, baseExpenses: 30, baseWages: 35, baseWorkers: 8, baseCost: 450, maxWorkers: 40, description: 'Coal extraction' },
-            { id: 'foundry', name: 'Foundry', category: 'industrial', baseIncome: 45, baseExpenses: 30, baseWages: 38, baseWorkers: 8, baseCost: 480, maxWorkers: 35, description: 'Metal casting and smelting' },
-            { id: 'sawmill', name: 'Sawmill', category: 'industrial', baseIncome: 28, baseExpenses: 18, baseWages: 20, baseWorkers: 4, baseCost: 250, maxWorkers: 15, description: 'Lumber processing' },
-            { id: 'brickyard', name: 'Brickyard', category: 'industrial', baseIncome: 22, baseExpenses: 14, baseWages: 16, baseWorkers: 4, baseCost: 180, maxWorkers: 15, description: 'Brick and tile production' },
+            // ================================================================
+            // TYPE 3: TOWN WORKSHOP - Lower middle, established production
+            // ================================================================
+            {
+                id: 'town_workshop',
+                name: 'Town Workshop',
+                category: 'craft',
+                baseIncome: 15,
+                baseExpenses: 6,
+                baseWages: 6,
+                baseWorkers: 3,
+                baseCost: 60,
+                maxWorkers: 8,
+                description: 'A proper workshop in a town or village - producing quality goods for the local market'
+            },
 
-            // Commercial
-            { id: 'market_stall', name: 'Market Stall', category: 'commercial', baseIncome: 12, baseExpenses: 6, baseWages: 6, baseWorkers: 1, baseCost: 50, maxWorkers: 4, description: 'Small market trading post' },
-            { id: 'shop', name: 'Shop', category: 'commercial', baseIncome: 20, baseExpenses: 12, baseWages: 10, baseWorkers: 2, baseCost: 120, maxWorkers: 8, description: 'Retail establishment' },
-            { id: 'tavern', name: 'Tavern', category: 'commercial', baseIncome: 25, baseExpenses: 15, baseWages: 15, baseWorkers: 3, baseCost: 150, maxWorkers: 10, description: 'Public house and inn' },
-            { id: 'warehouse', name: 'Warehouse', category: 'commercial', baseIncome: 18, baseExpenses: 10, baseWages: 8, baseWorkers: 2, baseCost: 100, maxWorkers: 8, description: 'Storage and distribution' },
-            { id: 'trading_post', name: 'Trading Post', category: 'commercial', baseIncome: 30, baseExpenses: 18, baseWages: 18, baseWorkers: 3, baseCost: 200, maxWorkers: 12, description: 'Regional trade hub' },
+            // ================================================================
+            // TYPE 4: MANUFACTORY - Middle class, significant production
+            // ================================================================
+            {
+                id: 'manufactory',
+                name: 'Manufactory',
+                category: 'manufacturing',
+                baseIncome: 30,
+                baseExpenses: 12,
+                baseWages: 10,
+                baseWorkers: 6,
+                baseCost: 120,
+                maxWorkers: 20,
+                description: 'A substantial production facility with multiple workers and organized production lines'
+            },
 
-            // Transport
-            { id: 'ferry', name: 'Ferry Service', category: 'transport', baseIncome: 15, baseExpenses: 8, baseWages: 10, baseWorkers: 2, baseCost: 80, maxWorkers: 6, description: 'River crossing service' },
-            { id: 'shipping', name: 'Shipping Company', category: 'transport', baseIncome: 40, baseExpenses: 25, baseWages: 30, baseWorkers: 5, baseCost: 350, maxWorkers: 20, description: 'Maritime transport and trade' },
-            { id: 'carriage_service', name: 'Carriage Service', category: 'transport', baseIncome: 20, baseExpenses: 12, baseWages: 15, baseWorkers: 3, baseCost: 150, maxWorkers: 10, description: 'Passenger and goods transport' },
+            // ================================================================
+            // TYPE 5: FACTORY - Upper middle, industrial production
+            // ================================================================
+            {
+                id: 'factory',
+                name: 'Factory',
+                category: 'manufacturing',
+                baseIncome: 50,
+                baseExpenses: 20,
+                baseWages: 14,
+                baseWorkers: 10,
+                baseCost: 250,
+                maxWorkers: 40,
+                description: 'A large industrial facility with machinery, skilled workers, and mass production capacity'
+            },
 
-            // Mining
-            { id: 'mine', name: 'Mine', category: 'mining', baseIncome: 35, baseExpenses: 25, baseWages: 30, baseWorkers: 6, baseCost: 300, maxWorkers: 30, description: 'Ore and mineral extraction' },
-            { id: 'quarry', name: 'Quarry', category: 'mining', baseIncome: 25, baseExpenses: 15, baseWages: 20, baseWorkers: 4, baseCost: 200, maxWorkers: 20, description: 'Stone and gravel extraction' }
+            // ================================================================
+            // TYPE 6: INDUSTRIAL_COMPLEX - Rich, major production
+            // ================================================================
+            {
+                id: 'industrial_complex',
+                name: 'Industrial Complex',
+                category: 'manufacturing',
+                baseIncome: 80,
+                baseExpenses: 35,
+                baseWages: 18,
+                baseWorkers: 20,
+                baseCost: 500,
+                maxWorkers: 80,
+                description: 'A major industrial enterprise with multiple buildings, hundreds of workers, and regional influence'
+            },
+
+            // ================================================================
+            // TYPE 7: GRAND_INDUSTRY - Filthy rich, empire-scale production
+            // ================================================================
+            {
+                id: 'grand_industry',
+                name: 'Grand Industry',
+                category: 'manufacturing',
+                baseIncome: 150,
+                baseExpenses: 60,
+                baseWages: 25,
+                baseWorkers: 40,
+                baseCost: 1000,
+                maxWorkers: 200,
+                description: 'The pinnacle of production - an industrial empire that dominates markets and shapes economies'
+            }
         ];
     }
 
@@ -110,7 +181,6 @@
 
             var types = state.getEnterpriseTypes();
             if (!types || types.length === 0) {
-                // Initialize with defaults
                 var defaults = getDefaultEnterpriseTypes();
                 state._setEnterpriseTypes(defaults);
                 return defaults;
@@ -135,7 +205,6 @@
                 }
             }
 
-            // Check defaults
             var defaults = getDefaultEnterpriseTypes();
             for (var j = 0; j < defaults.length; j++) {
                 if (defaults[j].id === id) {
@@ -218,7 +287,6 @@
             };
 
             var types = state.getEnterpriseTypes();
-            // Check for duplicate name
             for (var i = 0; i < types.length; i++) {
                 if (types[i].name === newType.name) {
                     return { success: false, reason: 'Type name already exists' };
@@ -317,7 +385,21 @@
     }
 
     // =========================================================================
-    // 6. EXPORTS
+    // 6. INDUSTRY TIERS (for easy filtering)
+    // =========================================================================
+
+    var INDUSTRY_TIERS = {
+        SUBSISTENCE: { id: 'subsistence', label: 'Subsistence', minIncome: 0, maxIncome: 10, minWorkers: 0, maxWorkers: 2 },
+        SMALL: { id: 'small', label: 'Small Scale', minIncome: 8, maxIncome: 20, minWorkers: 2, maxWorkers: 5 },
+        MEDIUM: { id: 'medium', label: 'Medium Scale', minIncome: 15, maxIncome: 40, minWorkers: 3, maxWorkers: 12 },
+        LARGE: { id: 'large', label: 'Large Scale', minIncome: 30, maxIncome: 70, minWorkers: 6, maxWorkers: 30 },
+        INDUSTRIAL: { id: 'industrial', label: 'Industrial Scale', minIncome: 50, maxIncome: 120, minWorkers: 10, maxWorkers: 60 },
+        MAJOR: { id: 'major', label: 'Major Industry', minIncome: 80, maxIncome: 200, minWorkers: 20, maxWorkers: 120 },
+        EMPIRE: { id: 'empire', label: 'Empire Scale', minIncome: 150, maxIncome: 300, minWorkers: 40, maxWorkers: 200 }
+    };
+
+    // =========================================================================
+    // 7. EXPORTS
     // =========================================================================
 
     window.IndustryTypes = {
@@ -328,7 +410,8 @@
         getEnterpriseCategories: getEnterpriseCategories,
         addEnterpriseType: addEnterpriseType,
         updateEnterpriseType: updateEnterpriseType,
-        deleteEnterpriseType: deleteEnterpriseType
+        deleteEnterpriseType: deleteEnterpriseType,
+        INDUSTRY_TIERS: INDUSTRY_TIERS
     };
 
     if (typeof module !== 'undefined' && module.exports) {

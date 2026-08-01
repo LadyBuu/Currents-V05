@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * STILL WATERS - SETTLEMENT MODALS CORE (modals-settlement-core.js)
+ * STILL WATERS - SETTLEMENT MODALS CORE js/settlement/modals-settlement-core.js
  * =============================================================================
  * 
  * This file contains the core settlement UI modals:

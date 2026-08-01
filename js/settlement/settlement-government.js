@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * SETTLEMENT GOVERNMENT - Government type, justice, watch management
+ * SETTLEMENT GOVERNMENT - Government type, justice, watch management js/settlement/settlement-government.js
  * =============================================================================
  * 
  * DEPENDENCIES:

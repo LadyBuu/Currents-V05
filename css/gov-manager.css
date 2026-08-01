@@ -1,0 +1,472 @@
+/* ================================================================
+   GOVERNMENT MANAGER · EXTERNAL CSS
+   ================================================================
+   File: css/gov-manager.css
+   Dependencies: common.css, worldManager.css
+   Icons: all from icons.js (no emojis)
+   ================================================================ */
+
+/* ---- GOVERNMENT TAB (main) ---- */
+.gov-tab {
+    padding: 16px;
+    max-width: 900px;
+    margin: 0 auto;
+}
+
+.gov-tab .gov-header {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 18px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--accent);
+}
+
+.gov-tab .gov-header h3 {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'Cinzel', serif;
+}
+
+.gov-tab .gov-header .sub {
+    font-size: 0.6rem;
+    color: var(--dim);
+    font-family: 'Crimson Pro', serif;
+    font-weight: 400;
+    letter-spacing: 0.02em;
+}
+
+.gov-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.gov-stats-grid .stat-box {
+    background: var(--bg2);
+    padding: 10px 6px;
+    border-radius: 8px;
+    text-align: center;
+    border: 1px solid var(--border);
+    transition: border 0.2s;
+}
+
+.gov-stats-grid .stat-box:hover {
+    border-color: var(--accent);
+}
+
+.gov-stats-grid .stat-box .num {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--accent);
+    line-height: 1.2;
+}
+
+.gov-stats-grid .stat-box .label {
+    font-size: 0.5rem;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-family: 'Cinzel', serif;
+    margin-top: 2px;
+}
+
+.gov-section {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+    transition: border 0.2s;
+}
+
+.gov-section:hover {
+    border-color: var(--accent-dim);
+}
+
+.gov-section .section-title {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--accent);
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'Cinzel', serif;
+    letter-spacing: 0.05em;
+}
+
+.gov-section .section-title .badge {
+    font-size: 0.5rem;
+    background: var(--accent-dim);
+    padding: 0 8px;
+    border-radius: 12px;
+    color: var(--accent);
+    font-weight: 400;
+}
+
+.gov-leader-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px 20px;
+}
+
+.gov-leader-row .leader-name {
+    font-weight: 600;
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 0.85rem;
+}
+
+.gov-leader-row .leader-name:hover {
+    text-shadow: 0 0 6px var(--accent-glow);
+}
+
+.gov-leader-row .meta {
+    font-size: 0.6rem;
+    color: var(--dim);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+}
+
+.gov-leader-row .meta span {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.gov-action-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+
+/* ---- GOVERNMENT TYPES TAB ---- */
+.gov-type-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 10px;
+    overflow: hidden;
+    transition: border 0.2s;
+}
+
+.gov-type-card:hover {
+    border-color: var(--accent-dim);
+}
+
+.gov-type-card .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    cursor: pointer;
+    flex-wrap: wrap;
+    gap: 8px;
+    background: var(--bg3);
+}
+
+.gov-type-card .card-header .name {
+    font-weight: 600;
+    color: var(--accent);
+    font-size: 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.gov-type-card .card-header .pill {
+    font-size: 0.5rem;
+    padding: 2px 8px;
+    background: var(--accent-dim);
+    border-radius: 12px;
+    color: var(--accent);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.gov-type-card .card-header .actions {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.gov-type-card .card-body {
+    padding: 12px 14px;
+    border-top: 1px solid var(--border);
+    background: rgba(9, 12, 18, 0.4);
+}
+
+.gov-type-card .card-body .desc-edit {
+    width: 100%;
+    padding: 6px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 0.6rem;
+    font-family: 'Crimson Pro', serif;
+    resize: vertical;
+}
+
+.gov-type-card .card-body .desc-edit:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 6px var(--accent-glow);
+}
+
+.rank-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    background: rgba(106, 158, 207, 0.12);
+    border: 1px solid var(--accent);
+    border-radius: 16px;
+    font-size: 0.6rem;
+    color: var(--accent);
+}
+
+.rank-tag .remove-rank {
+    background: none;
+    border: none;
+    color: var(--danger);
+    cursor: pointer;
+    padding: 0 2px;
+    font-size: 0.5rem;
+    line-height: 1;
+}
+
+.rank-tag .remove-rank:hover {
+    color: var(--danger-lt);
+}
+
+/* ---- GOVERNMENT STRUCTURE TAB ---- */
+.dept-node {
+    border-left: 2px solid var(--border);
+    padding-left: 12px;
+    margin-bottom: 8px;
+}
+
+.dept-node .dept-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg2);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.dept-node .dept-header:hover {
+    background: var(--bg3);
+}
+
+.dept-node .dept-header .dept-name {
+    font-weight: 600;
+    font-size: 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.dept-node .dept-header .dept-meta {
+    font-size: 0.55rem;
+    color: var(--dim);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+}
+
+.dept-node .position-item {
+    padding: 4px 8px;
+    margin-bottom: 4px;
+    background: var(--bg3);
+    border-radius: 4px;
+    border-left: 3px solid var(--border);
+    transition: border 0.15s;
+}
+
+.dept-node .position-item:hover {
+    border-color: var(--accent);
+}
+
+.dept-node .position-item .pos-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+}
+
+.dept-node .position-item .pos-header .pos-name {
+    font-size: 0.7rem;
+    font-weight: 500;
+}
+
+.dept-node .position-item .pos-header .pos-tags {
+    font-size: 0.5rem;
+    color: var(--dim);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+}
+
+.dept-node .position-item .pos-header .pos-actions {
+    display: flex;
+    gap: 3px;
+    flex-wrap: wrap;
+}
+
+.dept-node .position-item .assignment-item {
+    padding: 2px 8px;
+    background: rgba(13, 17, 25, 0.4);
+    border-radius: 3px;
+    margin-bottom: 2px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    font-size: 0.6rem;
+}
+
+.dept-node .position-item .assignment-item .char-name {
+    font-weight: 500;
+    color: var(--accent);
+    cursor: pointer;
+}
+
+.dept-node .position-item .assignment-item .char-name:hover {
+    text-decoration: underline;
+}
+
+/* ---- GOVERNMENT OVERVIEW TAB ---- */
+.overview-node {
+    border-left: 2px solid var(--border);
+    padding-left: 12px;
+    margin-bottom: 6px;
+}
+
+.overview-node .overview-header {
+    padding: 6px 10px;
+    background: var(--bg2);
+    border-radius: 6px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 4px 12px;
+    font-size: 0.7rem;
+}
+
+.overview-node .overview-header .name {
+    font-weight: 600;
+    color: var(--accent);
+}
+
+.overview-node .overview-header .meta {
+    font-size: 0.55rem;
+    color: var(--dim);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+}
+
+.overview-node .overview-pos {
+    padding: 3px 8px;
+    margin: 2px 0 2px 12px;
+    background: var(--bg3);
+    border-radius: 4px;
+    border-left: 2px solid var(--border);
+    font-size: 0.65rem;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 4px 8px;
+}
+
+.overview-node .overview-pos .pos-name {
+    font-weight: 500;
+}
+
+.overview-node .overview-pos .pos-meta {
+    font-size: 0.5rem;
+    color: var(--dim);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+}
+
+/* ---- RESPONSIVE ---- */
+@media (max-width: 768px) {
+    .gov-tab {
+        padding: 10px;
+    }
+    .gov-stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+    }
+    .gov-section {
+        padding: 10px 12px;
+    }
+    .gov-leader-row {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    .dept-node .dept-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    .dept-node .dept-header .dept-meta {
+        width: 100%;
+    }
+    .dept-node .position-item .pos-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    .dept-node .position-item .pos-header .pos-actions {
+        width: 100%;
+        justify-content: flex-start;
+    }
+    .overview-node .overview-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}
+
+@media (max-width: 480px) {
+    .gov-stats-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+    }
+    .gov-stats-grid .stat-box {
+        padding: 6px 4px;
+    }
+    .gov-stats-grid .stat-box .num {
+        font-size: 0.9rem;
+    }
+    .gov-tab .gov-header h3 {
+        font-size: 0.7rem;
+    }
+    .gov-section .section-title {
+        font-size: 0.6rem;
+    }
+}

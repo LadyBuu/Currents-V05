@@ -922,7 +922,7 @@
     }
 
     // =========================================================================
-    // 7. ENTERPRISE QUERIES (UPDATED)
+    // 7. ENTERPRISE QUERIES
     // =========================================================================
 
     /**
@@ -1022,7 +1022,7 @@
                 totalWorkers: 0,
                 byStatus: {},
                 byCategory: {},
-                byOwnershipType: {}, // NEW
+                byOwnershipType: {},
                 profitableEnterprises: [],
                 unprofitableEnterprises: [],
                 publicCount: 0,
@@ -1153,7 +1153,7 @@
         getHouseholdStaff: getHouseholdStaff,
         getUnassignedHouseholdStaff: getUnassignedHouseholdStaff,
 
-        // Enterprise Integration (UPDATED)
+        // Enterprise Integration
         getHouseholdEnterprises: getHouseholdEnterprises,
         getHouseholdEnterpriseSummaries: getHouseholdEnterpriseSummaries,
         getHouseholdEnterpriseStats: getHouseholdEnterpriseStats,

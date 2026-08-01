@@ -1,6 +1,7 @@
 /**
  * =============================================================================
- * GOVERNMENT ASSIGNMENT - Business logic for government assignments * =============================================================================
+ * GOVERNMENT ASSIGNMENT - Business logic for government assignments  js/government/government-assignment.js
+ * =============================================================================
  * 
  * This file contains business logic for:
  * - Assignment validation and qualification checking

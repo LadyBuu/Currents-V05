@@ -1,0 +1,836 @@
+/* ============================================================================
+   WORLD MANAGER - COMPLETE CSS
+   CONSTRAINED LAYOUT - PREVENTS CONTENT FROM OVERFLOWING
+   FIXED: Scrollbars, solid sidebar, no blur, mobile responsive
+   UNIFIED TRON THEME - Matches Character Manager
+   ============================================================================ */
+
+/* ============================================================================
+   BASE LAYOUT
+   ============================================================================ */
+.world-app {
+    display: flex;
+    height: calc(100vh - var(--topbar-height, 48px));
+    overflow: hidden;
+    background: #0a0e16;
+    position: relative;
+}
+
+/* TRON Grid Background */
+.world-app::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: 
+        linear-gradient(var(--accent-glow) 1px, transparent 1px),
+        linear-gradient(90deg, var(--accent-glow) 1px, transparent 1px);
+    background-size: 30px 30px;
+    opacity: 0.04;
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* ============================================================================
+   LEFT SIDEBAR - SOLID BACKGROUND
+   ============================================================================ */
+.world-app .locations-sidebar {
+    width: 280px;
+    min-width: 280px;
+    max-width: 280px;
+    background: #0d1119;
+    border-right: 1px solid var(--accent);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 10;
+    transition: transform 0.3s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+}
+
+.world-app .locations-sidebar::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: -1px;
+    bottom: 0;
+    width: 1px;
+    background: linear-gradient(180deg, transparent, var(--accent), transparent);
+    box-shadow: 0 0 6px var(--accent);
+}
+
+.world-app .sidebar-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--accent);
+    flex-shrink: 0;
+    background: #121820;
+    position: relative;
+}
+
+.world-app .sidebar-header::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--accent), var(--accent), transparent);
+    box-shadow: 0 0 8px var(--accent);
+}
+
+.world-app .sidebar-header h3 {
+    font-size: 0.65rem;
+    margin: 0;
+    color: var(--accent);
+    font-family: 'Cinzel', serif;
+    text-shadow: 0 0 5px var(--accent-glow);
+    letter-spacing: 0.15em;
+}
+
+/* ============================================================================
+   PLACE LIST - WITH SCROLLBAR
+   ============================================================================ */
+.world-app .place-list {
+    flex: 1;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    padding: 4px 6px;
+    min-height: 0;
+}
+
+.world-app .place-list::-webkit-scrollbar {
+    width: 8px;
+}
+
+.world-app .place-list::-webkit-scrollbar-track {
+    background: #090c12;
+    border-radius: 4px;
+}
+
+.world-app .place-list::-webkit-scrollbar-thumb {
+    background: var(--accent);
+    border-radius: 4px;
+    box-shadow: 0 0 4px var(--accent);
+}
+
+.world-app .place-list::-webkit-scrollbar-thumb:hover {
+    background: var(--accent-dark);
+    box-shadow: 0 0 8px var(--accent);
+}
+
+.world-app .place-list {
+    scrollbar-width: thin;
+    scrollbar-color: var(--accent) #090c12;
+}
+
+/* ============================================================================
+   TREE NODES - SOLID BACKGROUNDS
+   ============================================================================ */
+.world-app .tree-node,
+.world-app .location-node {
+    display: block;
+    margin: 0;
+    padding: 0;
+}
+
+.world-app .tree-item,
+.world-app .location-item {
+    display: flex !important;
+    align-items: center !important;
+    gap: 4px !important;
+    padding: 4px 6px !important;
+    margin: 1px 0 !important;
+    cursor: pointer !important;
+    border-radius: 4px !important;
+    background: #121820 !important;
+    font-size: 0.7rem !important;
+    transition: all 0.2s;
+}
+
+.world-app .tree-item:hover,
+.world-app .location-item:hover {
+    background: #1a2d48 !important;
+}
+
+.world-app .tree-item.selected,
+.world-app .location-item.selected {
+    background: rgba(26, 45, 72, 0.9) !important;
+    border-left: 2px solid var(--accent) !important;
+}
+
+.world-app .expand-toggle {
+    width: 16px !important;
+    font-size: 0.6rem !important;
+    flex-shrink: 0 !important;
+    text-align: center;
+    color: var(--accent);
+    cursor: pointer;
+}
+
+.world-app .capital-star {
+    font-size: 0.6rem !important;
+    flex-shrink: 0 !important;
+    color: #ffd700;
+    text-shadow: 0 0 4px #ffd700;
+}
+
+.world-app .place-name {
+    flex: 1 !important;
+    font-size: 0.7rem !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+}
+
+.world-app .type-badge {
+    font-size: 0.5rem !important;
+    padding: 1px 6px !important;
+    flex-shrink: 0 !important;
+    background: var(--bg2);
+    border-radius: 10px;
+    color: var(--dim);
+}
+
+.world-app .tree-children,
+.world-app .location-children {
+    margin-left: 16px !important;
+    padding-left: 4px !important;
+    border-left: 1px solid var(--border) !important;
+}
+
+/* ============================================================================
+   MAIN PANEL - SOLID BACKGROUND
+   ============================================================================ */
+.world-app .main-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 0;
+    background: #0a0e16;
+}
+
+/* Panel Tabs - GLOW BORDER - UNIFIED */
+.world-app .panel-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--accent);
+    background: #0d1119;
+    padding: 0 12px;
+    gap: 2px;
+    flex-shrink: 0;
+    overflow-x: auto;
+    white-space: nowrap;
+    position: relative;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    min-height: var(--tab-height, 38px);
+    align-items: center;
+}
+
+.world-app .panel-tabs::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+}
+
+.world-app .panel-tabs::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--accent), var(--accent), transparent);
+    box-shadow: 0 0 6px var(--accent);
+}
+
+.world-app .tab-btn {
+    padding: 10px 16px;
+    background: none;
+    border: none;
+    font-size: 0.55rem;
+    cursor: pointer;
+    color: var(--dim);
+    white-space: nowrap;
+    font-family: 'Cinzel', serif;
+    border-bottom: 2px solid transparent;
+    transition: all 0.3s;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: var(--tab-height, 38px);
+}
+
+.world-app .tab-btn:hover {
+    color: var(--accent);
+    background: rgba(106, 158, 207, 0.1);
+    text-shadow: 0 0 5px var(--accent);
+}
+
+.world-app .tab-btn.active {
+    color: var(--accent);
+    border-bottom: 2px solid var(--accent);
+    text-shadow: 0 0 8px var(--accent);
+    box-shadow: 0 2px 8px rgba(106, 158, 207, 0.2);
+}
+
+.world-app .tab-btn .icon-svg {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    vertical-align: middle;
+    flex-shrink: 0;
+}
+
+.world-app .tab-btn .icon-svg svg {
+    width: 100%;
+    height: 100%;
+    fill: currentColor;
+    stroke: currentColor;
+}
+
+/* Panel Content */
+.world-app .panel-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    min-height: 0;
+}
+
+.world-app .panel-content::-webkit-scrollbar {
+    width: 8px;
+}
+
+.world-app .panel-content::-webkit-scrollbar-track {
+    background: #090c12;
+    border-radius: 4px;
+}
+
+.world-app .panel-content::-webkit-scrollbar-thumb {
+    background: var(--accent);
+    border-radius: 4px;
+    box-shadow: 0 0 4px var(--accent);
+}
+
+.world-app .panel-content::-webkit-scrollbar-thumb:hover {
+    background: var(--accent-dark);
+    box-shadow: 0 0 8px var(--accent);
+}
+
+.world-app .panel-content {
+    scrollbar-width: thin;
+    scrollbar-color: var(--accent) #090c12;
+}
+
+/* ============================================================================
+   LOCATION TAB - CONSTRAINED WIDTH
+   ============================================================================ */
+.world-app .location-tab,
+.world-app .government-tab,
+.world-app .population-tab,
+.world-app .settlement-tab {
+    max-width: 800px;
+    margin: 0 auto;
+    width: 100%;
+}
+
+/* Location Header */
+.world-app .location-header {
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 12px;
+}
+
+.world-app .location-header h2 {
+    margin: 0 0 4px 0;
+    font-size: 1rem;
+    color: var(--accent);
+}
+
+.world-app .place-id {
+    font-size: 0.55rem;
+    color: var(--dim);
+    font-family: monospace;
+}
+
+/* Info Grid */
+.world-app .info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+    background: rgba(13, 17, 25, 0.8);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+}
+
+.world-app .info-card {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.world-app .info-label {
+    font-size: 0.55rem;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-family: 'Cinzel', serif;
+}
+
+.world-app .info-value {
+    font-size: 0.7rem;
+    color: var(--text);
+    word-break: break-word;
+}
+
+/* Section Headers */
+.world-app .section-header {
+    font-size: 0.7rem;
+    color: var(--accent);
+    margin: 16px 0 8px 0;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+    font-family: 'Cinzel', serif;
+    display: block;
+}
+
+/* Section Content - ALWAYS VISIBLE */
+.world-app .section-content {
+    display: block !important;
+    padding: 0 !important;
+    margin-bottom: 16px;
+}
+
+/* Notes Section */
+.world-app .notes-section {
+    background: rgba(13, 17, 25, 0.8);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 20px;
+}
+
+.world-app .notes-content {
+    font-size: 0.65rem;
+    line-height: 1.4;
+    color: var(--dim);
+}
+
+/* Action Buttons */
+.world-app .action-buttons {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 20px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+
+/* ============================================================================
+   RESIDENCES TAB
+   ============================================================================ */
+.residence-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.residence-item {
+    background: rgba(13, 17, 25, 0.8);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.residence-item:hover {
+    border-color: var(--accent);
+    background: rgba(26, 45, 72, 0.5);
+    transform: translateX(2px);
+}
+
+.residence-item.vacant {
+    border-left: 3px solid var(--warn);
+}
+
+.residence-item.occupied {
+    border-left: 3px solid var(--success);
+}
+
+/* Vacancy alert styles */
+.vacancy-alert .warning-box {
+    background: rgba(200, 112, 64, 0.2);
+    border-left: 4px solid var(--warn);
+    padding: 10px 14px;
+    border-radius: 6px;
+    margin-bottom: 12px;
+}
+
+.vacant-residence-item:hover {
+    background: rgba(26, 45, 72, 0.5);
+    transform: translateX(2px);
+}
+
+.vacancy-badge {
+    background: var(--warn);
+    color: #1a1a2e;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.5rem;
+    font-weight: bold;
+}
+
+/* Residence stats cards */
+.residence-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.residence-stat-card {
+    background: rgba(13, 17, 25, 0.8);
+    padding: 8px;
+    border-radius: 6px;
+    text-align: center;
+    border: 1px solid var(--border);
+}
+
+.residence-stat-card .stat-value {
+    font-size: 1rem;
+    font-weight: bold;
+    color: var(--accent);
+}
+
+.residence-stat-card .stat-label {
+    font-size: 0.55rem;
+    color: var(--dim);
+}
+
+/* ============================================================================
+   NAMES TAB
+   ============================================================================ */
+.names-tab {
+    max-width: 100%;
+}
+
+.names-tab .name-section-header {
+    transition: background 0.2s;
+}
+
+.names-tab .name-section-header:hover {
+    background: var(--bg4) !important;
+}
+
+.names-tab .name-tag {
+    transition: all 0.15s;
+}
+
+.names-tab .name-tag:hover {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+}
+
+.names-tab .name-tag .delete-btn {
+    opacity: 0.6;
+    transition: opacity 0.2s;
+}
+
+.names-tab .name-tag .delete-btn:hover {
+    opacity: 1;
+    color: var(--danger);
+}
+
+/* ============================================================================
+   WORLD EDUCATION TAB
+   ============================================================================ */
+.world-education-tab {
+    max-width: 1000px;
+    margin: 0 auto;
+}
+
+.world-edu-institution {
+    transition: all 0.2s;
+}
+
+.world-edu-institution:hover {
+    border-color: var(--accent);
+}
+
+.world-edu-header {
+    transition: background 0.2s;
+}
+
+.world-edu-header:hover {
+    background: var(--bg4);
+}
+
+.world-edu-details {
+    background: var(--bg);
+}
+
+.world-edu-details .progress-bar {
+    background: var(--bg3);
+    border-radius: 4px;
+    height: 8px;
+    overflow: hidden;
+}
+
+.world-edu-details .progress-fill {
+    border-radius: 4px;
+    height: 100%;
+    transition: width 0.3s ease;
+}
+
+.world-edu-institution .expand-toggle {
+    user-select: none;
+}
+
+.world-edu-institution .expand-toggle:hover {
+    color: var(--accent-light);
+}
+
+/* ============================================================================
+   EMPTY STATE
+   ============================================================================ */
+.world-app .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--dim);
+    padding: 40px;
+    text-align: center;
+    font-size: 0.75rem;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    margin: 20px;
+    background: rgba(13, 17, 25, 0.5);
+}
+
+.world-app .loading-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--dim);
+    font-size: 0.7rem;
+}
+
+.world-app .loading-spinner {
+    width: 30px;
+    height: 30px;
+    margin: 0 auto 12px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ============================================================================
+   MOBILE RESPONSIVE
+   ============================================================================ */
+@media (max-width: 768px) {
+    .world-app .locations-sidebar {
+        position: fixed;
+        top: var(--topbar-height, 44px);
+        left: 0;
+        bottom: 0;
+        width: 85%;
+        max-width: 280px;
+        z-index: 100;
+        transform: translateX(-100%);
+        transition: transform 0.3s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+        box-shadow: 4px 0 30px rgba(0, 0, 0, 0.8);
+        border-right: 1px solid var(--accent);
+        background: #0d1119;
+    }
+
+    .world-app .locations-sidebar.visible {
+        transform: translateX(0);
+    }
+
+    .world-app .panel-tabs {
+        padding: 0 8px;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+        min-height: 42px;
+    }
+
+    .world-app .panel-tabs::-webkit-scrollbar {
+        display: none;
+    }
+
+    .world-app .tab-btn {
+        padding: 10px 14px;
+        font-size: 0.5rem;
+        flex-shrink: 0;
+        min-height: 42px;
+    }
+
+    .world-app .panel-content {
+        padding: 12px;
+    }
+
+    .world-app .location-tab,
+    .world-app .government-tab,
+    .world-app .population-tab,
+    .world-app .settlement-tab {
+        max-width: 100%;
+    }
+
+    .world-app .info-grid {
+        grid-template-columns: 1fr;
+        gap: 8px;
+        padding: 12px;
+    }
+
+    .world-app .action-buttons {
+        flex-direction: column;
+    }
+
+    .world-app .action-buttons .btn {
+        width: 100%;
+        text-align: center;
+    }
+
+    /* Sidebar overlay - solid, no blur */
+    .sidebar-overlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.7);
+        z-index: 98;
+    }
+
+    .sidebar-overlay.active {
+        display: block;
+    }
+
+    /* Scrollbar on mobile - thinner */
+    .world-app .place-list::-webkit-scrollbar {
+        width: 4px;
+    }
+    
+    .world-app .panel-content::-webkit-scrollbar {
+        width: 4px;
+    }
+
+    /* Names tab mobile fixes */
+    .names-tab .names-toolbar {
+        flex-wrap: wrap;
+    }
+    
+    .names-tab .names-toolbar select {
+        min-width: 80px;
+        flex-basis: 100px;
+    }
+
+    /* Education tab mobile */
+    .world-education-tab .world-edu-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .world-education-tab .world-edu-details .action-buttons {
+        flex-wrap: wrap;
+    }
+}
+
+@media (max-width: 480px) {
+    .world-app .locations-sidebar {
+        width: 90%;
+        max-width: 260px;
+        top: 36px;
+    }
+
+    .world-app .panel-tabs {
+        min-height: 36px;
+        padding: 0 6px;
+    }
+
+    .world-app .tab-btn {
+        padding: 8px 10px;
+        font-size: 0.45rem;
+        min-height: 36px;
+    }
+
+    .world-app .panel-content {
+        padding: 8px;
+    }
+
+    .world-app .info-grid {
+        padding: 10px;
+    }
+
+    .world-app .empty-state {
+        padding: 20px;
+        margin: 10px;
+    }
+
+    /* Names tab - very compact on small screens */
+    .names-tab .names-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 6px;
+    }
+    
+    .names-tab .names-toolbar select {
+        width: 100%;
+        flex-basis: auto;
+    }
+    
+    .names-tab .names-toolbar .btn {
+        font-size: 0.5rem;
+        padding: 4px 8px;
+    }
+}
+
+@media (min-width: 769px) {
+    .world-app .locations-sidebar {
+        transform: translateX(0) !important;
+        position: relative;
+        top: 0;
+        height: 100%;
+    }
+    
+    .sidebar-overlay {
+        display: none !important;
+    }
+}
+
+/* ============================================================================
+   ANIMATIONS
+   ============================================================================ */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.world-app .tree-item,
+.world-app .location-item,
+.residence-item,
+.residence-stat-card,
+.names-tab .name-tag,
+.world-edu-institution {
+    animation: fadeIn 0.2s ease;
+}

@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * SETTLEMENT BUDGET - Budget allocation and tax management
+ * SETTLEMENT BUDGET - Budget allocation and tax management js/settlement/settlement-budget.js
  * =============================================================================
  * 
  * DEPENDENCIES:

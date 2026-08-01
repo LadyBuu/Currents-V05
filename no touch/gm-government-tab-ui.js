@@ -1,17 +1,12 @@
 /**
  * =============================================================================
- * STILL WATERS - GOVERNMENT UI (governmentTabUI.js)
+ * STILL WATERS - GOVERNMENT UI
+ * File: js/ui/gm-government-tab-ui.js
  * =============================================================================
  * 
- * UPDATED: Full integration with GovernmentState, GovernmentCommands,
- *          GovernmentQueries, GovernmentEconomy, GovernmentAssignment
- * 
- * This file contains ALL government management UI for places including:
- * - Government assignment (type and style)
- * - Leader assignment (current and historical)
- * - Leader term management
- * - Rank restrictions display
- * - Government type statistics
+ * UPDATED: Fixed duplicate buttons - removed extra "Assign Type" button
+ * UPDATED: Assign leader now uses character selector
+ * UPDATED: Removed duplicate refresh button
  * 
  * =============================================================================
  */
@@ -43,15 +38,11 @@
     function _getHomeIcon() { return _getIcon('HOME', '⌂'); }
     function _getWarningIcon() { return _getIcon('WARNING', '⚠'); }
     function _getRefreshIcon() { return _getIcon('REFRESH', '⟳'); }
-    function _getSearchIcon() { return _getIcon('SEARCH', '⌕'); }
-    function _getStarIcon() { return _getIcon('STAR', '★'); }
     function _getGearIcon() { return _getIcon('GEAR', '⚙'); }
     function _getShieldIcon() { return _getIcon('SHIELD', '🛡'); }
     function _getPersonIcon() { return _getIcon('PERSON', '👤'); }
     function _getFlagIcon() { return _getIcon('FLAG', '🏴'); }
     function _getCrownIcon() { return _getIcon('CROWN', '👑'); }
-    function _getBookIcon() { return _getIcon('BOOK', '📚'); }
-    function _getCoinIcon() { return _getIcon('COIN', '♢'); }
 
     // =========================================================================
     // 3. DEPENDENCY WRAPPERS
@@ -59,14 +50,19 @@
 
     function _escapeHtml(str) {
         if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
+        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
         if (!str) return '';
         return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     function _showToast(msg, type) {
-        if (typeof window._showToast === 'function') return window._showToast(msg, type);
-        if (typeof window.showToast === 'function') return window.showToast(msg, type);
-        console.log('[' + (type || 'info') + '] ' + msg);
+        var plainMessage = msg;
+        if (typeof msg === 'string') {
+            plainMessage = msg.replace(/<[^>]*>/g, '');
+        }
+        if (typeof window._showToast === 'function') return window._showToast(plainMessage, type);
+        if (typeof window.showToast === 'function') return window.showToast(plainMessage, type);
+        console.log('[' + (type || 'info') + '] ' + plainMessage);
     }
 
     function _getCurrentYear() {
@@ -80,10 +76,6 @@
         return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
     }
 
-    function _getPlaces() {
-        return typeof window.getPlaces === 'function' ? window.getPlaces() : [];
-    }
-
     function _getCharacterById(id) {
         return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
     }
@@ -94,11 +86,6 @@
 
     function _getRankById(id) {
         return typeof window.getRankById === 'function' ? window.getRankById(id) : null;
-    }
-
-    function _getRanks() {
-        if (typeof window.getRanks === 'function') return window.getRanks();
-        return [];
     }
 
     function _getActiveRankDisplay(character) {
@@ -116,6 +103,10 @@
         return Math.max(0, currentYear - birthYear);
     }
 
+    // =========================================================================
+    // 4. MODAL WRAPPERS
+    // =========================================================================
+
     function _openModal(options) {
         if (typeof window.openModal === 'function') return window.openModal(options);
         if (typeof window._openModal === 'function') return window._openModal(options);
@@ -127,14 +118,38 @@
         if (typeof window._closeTopModal === 'function') window._closeTopModal();
     }
 
+    function _openAssignGovernmentModal(placeId, onSuccess) {
+        if (typeof window.openAssignGovernmentModal === 'function') {
+            return window.openAssignGovernmentModal(placeId, onSuccess);
+        }
+        if (typeof window._openAssignGovernmentModal === 'function') {
+            return window._openAssignGovernmentModal(placeId, onSuccess);
+        }
+        _showToast('Assign government modal not available', 'error');
+        return null;
+    }
+
+    function _openCharacterSelector(options) {
+        if (typeof window.openCharacterSelector === 'function') {
+            return window.openCharacterSelector(options);
+        }
+        if (typeof window.openUnifiedCharacterSelector === 'function') {
+            return window.openUnifiedCharacterSelector(options);
+        }
+        if (typeof window._openCharacterSelector === 'function') {
+            return window._openCharacterSelector(options);
+        }
+        _showToast('Character selector not available', 'error');
+        return null;
+    }
+
     // =========================================================================
-    // 4. GOVERNMENT SYSTEM WRAPPERS
+    // 5. GOVERNMENT SYSTEM WRAPPERS
     // =========================================================================
 
     var _state = window.GovernmentState;
     var _commands = window.GovernmentCommands;
     var _queries = window.GovernmentQueries;
-    var _economy = window.GovernmentEconomy;
 
     function _getGovernmentTypes() {
         return _state ? _state.getGovernmentTypes() : [];
@@ -168,7 +183,6 @@
         if (typeof window.assignGovernment === 'function') {
             return window.assignGovernment(placeId, govTypeId, govStyle);
         }
-        // Fallback: direct state update
         var place = _getPlaceById(placeId);
         if (place) {
             place.governmentTypeId = govTypeId || null;
@@ -185,21 +199,16 @@
         return _queries ? _queries.getLocationGovernmentSummary(locationId) : null;
     }
 
-    function _getGovernmentStatistics() {
-        return _queries ? _queries.getStatistics({ includeDeprecated: false }) : null;
-    }
-
     // =========================================================================
-    // 5. STATE
+    // 6. STATE
     // =========================================================================
 
     var governmentUIState = {
-        expandedHistoricalLeaders: false,
-        showRankRestrictions: false
+        expandedHistoricalLeaders: false
     };
 
     // =========================================================================
-    // 6. MAIN RENDER FUNCTION
+    // 7. MAIN RENDER FUNCTION
     // =========================================================================
 
     function renderGovernmentTab(containerId, placeId, onRefresh) {
@@ -221,9 +230,7 @@
             var formerLeaders = _getLeaderHistory(placeId).filter(function(l) { return l.endYear; });
             var govType = place.governmentTypeId ? _getGovernmentTypeById(place.governmentTypeId) : null;
             var summary = _getLocationGovernmentSummary(placeId);
-            var stats = _getGovernmentStatistics();
 
-            // Get allowed ranks for this government type
             var allowedRanks = [];
             if (govType && govType.allowedRankIds) {
                 for (var i = 0; i < govType.allowedRankIds.length; i++) {
@@ -232,6 +239,7 @@
                 }
             }
 
+            // --- HEADER ---
             var html = 
                 '<div class="government-tab" style="padding:16px;">' +
                 '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px;">' +
@@ -242,11 +250,12 @@
                 (currentLeader ? ' · ' + _getCrownIcon() + ' ' + _escapeHtml(currentLeader.character ? currentLeader.character.name : 'Unknown') : '') +
                 '</div>' +
                 '</div>' +
+                // Only refresh button in header - NO Assign Type button here
                 '<div style="display:flex; gap:8px; flex-wrap:wrap;">' +
                 '<button id="refreshGovTabBtn" class="btn small" style="padding:4px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">' + _getRefreshIcon() + ' Refresh</button>' +
                 '</div></div>';
 
-            // Stats bar
+            // --- STATS ROW ---
             html +=
                 '<div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(100px,1fr)); gap:8px; margin-bottom:16px;">' +
                 '<div style="background:var(--bg2); padding:6px; border-radius:6px; text-align:center;">' +
@@ -263,34 +272,19 @@
                 '<div style="font-size:0.8rem; font-weight:bold;">' + govTypes.length + '</div></div>' +
                 '</div>';
 
-            // Government Type Section
+            // --- SINGLE Government Type Section - ONE button only ---
             html += 
                 '<div style="margin-top:12px;background:var(--bg2);padding:16px;border-radius:8px;border:1px solid var(--border);">' +
                 '<div style="font-size:0.8rem;font-weight:bold;color:var(--accent);margin-bottom:12px;">' + _getGearIcon() + ' Government Type</div>' +
-                '<form id="govForm">' +
-                '<div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;">' +
-                '<div>' +
-                '<label style="display:block;font-size:0.7rem;color:var(--dim);margin-bottom:4px;">Government Type</label>' +
-                '<select id="govTypeSelect" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
-                '<option value="">— None —</option>' +
-                govTypes.map(function(t) {
-                    return '<option value="' + t.id + '" ' + (place.governmentTypeId === t.id ? 'selected' : '') + '>' + _escapeHtml(t.name) + '</option>';
-                }).join('') +
-                '</select>' +
+                '<div style="display:flex; gap:16px; flex-wrap:wrap; align-items:center;">' +
+                '<div><span style="color:var(--dim);">Current Type:</span> ' + (govType ? _escapeHtml(govType.name) : 'None') + '</div>' +
+                '<div><span style="color:var(--dim);">Style:</span> ' + (place.governmentStyle ? _escapeHtml(place.governmentStyle) : 'None') + '</div>' +
+                '<div><button id="assignGovTypeBtn" class="btn primary" style="padding:4px 12px;background:var(--accent);border:none;color:white;border-radius:4px;cursor:pointer;">' + _getGearIcon() + ' Assign</button></div>' +
+                '<div><button id="clearGovBtn" class="btn danger" style="padding:4px 12px;background:#8a3020;border:none;color:white;border-radius:4px;cursor:pointer;">' + _getCrossIcon() + ' Clear</button></div>' +
                 '</div>' +
-                '<div>' +
-                '<label style="display:block;font-size:0.7rem;color:var(--dim);margin-bottom:4px;">Style</label>' +
-                '<input type="text" id="govStyle" value="' + _escapeHtml(place.governmentStyle || '') + '" placeholder="e.g., Sultanate of..." style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
-                '</div>' +
-                '</div>' +
-                '<div style="display:flex;gap:8px;margin-top:12px;">' +
-                '<button type="submit" class="btn primary" style="padding:6px 14px;background:var(--accent);border:none;color:white;border-radius:4px;cursor:pointer;">' + _getCheckIcon() + ' Save</button>' +
-                '<button type="button" id="clearGovBtn" class="btn danger" style="padding:6px 14px;background:#8a3020;border:none;color:white;border-radius:4px;cursor:pointer;">' + _getCrossIcon() + ' Clear</button>' +
-                '</div>' +
-                '</form>' +
                 '</div>';
 
-            // Allowed Ranks Section
+            // --- Allowed Ranks Section ---
             if (govType && allowedRanks.length > 0) {
                 html += 
                     '<div style="margin-top:12px;background:var(--bg2);padding:12px 16px;border-radius:8px;border:1px solid var(--border);">' +
@@ -306,7 +300,7 @@
                     '</div>';
             }
 
-            // Current Leader Section
+            // --- Current Leader Section ---
             html += 
                 '<div style="margin-top:12px;background:var(--bg2);padding:16px;border-radius:8px;border:1px solid var(--border);">' +
                 '<div style="font-size:0.8rem;font-weight:bold;color:var(--accent);margin-bottom:12px;">' + _getCrownIcon() + ' Current Leadership</div>' +
@@ -331,14 +325,13 @@
                 '</div>' : '<div style="color:var(--dim);font-size:0.8rem;">' + _getCircleIcon() + ' No current leader</div>') +
                 '</div>';
 
-            // Assign New Leader Section
+            // --- Assign New Leader Section (with character selector) ---
             html += 
                 '<div style="margin-top:12px;background:var(--bg2);padding:16px;border-radius:8px;border:1px solid var(--border);">' +
                 '<div style="font-size:0.8rem;font-weight:bold;color:var(--accent);margin-bottom:12px;">' + _getPersonIcon() + ' Assign New Leader</div>' +
-                '<form id="assignLeaderForm">' +
-                '<div style="margin-bottom:10px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--dim);margin-bottom:4px;">Select Character</label>' +
-                '<select id="leaderSelect" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);"></select>' +
+                '<div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-bottom:12px;">' +
+                '<button id="selectLeaderBtn" class="btn primary" style="padding:6px 14px;background:var(--accent);border:none;color:white;border-radius:4px;cursor:pointer;">' + _getPersonIcon() + ' Select Character</button>' +
+                '<span id="selectedLeaderDisplay" style="font-size:0.7rem;color:var(--dim);">No character selected</span>' +
                 '</div>' +
                 '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">' +
                 '<div>' +
@@ -350,11 +343,10 @@
                 '<input type="number" id="leaderStartYear" value="' + _getCurrentYear() + '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
                 '</div>' +
                 '</div>' +
-                '<button type="submit" class="btn primary" style="padding:6px 14px;background:var(--accent);border:none;color:white;border-radius:4px;cursor:pointer;">' + _getCrownIcon() + ' Assign</button>' +
-                '</form>' +
+                '<button id="assignLeaderBtn" class="btn primary" style="padding:6px 14px;background:var(--accent);border:none;color:white;border-radius:4px;cursor:pointer;">' + _getCrownIcon() + ' Assign</button>' +
                 '</div>';
 
-            // Former Leaders Section
+            // --- Former Leaders Section ---
             html += 
                 '<div style="margin-top:12px;background:var(--bg2);padding:16px;border-radius:8px;border:1px solid var(--border);">' +
                 '<div data-section="historical" style="display:flex;align-items:center;gap:8px;font-size:0.8rem;font-weight:bold;color:var(--accent);cursor:pointer;">' +
@@ -381,14 +373,7 @@
                 '</div>';
 
             container.innerHTML = html;
-
-            // Populate leader select dropdown
-            populateLeaderSelect(placeId, govType);
-
-            // Attach event handlers
-            attachGovernmentFormHandlers(placeId, onRefresh);
-            attachLeaderAssignmentHandlers(placeId, onRefresh);
-            attachGovernmentUIHandlers(placeId, onRefresh);
+            attachGovernmentTabHandlers(placeId, onRefresh);
 
         } finally {
             _rendering = false;
@@ -396,131 +381,109 @@
     }
 
     // =========================================================================
-    // 7. POPULATE LEADER SELECT
+    // 8. EVENT HANDLERS - FIXED: No duplicate handlers
     // =========================================================================
 
-    function populateLeaderSelect(placeId, govType) {
-        var leaderSelect = document.getElementById('leaderSelect');
-        if (!leaderSelect) return;
+    function attachGovernmentTabHandlers(placeId, onRefresh) {
+        // Track selected leader
+        var selectedLeaderId = null;
 
-        var eligible = _getCharacters().filter(function(c) { return !c.isDeceased; });
-
-        // Filter by allowed ranks if government type has restrictions
-        if (govType && govType.allowedRankIds && govType.allowedRankIds.length > 0) {
-            eligible = eligible.filter(function(c) {
-                var hasAllowedRank = false;
-                if (c.rankAssignments) {
-                    for (var i = 0; i < c.rankAssignments.length; i++) {
-                        if (!c.rankAssignments[i].isDeprecated && govType.allowedRankIds.indexOf(c.rankAssignments[i].rankId) !== -1) {
-                            hasAllowedRank = true;
-                            break;
-                        }
-                    }
-                }
-                return hasAllowedRank || (c.activeRankId && govType.allowedRankIds.indexOf(c.activeRankId) !== -1);
-            });
-        }
-
-        // Sort by name
-        eligible.sort(function(a, b) { return a.name.localeCompare(b.name); });
-
-        var optionsHtml = '<option value="">— Select character —</option>';
-        for (var i = 0; i < eligible.length; i++) {
-            var char = eligible[i];
-            var age = _calculateAge(char.birthYear, false, null);
-            var rank = _getActiveRankDisplay(char);
-            var rankDisplay = rank ? (rank.display || rank.name) + ' ' : '';
-            var genderIcon = char.gender === 'male' ? '♂' : (char.gender === 'female' ? '♀' : '⚥');
-            optionsHtml += '<option value="' + char.id + '">' + rankDisplay + _escapeHtml(char.name) + ' ' + _escapeHtml(char.surname || '') + ' (' + age + 'y, ' + genderIcon + ')</option>';
-        }
-
-        leaderSelect.innerHTML = optionsHtml;
-    }
-
-    // =========================================================================
-    // 8. EVENT HANDLERS
-    // =========================================================================
-
-    function attachGovernmentFormHandlers(placeId, onRefresh) {
-        var govForm = document.getElementById('govForm');
-        var clearBtn = document.getElementById('clearGovBtn');
-
-        if (govForm && !govForm._submitAttached) {
-            govForm.addEventListener('submit', function(e) {
-                e.preventDefault();
-
-                var govTypeId = document.getElementById('govTypeSelect').value || null;
-                var govStyle = document.getElementById('govStyle').value || null;
-
-                var result = _assignGovernment(placeId, govTypeId, govStyle);
-                if (result) {
+        // SINGLE Assign government type button (in the government type section)
+        var assignGovTypeBtn = document.getElementById('assignGovTypeBtn');
+        if (assignGovTypeBtn && !assignGovTypeBtn._clickAttached) {
+            assignGovTypeBtn.addEventListener('click', function() {
+                _openAssignGovernmentModal(placeId, function() {
                     if (onRefresh) onRefresh();
-                    _showToast(_getCheckIcon() + ' Government saved', 'success');
-                } else {
-                    _showToast(_getCrossIcon() + ' Failed to save government', 'error');
-                }
+                });
             });
-            govForm._submitAttached = true;
+            assignGovTypeBtn._clickAttached = true;
         }
 
+        // Clear government button
+        var clearBtn = document.getElementById('clearGovBtn');
         if (clearBtn && !clearBtn._clickAttached) {
             clearBtn.addEventListener('click', function() {
                 var result = _assignGovernment(placeId, null, null);
                 if (result) {
                     if (onRefresh) onRefresh();
-                    _showToast(_getCircleIcon() + ' Government cleared', 'info');
+                    _showToast('Government cleared', 'info');
                 } else {
-                    _showToast(_getCrossIcon() + ' Failed to clear government', 'error');
+                    _showToast('Failed to clear government', 'error');
                 }
             });
             clearBtn._clickAttached = true;
         }
-    }
 
-    function attachLeaderAssignmentHandlers(placeId, onRefresh) {
-        var assignForm = document.getElementById('assignLeaderForm');
-        var endLeaderBtn = document.getElementById('endLeaderBtn');
-
-        if (assignForm && !assignForm._submitAttached) {
-            assignForm.addEventListener('submit', function(e) {
-                e.preventDefault();
-
-                var characterId = document.getElementById('leaderSelect').value;
-                var title = document.getElementById('leaderTitle').value;
-                var startYear = parseInt(document.getElementById('leaderStartYear').value);
-
-                if (!characterId) {
-                    _showToast(_getCrossIcon() + ' Select a character', 'error');
-                    return;
-                }
-                if (isNaN(startYear)) {
-                    _showToast(_getCrossIcon() + ' Enter a valid start year', 'error');
-                    return;
-                }
-
-                var result = _assignLeader(placeId, characterId, startYear, title);
-                if (result) {
-                    if (onRefresh) onRefresh();
-                    _showToast(_getCheckIcon() + ' Leader assigned', 'success');
-                } else {
-                    _showToast(_getCrossIcon() + ' Failed to assign leader', 'error');
-                }
+        // Select Leader button - opens character selector
+        var selectLeaderBtn = document.getElementById('selectLeaderBtn');
+        if (selectLeaderBtn && !selectLeaderBtn._clickAttached) {
+            selectLeaderBtn.addEventListener('click', function() {
+                _openCharacterSelector({
+                    title: 'Select Leader',
+                    filters: {
+                        status: 'all',
+                        showDeceased: false
+                    },
+                    onSelect: function(character) {
+                        selectedLeaderId = character.id;
+                        var display = document.getElementById('selectedLeaderDisplay');
+                        if (display) {
+                            display.textContent = character.name + ' ' + (character.surname || '');
+                            display.style.color = 'var(--accent)';
+                        }
+                        _showToast('Selected: ' + character.name, 'success');
+                    },
+                    onCancel: function() {
+                        // Do nothing
+                    }
+                });
             });
-            assignForm._submitAttached = true;
+            selectLeaderBtn._clickAttached = true;
         }
 
+        // Assign Leader button
+        var assignLeaderBtn = document.getElementById('assignLeaderBtn');
+        if (assignLeaderBtn && !assignLeaderBtn._clickAttached) {
+            assignLeaderBtn.addEventListener('click', function() {
+                if (!selectedLeaderId) {
+                    _showToast('Select a character first', 'warning');
+                    return;
+                }
+                
+                var title = document.getElementById('leaderTitle').value || 'Leader';
+                var startYear = parseInt(document.getElementById('leaderStartYear').value) || _getCurrentYear();
+                
+                var result = _assignLeader(placeId, selectedLeaderId, startYear, title);
+                if (result) {
+                    if (onRefresh) onRefresh();
+                    _showToast('Leader assigned', 'success');
+                    selectedLeaderId = null;
+                    var display = document.getElementById('selectedLeaderDisplay');
+                    if (display) {
+                        display.textContent = 'No character selected';
+                        display.style.color = 'var(--dim)';
+                    }
+                } else {
+                    _showToast('Failed to assign leader', 'error');
+                }
+            });
+            assignLeaderBtn._clickAttached = true;
+        }
+
+        // End leader button
+        var endLeaderBtn = document.getElementById('endLeaderBtn');
         if (endLeaderBtn && !endLeaderBtn._clickAttached) {
             endLeaderBtn.addEventListener('click', function() {
                 var currentLeader = _getCurrentLeader(placeId);
                 if (!currentLeader) {
-                    _showToast(_getWarningIcon() + ' No current leader to end', 'warning');
+                    _showToast('No current leader to end', 'warning');
                     return;
                 }
 
                 var endYear = _getCurrentYear();
 
                 _openModal({
-                    title: _getCrossIcon() + ' End Term',
+                    title: 'End Term',
                     content: 
                         '<div style="margin-bottom:12px;">' +
                         '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">End Year</label>' +
@@ -530,13 +493,12 @@
                         '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason</label>' +
                         '<input type="text" id="endReasonInput" placeholder="e.g., Died, Abdicated" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
                         '</div>',
-                    confirmText: _getCheckIcon() + ' End Term',
+                    confirmText: 'End Term',
+                    cancelText: 'Cancel',
                     onConfirm: function() {
                         var year = parseInt(document.getElementById('endYearInput').value);
-                        var reason = document.getElementById('endReasonInput').value;
-
                         if (isNaN(year)) {
-                            _showToast(_getCrossIcon() + ' Enter a valid year', 'error');
+                            _showToast('Enter a valid year', 'error');
                             return false;
                         }
 
@@ -544,10 +506,10 @@
                         if (result) {
                             _closeTopModal();
                             if (onRefresh) onRefresh();
-                            _showToast(_getCheckIcon() + ' Leader term ended in ' + year, 'info');
+                            _showToast('Leader term ended in ' + year, 'info');
                             return true;
                         } else {
-                            _showToast(_getCrossIcon() + ' Failed to end term', 'error');
+                            _showToast('Failed to end term', 'error');
                             return false;
                         }
                     }
@@ -555,10 +517,8 @@
             });
             endLeaderBtn._clickAttached = true;
         }
-    }
 
-    function attachGovernmentUIHandlers(placeId, onRefresh) {
-        // Historical leaders collapsible section
+        // Historical leaders collapsible
         var histHeader = document.querySelector('[data-section="historical"]');
         if (histHeader && !histHeader._clickAttached) {
             histHeader.addEventListener('click', function() {
@@ -593,11 +553,12 @@
             name._clickAttached = true;
         }
 
+        // Refresh button
         var refreshBtn = document.getElementById('refreshGovTabBtn');
         if (refreshBtn && !refreshBtn._clickAttached) {
             refreshBtn.addEventListener('click', function() {
                 if (onRefresh) onRefresh();
-                _showToast(_getRefreshIcon() + ' Refreshed', 'success');
+                _showToast('Refreshed', 'success');
             });
             refreshBtn._clickAttached = true;
         }
@@ -609,7 +570,5 @@
 
     window.renderGovernmentTab = renderGovernmentTab;
     window.governmentUIState = governmentUIState;
-
- 
 
 })();

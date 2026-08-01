@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * STILL WATERS - SETTLEMENT QUERIES (settlement-queries.js)
+ * STILL WATERS - SETTLEMENT QUERIES js/settlement/settlement-queries.js
  * =============================================================================
  * 
  * LOCATION: js/systems/settlement/settlement-queries.js

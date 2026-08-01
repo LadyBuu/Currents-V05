@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Still Waters · Location Manager</title>
+    <!-- external CSS (common.css) is linked; styles are applied from that file -->
+    <link rel="stylesheet" href="css/common.css" />
+    <!-- minimal overrides to remove sidebar and adjust layout -->
+    <style>
+        /* ----- remove sidebar completely ----- */
+        .app-layout {
+            display: block;
+            padding: 0 16px 16px 16px;
+        }
+        .main-panel {
+            margin-left: 0;
+            width: 100%;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+        .sidebar {
+            display: none !important;
+        }
+        .topbar .burger-btn {
+            display: none !important;
+        }
+        .topbar .title {
+            margin-left: 0;
+        }
+        /* ensure tabs and content use the dark theme from common.css */
+        .panel-tabs {
+            background: var(--bg2);
+        }
+        .tab-pane {
+            background: var(--bg);
+        }
+        .detail-card {
+            background: var(--bg2);
+        }
+        .detail-notes {
+            background: var(--bg2);
+        }
+        /* preserve placeholder styling */
+        .placeholder {
+            color: var(--tmut);
+            text-align: center;
+            padding: 60px 20px;
+            font-size: 0.9rem;
+        }
+        /* hide file input */
+        #fileInput {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- TOP BAR -->
+    <div class="topbar">
+        <!-- burger hidden via css -->
+        <span class="title"> Still Waters · Location Manager</span>
+        <span class="spacer"></span>
+
+        <!-- 5 placeholder buttons (do nothing) -->
+        <button class="btn" id="placeholder1">Action 1</button>
+        <button class="btn" id="placeholder2">Action 2</button>
+        <button class="btn" id="placeholder3">Action 3</button>
+        <button class="btn" id="placeholder4">Action 4</button>
+        <button class="btn" id="placeholder5">Action 5</button>
+
+        <label for="yearInput">Year</label>
+        <input type="number" class="year-input" id="yearInput" value="1250" />
+        <button class="btn" id="setYearBtn">Set</button>
+        <button class="btn" id="exportBtn">Export</button>
+        <button class="btn" id="importBtn">Import</button>
+        <input type="file" id="fileInput" accept=".json" />
+    </div>
+
+    <!-- APP LAYOUT (no sidebar) -->
+    <div class="app-layout">
+        <!-- MAIN PANEL WITH TABS -->
+        <div class="main-panel" id="mainPanel">
+            <div class="panel-tabs" id="panelTabs">
+                <button class="tab-btn active" data-tab="details">
+                    <span class="tab-icon">◈</span> Details
+                </button>
+                <button class="tab-btn" data-tab="census">
+                    <span class="tab-icon">▦</span> Census
+                </button>
+                <button class="tab-btn" data-tab="history">
+                    <span class="tab-icon">◉</span> History
+                </button>
+                <button class="tab-btn" data-tab="relations">
+                    <span class="tab-icon">⚿</span> Relations
+                </button>
+                <button class="tab-btn" data-tab="settings">
+                    <span class="tab-icon">⚙</span> Settings
+                </button>
+            </div>
+
+            <div class="tab-content" id="tabContent">
+                <div class="tab-pane active" id="tab-details">
+                    <div class="placeholder">Select a location from the sidebar</div>
+                </div>
+                <div class="tab-pane" id="tab-census">
+                    <div style="color:var(--dim); text-align:center; padding:40px; font-size:0.9rem;">
+                        <span style="font-size:2rem; display:block; margin-bottom:12px;">▦</span>
+                        Census data will appear here
+                    </div>
+                </div>
+                <div class="tab-pane" id="tab-history">
+                    <div style="color:var(--dim); text-align:center; padding:40px; font-size:0.9rem;">
+                        <span style="font-size:2rem; display:block; margin-bottom:12px;">◉</span>
+                        Historical records will appear here
+                    </div>
+                </div>
+                <div class="tab-pane" id="tab-relations">
+                    <div style="color:var(--dim); text-align:center; padding:40px; font-size:0.9rem;">
+                        <span style="font-size:2rem; display:block; margin-bottom:12px;">⚿</span>
+                        Relationship data will appear here
+                    </div>
+                </div>
+                <div class="tab-pane" id="tab-settings">
+                    <div style="color:var(--dim); text-align:center; padding:40px; font-size:0.9rem;">
+                        <span style="font-size:2rem; display:block; margin-bottom:12px;">⚙</span>
+                        Settings will appear here
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- LOAD LOCALSTORAGE DATA FIRST (BEFORE ANY SYSTEMS)            -->
+    <!-- ============================================================ -->
+    <script>
+        (function() {
+            'use strict';
+            try {
+                var STORAGE_KEY = 'stillwaters_master';
+                var stored = localStorage.getItem(STORAGE_KEY);
+                if (stored) {
+                    var parsed = JSON.parse(stored);
+                    if (parsed && parsed.data) {
+                        window.masterData = parsed;
+                        console.log('[PRELOAD] Loaded from localStorage:',
+                            parsed.data.places?.length || 0, 'places,',
+                            parsed.data.characters?.length || 0, 'characters');
+                    }
+                }
+            } catch(e) {
+                console.warn('[PRELOAD] Failed to load from localStorage:', e.message);
+            }
+
+            if (!window.masterData || !window.masterData.data) {
+                window.masterData = {
+                    version: '2.0',
+                    lastUpdated: new Date().toISOString(),
+                    data: {
+                        characters: [],
+                        places: [],
+                        ranks: [],
+                        roles: [],
+                        locationTypes: [],
+                        governmentTypes: [],
+                        households: [],
+                        residences: [],
+                        currentYear: 1250
+                    }
+                };
+                console.log('[PRELOAD] Created empty masterData');
+            }
+        })();
+    </script>
+
+    <!-- ============================================================ -->
+    <!-- CORE - NO SYSTEM DEPENDENCIES                                 -->
+    <!-- ============================================================ -->
+
+    <script src="js/core/constants.js"></script>
+    <script src="js/core/randomness.js"></script>
+    <script src="js/core/collections.js"></script>
+    <script src="js/core/validation.js"></script>
+    <script src="js/core/formatting.js"></script>
+    <script src="js/core/time.js"></script>
+    <script src="js/core/ids.js"></script>
+    <script src="js/core/storage.js"></script>
+    <script src="js/core/accessors.js"></script>
+    <script src="js/core/world.js"></script>
+    <script src="js/core/names.js"></script>
+    <script src="js/core/state.js"></script>
+    <script src="js/core/integrity.js"></script>
+    <script src="js/core/icons.js"></script>
+    <script src="js/core/ui.js"></script>
+    <script src="js/core/collapsible.js"></script>
+    <script src="js/core/responsive.js"></script>
+    <script src="js/core/modals-core.js"></script>
+    <script src="js/core/exportUtils.js"></script>
+    <script src="js/core/query-helpers.js"></script>
+
+    <!-- ============================================================ -->
+    <!-- SELECTORS                                                    -->
+    <!-- ============================================================ -->
+
+    <script src="js/selectors/selector-base.js"></script>
+    <script src="js/selectors/locationDropdown.js"></script>
+    <script src="js/selectors/modals-char-selector.js"></script>
+    <script src="js/selectors/modals-household-selector.js"></script>
+
+    <!-- ============================================================ -->
+    <!-- LOCATION SYSTEM                                              -->
+    <!-- ============================================================ -->
+
+    <script src="js/location/location-state.js"></script>
+    <script src="js/location/location-commands.js"></script>
+    <script src="js/location/location-queries.js"></script>
+    <script src="js/location/location-hierarchy.js"></script>
+    <script src="js/location/location-movement.js"></script>
+    <script src="js/location/location-ui-list.js"></script>
+    <script src="js/location/modals-location.js"></script>
+    <script src="js/location/modals-moves.js"></script>
+
+    <!-- ============================================================ -->
+    <!-- SETTLEMENT SYSTEM                                            -->
+    <!-- ============================================================ -->
+
+    <script src="js/settlement/settlement-state.js"></script>
+    <script src="js/settlement/settlement-commands-core.js"></script>
+    <script src="js/settlement/settlement-ranks.js"></script>
+    <script src="js/settlement/settlement-features.js"></script>
+    <script src="js/settlement/settlement-economy-core.js"></script>
+    <script src="js/settlement/settlement-prosperity.js"></script>
+    <script src="js/settlement/settlement-enterprises.js"></script>
+    <script src="js/settlement/settlement-government.js"></script>
+    <script src="js/settlement/settlement-budget.js"></script>
+    <script src="js/settlement/settlement-commands-writes.js"></script>
+    <script src="js/settlement/settlement-commands-annual.js"></script>
+    <script src="js/settlement/settlement-queries.js"></script>
+    <script src="js/settlement/settlement-crud.js"></script>
+    <script src="js/settlement/settlement-ui-list.js"></script>
+    <script src="js/settlement/modals-settlement-core.js"></script>
+    <script src="js/settlement/modals-settlement-economy.js"></script>
+    <script src="js/settlement/modals-settlement-roles.js"></script>
+
+    <!-- ============================================================ -->
+    <!-- ORCHESTRATOR (sidebar removed)                               -->
+    <!-- ============================================================ -->
+
+    <script>
+        (function() {
+            'use strict';
+
+            var exportBtn = document.getElementById('exportBtn');
+            var importBtn = document.getElementById('importBtn');
+            var fileInput = document.getElementById('fileInput');
+            var yearInput = document.getElementById('yearInput');
+            var setYearBtn = document.getElementById('setYearBtn');
+
+            var selectedId = null;
+            var isInitialized = false;
+
+            // placeholder buttons (do nothing)
+            document.getElementById('placeholder1').addEventListener('click', function() {});
+            document.getElementById('placeholder2').addEventListener('click', function() {});
+            document.getElementById('placeholder3').addEventListener('click', function() {});
+            document.getElementById('placeholder4').addEventListener('click', function() {});
+            document.getElementById('placeholder5').addEventListener('click', function() {});
+
+            // ============================================================
+            // TAB SWITCHING
+            // ============================================================
+            var tabButtons = document.querySelectorAll('.tab-btn');
+            var tabPanes = {
+                details: document.getElementById('tab-details'),
+                census: document.getElementById('tab-census'),
+                history: document.getElementById('tab-history'),
+                relations: document.getElementById('tab-relations'),
+                settings: document.getElementById('tab-settings')
+            };
+
+            function switchTab(tabId) {
+                tabButtons.forEach(function(btn) {
+                    btn.classList.toggle('active', btn.dataset.tab === tabId);
+                });
+
+                Object.keys(tabPanes).forEach(function(key) {
+                    tabPanes[key].classList.toggle('active', key === tabId);
+                });
+
+                if (tabId === 'details' && selectedId) {
+                    var LS = window.LocationState;
+                    if (LS) {
+                        var place = LS.getPlace(selectedId);
+                        if (place) showLocationDetail(place);
+                    }
+                }
+            }
+
+            tabButtons.forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    switchTab(this.dataset.tab);
+                });
+            });
+
+            // ============================================================
+            // GET/SET FULL DATA
+            // ============================================================
+            function getFullData() {
+                if (typeof window.masterData !== 'undefined' && window.masterData) {
+                    return window.masterData;
+                }
+                return null;
+            }
+
+            function setFullData(data) {
+                if (data && data.data) {
+                    window.masterData = data;
+                } else if (data && data.places) {
+                    window.masterData = {
+                        version: '2.0',
+                        lastUpdated: new Date().toISOString(),
+                        data: data
+                    };
+                } else {
+                    return false;
+                }
+
+                try {
+                    localStorage.setItem('stillwaters_master', JSON.stringify(window.masterData));
+                } catch(e) {}
+
+                if (typeof window.saveMasterData === 'function') {
+                    window.saveMasterData(true);
+                }
+                if (typeof window.invalidateAccessorCaches === 'function') {
+                    window.invalidateAccessorCaches();
+                }
+                if (typeof window.LocationState !== 'undefined' &&
+                    typeof window.LocationState.invalidateCache === 'function') {
+                    window.LocationState.invalidateCache();
+                }
+                if (typeof window.SettlementState !== 'undefined' &&
+                    typeof window.SettlementState.invalidateCache === 'function') {
+                    window.SettlementState.invalidateCache();
+                }
+
+                return true;
+            }
+
+            // ============================================================
+            // SHOW LOCATION DETAIL
+            // ============================================================
+            function showLocationDetail(place) {
+                if (!place) {
+                    document.getElementById('tab-details').innerHTML = '<div class="placeholder">Select a location from the sidebar</div>';
+                    return;
+                }
+
+                var LS = window.LocationState;
+                var population = LS ? LS.getPopulationCount(place.id, false) : 0;
+                var ownPopulation = LS ? LS.getOwnPopulation(place.id, false) : 0;
+                var typeName = LS ? LS.getLocationTypeName(place.typeId) : 'Unknown';
+                var parentName = 'None';
+                if (place.parentId) {
+                    var parent = LS ? LS.getPlace(place.parentId) : null;
+                    if (parent) parentName = parent.displayName;
+                }
+                var children = LS ? LS.getPlaceChildren(place.id, false) : [];
+                var hierarchy = LS ? LS.getPlaceHierarchy(place.id) : [];
+
+                var breadcrumb = hierarchy.map(function(p) {
+                    return p.displayName;
+                }).join(' → ') || 'Root';
+
+                document.getElementById('tab-details').innerHTML =
+                    '<div class="detail-container">' +
+                        '<div class="detail-card">' +
+                            '<h2 class="detail-title">' + place.displayName + '</h2>' +
+                            '<div class="detail-subtitle">' + typeName + (place.isCapital ? ' · Capital' : '') + '</div>' +
+                            '<div class="detail-grid">' +
+                                '<span class="detail-label">ID</span><span class="detail-value">' + place.id + '</span>' +
+                                '<span class="detail-label">Type</span><span class="detail-value">' + typeName + '</span>' +
+                                '<span class="detail-label">Parent</span><span class="detail-value">' + parentName + '</span>' +
+                                '<span class="detail-label">Status</span><span class="detail-value">' + (place.status || 'active') + '</span>' +
+                                '<span class="detail-label">Total Population</span><span class="detail-value">' + population.toLocaleString() + '</span>' +
+                                '<span class="detail-label">Direct Population</span><span class="detail-value">' + ownPopulation.toLocaleString() + '</span>' +
+                                '<span class="detail-label">Children</span><span class="detail-value">' + children.length + '</span>' +
+                                '<span class="detail-label">Hierarchy Depth</span><span class="detail-value">' + hierarchy.length + '</span>' +
+                                '<span class="detail-label">Variable Key</span><span class="detail-value">' + (place.variableKey || '—') + '</span>' +
+                            '</div>' +
+                            '<div class="detail-breadcrumb">' + breadcrumb + '</div>' +
+                        '</div>' +
+                        (place.notes ? '<div class="detail-notes"><div class="notes-label">Notes</div><p>' + place.notes + '</p></div>' : '') +
+                    '</div>';
+            }
+
+            // ============================================================
+            // PICK FIRST LOCATION (auto-select)
+            // ============================================================
+            function pickFirstLocation() {
+                var LS = window.LocationState;
+                if (!LS) return;
+                var places = LS.getAllPlaces({ includeDeprecated: false });
+                if (places && places.length > 0) {
+                    selectedId = places[0].id;
+                    var place = LS.getPlace(selectedId);
+                    if (place) {
+                        switchTab('details');
+                        showLocationDetail(place);
+                    }
+                } else {
+                    document.getElementById('tab-details').innerHTML = '<div class="placeholder">No locations found in data</div>';
+                }
+            }
+
+            // ============================================================
+            // IMPORT / EXPORT
+            // ============================================================
+            exportBtn.addEventListener('click', function() {
+                var data = getFullData();
+                if (!data) {
+                    alert('No data to export');
+                    return;
+                }
+                var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = 'stillwaters_export_' + Date.now() + '.json';
+                a.click();
+                URL.revokeObjectURL(url);
+            });
+
+            importBtn.addEventListener('click', function() {
+                fileInput.value = '';
+                fileInput.click();
+            });
+
+            fileInput.addEventListener('change', function() {
+                var file = this.files[0];
+                if (!file) return;
+
+                var reader = new FileReader();
+                reader.onload = function(e) {
+                    try {
+                        var imported = JSON.parse(e.target.result);
+                        var dataToImport = null;
+
+                        if (imported.data && imported.version) {
+                            dataToImport = imported;
+                        } else if (imported.places || imported.characters) {
+                            dataToImport = {
+                                version: '2.0',
+                                lastUpdated: new Date().toISOString(),
+                                data: imported
+                            };
+                        } else if (imported.data) {
+                            dataToImport = {
+                                version: '2.0',
+                                lastUpdated: new Date().toISOString(),
+                                data: imported.data
+                            };
+                        }
+
+                        if (!dataToImport) {
+                            alert('Invalid format: Could not recognize data structure.');
+                            return;
+                        }
+
+                        if (setFullData(dataToImport)) {
+                            pickFirstLocation();
+                        } else {
+                            alert('Import failed');
+                        }
+                    } catch(err) {
+                        alert('Invalid JSON: ' + err.message);
+                    }
+                };
+                reader.readAsText(file);
+                this.value = '';
+            });
+
+            // ============================================================
+            // YEAR SETTER
+            // ============================================================
+            setYearBtn.addEventListener('click', function() {
+                var val = parseInt(yearInput.value, 10);
+                if (!isNaN(val) && window.masterData) {
+                    window.masterData.data.currentYear = val;
+                    try {
+                        localStorage.setItem('stillwaters_master', JSON.stringify(window.masterData));
+                    } catch(e) {}
+                    if (typeof window.saveMasterData === 'function') {
+                        window.saveMasterData(true);
+                    }
+                }
+            });
+
+            // ============================================================
+            // INIT
+            // ============================================================
+            function init() {
+                if (isInitialized) return;
+                isInitialized = true;
+
+                setTimeout(function() {
+                    pickFirstLocation();
+                }, 120);
+            }
+
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', init);
+            } else {
+                setTimeout(init, 50);
+            }
+
+        })();
+    </script>
+
+</body>
+</html>

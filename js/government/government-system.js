@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * GOVERNMENT SYSTEM (Wrapper) - government-system.js
+ * GOVERNMENT SYSTEM (Wrapper) - js/government/government-system.js
  * =============================================================================
  * 
  * LOCATION: js/systems/government/government-system.js

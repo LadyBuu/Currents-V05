@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Data Manager</title>
+    <link rel="stylesheet" href="css/common.css" />
+    <link rel="stylesheet" href="css/data-manager.css" />
+</head>
+<body>
+
+<!-- ============================================================ -->
+<!-- DATA MANAGER APP WRAPPER                                      -->
+<!-- ============================================================ -->
+<div class="data-manager-app">
+
+    <!-- TOP BAR -->
+    <div class="topbar">
+        <span class="title">🗄 Data Manager</span>
+        <span class="spacer"></span>
+        <label for="yearInput">Year</label>
+        <input type="number" class="year-input" id="yearInput" value="1250" />
+        <button class="tb-btn" id="setYearBtn">✓ Set</button>
+        <button class="tb-btn" id="exportBtn">⬇ Export</button>
+        <button class="tb-btn" id="importBtn">⬆ Import</button>
+        <input type="file" id="fileInput" accept=".json" style="display:none;" />
+    </div>
+
+    <!-- PANEL TABS -->
+    <div class="panel-tabs" id="panelTabs">
+        <button class="tab-btn active" data-tab="locationtypes">
+            <span class="tab-icon" id="icon-locationtypes"></span> Location Types
+        </button>
+        <button class="tab-btn" data-tab="governmenttypes">
+            <span class="tab-icon" id="icon-governmenttypes"></span> Government Types
+        </button>
+        <button class="tab-btn" data-tab="ranks">
+            <span class="tab-icon" id="icon-ranks"></span> Ranks
+        </button>
+        <button class="tab-btn" data-tab="census">
+            <span class="tab-icon" id="icon-census"></span> Census
+        </button>
+        <button class="tab-btn" data-tab="history">
+            <span class="tab-icon" id="icon-history"></span> History
+        </button>
+        <button class="tab-btn" data-tab="relations">
+            <span class="tab-icon" id="icon-relations"></span> Relations
+        </button>
+        <button class="tab-btn" data-tab="settings">
+            <span class="tab-icon" id="icon-settings"></span> Settings
+        </button>
+    </div>
+
+    <!-- TAB CONTENT -->
+    <div class="tab-content" id="tabContent">
+        <!-- LOCATION TYPES -->
+        <div class="tab-pane active" id="tab-locationtypes"></div>
+
+        <!-- GOVERNMENT TYPES -->
+        <div class="tab-pane" id="tab-governmenttypes"></div>
+
+        <!-- RANKS -->
+        <div class="tab-pane" id="tab-ranks">
+            <div class="empty-state">
+                <div class="icon" id="empty-ranks-icon"></div>
+                <div class="message">Rank data will appear here</div>
+                <div class="sub-message">(placeholder – coming soon)</div>
+            </div>
+        </div>
+
+        <!-- CENSUS -->
+        <div class="tab-pane" id="tab-census">
+            <div class="empty-state">
+                <div class="icon" id="empty-census-icon"></div>
+                <div class="message">Census data will appear here</div>
+                <div class="sub-message">(placeholder – coming soon)</div>
+            </div>
+        </div>
+
+        <!-- HISTORY -->
+        <div class="tab-pane" id="tab-history">
+            <div class="empty-state">
+                <div class="icon" id="empty-history-icon"></div>
+                <div class="message">Historical records will appear here</div>
+                <div class="sub-message">(placeholder – coming soon)</div>
+            </div>
+        </div>
+
+        <!-- RELATIONS -->
+        <div class="tab-pane" id="tab-relations">
+            <div class="empty-state">
+                <div class="icon" id="empty-relations-icon"></div>
+                <div class="message">Relationship data will appear here</div>
+                <div class="sub-message">(placeholder – coming soon)</div>
+            </div>
+        </div>
+
+        <!-- SETTINGS -->
+        <div class="tab-pane" id="tab-settings">
+            <div class="empty-state">
+                <div class="icon" id="empty-settings-icon"></div>
+                <div class="message">Settings will appear here</div>
+                <div class="sub-message">(placeholder – coming soon)</div>
+            </div>
+        </div>
+    </div>
+
+</div>
+<!-- END data-manager-app wrapper -->
+
+<!-- ============================================================ -->
+<!-- PRELOAD                                                       -->
+<!-- ============================================================ -->
+<script>
+    (function() {
+        'use strict';
+        try {
+            var STORAGE_KEY = 'stillwaters_master';
+            var stored = localStorage.getItem(STORAGE_KEY);
+            if (stored) {
+                var parsed = JSON.parse(stored);
+                if (parsed && parsed.data) {
+                    window.masterData = parsed;
+                }
+            }
+        } catch(e) {}
+
+        if (!window.masterData || !window.masterData.data) {
+            window.masterData = {
+                version: '2.0',
+                lastUpdated: new Date().toISOString(),
+                data: {
+                    characters: [],
+                    places: [],
+                    ranks: [],
+                    roles: [],
+                    locationTypes: [],
+                    governmentTypes: [],
+                    households: [],
+                    residences: [],
+                    currentYear: 1250
+                }
+            };
+        }
+    })();
+</script>
+
+<!-- ============================================================ -->
+<!-- CORE SCRIPTS                                                  -->
+<!-- ============================================================ -->
+<script src="js/core/constants.js"></script>
+<script src="js/core/randomness.js"></script>
+<script src="js/core/collections.js"></script>
+<script src="js/core/validation.js"></script>
+<script src="js/core/formatting.js"></script>
+<script src="js/core/time.js"></script>
+<script src="js/core/ids.js"></script>
+<script src="js/core/storage.js"></script>
+<script src="js/core/accessors.js"></script>
+<script src="js/core/world.js"></script>
+<script src="js/core/names.js"></script>
+<script src="js/core/state.js"></script>
+<script src="js/core/integrity.js"></script>
+<script src="js/core/icons.js"></script>
+<script src="js/core/ui.js"></script>
+<script src="js/core/collapsible.js"></script>
+<script src="js/core/responsive.js"></script>
+<script src="js/core/modals-core.js"></script>
+<script src="js/core/exportUtils.js"></script>
+<script src="js/core/query-helpers.js"></script>
+
+<!-- ============================================================ -->
+<!-- SELECTORS                                                     -->
+<!-- ============================================================ -->
+<script src="js/selectors/selector-base.js"></script>
+<script src="js/selectors/locationDropdown.js"></script>
+<script src="js/selectors/modals-char-selector.js"></script>
+<script src="js/selectors/modals-household-selector.js"></script>
+
+<!-- ============================================================ -->
+<!-- LOCATION SYSTEM                                               -->
+<!-- ============================================================ -->
+<script src="js/location/location-state.js"></script>
+<script src="js/location/location-commands.js"></script>
+<script src="js/location/location-queries.js"></script>
+<script src="js/location/location-hierarchy.js"></script>
+<script src="js/location/location-movement.js"></script>
+<script src="js/location/location-ui-list.js"></script>
+<script src="js/location/modals-location.js"></script>
+<script src="js/location/modals-moves.js"></script>
+
+<!-- ============================================================ -->
+<!-- LOCATION TYPE MANAGER                                         -->
+<!-- ============================================================ -->
+<script src="js/tabs/location-type-manager-tab.js"></script>
+
+<!-- ============================================================ -->
+<!-- GOVERNMENT SYSTEM                                             -->
+<!-- ============================================================ -->
+<script src="js/government/government-state.js"></script>
+<script src="js/government/government-commands.js"></script>
+<script src="js/government/government-queries.js"></script>
+<script src="js/government/government-economy.js"></script>
+<script src="js/government/government-assignment.js"></script>
+<script src="js/government/government-laws.js"></script>
+<script src="js/government/government-system.js"></script>
+<script src="js/government/modals-government.js"></script>
+
+<!-- ============================================================ -->
+<!-- GOVERNMENT TYPE MANAGER                                       -->
+<!-- ============================================================ -->
+<script src="js/tabs/government-type-manager-tab.js"></script>
+
+<!-- ============================================================ -->
+<!-- SETTLEMENT SYSTEM                                             -->
+<!-- ============================================================ -->
+<script src="js/settlement/settlement-state.js"></script>
+<script src="js/settlement/settlement-commands-core.js"></script>
+<script src="js/settlement/settlement-ranks.js"></script>
+<script src="js/settlement/settlement-features.js"></script>
+<script src="js/settlement/settlement-economy-core.js"></script>
+<script src="js/settlement/settlement-prosperity.js"></script>
+<script src="js/settlement/settlement-enterprises.js"></script>
+<script src="js/settlement/settlement-government.js"></script>
+<script src="js/settlement/settlement-budget.js"></script>
+<script src="js/settlement/settlement-commands-writes.js"></script>
+<script src="js/settlement/settlement-commands-annual.js"></script>
+<script src="js/settlement/settlement-queries.js"></script>
+<script src="js/settlement/settlement-crud.js"></script>
+<script src="js/settlement/settlement-ui-list.js"></script>
+<script src="js/settlement/modals-settlement-core.js"></script>
+<script src="js/settlement/modals-settlement-economy.js"></script>
+<script src="js/settlement/modals-settlement-roles.js"></script>
+
+<!-- ============================================================ -->
+<!-- RANK SYSTEM                                                   -->
+<!-- ============================================================ -->
+<script src="js/ranks/rank-constants.js"></script>
+<script src="js/ranks/rank-state.js"></script>
+<script src="js/ranks/rank-queries.js"></script>
+<script src="js/ranks/rank-assignments.js"></script>
+<script src="js/ranks/rank-commands.js"></script>
+<script src="js/ranks/rank-issues.js"></script>
+<script src="js/ranks/rank-ui-list.js"></script>
+<script src="js/ranks/modals-rank.js"></script>
+
+<!-- ============================================================ -->
+<!-- RANK TAB MANAGER                                              -->
+<!-- ============================================================ -->
+<script src="js/tabs/rank-manager-tab.js"></script>
+
+<!-- ============================================================ -->
+<!-- ORCHESTRATOR                                                  -->
+<!-- ============================================================ -->
+<script>
+    (function() {
+        'use strict';
+
+        // --- Inject Icons from icons.js into the DOM ---
+        function injectIcons() {
+            if (typeof window.Icons === 'undefined') {
+                console.warn('Icons not loaded yet, retrying...');
+                setTimeout(injectIcons, 100);
+                return;
+            }
+
+            var iconMap = {
+                'icon-locationtypes': window.Icons.LOCATION || window.Icons.CIRCLE,
+                'icon-governmenttypes': window.Icons.GEAR || window.Icons.CIRCLE,
+                'icon-ranks': window.Icons.RANK || window.Icons.CROWN || window.Icons.CIRCLE,
+                'icon-census': window.Icons.CENSUS || window.Icons.CIRCLE,
+                'icon-history': window.Icons.BOOK || window.Icons.CIRCLE,
+                'icon-relations': window.Icons.FRIENDSHIP || window.Icons.CIRCLE,
+                'icon-settings': window.Icons.GEAR || window.Icons.CIRCLE,
+                'empty-ranks-icon': window.Icons.RANK || window.Icons.CROWN || window.Icons.CIRCLE,
+                'empty-census-icon': window.Icons.CENSUS || window.Icons.CIRCLE,
+                'empty-history-icon': window.Icons.BOOK || window.Icons.CIRCLE,
+                'empty-relations-icon': window.Icons.FRIENDSHIP || window.Icons.CIRCLE,
+                'empty-settings-icon': window.Icons.GEAR || window.Icons.CIRCLE
+            };
+
+            for (var id in iconMap) {
+                var el = document.getElementById(id);
+                if (el) {
+                    el.innerHTML = iconMap[id];
+                }
+            }
+        }
+
+        // --- Tab switching ---
+        var tabButtons = document.querySelectorAll('.panel-tabs .tab-btn');
+        var tabPanes = {
+            locationtypes: document.getElementById('tab-locationtypes'),
+            governmenttypes: document.getElementById('tab-governmenttypes'),
+            ranks: document.getElementById('tab-ranks'),
+            census: document.getElementById('tab-census'),
+            history: document.getElementById('tab-history'),
+            relations: document.getElementById('tab-relations'),
+            settings: document.getElementById('tab-settings')
+        };
+
+        function switchTab(tabId) {
+            tabButtons.forEach(function(btn) {
+                btn.classList.toggle('active', btn.dataset.tab === tabId);
+            });
+            Object.keys(tabPanes).forEach(function(key) {
+                if (tabPanes[key]) {
+                    tabPanes[key].classList.toggle('active', key === tabId);
+                }
+            });
+            if (tabId === 'locationtypes' && window.LocationTypeManager) {
+                window.LocationTypeManager.renderTypeList('tab-locationtypes');
+            }
+            if (tabId === 'governmenttypes' && window.GovernmentTypeManager) {
+                window.GovernmentTypeManager.renderTypeList('tab-governmenttypes');
+            }
+            if (tabId === 'ranks' && window.RankManager) {
+                window.RankManager.renderRankList('tab-ranks');
+            }
+        }
+
+        tabButtons.forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                switchTab(this.dataset.tab);
+            });
+        });
+
+        // --- Topbar buttons ---
+        document.getElementById('setYearBtn').addEventListener('click', function() {
+            var val = parseInt(document.getElementById('yearInput').value, 10);
+            if (!isNaN(val) && window.masterData) {
+                window.masterData.data.currentYear = val;
+                try { localStorage.setItem('stillwaters_master', JSON.stringify(window.masterData)); } catch(e) {}
+                if (typeof window.saveMasterData === 'function') window.saveMasterData(true);
+            }
+        });
+
+        document.getElementById('exportBtn').addEventListener('click', function() {
+            var data = window.masterData;
+            if (!data) { alert('No data to export'); return; }
+            var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = 'stillwaters_export_' + Date.now() + '.json';
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+
+        document.getElementById('importBtn').addEventListener('click', function() {
+            document.getElementById('fileInput').click();
+        });
+
+        document.getElementById('fileInput').addEventListener('change', function() {
+            var file = this.files[0];
+            if (!file) return;
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    var imported = JSON.parse(e.target.result);
+                    var dataToImport = null;
+                    if (imported.data && imported.version) dataToImport = imported;
+                    else if (imported.places || imported.characters) dataToImport = { version: '2.0', lastUpdated: new Date().toISOString(), data: imported };
+                    else if (imported.data) dataToImport = { version: '2.0', lastUpdated: new Date().toISOString(), data: imported.data };
+                    if (!dataToImport) { alert('Invalid format'); return; }
+                    window.masterData = dataToImport;
+                    try { localStorage.setItem('stillwaters_master', JSON.stringify(window.masterData)); } catch(e) {}
+                    if (typeof window.saveMasterData === 'function') window.saveMasterData(true);
+                    if (typeof LocationState !== 'undefined' && LocationState.invalidateCache) LocationState.invalidateCache();
+                    if (typeof GovernmentState !== 'undefined' && GovernmentState.invalidateCache) GovernmentState.invalidateCache();
+                    if (window.LocationTypeManager) {
+                        window.LocationTypeManager.renderTypeList('tab-locationtypes');
+                    }
+                    if (window.GovernmentTypeManager) {
+                        window.GovernmentTypeManager.renderTypeList('tab-governmenttypes');
+                    }
+                    if (window.RankManager) {
+                        window.RankManager.renderRankList('tab-ranks');
+                    }
+                    alert('Import successful!');
+                } catch(err) { alert('Invalid JSON: ' + err.message); }
+            };
+            reader.readAsText(file);
+            this.value = '';
+        });
+
+        // --- Initial render ---
+        injectIcons();
+
+        if (window.LocationTypeManager) {
+            window.LocationTypeManager.renderTypeList('tab-locationtypes');
+        }
+
+    })();
+</script>
+
+</body>
+</html>

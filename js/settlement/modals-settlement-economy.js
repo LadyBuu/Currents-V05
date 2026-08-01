@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * STILL WATERS - SETTLEMENT ECONOMY MODALS (modals-settlement-economy.js)
+ * STILL WATERS - SETTLEMENT ECONOMY MODALS js/settlement/modals-settlement-economy.js
  * =============================================================================
  * 
  * This file contains economy-specific UI modals:

@@ -1,0 +1,331 @@
+<!-- ============================================================ -->
+<!-- CORE - NO DEPENDENCIES                                       -->
+<!-- ============================================================ -->
+<script src="js/core/constants.js"></script>
+<script src="js/core/randomness.js"></script>
+<script src="js/core/collections.js"></script>
+<script src="js/core/validation.js"></script>
+<script src="js/core/formatting.js"></script>
+<script src="js/core/time.js"></script>
+<script src="js/core/icons.js"></script>
+<script src="js/core/state.js"></script>
+
+<!-- ============================================================ -->
+<!-- CORE - DEPENDS ON randomness.js                              -->
+<!-- ============================================================ -->
+<script src="js/core/ids.js"></script>
+
+<!-- ============================================================ -->
+<!-- CORE - DEPENDS ON formatting.js, icons.js                    -->
+<!-- ============================================================ -->
+<script src="js/core/ui.js"></script>
+
+<!-- ============================================================ -->
+<!-- CORE - DEPENDS ON formatting.js                              -->
+<!-- ============================================================ -->
+<script src="js/core/collapsible.js"></script>
+
+<!-- ============================================================ -->
+<!-- CORE - DEPENDS ON collections.js                             -->
+<!-- ============================================================ -->
+<script src="js/core/responsive.js"></script>
+
+<!-- ============================================================ -->
+<!-- CORE - ACCESSORS (circular - load together)                 -->
+<!-- ============================================================ -->
+<script src="js/core/storage.js"></script>
+<script src="js/core/accessors.js"></script>
+
+<!-- ============================================================ -->
+<!-- CORE - DEPENDS ON accessors.js                               -->
+<!-- ============================================================ -->
+<script src="js/core/world.js"></script>
+<script src="js/core/names.js"></script>
+<script src="js/core/family-accessors.js"></script>
+<script src="js/core/query-helpers.js"></script>
+
+<!-- ============================================================ -->
+<!-- CORE - UI                                                    -->
+<!-- ============================================================ -->
+<script src="js/core/modals-core.js"></script>
+<script src="js/core/exportUtils.js"></script>
+
+<!-- ============================================================ -->
+<!-- CORE - DEPENDS ON accessors.js, storage.js                   -->
+<!-- ============================================================ -->
+<script src="js/core/integrity.js"></script>
+
+<!-- ============================================================ -->
+<!-- SELECTOR SYSTEM - DEPENDS ON CORE ONLY                      -->
+<!-- ============================================================ -->
+<script src="js/selectors/selector-base.js"></script>
+<script src="js/selectors/locationDropdown.js"></script>
+<script src="js/selectors/modals-char-selector.js"></script>
+<script src="js/selectors/modals-household-selector.js"></script>
+
+<!-- ============================================================ -->
+<!-- ROLE SYSTEM                                                  -->
+<!-- ============================================================ -->
+<script src="js/roles/role-constants.js"></script>
+<script src="js/roles/role-state.js"></script>
+<script src="js/roles/role-queries.js"></script>
+<script src="js/roles/role-commands.js"></script>
+<script src="js/roles/role-system.js"></script>
+<script src="js/roles/skill-utils.js"></script>
+<script src="js/roles/role-ui-list.js"></script>
+<script src="js/roles/modals-role-select.js"></script>
+<script src="js/roles/modals-roles.js"></script>
+
+<!-- ============================================================ -->
+<!-- CHARACTER SYSTEM                                             -->
+<!-- ============================================================ -->
+<script src="js/character/character-state.js"></script>
+<script src="js/character/character-commands.js"></script>
+<script src="js/character/character-queries.js"></script>
+<script src="js/character/character-lifecycle.js"></script>
+<script src="js/character/character-ui-list.js"></script>
+<script src="js/character/modals-character.js"></script>
+
+<!-- ============================================================ -->
+<!-- RELATIONSHIP SYSTEM                                          -->
+<!-- ============================================================ -->
+<script src="js/relationships/relationship-types.js"></script>
+<script src="js/relationships/relationship-registry.js"></script>
+<script src="js/relationships/relationship-queries.js"></script>
+<script src="js/relationships/family-logic.js"></script>
+<script src="js/relationships/friendship-logic.js"></script>
+<script src="js/relationships/professional-logic.js"></script>
+<script src="js/relationships/romance-logic.js"></script>
+<script src="js/relationships/affair-system.js"></script>
+<script src="js/relationships/jealousy-system.js"></script>
+<script src="js/relationships/relationshipFinder.js"></script>
+<script src="js/relationships/modals-family.js"></script>
+<script src="js/relationships/modals-friendship.js"></script>
+<script src="js/relationships/modals-relationship.js"></script>
+
+<!-- ============================================================ -->
+<!-- LOCATION SYSTEM                                              -->
+<!-- ============================================================ -->
+<script src="js/location/location-state.js"></script>
+<script src="js/location/location-hierarchy.js"></script>
+<script src="js/location/location-queries.js"></script>
+<script src="js/location/location-commands.js"></script>
+<script src="js/location/location-movement.js"></script>
+<script src="js/location/location-ui-list.js"></script>
+<script src="js/location/modals-location.js"></script>
+<script src="js/location/modals-moves.js"></script>
+
+<!-- ============================================================ -->
+<!-- NAME SYSTEM                                                  -->
+<!-- ============================================================ -->
+<script src="js/names/name-state.js"></script>
+<script src="js/names/name-queries.js"></script>
+<script src="js/names/name-commands.js"></script>
+<script src="js/names/name-rules.js"></script>
+<script src="js/names/name-system.js"></script>
+<script src="js/names/modals-name.js"></script>
+
+<!-- ============================================================ -->
+<!-- RELIGION SYSTEM                                              -->
+<!-- ============================================================ -->
+<script src="js/religion/religion-constants.js"></script>
+<script src="js/religion/religion-state.js"></script>
+<script src="js/religion/religion-queries.js"></script>
+<script src="js/religion/religion-commands.js"></script>
+<script src="js/religion/religion-laws.js"></script>
+<script src="js/religion/religion-inheritance.js"></script>
+<script src="js/religion/religion-ui-list.js"></script>
+<script src="js/religion/modals-religion.js"></script>
+
+<!-- ============================================================ -->
+<!-- RANK SYSTEM                                                  -->
+<!-- ============================================================ -->
+<script src="js/ranks/rank-constants.js"></script>
+<script src="js/ranks/rank-state.js"></script>
+<script src="js/ranks/rank-queries.js"></script>
+<script src="js/ranks/rank-commands.js"></script>
+<script src="js/ranks/rank-assignments.js"></script>
+<script src="js/ranks/rank-issues.js"></script>
+<script src="js/ranks/rank-ui-list.js"></script>
+<script src="js/ranks/modals-rank.js"></script>
+
+<!-- ============================================================ -->
+<!-- MORTALITY SYSTEM                                             -->
+<!-- ============================================================ -->
+<script src="js/mortality/mortality-state.js"></script>
+<script src="js/mortality/mortality-queries.js"></script>
+<script src="js/mortality/mortality-commands.js"></script>
+<script src="js/mortality/modals-death.js"></script>
+
+<!-- ============================================================ -->
+<!-- INDUSTRY SYSTEM                                              -->
+<!-- ============================================================ -->
+<script src="js/industry/industry-types.js"></script>
+<script src="js/industry/industry-state.js"></script>
+<script src="js/industry/industry-queries.js"></script>
+<script src="js/industry/industry-commands.js"></script>
+<script src="js/industry/industry-processor.js"></script>
+<script src="js/industry/industry-ui-list.js"></script>
+<script src="js/industry/modals-industry.js"></script>
+
+<!-- ============================================================ -->
+<!-- GOVERNMENT SYSTEM (needed by settlement)                    -->
+<!-- ============================================================ -->
+<script src="js/government/government-state.js"></script>
+<script src="js/government/government-queries.js"></script>
+<script src="js/government/government-commands.js"></script>
+<script src="js/government/government-assignment.js"></script>
+<script src="js/government/government-economy.js"></script>
+<script src="js/government/government-laws.js"></script>
+<script src="js/government/government-system.js"></script>
+<script src="js/government/government-ui-list.js"></script>
+<script src="js/government/modals-government.js"></script>
+<script src="js/government/modals-government-assign.js"></script>
+<script src="js/government/modals-government-departments.js"></script>
+<script src="js/government/modals-government-economy.js"></script>
+<script src="js/government/modals-government-positions.js"></script>
+
+<!-- ============================================================ -->
+<!-- SETTLEMENT SYSTEM                                            -->
+<!-- ============================================================ -->
+<script src="js/settlement/settlement-state.js"></script>
+<script src="js/settlement/settlement-queries.js"></script>
+<script src="js/settlement/settlement-crud.js"></script>
+<script src="js/settlement/settlement-commands-core.js"></script>
+<script src="js/settlement/settlement-commands-writes.js"></script>
+<script src="js/settlement/settlement-commands-annual.js"></script>
+<script src="js/settlement/settlement-economy-core.js"></script>
+<script src="js/settlement/settlement-budget.js"></script>
+<script src="js/settlement/settlement-prosperity.js"></script>
+<script src="js/settlement/settlement-government.js"></script>
+<script src="js/settlement/settlement-ranks.js"></script>
+<script src="js/settlement/settlement-enterprises.js"></script>
+<script src="js/settlement/settlement-features.js"></script>
+<script src="js/settlement/settlement-ui-list.js"></script>
+<script src="js/settlement/modals-settlement-core.js"></script>
+<script src="js/settlement/modals-settlement-economy.js"></script>
+<script src="js/settlement/modals-settlement-roles.js"></script>
+
+<!-- ============================================================ -->
+<!-- HOUSEHOLD SYSTEM                                             -->
+<!-- ============================================================ -->
+<script src="js/households/household-state.js"></script>
+<script src="js/households/household-queries.js"></script>
+<script src="js/households/household-commands.js"></script>
+<script src="js/households/household-assignment.js"></script>
+<script src="js/households/household-economy.js"></script>
+<script src="js/households/household-servant.js"></script>
+<script src="js/households/residence-system.js"></script>
+<script src="js/households/household-ui-list.js"></script>
+<script src="js/households/modals-household.js"></script>
+<script src="js/households/modals-household-economy.js"></script>
+<script src="js/households/modals-household-snapshot.js"></script>
+<script src="js/households/modals-household-staff.js"></script>
+<script src="js/households/modals-assign-staff.js"></script>
+<script src="js/households/modals-residence.js"></script>
+<script src="js/households/modals-residence-history.js"></script>
+<script src="js/households/modals-residence-rental.js"></script>
+<script src="js/households/modals-residence-snapshot.js"></script>
+<script src="js/households/modals-residence-staff.js"></script>
+<script src="js/households/modals-residence-vacancy.js"></script>
+<script src="js/households/modals-residence-owner.js"></script>
+
+<!-- ============================================================ -->
+<!-- CRIME SYSTEM (depends on government-laws, crime-constants)  -->
+<!-- ============================================================ -->
+<script src="js/crime/crime-constants.js"></script>
+<script src="js/crime/crime-state.js"></script>
+<script src="js/crime/crime-law-integration.js"></script>
+<script src="js/crime/crime-commands.js"></script>
+<script src="js/crime/crime-queries.js"></script>
+<script src="js/crime/vendetta-system.js"></script>
+<script src="js/crime/crime-ui-stats.js"></script>
+<script src="js/crime/modals-crime.js"></script>
+
+<!-- ============================================================ -->
+<!-- EDUCATION SYSTEM (depends on role, religion, settlement)    -->
+<!-- ============================================================ -->
+<script src="js/education/education-constants.js"></script>
+<script src="js/education/education-state.js"></script>
+<script src="js/education/education-queries.js"></script>
+<script src="js/education/education-commands.js"></script>
+<script src="js/education/education-system.js"></script>
+<script src="js/education/education-annual.js"></script>
+<script src="js/education/education-learning.js"></script>
+<script src="js/education/education-history.js"></script>
+<script src="js/education/education-ui-list.js"></script>
+<script src="js/education/modals-education.js"></script>
+
+<!-- ============================================================ -->
+<!-- DISASTER SYSTEM (depends on settlement, education, etc)    -->
+<!-- ============================================================ -->
+<script src="js/disaster/disaster-constants.js"></script>
+<script src="js/disaster/disaster-state.js"></script>
+<script src="js/disaster/disaster-queries.js"></script>
+<script src="js/disaster/disaster-commands.js"></script>
+<script src="js/disaster/disaster-damage.js"></script>
+<script src="js/disaster/disaster-ui-stats.js"></script>
+<script src="js/disaster/modals-disaster.js"></script>
+
+<!-- ============================================================ -->
+<!-- APPRENTICESHIP SYSTEM (depends on professional-logic)       -->
+<!-- ============================================================ -->
+<script src="js/apprenticeship/apprenticeship-constants.js"></script>
+<script src="js/apprenticeship/apprenticeship-system.js"></script>
+<script src="js/apprenticeship/modals-apprenticeship.js"></script>
+
+<!-- ============================================================ -->
+<!-- CHILDREN SYSTEM (depends on character, family)             -->
+<!-- ============================================================ -->
+<script src="js/children/children-state.js"></script>
+<script src="js/children/children-queries.js"></script>
+<script src="js/children/children-commands.js"></script>
+<script src="js/children/children-lifecycle.js"></script>
+<script src="js/children/adoption-service.js"></script>
+<script src="js/children/pregnancy-service.js"></script>
+<script src="js/children/surrogacy-service.js"></script>
+<script src="js/children/modals-adoption.js"></script>
+<script src="js/children/modals-birth.js"></script>
+<script src="js/children/modals-surrogacy.js"></script>
+
+<!-- ============================================================ -->
+<!-- CULTURE SYSTEM (depends on religion-state)                 -->
+<!-- ============================================================ -->
+<script src="js/culture/culture-constants.js"></script>
+<script src="js/culture/culture-state.js"></script>
+<script src="js/culture/culture-queries.js"></script>
+<script src="js/culture/culture-commands.js"></script>
+<script src="js/culture/culture-generation.js"></script>
+<script src="js/culture/culture-ui-list.js"></script>
+<script src="js/culture/modals-culture.js"></script>
+
+<!-- ============================================================ -->
+<!-- EVENTS & ANNUAL PROCESSING                                  -->
+<!-- ============================================================ -->
+<script src="js/events/timeline-core.js"></script>
+<script src="js/events/census-core.js"></script>
+<script src="js/events/annualProcessing.js"></script>
+<script src="js/events/social-events-system.js"></script>
+
+<!-- ============================================================ -->
+<!-- UI TABS                                                     -->
+<!-- ============================================================ -->
+<script src="js/tabs/location-tab.js"></script>
+<script src="js/tabs/location-type-manager-tab.js"></script>
+<script src="js/tabs/settlement-overview-tab.js"></script>
+<script src="js/tabs/settlement-economy-tab.js"></script>
+<script src="js/tabs/settlement-education-tab.js"></script>
+<script src="js/tabs/settlement-religion-tab.js"></script>
+<script src="js/tabs/settlement-industry-tab.js"></script>
+<script src="js/tabs/settlement-features-tab.js"></script>
+<script src="js/tabs/settlement-history-tab.js"></script>
+<script src="js/tabs/settlement-roles-tab.js"></script>
+<script src="js/tabs/rank-manager-tab.js"></script>
+<script src="js/tabs/apprenticeship-tab.js"></script>
+<script src="js/tabs/roles-tab.js"></script>
+<script src="js/tabs/roles-analytics-tab.js"></script>
+<script src="js/tabs/government-type-manager-tab.js"></script>
+<script src="js/tabs/household-overview-tab.js"></script>
+<script src="js/tabs/household-members-tab.js"></script>
+<script src="js/tabs/household-departments-tab.js"></script>
+<script src="js/tabs/household-economy-tab.js"></script>

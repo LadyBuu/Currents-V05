@@ -1,0 +1,1490 @@
+/* ============================================================================
+   ROLE MANAGER - EXTERNAL CSS v8.0 - COMPLETE FIX
+   ============================================================================
+   Complete styles for Role & Apprenticeship Manager.
+   EVERY input explicitly colored - no black text on dark backgrounds.
+   ============================================================================ */
+
+/* ============================================================================
+   1. BASE LAYOUT & RESET
+   ============================================================================ */
+
+.role-manager-app {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background: #090c12;
+    color: #cdd5e0;
+    overflow: hidden;
+}
+
+/* ============================================================================
+   2. CRITICAL FIX: ALL FORM ELEMENTS - EXPLICIT COLORS
+   ============================================================================ */
+
+/* Target EVERY possible input inside the role manager */
+.role-manager-app input,
+.role-manager-app select,
+.role-manager-app textarea,
+.role-manager-app input[type="text"],
+.role-manager-app input[type="number"],
+.role-manager-app input[type="search"],
+.role-manager-app input[type="email"],
+.role-manager-app input[type="password"],
+.role-manager-app input[type="date"],
+.role-manager-app input[type="datetime-local"],
+.role-manager-app input[type="month"],
+.role-manager-app input[type="time"],
+.role-manager-app input[type="week"],
+.role-manager-app input[type="url"],
+.role-manager-app input[type="tel"],
+.role-manager-app input[type="color"],
+.role-manager-app input[type="range"],
+.role-manager-app textarea,
+.role-manager-app select {
+    color: #cdd5e0 !important;
+    background: #2a3a50 !important;
+    border: 1px solid #3a4a60 !important;
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: 0.8rem;
+    font-family: 'Crimson Pro', Georgia, serif;
+}
+
+/* Focus states */
+.role-manager-app input:focus,
+.role-manager-app select:focus,
+.role-manager-app textarea:focus {
+    outline: none;
+    border-color: #6a9ecf !important;
+    box-shadow: 0 0 0 2px rgba(106, 158, 207, 0.3);
+    background: #304260 !important;
+}
+
+/* Placeholder text */
+.role-manager-app input::placeholder,
+.role-manager-app textarea::placeholder {
+    color: #8aabb8 !important;
+    opacity: 1;
+}
+
+/* Select dropdown options */
+.role-manager-app select option {
+    background: #2a3a50 !important;
+    color: #cdd5e0 !important;
+}
+
+/* Disabled inputs */
+.role-manager-app input:disabled,
+.role-manager-app select:disabled,
+.role-manager-app textarea:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: #1a2433 !important;
+}
+
+/* Read-only inputs */
+.role-manager-app input:read-only,
+.role-manager-app textarea:read-only {
+    opacity: 0.8;
+    background: #1a2433 !important;
+}
+
+/* Checkboxes and radios */
+.role-manager-app input[type="checkbox"],
+.role-manager-app input[type="radio"] {
+    accent-color: #6a9ecf;
+    background: #2a3a50 !important;
+}
+
+/* Range slider */
+.role-manager-app input[type="range"] {
+    background: transparent !important;
+    border: none !important;
+}
+
+.role-manager-app input[type="range"]::-webkit-slider-runnable-track {
+    background: #3a4a60;
+    border-radius: 4px;
+    height: 4px;
+}
+
+.role-manager-app input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #6a9ecf;
+    cursor: pointer;
+    margin-top: -5px;
+}
+
+.role-manager-app input[type="range"]::-moz-range-track {
+    background: #3a4a60;
+    border-radius: 4px;
+    height: 4px;
+    border: none;
+}
+
+.role-manager-app input[type="range"]::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #6a9ecf;
+    cursor: pointer;
+    border: none;
+}
+
+/* ============================================================================
+   3. OVERRIDE INLINE STYLES - Target inputs with dark backgrounds
+   ============================================================================ */
+
+/* Target any input that has background: var(--bg) or var(--bg2) or similar */
+.role-manager-app [style*="background: var(--bg)"] input,
+.role-manager-app [style*="background: var(--bg2)"] input,
+.role-manager-app [style*="background: var(--bg)"] select,
+.role-manager-app [style*="background: var(--bg2)"] select,
+.role-manager-app [style*="background: var(--bg)"] textarea,
+.role-manager-app [style*="background: var(--bg2)"] textarea,
+.role-manager-app input[style*="background: var(--bg)"],
+.role-manager-app input[style*="background: var(--bg2)"],
+.role-manager-app select[style*="background: var(--bg)"],
+.role-manager-app select[style*="background: var(--bg2)"],
+.role-manager-app textarea[style*="background: var(--bg)"],
+.role-manager-app textarea[style*="background: var(--bg2)"] {
+    background: #2a3a50 !important;
+    color: #cdd5e0 !important;
+    border-color: #3a4a60 !important;
+}
+
+/* Target inputs with inline style background: var(--bg3) too */
+.role-manager-app [style*="background: var(--bg3)"] input,
+.role-manager-app [style*="background: var(--bg3)"] select,
+.role-manager-app [style*="background: var(--bg3)"] textarea,
+.role-manager-app input[style*="background: var(--bg3)"],
+.role-manager-app select[style*="background: var(--bg3)"],
+.role-manager-app textarea[style*="background: var(--bg3)"] {
+    background: #2a3a50 !important;
+    color: #cdd5e0 !important;
+    border-color: #3a4a60 !important;
+}
+
+/* ============================================================================
+   4. SPECIFIC OVERRIDES FOR ROLE DETAIL PANEL
+   ============================================================================ */
+
+.role-manager-app .role-detail-panel input,
+.role-manager-app .role-detail-panel select,
+.role-manager-app .role-detail-panel textarea,
+.role-manager-app .form-group input,
+.role-manager-app .form-group select,
+.role-manager-app .form-group textarea {
+    background: #2a3a50 !important;
+    border: 1px solid #3a4a60 !important;
+    color: #cdd5e0 !important;
+}
+
+.role-manager-app .role-detail-panel input:focus,
+.role-manager-app .role-detail-panel select:focus,
+.role-manager-app .role-detail-panel textarea:focus,
+.role-manager-app .form-group input:focus,
+.role-manager-app .form-group select:focus,
+.role-manager-app .form-group textarea:focus {
+    background: #304260 !important;
+    border-color: #6a9ecf !important;
+}
+
+/* ============================================================================
+   5. FILTER BAR INPUTS
+   ============================================================================ */
+
+.role-manager-app .filter-bar input,
+.role-manager-app .filter-bar select {
+    background: #2a3a50 !important;
+    border: 1px solid #3a4a60 !important;
+    color: #cdd5e0 !important;
+}
+
+.role-manager-app .filter-bar input:focus,
+.role-manager-app .filter-bar select:focus {
+    background: #304260 !important;
+    border-color: #6a9ecf !important;
+}
+
+.role-manager-app .filter-bar input::placeholder {
+    color: #8aabb8 !important;
+}
+
+/* ============================================================================
+   6. TOPBAR YEAR INPUT
+   ============================================================================ */
+
+.role-manager-app .topbar .year-input {
+    background: #2a3a50 !important;
+    border: 1px solid #3a4a60 !important;
+    color: #cdd5e0 !important;
+}
+
+.role-manager-app .topbar .year-input:focus {
+    background: #304260 !important;
+    border-color: #6a9ecf !important;
+}
+
+/* ============================================================================
+   7. MODAL INPUTS (if modals are used)
+   ============================================================================ */
+
+.role-manager-app .modal-content input,
+.role-manager-app .modal-content select,
+.role-manager-app .modal-content textarea {
+    background: #2a3a50 !important;
+    border: 1px solid #3a4a60 !important;
+    color: #cdd5e0 !important;
+}
+
+.role-manager-app .modal-content input:focus,
+.role-manager-app .modal-content select:focus,
+.role-manager-app .modal-content textarea:focus {
+    background: #304260 !important;
+    border-color: #6a9ecf !important;
+}
+
+/* ============================================================================
+   8. TOPBAR
+   ============================================================================ */
+
+.role-manager-app .topbar {
+    background: #0d1119;
+    padding: 4px 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid #1e2738;
+    flex-shrink: 0;
+    min-height: 42px;
+    flex-wrap: wrap;
+    z-index: 10;
+}
+
+.role-manager-app .topbar .title {
+    font-weight: 600;
+    font-size: 0.8rem;
+    color: #6a9ecf !important;
+    white-space: nowrap;
+    letter-spacing: 0.05em;
+}
+
+.role-manager-app .topbar .spacer {
+    flex: 1;
+    min-width: 8px;
+}
+
+.role-manager-app .topbar .tb-btn {
+    background: #0d1119;
+    border: 1px solid #1e2738;
+    color: #cdd5e0 !important;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.6rem;
+    transition: border-color 0.2s, background 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.role-manager-app .topbar .tb-btn:hover {
+    border-color: #6a9ecf;
+    background: #121820;
+}
+
+.role-manager-app .topbar .tb-btn.primary {
+    background: #6a9ecf;
+    border-color: #6a9ecf;
+    color: #ffffff !important;
+}
+
+.role-manager-app .topbar .tb-btn.primary:hover {
+    background: #4a7aa5;
+    border-color: #4a7aa5;
+}
+
+.role-manager-app .topbar label {
+    font-size: 0.6rem;
+    color: #8aabb8 !important;
+    font-family: 'Cinzel', serif;
+}
+
+/* ============================================================================
+   9. APP LAYOUT
+   ============================================================================ */
+
+.role-manager-app .app-layout {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    min-height: 0;
+}
+
+/* ============================================================================
+   10. SIDEBAR
+   ============================================================================ */
+
+.role-manager-app .sidebar {
+    width: 260px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: #090c12;
+    border-right: 1px solid #1e2738;
+    transition: width 0.2s;
+}
+
+.role-manager-app .sidebar h3 {
+    flex-shrink: 0;
+    padding: 10px 14px 6px 14px;
+    margin: 0;
+    font-size: 0.7rem;
+    font-family: 'Cinzel', serif;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #8aabb8 !important;
+}
+
+.role-manager-app .sidebar .role-count {
+    flex-shrink: 0;
+    padding: 0 14px 8px 14px;
+    font-size: 0.6rem;
+    color: #6a8098 !important;
+}
+
+.role-manager-app .sidebar .role-count .count {
+    color: #6a9ecf !important;
+    font-weight: bold;
+}
+
+.role-manager-app #roleListContainer {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 4px 10px 10px 10px;
+    min-height: 0;
+}
+
+.role-manager-app #roleListContainer::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+.role-manager-app #roleListContainer::-webkit-scrollbar-track {
+    background: #0d1119;
+    border-radius: 3px;
+}
+
+.role-manager-app #roleListContainer::-webkit-scrollbar-thumb {
+    background: #6a9ecf;
+    border-radius: 3px;
+}
+
+.role-manager-app #roleListContainer::-webkit-scrollbar-thumb:hover {
+    background: #4a7aa5;
+}
+
+.role-manager-app #roleListContainer {
+    scrollbar-width: thin;
+    scrollbar-color: #6a9ecf #0d1119;
+}
+
+.role-manager-app .role-sidebar-item {
+    cursor: pointer;
+    transition: all 0.15s;
+    padding: 7px 12px;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    margin-bottom: 2px;
+    font-size: 0.7rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #cdd5e0 !important;
+    background: transparent;
+}
+
+.role-manager-app .role-sidebar-item .icon {
+    font-size: 0.8rem;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    color: #6a9ecf !important;
+}
+
+.role-manager-app .role-sidebar-item .icon svg {
+    width: 0.8rem;
+    height: 0.8rem;
+    display: block;
+    fill: currentColor;
+}
+
+.role-manager-app .role-sidebar-item .name {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #cdd5e0 !important;
+}
+
+.role-manager-app .role-sidebar-item .badge {
+    font-size: 0.45rem;
+    background: #121820;
+    padding: 1px 6px;
+    border-radius: 8px;
+    color: #6a8098 !important;
+    flex-shrink: 0;
+}
+
+.role-manager-app .role-sidebar-item:hover {
+    background: #0d1119 !important;
+}
+
+.role-manager-app .role-sidebar-item.selected {
+    background: rgba(106, 158, 207, 0.15) !important;
+    border-color: #6a9ecf !important;
+}
+
+/* ============================================================================
+   11. MAIN PANEL
+   ============================================================================ */
+
+.role-manager-app .main-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 0;
+    background: #090c12;
+}
+
+/* ============================================================================
+   12. PANEL TABS
+   ============================================================================ */
+
+.role-manager-app .panel-tabs {
+    display: flex;
+    gap: 2px;
+    padding: 0 14px;
+    border-bottom: 1px solid #6a9ecf;
+    background: #0d1119;
+    flex-shrink: 0;
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    min-height: 40px;
+    align-items: center;
+    position: relative;
+}
+
+.role-manager-app .panel-tabs::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+}
+
+.role-manager-app .panel-tabs .tab-btn {
+    padding: 10px 16px;
+    background: none;
+    border: none;
+    font-family: 'Cinzel', serif;
+    font-size: 0.6rem;
+    cursor: pointer;
+    color: #8aabb8 !important;
+    border-bottom: 2px solid transparent;
+    white-space: nowrap;
+    transition: all 0.3s;
+    position: relative;
+    flex-shrink: 0;
+    min-height: 40px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.role-manager-app .panel-tabs .tab-btn:hover {
+    color: #6a9ecf !important;
+    text-shadow: 0 0 5px rgba(106, 158, 207, 0.4);
+    background: rgba(106, 158, 207, 0.08);
+}
+
+.role-manager-app .panel-tabs .tab-btn.active {
+    color: #6a9ecf !important;
+    border-bottom-color: #6a9ecf;
+    text-shadow: 0 0 8px rgba(106, 158, 207, 0.4);
+}
+
+.role-manager-app .panel-tabs .tab-btn .tab-icon {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.7rem;
+    color: inherit !important;
+}
+
+.role-manager-app .panel-tabs .tab-btn .tab-icon svg {
+    width: 0.85rem;
+    height: 0.85rem;
+    display: block;
+    fill: currentColor;
+}
+
+/* ============================================================================
+   13. TAB CONTENT - with scrollbars
+   ============================================================================ */
+
+.role-manager-app .tab-content {
+    flex: 1;
+    overflow: hidden;
+    padding: 10px 16px 16px 16px;
+    min-height: 0;
+    background: #090c12;
+}
+
+.role-manager-app .tab-content .tab-pane {
+    height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 6px;
+    display: none;
+}
+
+.role-manager-app .tab-content .tab-pane.active {
+    display: block;
+}
+
+.role-manager-app .tab-content .tab-pane::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+.role-manager-app .tab-content .tab-pane::-webkit-scrollbar-track {
+    background: #0d1119;
+    border-radius: 3px;
+}
+
+.role-manager-app .tab-content .tab-pane::-webkit-scrollbar-thumb {
+    background: #6a9ecf;
+    border-radius: 3px;
+}
+
+.role-manager-app .tab-content .tab-pane::-webkit-scrollbar-thumb:hover {
+    background: #4a7aa5;
+}
+
+.role-manager-app .tab-content .tab-pane {
+    scrollbar-width: thin;
+    scrollbar-color: #6a9ecf #0d1119;
+}
+
+.role-manager-app .tab-content .tab-pane {
+    -webkit-overflow-scrolling: touch;
+}
+
+/* ============================================================================
+   14. TOOLBAR
+   ============================================================================ */
+
+.role-manager-app .tab-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+    padding: 8px 14px;
+    background: #0d1119;
+    border-radius: 8px;
+    border: 1px solid #1e2738;
+}
+
+.role-manager-app .tab-toolbar .info {
+    font-size: 0.7rem;
+    color: #8aabb8 !important;
+}
+
+.role-manager-app .tab-toolbar .info .count {
+    font-weight: bold;
+    color: #6a9ecf !important;
+}
+
+.role-manager-app .tab-toolbar .actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.role-manager-app .tab-toolbar .btn {
+    padding: 4px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.6rem;
+    font-weight: 500;
+    border: 1px solid #1e2738;
+    background: #121820;
+    color: #cdd5e0 !important;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.role-manager-app .tab-toolbar .btn:hover {
+    border-color: #6a9ecf;
+    background: #0d1119;
+}
+
+.role-manager-app .tab-toolbar .btn.primary {
+    background: #6a9ecf;
+    border-color: #6a9ecf;
+    color: #ffffff !important;
+}
+
+.role-manager-app .tab-toolbar .btn.primary:hover {
+    background: #4a7aa5;
+    border-color: #4a7aa5;
+}
+
+.role-manager-app .tab-toolbar .btn.danger {
+    background: rgba(200, 68, 68, 0.15);
+    border-color: #8b4040;
+    color: #c08080 !important;
+}
+
+.role-manager-app .tab-toolbar .btn.danger:hover {
+    background: rgba(200, 68, 68, 0.25);
+}
+
+/* ============================================================================
+   15. FILTER BAR - COMPLETE OVERRIDE
+   ============================================================================ */
+
+.role-manager-app .filter-bar {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+    padding: 8px 14px;
+    background: #0d1119;
+    border-radius: 6px;
+    border: 1px solid #1e2738;
+}
+
+.role-manager-app .filter-bar input,
+.role-manager-app .filter-bar select {
+    padding: 5px 10px;
+    background: #2a3a50 !important;
+    border: 1px solid #3a4a60 !important;
+    border-radius: 4px;
+    font-size: 0.6rem;
+    color: #cdd5e0 !important;
+}
+
+.role-manager-app .filter-bar input::placeholder {
+    color: #8aabb8 !important;
+}
+
+.role-manager-app .filter-bar input {
+    flex: 1;
+    min-width: 120px;
+}
+
+.role-manager-app .filter-bar input:focus,
+.role-manager-app .filter-bar select:focus {
+    outline: none;
+    border-color: #6a9ecf;
+    background: #304260 !important;
+}
+
+.role-manager-app .filter-bar select option {
+    background: #2a3a50 !important;
+    color: #cdd5e0 !important;
+}
+
+.role-manager-app .filter-bar .filter-btn {
+    padding: 4px 12px;
+    font-size: 0.55rem;
+    background: #121820;
+    border: 1px solid #1e2738;
+    border-radius: 4px;
+    cursor: pointer;
+    color: #cdd5e0 !important;
+    transition: all 0.15s;
+}
+
+.role-manager-app .filter-bar .filter-btn:hover {
+    border-color: #6a9ecf;
+    background: #0d1119;
+}
+
+/* ============================================================================
+   16. ROLE DETAIL PANEL
+   ============================================================================ */
+
+.role-manager-app .role-detail-panel {
+    padding: 4px;
+}
+
+.role-manager-app .role-detail-panel .detail-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+    padding: 12px 18px;
+    background: #0d1119;
+    border-radius: 8px;
+    border: 1px solid #1e2738;
+}
+
+.role-manager-app .role-detail-panel .detail-header .title-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.role-manager-app .role-detail-panel .detail-header .title-group .icon {
+    font-size: 1.4rem;
+    display: inline-flex;
+    align-items: center;
+    color: #6a9ecf !important;
+}
+
+.role-manager-app .role-detail-panel .detail-header .title-group .icon svg {
+    width: 1.4rem;
+    height: 1.4rem;
+    display: block;
+    fill: currentColor;
+}
+
+.role-manager-app .role-detail-panel .detail-header .title-group .name {
+    font-size: 1.1rem;
+    font-weight: bold;
+    color: #cdd5e0 !important;
+}
+
+.role-manager-app .role-detail-panel .detail-header .title-group .meta {
+    font-size: 0.6rem;
+    color: #8aabb8 !important;
+    margin-left: 8px;
+}
+
+.role-manager-app .role-detail-panel .detail-header .actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.role-manager-app .role-detail-panel .detail-header .actions .btn {
+    padding: 4px 12px;
+    font-size: 0.55rem;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+    border: none;
+}
+
+.role-manager-app .role-detail-panel .detail-header .actions .btn-edit {
+    background: rgba(106, 158, 207, 0.15);
+    border: 1px solid #6a9ecf;
+    color: #8ab0e0 !important;
+}
+
+.role-manager-app .role-detail-panel .detail-header .actions .btn-edit:hover {
+    background: rgba(106, 158, 207, 0.25);
+}
+
+.role-manager-app .role-detail-panel .detail-header .actions .btn-delete {
+    background: rgba(200, 68, 68, 0.15);
+    border: 1px solid #8b4040;
+    color: #c08080 !important;
+}
+
+.role-manager-app .role-detail-panel .detail-header .actions .btn-delete:hover {
+    background: rgba(200, 68, 68, 0.25);
+}
+
+.role-manager-app .role-detail-panel .detail-header .actions .btn-view {
+    background: #121820;
+    border: 1px solid #1e2738;
+    color: #cdd5e0 !important;
+}
+
+.role-manager-app .role-detail-panel .detail-header .actions .btn-view:hover {
+    border-color: #6a9ecf;
+}
+
+/* --- stats grid --- */
+.role-manager-app .role-detail-panel .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.role-manager-app .role-detail-panel .stats-grid .stat-card {
+    background: #0d1119;
+    padding: 10px 12px;
+    border-radius: 6px;
+    text-align: center;
+    border: 1px solid #1e2738;
+}
+
+.role-manager-app .role-detail-panel .stats-grid .stat-card .label {
+    font-size: 0.45rem;
+    color: #8aabb8 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.role-manager-app .role-detail-panel .stats-grid .stat-card .value {
+    font-size: 1.1rem;
+    font-weight: bold;
+    margin-top: 2px;
+    color: #cdd5e0 !important;
+}
+
+.role-manager-app .role-detail-panel .stats-grid .stat-card .value.accent {
+    color: #6a9ecf !important;
+}
+
+.role-manager-app .role-detail-panel .stats-grid .stat-card .value.success {
+    color: #4a9060 !important;
+}
+
+/* --- detail sections --- */
+.role-manager-app .role-detail-panel .detail-section {
+    background: #0d1119;
+    padding: 12px 16px;
+    border-radius: 6px;
+    border: 1px solid #1e2738;
+    margin-bottom: 12px;
+}
+
+.role-manager-app .role-detail-panel .detail-section .section-title {
+    font-size: 0.6rem;
+    font-weight: bold;
+    color: #6a9ecf !important;
+    margin-bottom: 6px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.role-manager-app .role-detail-panel .detail-section .section-title .action-btn {
+    padding: 2px 10px;
+    font-size: 0.5rem;
+    background: #6a9ecf;
+    border: none;
+    border-radius: 4px;
+    color: #ffffff !important;
+    cursor: pointer;
+}
+
+.role-manager-app .role-detail-panel .detail-section .section-title .action-btn:hover {
+    background: #4a7aa5;
+}
+
+.role-manager-app .role-detail-panel .detail-section .info-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 20px;
+    font-size: 0.6rem;
+}
+
+.role-manager-app .role-detail-panel .detail-section .info-grid .label {
+    color: #6a8098 !important;
+}
+
+.role-manager-app .role-detail-panel .detail-section .info-grid .value {
+    color: #cdd5e0 !important;
+}
+
+/* --- specializations --- */
+.role-manager-app .role-detail-panel .spec-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.role-manager-app .role-detail-panel .spec-list .spec-tag {
+    font-size: 0.45rem;
+    background: #121820;
+    padding: 2px 10px;
+    border-radius: 10px;
+    border: 1px solid rgba(42, 52, 64, 0.5);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: #cdd5e0 !important;
+}
+
+.role-manager-app .role-detail-panel .spec-list .spec-tag .remove {
+    background: none;
+    border: none;
+    color: #c08080 !important;
+    cursor: pointer;
+    font-size: 0.45rem;
+    padding: 0 2px;
+}
+
+.role-manager-app .role-detail-panel .spec-list .empty {
+    font-size: 0.55rem;
+    color: #8aabb8 !important;
+}
+
+/* --- notes --- */
+.role-manager-app .role-detail-panel .notes {
+    font-size: 0.6rem;
+    color: #8aabb8 !important;
+    background: #0d1119;
+    padding: 12px 16px;
+    border-radius: 6px;
+    border: 1px solid #1e2738;
+    margin-bottom: 12px;
+}
+
+.role-manager-app .role-detail-panel .notes strong {
+    color: #6a9ecf !important;
+}
+
+/* --- action row --- */
+.role-manager-app .role-detail-panel .action-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+}
+
+.role-manager-app .role-detail-panel .action-row .btn {
+    padding: 4px 14px;
+    font-size: 0.55rem;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+    border: none;
+}
+
+.role-manager-app .role-detail-panel .action-row .btn-primary {
+    background: #6a9ecf;
+    color: #ffffff !important;
+}
+
+.role-manager-app .role-detail-panel .action-row .btn-primary:hover {
+    background: #4a7aa5;
+}
+
+.role-manager-app .role-detail-panel .action-row .btn-secondary {
+    background: rgba(106, 158, 207, 0.15);
+    border: 1px solid #6a9ecf;
+    color: #8ab0e0 !important;
+}
+
+.role-manager-app .role-detail-panel .action-row .btn-secondary:hover {
+    background: rgba(106, 158, 207, 0.25);
+}
+
+/* ============================================================================
+   17. APPRENTICESHIP CHARACTER CARD
+   ============================================================================ */
+
+.role-manager-app .apprentice-character-card {
+    transition: all 0.15s;
+    padding: 8px 14px;
+    border-radius: 4px;
+    margin-bottom: 4px;
+    border: 1px solid #1e2738;
+    background: #0d1119;
+}
+
+.role-manager-app .apprentice-character-card:hover {
+    background: #121820 !important;
+}
+
+.role-manager-app .apprentice-character-card .card-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.role-manager-app .apprentice-character-card .card-row .left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 150px;
+    flex-wrap: wrap;
+}
+
+.role-manager-app .apprentice-character-card .card-row .left .char-name {
+    font-size: 0.75rem;
+    font-weight: bold;
+    color: #cdd5e0 !important;
+}
+
+.role-manager-app .apprentice-character-card .card-row .left .meta {
+    font-size: 0.5rem;
+    color: #8aabb8 !important;
+}
+
+.role-manager-app .apprentice-character-card .card-row .right .skill {
+    font-size: 0.55rem;
+}
+
+.role-manager-app .apprentice-character-card .card-row .right .skill.master {
+    color: #4a9060 !important;
+}
+
+.role-manager-app .apprentice-character-card .card-row .right .skill.expert {
+    color: #6a9ecf !important;
+}
+
+.role-manager-app .apprentice-character-card .card-row .right .edit-skill {
+    background: none;
+    border: none;
+    color: #6a9ecf !important;
+    cursor: pointer;
+    padding: 2px 4px;
+    font-size: 0.5rem;
+}
+
+/* --- specializations row --- */
+.role-manager-app .apprentice-character-card .specs-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 4px;
+    flex-wrap: wrap;
+}
+
+.role-manager-app .apprentice-character-card .specs-row .label {
+    font-size: 0.5rem;
+    color: #8aabb8 !important;
+}
+
+.role-manager-app .apprentice-character-card .specs-row .spec-tag {
+    font-size: 0.45rem;
+    background: #121820;
+    padding: 1px 8px;
+    border-radius: 10px;
+    border: 1px solid rgba(42, 52, 64, 0.5);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: #cdd5e0 !important;
+}
+
+.role-manager-app .apprentice-character-card .specs-row .spec-tag .remove {
+    background: none;
+    border: none;
+    color: #c08080 !important;
+    cursor: pointer;
+    font-size: 0.4rem;
+    padding: 0 2px;
+}
+
+.role-manager-app .apprentice-character-card .specs-row .add-spec {
+    background: none;
+    border: none;
+    color: #6a9ecf !important;
+    cursor: pointer;
+    font-size: 0.45rem;
+    padding: 2px 4px;
+}
+
+/* --- actions row --- */
+.role-manager-app .apprentice-character-card .actions-row {
+    display: flex;
+    gap: 4px;
+    margin-top: 6px;
+    flex-wrap: wrap;
+}
+
+.role-manager-app .apprentice-character-card .actions-row .btn-sm {
+    font-size: 0.5rem;
+    padding: 2px 10px;
+    background: #121820;
+    border: 1px solid #1e2738;
+    border-radius: 4px;
+    cursor: pointer;
+    color: #cdd5e0 !important;
+    transition: all 0.15s;
+}
+
+.role-manager-app .apprentice-character-card .actions-row .btn-sm:hover {
+    border-color: #6a9ecf;
+    background: #0d1119;
+}
+
+.role-manager-app .apprentice-character-card .actions-row .btn-sm.primary {
+    border-color: #6a9ecf;
+    color: #8ab0e0 !important;
+}
+
+/* ============================================================================
+   18. BURGER BUTTON
+   ============================================================================ */
+
+.role-manager-app .burger-btn {
+    display: none;
+    background: none;
+    border: 1px solid #1e2738;
+    color: #cdd5e0 !important;
+    font-size: 1.2rem;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.role-manager-app .burger-btn:hover {
+    border-color: #6a9ecf;
+}
+
+/* ============================================================================
+   19. RESPONSIVE
+   ============================================================================ */
+
+@media (max-width: 768px) {
+    .role-manager-app .topbar {
+        padding: 4px 10px;
+        min-height: 38px;
+    }
+
+    .role-manager-app .topbar .title {
+        font-size: 0.65rem;
+    }
+
+    .role-manager-app .topbar .tb-btn {
+        padding: 3px 8px;
+        font-size: 0.5rem;
+    }
+
+    .role-manager-app .topbar .year-input {
+        width: 50px;
+        font-size: 0.5rem;
+        padding: 2px 4px;
+    }
+
+    .role-manager-app .topbar label {
+        font-size: 0.5rem;
+    }
+
+    .role-manager-app .burger-btn {
+        display: inline-block !important;
+    }
+
+    .role-manager-app .sidebar {
+        position: fixed;
+        top: 42px;
+        left: 0;
+        bottom: 0;
+        width: 280px;
+        transform: translateX(-110%);
+        z-index: 100;
+        background: #090c12;
+        border-right: 1px solid #1e2738;
+        transition: transform 0.25s ease;
+    }
+
+    .role-manager-app .sidebar.open {
+        transform: translateX(0);
+    }
+
+    .role-manager-app .main-panel {
+        padding: 0;
+    }
+
+    .role-manager-app .panel-tabs {
+        padding: 0 10px;
+        min-height: 36px;
+    }
+
+    .role-manager-app .panel-tabs .tab-btn {
+        padding: 8px 12px;
+        font-size: 0.5rem;
+        min-height: 36px;
+    }
+
+    .role-manager-app .tab-content {
+        padding: 8px 12px 12px 12px;
+    }
+
+    .role-manager-app .role-detail-panel .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .role-manager-app .role-detail-panel .detail-section .info-grid {
+        grid-template-columns: 1fr;
+        gap: 4px;
+    }
+
+    .role-manager-app .role-detail-panel .detail-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+    }
+
+    .role-manager-app .tab-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 6px;
+        padding: 6px 12px;
+    }
+
+    .role-manager-app .tab-toolbar .actions {
+        justify-content: center;
+    }
+
+    .role-manager-app .filter-bar {
+        padding: 6px 10px;
+        flex-direction: column;
+    }
+
+    .role-manager-app .filter-bar input {
+        min-width: 0;
+    }
+
+    .role-manager-app .filter-bar select {
+        min-width: 0;
+    }
+
+    .role-manager-app .apprentice-character-card .card-row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 4px;
+    }
+}
+
+@media (max-width: 480px) {
+    .role-manager-app .topbar {
+        padding: 3px 6px;
+        min-height: 34px;
+        gap: 4px;
+    }
+
+    .role-manager-app .topbar .title {
+        font-size: 0.5rem;
+    }
+
+    .role-manager-app .topbar .tb-btn {
+        padding: 2px 6px;
+        font-size: 0.4rem;
+    }
+
+    .role-manager-app .topbar .year-input {
+        width: 40px;
+        font-size: 0.4rem;
+        padding: 2px 3px;
+    }
+
+    .role-manager-app .sidebar {
+        width: 90%;
+        max-width: 260px;
+        top: 34px;
+    }
+
+    .role-manager-app .panel-tabs {
+        min-height: 32px;
+        padding: 0 6px;
+    }
+
+    .role-manager-app .panel-tabs .tab-btn {
+        padding: 6px 8px;
+        font-size: 0.45rem;
+        min-height: 32px;
+        gap: 3px;
+    }
+
+    .role-manager-app .tab-content {
+        padding: 6px 8px 10px 8px;
+    }
+
+    .role-manager-app .role-detail-panel .stats-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 4px;
+    }
+
+    .role-manager-app .role-detail-panel .stats-grid .stat-card {
+        padding: 6px 8px;
+    }
+
+    .role-manager-app .role-detail-panel .stats-grid .stat-card .value {
+        font-size: 0.9rem;
+    }
+
+    .role-manager-app .role-detail-panel .detail-section {
+        padding: 8px 12px;
+    }
+
+    .role-manager-app .apprentice-character-card {
+        padding: 6px 10px;
+    }
+
+    .role-manager-app .apprentice-character-card .card-row .left .char-name {
+        font-size: 0.65rem;
+    }
+
+    .role-manager-app .tab-toolbar {
+        padding: 4px 8px;
+    }
+
+    .role-manager-app .tab-toolbar .info {
+        font-size: 0.55rem;
+    }
+
+    .role-manager-app .tab-toolbar .btn {
+        font-size: 0.45rem;
+        padding: 2px 8px;
+    }
+
+    .role-manager-app .filter-bar {
+        padding: 4px 8px;
+        gap: 4px;
+    }
+
+    .role-manager-app .filter-bar input,
+    .role-manager-app .filter-bar select {
+        font-size: 0.5rem;
+        padding: 3px 6px;
+    }
+
+    .role-manager-app .tab-content .tab-pane::-webkit-scrollbar {
+        width: 4px;
+        height: 4px;
+    }
+}
+
+/* ============================================================================
+   20. ANIMATIONS
+   ============================================================================ */
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.role-manager-app .fade-in {
+    animation: fadeIn 0.25s ease;
+}
+
+/* ============================================================================
+   21. PRINT STYLES
+   ============================================================================ */
+
+@media print {
+    .role-manager-app .topbar,
+    .role-manager-app .sidebar,
+    .role-manager-app .panel-tabs,
+    .role-manager-app .tab-toolbar,
+    .role-manager-app .tab-toolbar .btn,
+    .role-manager-app .filter-bar .filter-btn,
+    .role-manager-app .burger-btn,
+    .role-manager-app .role-sidebar-item .actions,
+    .role-manager-app .apprentice-character-card .actions-row,
+    .role-manager-app .role-detail-panel .action-row .btn,
+    .role-manager-app .role-detail-panel .detail-header .actions .btn {
+        display: none !important;
+    }
+
+    .role-manager-app {
+        height: auto !important;
+        display: block !important;
+        background: #ffffff !important;
+        color: #000000 !important;
+    }
+
+    .role-manager-app .main-panel {
+        padding: 0 !important;
+        background: #ffffff !important;
+    }
+
+    .role-manager-app .tab-content {
+        padding: 20px !important;
+        background: #ffffff !important;
+        overflow: visible !important;
+    }
+
+    .role-manager-app .tab-content .tab-pane {
+        display: block !important;
+        page-break-inside: avoid;
+    }
+
+    .role-manager-app .tab-content .tab-pane:not(.active) {
+        display: none !important;
+    }
+
+    .role-manager-app .role-detail-panel .detail-header {
+        background: #f5f5f5 !important;
+        border: 1px solid #cccccc !important;
+    }
+
+    .role-manager-app .role-detail-panel .detail-header .title-group .name {
+        color: #000000 !important;
+    }
+
+    .role-manager-app .role-detail-panel .stats-grid .stat-card {
+        background: #f5f5f5 !important;
+        border: 1px solid #cccccc !important;
+    }
+
+    .role-manager-app .role-detail-panel .stats-grid .stat-card .value {
+        color: #000000 !important;
+    }
+
+    .role-manager-app .role-detail-panel .detail-section {
+        background: #f5f5f5 !important;
+        border: 1px solid #cccccc !important;
+    }
+
+    .role-manager-app .role-detail-panel .detail-section .info-grid .value {
+        color: #000000 !important;
+    }
+
+    .role-manager-app .apprentice-character-card {
+        background: #f5f5f5 !important;
+        border: 1px solid #cccccc !important;
+    }
+
+    .role-manager-app .apprentice-character-card .card-row .left .char-name {
+        color: #000000 !important;
+    }
+
+    .role-manager-app .filter-bar {
+        background: #f5f5f5 !important;
+        border: 1px solid #cccccc !important;
+    }
+
+    .role-manager-app .tab-toolbar {
+        background: #f5f5f5 !important;
+        border: 1px solid #cccccc !important;
+    }
+
+    .role-manager-app .tab-toolbar .info {
+        color: #555555 !important;
+    }
+
+    .role-manager-app .placeholder {
+        color: #555555 !important;
+    }
+}

@@ -1,0 +1,965 @@
+# Complete Selector System Documentation
+
+## File: `js/selectors/selectors-docs.txt`
+
+```text
+# STILL WATERS - COMPLETE SELECTOR SYSTEM DOCUMENTATION
+
+## DOCUMENTATION GENERATED: 2026-07-14
+
+---
+
+# TABLE OF CONTENTS
+
+1. [SYSTEM OVERVIEW](#1-system-overview)
+2. [ARCHITECTURE](#2-architecture)
+3. [CORE QUERY HELPERS](#3-core-query-helpers)
+4. [SELECTOR BASE](#4-selector-base)
+5. [CHARACTER SELECTOR](#5-character-selector)
+6. [HOUSEHOLD SELECTOR](#6-household-selector)
+7. [LOCATION DROPDOWN](#7-location-dropdown)
+8. [COMPLETE FUNCTION LIST](#8-complete-function-list)
+9. [DEPENDENCY MAP](#9-dependency-map)
+10. [LOAD ORDER](#10-load-order)
+11. [ICON POLICY](#11-icon-policy)
+
+---
+
+# 1. SYSTEM OVERVIEW
+
+## Purpose
+
+The Selector System provides reusable UI components for selecting entities (characters, households, locations) throughout the application. All selectors are built on a common foundation that ensures consistent behavior, styling, and user experience.
+
+## Key Principles
+
+| Principle | Description |
+|-----------|-------------|
+| **Core Only** | Selectors depend ONLY on core modules (no system dependencies) |
+| **Single Source of Truth** | Each selector type has one canonical implementation |
+| **Reusable Components** | All selectors share a common base with consistent API |
+| **No Inline Styles** | All styling via CSS classes in external stylesheet |
+| **No Emojis** | All icons from icons.js |
+| **Event Delegation** | Efficient event handling via delegation |
+| **Proper Cleanup** | All event listeners are cleaned up on destroy |
+| **Recursion Guards** | Protection against re-entrant calls |
+
+## Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         SELECTOR SYSTEM                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    CORE LAYER (js/core/)                           │   │
+│  │                                                                     │   │
+│  │  query-helpers.js    ←─── Pure core queries (NO system deps)      │   │
+│  │  selector-base.js    ←─── Shared base class                       │   │
+│  │  modals-core.js      ←─── Modal manager + core wrappers          │   │
+│  │  formatting.js       ←─── HTML escaping                           │   │
+│  │  icons.js            ←─── SVG icons                               │   │
+│  │  accessors.js        ←─── Data access                             │   │
+│  │  time.js             ←─── Time calculations                       │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    SELECTOR LAYER (js/selectors/)                  │   │
+│  │                                                                     │   │
+│  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐    │   │
+│  │  │ Character       │  │ Household       │  │ Location        │    │   │
+│  │  │ Selector        │  │ Selector        │  │ Dropdown        │    │   │
+│  │  │ (modals-char-   │  │ (modals-        │  │ (location       │    │   │
+│  │  │ selector.js)    │  │ household-      │  │ Dropdown.js)    │    │   │
+│  │  └─────────────────┘  │ selector.js)    │  └─────────────────┘    │   │
+│  │                       └─────────────────┘                          │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    STYLES (css/selectors.css)                      │   │
+│  │                                                                     │   │
+│  │  All selector styles in external stylesheet                        │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+# 2. ARCHITECTURE
+
+## File Structure
+
+```
+js/
+├── core/
+│   ├── query-helpers.js          # Core query utilities (NO system deps)
+│   ├── selector-base.js          # Shared selector base class
+│   ├── modals-core.js            # Modal manager + core wrappers
+│   ├── formatting.js             # HTML escaping
+│   ├── icons.js                  # SVG icons
+│   ├── accessors.js              # Data access
+│   └── time.js                   # Time calculations
+│
+├── selectors/
+│   ├── locationDropdown.js       # Hierarchical location dropdown
+│   ├── modals-char-selector.js   # Character selector modal
+│   └── modals-household-selector.js # Household selector modal
+│
+└── css/
+    └── selectors.css             # All selector styles
+```
+
+## Core Principles
+
+### 1. Core Has NO System Dependencies
+
+All core files (`query-helpers.js`, `selector-base.js`, `modals-core.js`) must NOT depend on any system files (relationship-registry, household-state, etc.).
+
+### 2. Selectors Depend Only on Core
+
+All selector files depend ONLY on core modules. They do NOT directly access system files.
+
+### 3. Data Queries Are Centralized
+
+All data querying logic is centralized in `query-helpers.js` and `accessors.js`. Selectors call these functions rather than implementing their own queries.
+
+### 4. Event Management
+
+- Event delegation is used for list item clicks (single listener on parent)
+- All listeners are tracked and cleaned up on destroy
+- No `cloneNode` workarounds
+
+### 5. Styling
+
+- ALL styling via CSS classes in `selectors.css`
+- NO inline styles in JavaScript
+- Responsive by default
+
+---
+
+# 3. CORE QUERY HELPERS
+
+## File: `js/core/query-helpers.js`
+
+### Purpose
+
+Provides basic query utilities using ONLY core dependencies. NO dependencies on system files (relationship-registry, etc.).
+
+### Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `accessors.js` | `getCharacterById`, `getCharacters`, `getPlaceById`, `getPlaces` |
+| `time.js` | `getCurrentYearSafe`, `calculateAge` |
+| `constants.js` | `AGE_GROUPS`, `AGE_GROUPS_MAP` |
+
+### Functions
+
+#### Character Status
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCharacterStatusBasic(char)` | `char` (Object) | string | Gets status: 'single', 'partnered', 'widowed', 'deceased' |
+
+#### Character Roles
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCharacterRoles(char)` | `char` (Object) | Array | Gets roles/professions as array of strings |
+
+#### Character Location
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCharacterLocationId(char)` | `char` (Object) | string\|null | Gets current location ID |
+| `getCharacterLocationName(char)` | `char` (Object) | string | Gets current location name |
+
+#### Parent/Child Queries
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCharacterParents(char)` | `char` (Object) | { father, mother } | Gets parents |
+| `getCharacterChildren(char)` | `char` (Object) | Array | Gets children |
+| `getCharacterHasChildren(char)` | `char` (Object) | boolean | Checks if has children |
+| `getCharacterHasParents(char)` | `char` (Object) | boolean | Checks if has parents |
+
+#### Age Group
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getAgeGroupForAge(age)` | `age` (number) | string | Gets age group key |
+| `getAgeGroupLabel(group)` | `group` (string) | string | Gets age group label |
+
+#### Location Hierarchy
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getLocationHierarchy(place)` | `place` (Object) | Array | Gets full hierarchy |
+| `getLocationHierarchyDisplay(place)` | `place` (Object) | string | Gets formatted hierarchy |
+| `getAllLocationsHierarchical()` | None | Array | Gets flat hierarchical list |
+
+#### Core Accessors Passed Through
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCharacterById(id)` | `id` (string) | Object\|null | Gets character by ID |
+| `getCharacters()` | None | Array | Gets all characters |
+| `getPlaceById(id)` | `id` (string) | Object\|null | Gets place by ID |
+| `getPlaces()` | None | Array | Gets all places |
+| `getCurrentYear()` | None | number | Gets current year |
+| `calculateAge(birthYear, isDeceased, deathYear)` | Various | number\|null | Calculates age |
+
+---
+
+# 4. SELECTOR BASE
+
+## File: `js/selectors/selector-base.js`
+
+### Purpose
+
+Shared utilities and base class for building selector modals.
+
+### Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `modals-core.js` | `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon` |
+| `query-helpers.js` | Various query functions |
+
+### SelectorBase Class
+
+```javascript
+new SelectorBase(options)
+```
+
+**Options:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `onSelect` | Function | function() {} | Called when selection is made |
+| `onCancel` | Function | function() {} | Called when cancelled |
+| `filters` | Object | {} | Initial filter state |
+| `title` | string | 'Select' | Modal title |
+
+### SelectorBase Methods
+
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `escapeHtml(str)` | `str` (string) | string | Escapes HTML |
+| `getIcon(name)` | `name` (string) | string | Gets SVG icon |
+| `getGenderSymbol(gender)` | `gender` (string) | string | Gets gender symbol |
+| `isBloodRelative(id1, id2)` | `id1` (string), `id2` (string) | boolean | Checks blood relation |
+| `isSpouse(id1, id2)` | `id1` (string), `id2` (string) | boolean | Checks spouse |
+| `openModal(title, content, confirmText, onConfirm)` | Various | Element | Opens modal |
+| `close()` | None | void | Closes selector |
+| `debounce(fn, delay)` | `fn` (Function), `delay` (number) | Function | Debounced function |
+| `showToast(message, type)` | `message` (string), `type` (string) | void | Shows toast |
+
+### Exposed Helpers
+
+| Helper | Description |
+|--------|-------------|
+| `_SelectorBaseHelpers.escapeHtml(str)` | HTML escaping |
+| `_SelectorBaseHelpers.getIcon(name)` | Gets icon |
+| `_SelectorBaseHelpers.getGenderSymbol(gender)` | Gets gender symbol |
+| `_SelectorBaseHelpers.getGenderLabel(gender)` | Gets gender label |
+| `_SelectorBaseHelpers.isBloodRelativeBasic(id1, id2)` | Blood relation check |
+| `_SelectorBaseHelpers.isSpouseBasic(id1, id2)` | Spouse check |
+| `_SelectorBaseHelpers.openModal(options)` | Opens modal |
+| `_SelectorBaseHelpers.closeTopModal()` | Closes modal |
+| `_SelectorBaseHelpers.showToast(message, type)` | Shows toast |
+| `_SelectorBaseHelpers.debounce(fn, delay)` | Debounces function |
+
+---
+
+# 5. CHARACTER SELECTOR
+
+## File: `js/selectors/modals-char-selector.js`
+
+### Purpose
+
+Single source of truth for character selection modals.
+
+### Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `selector-base.js` | `SelectorBase` |
+| `query-helpers.js` | `QueryHelpers` |
+| `modals-core.js` | `openModal`, `closeTopModal`, etc. |
+
+### Functions
+
+#### `openCharacterSelector(options)`
+
+Opens the character selector modal.
+
+**Options:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `title` | string | 'Select Character' | Modal title |
+| `targetId` | string | null | Target character ID for filtering |
+| `onSelect` | Function | function() {} | Called when character selected |
+| `onCancel` | Function | function() {} | Called when cancelled |
+| `excludeIds` | Array | [] | Character IDs to exclude |
+| `preset` | string | null | Filter preset |
+| `filters` | Object | {} | Filter options |
+
+**Filter Presets:**
+
+| Preset | Description |
+|--------|-------------|
+| `'partner'` | Single, age 21-30, peers |
+| `'father'` | Male, age 31-40, has children |
+| `'mother'` | Female, age 31-40, has children |
+| `'child'` | Age 0-10 |
+| `'master'` | Age 31-40 |
+| `'apprentice'` | Age 11-20 |
+| `'elder'` | Age 61-70 |
+| `'available'` | Single, age 21-30 |
+| `'all'` | No presets |
+
+**Filter Options:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `search` | string | '' | Search term |
+| `gender` | string | 'all' | 'all', 'male', 'female' |
+| `status` | string | 'all' | 'all', 'single', 'partnered', 'widowed' |
+| `ageGroup` | string | 'all' | Age group key |
+| `location` | string | 'all' | Location ID |
+| `role` | string | 'all' | Role ID |
+| `showDeceased` | boolean | false | Include deceased |
+| `peers` | boolean | false | Peers (±10 years) |
+| `sameLocation` | boolean | false | Same location |
+| `hasChildren` | boolean | false | Has children |
+| `noChildren` | boolean | false | No children |
+| `hasParents` | boolean | false | Has parents |
+| `orphan` | boolean | false | Orphan |
+| `sortBy` | string | 'age_desc' | 'age_desc', 'age_asc', 'name', 'birth_year' |
+
+**Returns:** `CharacterSelector` instance
+
+#### `closeCharacterSelector()`
+
+Closes the character selector.
+
+### CharacterSelector Class
+
+| Method | Description |
+|--------|-------------|
+| `new CharacterSelector(options)` | Creates instance |
+| `_render()` | Renders modal |
+| `_refresh()` | Refreshes list |
+| `_clearFilters()` | Clears all filters |
+| `close()` | Closes selector |
+
+### Exports
+
+| Export | Description |
+|--------|-------------|
+| `window.openCharacterSelector` | Main function |
+| `window.closeCharacterSelector` | Close function |
+| `window.FILTER_PRESETS` | Filter presets |
+| `window.CharacterSelectorState` | State object |
+
+---
+
+# 6. HOUSEHOLD SELECTOR
+
+## File: `js/selectors/modals-household-selector.js`
+
+### Purpose
+
+Single source of truth for household selection modals.
+
+### Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `selector-base.js` | `SelectorBase` |
+| `query-helpers.js` | `QueryHelpers` |
+| `accessors.js` | `getCharacters`, `getPlaceById`, etc. |
+
+### Functions
+
+#### `openHouseholdSelector(options)`
+
+Opens the household selector modal.
+
+**Options:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `title` | string | 'Select Household' | Modal title |
+| `targetCharacterId` | string | null | Target character ID |
+| `onSelect` | Function | function() {} | Called when household selected |
+| `onCancel` | Function | function() {} | Called when cancelled |
+| `preselectedId` | string | null | Pre-selected household ID |
+| `filterConfig` | Object | {} | Filter configuration |
+
+**Filter Configuration:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `showActive` | boolean | true | Show active households |
+| `showVacant` | boolean | false | Show vacant households |
+| `showEmpty` | boolean | false | Show empty households |
+| `locationFilter` | string | 'all' | Filter by location |
+| `searchTerm` | string | '' | Search term |
+
+**Returns:** `HouseholdSelector` instance
+
+#### `closeHouseholdSelector()`
+
+Closes the household selector.
+
+### HouseholdSelector Class
+
+| Method | Description |
+|--------|-------------|
+| `new HouseholdSelector(options)` | Creates instance |
+| `_render()` | Renders modal |
+| `_refresh()` | Refreshes list |
+| `_filterHouseholds()` | Applies filters |
+| `_selectHousehold(id)` | Selects household |
+| `close()` | Closes selector |
+
+### Exports
+
+| Export | Description |
+|--------|-------------|
+| `window.openHouseholdSelector` | Main function |
+| `window.closeHouseholdSelector` | Close function |
+| `window.HouseholdSelectorState` | State object |
+
+---
+
+# 7. LOCATION DROPDOWN
+
+## File: `js/selectors/locationDropdown.js`
+
+### Purpose
+
+Single source of truth for location dropdown components.
+
+### Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `formatting.js` | `escapeHtml` |
+| `accessors.js` | `getPlaces`, `getPlaceById`, `getLocationTypes`, `getLocationTypePriority` |
+| `world.js` | `getLocationHierarchyDisplay`, `getLocationCountry`, `getLocationDistrict`, `getChildPlaces`, `getPlacesByPriority`, `getPlacePriority` |
+
+### Functions
+
+#### Core Builders
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `buildHierarchicalLocationOptions(locations)` | `locations` (Array) | Array | Builds hierarchical options |
+| `renderHierarchicalLocationOptionsHtml(options, selectedId)` | `options` (Array), `selectedId` (string) | string | Renders as HTML |
+| `getFilteredLocationOptions(selectedId)` | `selectedId` (string) | string | Gets filtered options |
+
+#### Simple Renderers
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `renderSimpleLocationOptions(places, selectedId)` | `places` (Array), `selectedId` (string) | string | Simple location options |
+| `renderLocationOptionsByPriority(priority, selectedId)` | `priority` (number), `selectedId` (string) | string | By priority |
+| `renderLocationOptionsByParent(parentId, selectedId)` | `parentId` (string), `selectedId` (string) | string | By parent |
+
+#### Component Creators
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `createLocationSelector(containerId, options)` | `containerId` (string), `options` (Object) | { getValue, setValue, refresh, destroy } | Creates selector |
+| `createFilterAwareLocationSelector(containerId, options)` | `containerId` (string), `options` (Object) | { getValue, setValue, refresh, destroy } | Filter-aware selector |
+| `refreshAllFilterAwareSelectors()` | None | void | Refreshes all |
+
+#### Filter Functions
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `registerLocationFilterListener()` | None | void | Registers listener |
+| `notifyLocationFiltersChanged()` | None | void | Notifies listeners |
+| `setLocationFilterFn(fn)` | `fn` (Function) | void | Sets filter function |
+
+### Exports
+
+| Export | Description |
+|--------|-------------|
+| `window.buildHierarchicalLocationOptions` | Builder |
+| `window.renderHierarchicalLocationOptionsHtml` | Renderer |
+| `window.getFilteredLocationOptions` | Filtered options |
+| `window.renderSimpleLocationOptions` | Simple renderer |
+| `window.renderLocationOptionsByPriority` | By priority |
+| `window.renderLocationOptionsByParent` | By parent |
+| `window.createLocationSelector` | Component creator |
+| `window.createFilterAwareLocationSelector` | Filter-aware creator |
+| `window.refreshAllFilterAwareSelectors` | Refresh |
+| `window.registerLocationFilterListener` | Register |
+| `window.notifyLocationFiltersChanged` | Notify |
+| `window.setLocationFilterFn` | Set filter |
+
+---
+
+# 8. COMPLETE FUNCTION LIST
+
+## query-helpers.js
+
+| Function | Description |
+|----------|-------------|
+| `getCharacterStatusBasic(char)` | Gets character status |
+| `getCharacterRoles(char)` | Gets character roles |
+| `getCharacterLocationId(char)` | Gets location ID |
+| `getCharacterLocationName(char)` | Gets location name |
+| `getCharacterParents(char)` | Gets parents |
+| `getCharacterChildren(char)` | Gets children |
+| `getCharacterHasChildren(char)` | Checks children |
+| `getCharacterHasParents(char)` | Checks parents |
+| `getAgeGroupForAge(age)` | Gets age group |
+| `getAgeGroupLabel(group)` | Gets age group label |
+| `getLocationHierarchy(place)` | Gets hierarchy |
+| `getLocationHierarchyDisplay(place)` | Gets hierarchy display |
+| `getAllLocationsHierarchical()` | Gets all locations |
+
+## selector-base.js
+
+| Function | Description |
+|----------|-------------|
+| `new SelectorBase(options)` | Creates base selector |
+| `SelectorBase.escapeHtml(str)` | Escapes HTML |
+| `SelectorBase.getIcon(name)` | Gets icon |
+| `SelectorBase.getGenderSymbol(gender)` | Gets gender symbol |
+| `SelectorBase.isBloodRelative(id1, id2)` | Checks blood relation |
+| `SelectorBase.isSpouse(id1, id2)` | Checks spouse |
+| `SelectorBase.openModal(title, content, confirmText, onConfirm)` | Opens modal |
+| `SelectorBase.close()` | Closes selector |
+| `SelectorBase.debounce(fn, delay)` | Debounces function |
+| `SelectorBase.showToast(message, type)` | Shows toast |
+
+## modals-char-selector.js
+
+| Function | Description |
+|----------|-------------|
+| `openCharacterSelector(options)` | Opens character selector |
+| `closeCharacterSelector()` | Closes character selector |
+
+## modals-household-selector.js
+
+| Function | Description |
+|----------|-------------|
+| `openHouseholdSelector(options)` | Opens household selector |
+| `closeHouseholdSelector()` | Closes household selector |
+
+## locationDropdown.js
+
+| Function | Description |
+|----------|-------------|
+| `buildHierarchicalLocationOptions(locations)` | Builds options |
+| `renderHierarchicalLocationOptionsHtml(options, selectedId)` | Renders HTML |
+| `getFilteredLocationOptions(selectedId)` | Gets filtered options |
+| `renderSimpleLocationOptions(places, selectedId)` | Renders simple |
+| `renderLocationOptionsByPriority(priority, selectedId)` | By priority |
+| `renderLocationOptionsByParent(parentId, selectedId)` | By parent |
+| `createLocationSelector(containerId, options)` | Creates selector |
+| `createFilterAwareLocationSelector(containerId, options)` | Creates filter-aware |
+| `refreshAllFilterAwareSelectors()` | Refreshes all |
+| `registerLocationFilterListener()` | Registers listener |
+| `notifyLocationFiltersChanged()` | Notifies listeners |
+| `setLocationFilterFn(fn)` | Sets filter function |
+
+---
+
+# 9. DEPENDENCY MAP
+
+## Core Dependencies
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    CORE DEPENDENCIES                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  constants.js ───────────────────────────────────────────────────────────┐ │
+│  └── AGE_GROUPS, AGE_GROUPS_MAP                                         │ │
+│                                                                             │
+│  accessors.js ──────────────────────────────────────────────────────────┐ │
+│  ├── getCharacterById()                                                  │ │
+│  ├── getCharacters()                                                     │ │
+│  ├── getPlaceById()                                                      │ │
+│  ├── getPlaces()                                                         │ │
+│  ├── getLocationTypes()                                                  │ │
+│  └── getLocationTypeById()                                               │ │
+│                                                                             │
+│  time.js ───────────────────────────────────────────────────────────────┐ │
+│  ├── getCurrentYearSafe()                                                │ │
+│  └── calculateAge()                                                      │ │
+│                                                                             │
+│  formatting.js ─────────────────────────────────────────────────────────┐ │
+│  └── escapeHtml()                                                        │ │
+│                                                                             │
+│  icons.js ──────────────────────────────────────────────────────────────┐ │
+│  └── Icons                                                               │ │
+│                                                                             │
+│  modals-core.js ────────────────────────────────────────────────────────┐ │
+│  ├── openModal()                                                         │ │
+│  ├── closeTopModal()                                                     │ │
+│  ├── _escapeHtml()                                                       │ │
+│  ├── _showToast()                                                        │ │
+│  ├── _getIcon()                                                          │ │
+│  └── _getCurrentYear()                                                   │ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+## Selector Dependencies
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    SELECTOR DEPENDENCIES                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  query-helpers.js ───────────────────────────────────────────────────────┐ │
+│  └── accessors.js, time.js, constants.js                                 │ │
+│                                                                             │
+│  selector-base.js ──────────────────────────────────────────────────────┐ │
+│  └── modals-core.js, query-helpers.js                                    │ │
+│                                                                             │
+│  modals-char-selector.js ───────────────────────────────────────────────┐ │
+│  └── selector-base.js, query-helpers.js                                  │ │
+│                                                                             │
+│  modals-household-selector.js ──────────────────────────────────────────┐ │
+│  └── selector-base.js, query-helpers.js                                  │ │
+│                                                                             │
+│  locationDropdown.js ──────────────────────────────────────────────────┐ │
+│  └── formatting.js, accessors.js, world.js                              │ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+# 10. LOAD ORDER
+
+```html
+<!-- ============================================================ -->
+<!-- CORE - NO SYSTEM DEPENDENCIES                                 -->
+<!-- ============================================================ -->
+
+<!-- 1. Constants (MUST BE FIRST) -->
+<script src="js/core/constants.js"></script>
+
+<!-- 2. Pure utilities -->
+<script src="js/core/randomness.js"></script>
+<script src="js/core/collections.js"></script>
+<script src="js/core/validation.js"></script>
+<script src="js/core/formatting.js"></script>
+<script src="js/core/time.js"></script>
+
+<!-- 3. IDs -->
+<script src="js/core/ids.js"></script>
+
+<!-- 4. Data layer -->
+<script src="js/core/storage.js"></script>
+<script src="js/core/accessors.js"></script>
+<script src="js/core/world.js"></script>
+<script src="js/core/names.js"></script>
+
+<!-- 5. State & integrity -->
+<script src="js/core/state.js"></script>
+<script src="js/core/integrity.js"></script>
+
+<!-- 6. Icons & UI -->
+<script src="js/core/icons.js"></script>
+<script src="js/core/ui.js"></script>
+<script src="js/core/collapsible.js"></script>
+<script src="js/core/responsive.js"></script>
+
+<!-- 7. Core modals (PURE - no system deps) -->
+<script src="js/core/modals-core.js"></script>
+
+<!-- 8. Utilities -->
+<script src="js/core/exportUtils.js"></script>
+
+<!-- 9. QUERY HELPERS - Core query utilities -->
+<script src="js/core/query-helpers.js"></script>
+
+<!-- ============================================================ -->
+<!-- SELECTORS - Depend on core only                              -->
+<!-- ============================================================ -->
+
+<!-- 10. SELECTOR BASE - Shared selector utilities -->
+<script src="js/selectors/selector-base.js"></script>
+
+<!-- 11. SELECTOR COMPONENTS -->
+<script src="js/selectors/locationDropdown.js"></script>
+<script src="js/selectors/modals-char-selector.js"></script>
+<script src="js/selectors/modals-household-selector.js"></script>
+
+<!-- ============================================================ -->
+<!-- STYLES                                                       -->
+<!-- ============================================================ -->
+
+<link rel="stylesheet" href="css/selectors.css">
+
+<!-- ============================================================ -->
+<!-- SYSTEMS - Depend on core + selectors                         -->
+<!-- ============================================================ -->
+
+<!-- Location System -->
+<script src="js/location/location-state.js"></script>
+<script src="js/location/location-commands.js"></script>
+<!-- ... -->
+
+<!-- Social System -->
+<script src="js/social/relationship-types.js"></script>
+<!-- ... -->
+```
+
+---
+
+# 11. ICON POLICY
+
+## Rules
+
+| Rule | Description |
+|------|-------------|
+| **Rule 1** | NO emojis in code or UI |
+| **Rule 2** | All icons from icons.js via `_getIcon()` or `getIcon()` |
+| **Rule 3** | NO icons in confirm/cancel buttons (plain text only) |
+
+## Available Icons Used by Selectors
+
+| Usage | Icon |
+|-------|------|
+| Person | `PERSON` |
+| Location | `LOCATION` |
+| Search | `SEARCH` |
+| Household | `HOUSEHOLD` |
+| Heart | `HEART` |
+| Circle Dot | `CIRCLE_DOT` |
+| Warning | `WARNING` |
+| Check Simple | `CHECK_SIMPLE` |
+| X Heavy | `X_HEAVY` |
+
+---
+
+# 12. CSS CLASS REFERENCE
+
+## Selector Container
+
+| Class | Description |
+|-------|-------------|
+| `.selector-container` | Main container |
+| `.selector-container[data-selector="character"]` | Character selector |
+| `.selector-container[data-selector="household"]` | Household selector |
+
+## Search
+
+| Class | Description |
+|-------|-------------|
+| `.selector-search` | Search container |
+| `.selector-search-icon` | Search icon |
+| `.selector-search-input` | Search input |
+| `.selector-search-clear` | Clear button |
+
+## Filters
+
+| Class | Description |
+|-------|-------------|
+| `.selector-filters` | Filters container |
+| `.filter-row` | Filter row |
+| `.filter-search` | Search filter |
+| `.filter-search-input` | Search input |
+| `.filter-select` | Select filter |
+| `.filter-select-input` | Select input |
+| `.filter-checkboxes` | Checkbox group |
+| `.filter-checkbox` | Single checkbox |
+| `.filter-actions` | Action buttons |
+| `.filter-clear-btn` | Clear button |
+| `.filter-count` | Count display |
+
+## List
+
+| Class | Description |
+|-------|-------------|
+| `.selector-list` | List container |
+| `.selector-empty` | Empty state |
+| `.selector-item` | List item |
+| `.selector-item.is-deceased` | Deceased item |
+| `.selector-item.is-relative` | Relative item |
+| `.selector-item.is-spouse` | Spouse item |
+| `.selector-item-left` | Left side |
+| `.selector-item-gender` | Gender icon |
+| `.selector-item-name` | Name |
+| `.selector-item-right` | Right side |
+
+## Badges
+
+| Class | Description |
+|-------|-------------|
+| `.badge` | Base badge |
+| `.badge-relative` | Relative badge |
+| `.badge-spouse` | Spouse badge |
+| `.badge-deceased` | Deceased badge |
+| `.badge-role` | Role badge |
+| `.badge-more` | More badge |
+| `.badge-current` | Current badge |
+| `.badge-selected` | Selected badge |
+
+## Household Specific
+
+| Class | Description |
+|-------|-------------|
+| `.household-item` | Household item |
+| `.household-item.is-selected` | Selected |
+| `.household-item.is-current` | Current |
+| `.household-item-header` | Header |
+| `.household-item-name` | Name |
+| `.household-item-details` | Details |
+| `.household-item-action` | Action |
+| `.household-members` | Members container |
+| `.household-members-empty` | Empty members |
+| `.household-members-more` | More members |
+| `.household-member` | Single member |
+| `.household-member.member-deceased` | Deceased member |
+| `.household-member.member-relative` | Relative member |
+| `.household-member.member-spouse` | Spouse member |
+| `.household-member.member-target` | Target member |
+| `.member-label` | Member label |
+
+## Footer
+
+| Class | Description |
+|-------|-------------|
+| `.selector-footer` | Footer container |
+| `.selector-hint` | Hint text |
+| `.selector-legend` | Legend |
+| `.legend-item` | Legend item |
+| `.legend-dot` | Legend dot |
+
+## Responsive
+
+| Class | Description |
+|-------|-------------|
+| `.mobile-view` | Mobile layout |
+| `.tablet-view` | Tablet layout |
+| `.desktop-view` | Desktop layout |
+
+---
+
+# 13. USAGE EXAMPLES
+
+## Character Selector
+
+```javascript
+// Open character selector
+openCharacterSelector({
+    title: 'Select Father',
+    targetId: currentCharacter.id,
+    preset: 'father',
+    onSelect: function(character) {
+        console.log('Selected:', character.name);
+        // Do something with selected character
+    },
+    onCancel: function() {
+        console.log('Selection cancelled');
+    }
+});
+
+// With custom filters
+openCharacterSelector({
+    title: 'Select Partner',
+    filters: {
+        status: 'single',
+        ageGroup: '21-30',
+        peers: true,
+        sameLocation: true
+    },
+    onSelect: function(character) {
+        // Handle selection
+    }
+});
+```
+
+## Household Selector
+
+```javascript
+// Open household selector
+openHouseholdSelector({
+    title: 'Select Household',
+    targetCharacterId: characterId,
+    filterConfig: {
+        showActive: true,
+        showVacant: false,
+        locationFilter: locationId
+    },
+    onSelect: function(household) {
+        console.log('Selected household:', household.name);
+    }
+});
+```
+
+## Location Dropdown
+
+```javascript
+// Create a location selector component
+var selector = createLocationSelector('locationContainer', {
+    selectedId: currentLocationId,
+    onChange: function(id) {
+        console.log('Location changed:', id);
+        var place = getPlaceById(id);
+        console.log('Name:', place.displayName);
+    }
+});
+
+// Get/set value
+var current = selector.getValue();
+selector.setValue(newLocationId);
+
+// Refresh
+selector.refresh();
+
+// Destroy
+selector.destroy();
+```
+
+---
+
+# 14. SUMMARY
+
+| Component | File | Status |
+|-----------|------|--------|
+| Query Helpers | `js/core/query-helpers.js` | ✅ Complete |
+| Selector Base | `js/selectors/selector-base.js` | ✅ Complete |
+| Character Selector | `js/selectors/modals-char-selector.js` | ✅ Complete |
+| Household Selector | `js/selectors/modals-household-selector.js` | ✅ Complete |
+| Location Dropdown | `js/selectors/locationDropdown.js` | ✅ Complete |
+| Selector Styles | `css/selectors.css` | ✅ Complete |
+
+## Key Principles
+
+1. **Core has NO system dependencies** - All core files work without any system loaded
+2. **Selectors depend only on core** - No direct system dependencies
+3. **Event delegation** - Efficient event handling
+4. **Proper cleanup** - All listeners cleaned up on destroy
+5. **CSS classes** - No inline styles
+6. **No emojis** - All icons from icons.js
+7. **Recursion guards** - Protection against re-entrant calls
+
+---
+
+# END OF DOCUMENTATION
+
+**Generated:** 2026-07-14
+**Version:** 2.0
+**Core Files:** 2 (query-helpers.js, selector-base.js)
+**Selector Files:** 3 (character, household, location dropdown)
+**Total Files:** 5
+**Total Size:** ~60 KB
+```

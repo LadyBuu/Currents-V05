@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * STILL WATERS - APPRENTICESHIP MODALS (modals-apprenticeship.js)
+ * STILL WATERS - APPRENTICESHIP MODALS js/apprenticeship/modals-apprenticeship.js
  * =============================================================================
  * 
  * This file contains ALL apprenticeship-related UI modals:
@@ -8,7 +8,7 @@
  * - Edit Apprenticeship
  * - Apprenticeship Details
  * - View Master Tree
- * - FIND MASTER BY LOCATION (NEW)
+ * - Find Master By Location
  * 
  * DEPENDENCIES:
  *   - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
@@ -18,6 +18,7 @@
  *   - constants.js (AGE_GROUPS, AGE_GROUPS_MAP)
  *   - world.js (getCurrentLocation, getLocationTypeById)
  *   - households/ (Household management functions)
+ *   - skill-utils.js (SkillUtils)
  * 
  * =============================================================================
  */
@@ -47,7 +48,43 @@
     }
 
     // =========================================================================
-    // 3. DEPENDENCY WRAPPERS
+    // 3. SKILL UTILITIES
+    // =========================================================================
+
+    function _getSkillLevelName(level) {
+        if (typeof window.SkillUtils !== 'undefined') {
+            return window.SkillUtils.getSkillLevelName(level);
+        }
+        if (typeof window._getSkillLevelName === 'function') {
+            return window._getSkillLevelName(level);
+        }
+        if (typeof window.getSkillLevelName === 'function') {
+            return window.getSkillLevelName(level);
+        }
+        if (level >= 91) return 'Master';
+        if (level >= 76) return 'Expert';
+        if (level >= 51) return 'Journeyman';
+        if (level >= 26) return 'Apprentice';
+        if (level >= 1) return 'Novice';
+        return 'Untrained';
+    }
+
+    function _getStageFromLevel(level) {
+        if (typeof window.SkillUtils !== 'undefined') {
+            return window.SkillUtils.getStageFromLevel(level);
+        }
+        if (typeof window._getStageFromLevel === 'function') {
+            return window._getStageFromLevel(level);
+        }
+        if (level >= 76) return { id: 'master', name: 'Master', minLevel: 76, maxLevel: 100 };
+        if (level >= 51) return { id: 'journeyman', name: 'Journeyman', minLevel: 51, maxLevel: 75 };
+        if (level >= 26) return { id: 'apprentice', name: 'Apprentice', minLevel: 26, maxLevel: 50 };
+        if (level >= 1) return { id: 'novice', name: 'Novice', minLevel: 1, maxLevel: 25 };
+        return { id: 'novice', name: 'Novice', minLevel: 0, maxLevel: 25 };
+    }
+
+    // =========================================================================
+    // 4. DEPENDENCY WRAPPERS
     // =========================================================================
 
     function _escapeHtml(str) {
@@ -71,6 +108,9 @@
         if (typeof window.openModal === 'function') {
             return window.openModal(options);
         }
+        if (typeof window._openModal === 'function') {
+            return window._openModal(options);
+        }
         return null;
     }
 
@@ -78,11 +118,17 @@
         if (typeof window.closeTopModal === 'function') {
             window.closeTopModal();
         }
+        if (typeof window._closeTopModal === 'function') {
+            window._closeTopModal();
+        }
     }
 
     function _confirmDialog(message, title, onConfirm) {
         if (typeof window.confirmDialog === 'function') {
             return window.confirmDialog(message, title, onConfirm);
+        }
+        if (typeof window._confirmDialog === 'function') {
+            return window._confirmDialog(message, title, onConfirm);
         }
         if (confirm(message)) {
             onConfirm();
@@ -90,15 +136,33 @@
     }
 
     function _getCharacterById(id) {
-        return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+        if (typeof window.getCharacterById === 'function') {
+            return window.getCharacterById(id);
+        }
+        if (typeof window._getCharacterById === 'function') {
+            return window._getCharacterById(id);
+        }
+        return null;
     }
 
     function _getCharacters() {
-        return typeof window.getCharacters === 'function' ? window.getCharacters() : [];
+        if (typeof window.getCharacters === 'function') {
+            return window.getCharacters();
+        }
+        if (typeof window._getCharacters === 'function') {
+            return window._getCharacters();
+        }
+        return [];
     }
 
     function _getRoleById(id) {
-        return typeof window.getRoleById === 'function' ? window.getRoleById(id) : null;
+        if (typeof window.getRoleById === 'function') {
+            return window.getRoleById(id);
+        }
+        if (typeof window._getRoleById === 'function') {
+            return window._getRoleById(id);
+        }
+        return null;
     }
 
     function _getCurrentYear() {
@@ -112,6 +176,9 @@
         if (typeof window.calculateAge === 'function') {
             return window.calculateAge(birthYear, isDeceased, deathYear);
         }
+        if (typeof window._calculateAge === 'function') {
+            return window._calculateAge(birthYear, isDeceased, deathYear);
+        }
         var currentYear = _getCurrentYear();
         if (!birthYear) return 0;
         if (isDeceased && deathYear) return Math.max(0, deathYear - birthYear);
@@ -122,6 +189,9 @@
         if (typeof window.getCurrentLocation === 'function') {
             return window.getCurrentLocation(character);
         }
+        if (typeof window._getCurrentLocation === 'function') {
+            return window._getCurrentLocation(character);
+        }
         return 'Unknown';
     }
 
@@ -129,20 +199,38 @@
         if (typeof window.getCurrentLocationId === 'function') {
             return window.getCurrentLocationId(character.id);
         }
+        if (typeof window._getCurrentLocationId === 'function') {
+            return window._getCurrentLocationId(character.id);
+        }
         return null;
     }
 
     function _getPlaceById(id) {
-        return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+        if (typeof window.getPlaceById === 'function') {
+            return window.getPlaceById(id);
+        }
+        if (typeof window._getPlaceById === 'function') {
+            return window._getPlaceById(id);
+        }
+        return null;
     }
 
     function _getLocationTypeById(id) {
-        return typeof window.getLocationTypeById === 'function' ? window.getLocationTypeById(id) : null;
+        if (typeof window.getLocationTypeById === 'function') {
+            return window.getLocationTypeById(id);
+        }
+        if (typeof window._getLocationTypeById === 'function') {
+            return window._getLocationTypeById(id);
+        }
+        return null;
     }
 
     function _getLocationPopulationCount(locationId) {
         if (typeof window.getLocationPopulationCount === 'function') {
             return window.getLocationPopulationCount(locationId);
+        }
+        if (typeof window._getLocationPopulationCount === 'function') {
+            return window._getLocationPopulationCount(locationId);
         }
         return 0;
     }
@@ -168,11 +256,14 @@
         if (typeof window.openCharacterSelector === 'function') {
             return window.openCharacterSelector(options);
         }
+        if (typeof window._openCharacterSelector === 'function') {
+            return window._openCharacterSelector(options);
+        }
         return null;
     }
 
     // =========================================================================
-    // 4. APPRENTICESHIP SYSTEM WRAPPERS
+    // 5. APPRENTICESHIP SYSTEM WRAPPERS - FIXED
     // =========================================================================
 
     function _getMaster(charId) {
@@ -181,6 +272,9 @@
         }
         if (typeof window.getMaster === 'function') {
             return window.getMaster(charId);
+        }
+        if (typeof window._getMaster === 'function') {
+            return window._getMaster(charId);
         }
         return null;
     }
@@ -192,6 +286,9 @@
         if (typeof window.getApprentices === 'function') {
             return window.getApprentices(masterId, activeOnly);
         }
+        if (typeof window._getApprentices === 'function') {
+            return window._getApprentices(masterId, activeOnly);
+        }
         return [];
     }
 
@@ -201,6 +298,9 @@
         }
         if (typeof window.isApprentice === 'function') {
             return window.isApprentice(charId);
+        }
+        if (typeof window._isApprentice === 'function') {
+            return window._isApprentice(charId);
         }
         return false;
     }
@@ -212,6 +312,9 @@
         if (typeof window.isMaster === 'function') {
             return window.isMaster(charId);
         }
+        if (typeof window._isMaster === 'function') {
+            return window._isMaster(charId);
+        }
         return false;
     }
 
@@ -222,22 +325,13 @@
         if (typeof window.getSkillLevel === 'function') {
             return window.getSkillLevel(charId, roleId);
         }
+        if (typeof window._getSkillLevel === 'function') {
+            return window._getSkillLevel(charId, roleId);
+        }
+        if (typeof window.RoleQueries !== 'undefined') {
+            return window.RoleQueries.getSkillLevel(charId, roleId);
+        }
         return 0;
-    }
-
-    function _getSkillLevelName(level) {
-        if (typeof window.ApprenticeshipSystem !== 'undefined') {
-            return window.ApprenticeshipSystem.getSkillLevelName(level);
-        }
-        if (typeof window.getSkillLevelName === 'function') {
-            return window.getSkillLevelName(level);
-        }
-        if (level >= 91) return 'Master';
-        if (level >= 76) return 'Expert';
-        if (level >= 51) return 'Journeyman';
-        if (level >= 26) return 'Apprentice';
-        if (level >= 1) return 'Novice';
-        return 'Untrained';
     }
 
     function _getApprenticeshipRole(charId) {
@@ -246,6 +340,9 @@
         }
         if (typeof window.getApprenticeshipRole === 'function') {
             return window.getApprenticeshipRole(charId);
+        }
+        if (typeof window._getApprenticeshipRole === 'function') {
+            return window._getApprenticeshipRole(charId);
         }
         return null;
     }
@@ -257,17 +354,32 @@
         if (typeof window.getApprenticeship === 'function') {
             return window.getApprenticeship(masterId, apprenticeId);
         }
+        if (typeof window._getApprenticeship === 'function') {
+            return window._getApprenticeship(masterId, apprenticeId);
+        }
         return null;
     }
 
+    // FIXED: Normalizes result from ProfessionalLogic
     function _createApprenticeship(masterId, apprenticeId, options) {
+        var result = null;
+        
         if (typeof window.ApprenticeshipSystem !== 'undefined') {
-            return window.ApprenticeshipSystem.createApprenticeship(masterId, apprenticeId, options);
+            result = window.ApprenticeshipSystem.createApprenticeship(masterId, apprenticeId, options);
         }
-        if (typeof window.createApprenticeship === 'function') {
-            return window.createApprenticeship(masterId, apprenticeId, options);
+        if (!result && typeof window.createApprenticeship === 'function') {
+            result = window.createApprenticeship(masterId, apprenticeId, options);
         }
-        return null;
+        if (!result && typeof window._createApprenticeship === 'function') {
+            result = window._createApprenticeship(masterId, apprenticeId, options);
+        }
+        
+        // ProfessionalLogic returns the relationship object directly, or null on failure
+        // Wrap it in a success object for consistency
+        if (result) {
+            return { success: true, relationship: result };
+        }
+        return { success: false, reason: 'Failed to create apprenticeship' };
     }
 
     function _updateApprenticeship(masterId, apprenticeId, updates) {
@@ -276,6 +388,9 @@
         }
         if (typeof window.updateApprenticeship === 'function') {
             return window.updateApprenticeship(masterId, apprenticeId, updates);
+        }
+        if (typeof window._updateApprenticeship === 'function') {
+            return window._updateApprenticeship(masterId, apprenticeId, updates);
         }
         return null;
     }
@@ -287,6 +402,9 @@
         if (typeof window.progressApprenticeship === 'function') {
             return window.progressApprenticeship(masterId, apprenticeId, amount);
         }
+        if (typeof window._progressApprenticeship === 'function') {
+            return window._progressApprenticeship(masterId, apprenticeId, amount);
+        }
         return null;
     }
 
@@ -296,6 +414,9 @@
         }
         if (typeof window.completeApprenticeship === 'function') {
             return window.completeApprenticeship(masterId, apprenticeId, finalSkillLevel);
+        }
+        if (typeof window._completeApprenticeship === 'function') {
+            return window._completeApprenticeship(masterId, apprenticeId, finalSkillLevel);
         }
         return null;
     }
@@ -307,6 +428,9 @@
         if (typeof window.terminateApprenticeship === 'function') {
             return window.terminateApprenticeship(masterId, apprenticeId, reason);
         }
+        if (typeof window._terminateApprenticeship === 'function') {
+            return window._terminateApprenticeship(masterId, apprenticeId, reason);
+        }
         return null;
     }
 
@@ -316,6 +440,9 @@
         }
         if (typeof window.getTeachableSkills === 'function') {
             return window.getTeachableSkills(masterId, minSkillLevel);
+        }
+        if (typeof window._getTeachableSkills === 'function') {
+            return window._getTeachableSkills(masterId, minSkillLevel);
         }
         return [];
     }
@@ -327,6 +454,9 @@
         if (typeof window.findPotentialMasters === 'function') {
             return window.findPotentialMasters(roleId, locationId, minSkillLevel);
         }
+        if (typeof window._findPotentialMasters === 'function') {
+            return window._findPotentialMasters(roleId, locationId, minSkillLevel);
+        }
         return [];
     }
 
@@ -337,11 +467,50 @@
         if (typeof window.teachSkill === 'function') {
             return window.teachSkill(masterId, apprenticeId, method);
         }
+        if (typeof window._teachSkill === 'function') {
+            return window._teachSkill(masterId, apprenticeId, method);
+        }
         return null;
     }
 
     // =========================================================================
-    // 5. CREATE APPRENTICESHIP MODAL
+    // 6. APPRENTICESHIP STAGE HELPERS
+    // =========================================================================
+
+    function _getApprenticeshipStage(masterId, apprenticeId) {
+        var app = _getApprenticeship(masterId, apprenticeId);
+        if (app) {
+            var stageId = app.metadata?.stage || 'novice';
+            var stages = window.APPRENTICESHIP_STAGES || {};
+            return stages[stageId.toUpperCase()] || stages.NOVICE || { id: 'novice', name: 'Novice', minLevel: 0, maxLevel: 25 };
+        }
+        return { id: 'novice', name: 'Novice', minLevel: 0, maxLevel: 25 };
+    }
+
+    function _getApprenticeshipProgress(masterId, apprenticeId) {
+        var app = _getApprenticeship(masterId, apprenticeId);
+        if (app) {
+            var skillLevel = app.metadata?.skillLevel || 0;
+            var stage = _getApprenticeshipStage(masterId, apprenticeId);
+            var range = stage.maxLevel - stage.minLevel;
+            if (range === 0) return 100;
+            var stageProgress = ((skillLevel - stage.minLevel) / range) * 100;
+            return Math.min(100, Math.max(0, Math.floor(stageProgress)));
+        }
+        return 0;
+    }
+
+    function _getApprenticeshipRoleObj(masterId, apprenticeId) {
+        var app = _getApprenticeship(masterId, apprenticeId);
+        var roleId = app?.metadata?.roleId;
+        if (roleId) {
+            return _getRoleById(roleId);
+        }
+        return null;
+    }
+
+    // =========================================================================
+    // 7. CREATE APPRENTICESHIP MODAL
     // =========================================================================
 
     function openCreateApprenticeshipModal(master, candidate, onSuccess) {
@@ -369,7 +538,6 @@
             var locationIcon = _getIcon('LOCATION');
             var infoIcon = _getIcon('CIRCLE_DOT');
 
-            // Build skill options
             var skillOptions = '';
             if (teachableSkills && teachableSkills.length > 0) {
                 for (var i = 0; i < teachableSkills.length; i++) {
@@ -384,7 +552,6 @@
             var content =
                 '<div style="max-height: 500px; overflow-y: auto; padding: 4px;">' +
 
-                // Master and candidate info
                 '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">' +
                 '<div style="background: var(--bg2); padding: 12px; border-radius: 8px;">' +
                 '<div style="font-size: 0.55rem; color: var(--accent);">Master</div>' +
@@ -398,7 +565,6 @@
                 '</div>' +
                 '</div>' +
 
-                // Form fields
                 '<div class="form-group" style="margin-bottom: 12px;">' +
                 '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Profession to Learn</label>' +
                 '<select id="appRoleSelect" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
@@ -485,7 +651,7 @@
                     if (result && result.success) {
                         _showToast('Apprenticeship created successfully!', 'success');
                         _closeTopModal();
-                        if (onSuccess) onSuccess(result);
+                        if (onSuccess) onSuccess(result.relationship || result);
                         return true;
                     } else {
                         _showToast('Failed to create apprenticeship: ' + (result?.reason || 'Unknown error'), 'error');
@@ -500,7 +666,7 @@
     }
 
     // =========================================================================
-    // 6. EDIT APPRENTICESHIP MODAL
+    // 8. EDIT APPRENTICESHIP MODAL
     // =========================================================================
 
     function openEditApprenticeshipModal(masterId, apprenticeId, onSuccess) {
@@ -616,7 +782,7 @@
                         notes: notes
                     });
 
-                    if (result && result.success) {
+                    if (result) {
                         _showToast('Apprenticeship updated', 'success');
                         _closeTopModal();
                         if (onSuccess) onSuccess(result);
@@ -628,7 +794,6 @@
                 }
             });
 
-            // Attach button handlers
             setTimeout(function() {
                 var progressBtn = document.getElementById('progressSkillBtn');
                 if (progressBtn) {
@@ -676,7 +841,7 @@
     }
 
     // =========================================================================
-    // 7. APPRENTICESHIP DETAILS MODAL
+    // 9. APPRENTICESHIP DETAILS MODAL
     // =========================================================================
 
     function openApprenticeshipDetailsModal(masterId, apprenticeId, onSave, onDelete) {
@@ -856,7 +1021,7 @@
     }
 
     // =========================================================================
-    // 8. VIEW MASTER TREE MODAL
+    // 10. VIEW MASTER TREE MODAL
     // =========================================================================
 
     function openViewMasterTreeModal(masterId, onRefresh) {
@@ -892,12 +1057,11 @@
                 content += '<div style="display: flex; flex-direction: column; gap: 4px;">';
                 for (var i = 0; i < apprentices.length; i++) {
                     var app = apprentices[i];
-                    var appChar = typeof app === 'string' ? _getCharacterById(app) : app;
+                    var appChar = app.character || _getCharacterById(app);
                     if (!appChar) continue;
 
-                    var skill = _getSkillLevel(appChar.id, null) || 0;
-                    var role = _getApprenticeshipRole(appChar.id);
-                    var roleName = role ? (typeof role === 'string' ? role : role.name) : 'Unknown';
+                    var skill = app.skillLevel || 0;
+                    var roleName = app.roleName || 'Unknown';
                     var status = app.status || 'ongoing';
                     var statusColor = status === 'ongoing' ? 'var(--success)' :
                                      status === 'completed' ? 'var(--accent)' : 'var(--danger)';
@@ -945,7 +1109,6 @@
                             var char = _getCharacterById(charId);
                             if (char) {
                                 _closeTopModal();
-                                // Find the master of this apprentice
                                 var masterOf = _getMaster(charId);
                                 if (masterOf) {
                                     var masterId = typeof masterOf === 'object' ? masterOf.id : masterOf;
@@ -971,15 +1134,9 @@
     }
 
     // =========================================================================
-    // 9. FIND MASTER BY LOCATION MODAL (NEW)
+    // 11. FIND MASTER BY LOCATION MODAL
     // =========================================================================
 
-    /**
-     * Opens modal to find masters in a settlement
-     * @param {string} locationId - Settlement location ID
-     * @param {string} roleId - Role ID filter (optional)
-     * @param {Function} onSuccess - Callback when master selected
-     */
     function openFindMasterByLocationModal(locationId, roleId, onSuccess) {
         if (_openingModal) {
             _showToast('Modal is already opening', 'warning');
@@ -1023,7 +1180,6 @@
                 var char = m.character;
                 var age = _calculateAge(char.birthYear, false, null);
 
-                // Get master's primary profession
                 var primaryProf = '';
                 if (char.professions) {
                     for (var j = 0; j < char.professions.length; j++) {
@@ -1097,18 +1253,35 @@
             }, 100);
 
         } finally {
-            // Don't reset _openingModal here - it's reset in the modal close handlers
+            _openingModal = false;
         }
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 12. EXPORTS
     // =========================================================================
 
     window.openCreateApprenticeshipModal = openCreateApprenticeshipModal;
     window.openEditApprenticeshipModal = openEditApprenticeshipModal;
     window.openApprenticeshipDetailsModal = openApprenticeshipDetailsModal;
     window.openViewMasterTreeModal = openViewMasterTreeModal;
-    window.openFindMasterByLocationModal = openFindMasterByLocationModal; // NEW
+    window.openFindMasterByLocationModal = openFindMasterByLocationModal;
+
+    // Legacy aliases
+    window._openCreateApprenticeshipModal = openCreateApprenticeshipModal;
+    window._openEditApprenticeshipModal = openEditApprenticeshipModal;
+    window._openApprenticeshipDetailsModal = openApprenticeshipDetailsModal;
+    window._openViewMasterTreeModal = openViewMasterTreeModal;
+    window._openFindMasterByLocationModal = openFindMasterByLocationModal;
+
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = {
+            openCreateApprenticeshipModal: openCreateApprenticeshipModal,
+            openEditApprenticeshipModal: openEditApprenticeshipModal,
+            openApprenticeshipDetailsModal: openApprenticeshipDetailsModal,
+            openViewMasterTreeModal: openViewMasterTreeModal,
+            openFindMasterByLocationModal: openFindMasterByLocationModal
+        };
+    }
 
 })();

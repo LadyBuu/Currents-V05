@@ -3,19 +3,20 @@
  * LOCATION COMMANDS - All write operations for location and movement
  * =============================================================================
  * 
+ * LOCATION: js/location/location-commands.js
+ * 
  * This file contains ALL write operations:
  * - Place CRUD (create, update, delete)
  * - Location Type CRUD (create, update, delete)
  * - Move recording (record, edit, delete)
  * - Government assignment
  * - Leader assignment
+ * - Culture assignment
  * - Fix unknown locations
  * 
  * DEPENDENCIES:
- *   - location-state.js (LocationState)
- *   - accessors.js (getCharacterById, getPlaceById, getCurrentYear)
- *   - eventLogger.js (logEvent)
- *   - storage.js (saveMasterData)
+ *   - LocationState (public API only - NO internal _ methods)
+ *   - Core wrappers from modals-core.js
  * 
  * =============================================================================
  */
@@ -30,38 +31,48 @@
     var _processingCommand = false;
 
     // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
+    // 2. DEPENDENCY WRAPPERS (Using core wrappers)
     // =========================================================================
 
     function _getCharacterById(id) {
-        return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+        return typeof window._getCharacterById === 'function' ? window._getCharacterById(id) : null;
+    }
+
+    function _getCharacters() {
+        return typeof window._getCharacters === 'function' ? window._getCharacters() : [];
     }
 
     function _getPlaceById(id) {
-        return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+        return typeof window._getPlaceById === 'function' ? window._getPlaceById(id) : null;
+    }
+
+    function _getPlaces() {
+        return typeof window._getPlaces === 'function' ? window._getPlaces() : [];
+    }
+
+    function _getLocationTypeById(id) {
+        return typeof window._getLocationTypeById === 'function' ? window._getLocationTypeById(id) : null;
     }
 
     function _getCurrentYear() {
-        if (typeof window.getCurrentYearSafe === 'function') return window.getCurrentYearSafe();
-        if (typeof window.getCurrentYear === 'function') return window.getCurrentYear();
-        return 1250;
+        return typeof window._getCurrentYear === 'function' ? window._getCurrentYear() : 1250;
     }
 
     function _saveMasterData() {
-        if (typeof window.saveMasterData === 'function') window.saveMasterData();
+        if (typeof window._saveMasterData === 'function') {
+            window._saveMasterData();
+        }
     }
 
-    function _logEvent(category, type, message, subjects) {
-        if (typeof window.logEvent === 'function') {
-            window.logEvent(category, type, message, subjects);
+    function _invalidateAccessorCaches() {
+        if (typeof window._invalidateAccessorCaches === 'function') {
+            window._invalidateAccessorCaches();
         }
     }
 
     function _showToast(message, type) {
-        if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(message, type);
+        if (typeof window._showToast === 'function') {
+            window._showToast(message, type);
         }
     }
 
@@ -74,110 +85,147 @@
     // 3. VALIDATION HELPERS
     // =========================================================================
 
-    function _validatePlace(data, isUpdate) {
+    function validatePlace(data, isUpdate) {
         isUpdate = isUpdate || false;
+        var result = { valid: true, reason: '' };
 
         if (!isUpdate) {
             if (!data.displayName || data.displayName.trim() === '') {
-                return { valid: false, reason: 'Place name is required' };
+                result.valid = false;
+                result.reason = 'Place name is required';
+                return result;
             }
             if (!data.typeId) {
-                return { valid: false, reason: 'Location type is required' };
+                result.valid = false;
+                result.reason = 'Location type is required';
+                return result;
             }
         }
 
         if (data.displayName) {
             var trimmed = data.displayName.trim();
             if (trimmed.length < 2) {
-                return { valid: false, reason: 'Place name must be at least 2 characters' };
+                result.valid = false;
+                result.reason = 'Place name must be at least 2 characters';
+                return result;
             }
         }
 
         if (data.typeId) {
             var type = LocationState.getLocationType(data.typeId);
             if (!type) {
-                return { valid: false, reason: 'Location type not found' };
+                result.valid = false;
+                result.reason = 'Location type not found';
+                return result;
             }
         }
 
         if (data.parentId) {
             var parent = LocationState.getPlace(data.parentId);
             if (!parent) {
-                return { valid: false, reason: 'Parent place not found' };
+                result.valid = false;
+                result.reason = 'Parent place not found';
+                return result;
             }
-            if (!isUpdate && data.parentId === data.id) {
-                return { valid: false, reason: 'Place cannot be its own parent' };
+            if (!isUpdate && data.id && data.parentId === data.id) {
+                result.valid = false;
+                result.reason = 'Place cannot be its own parent';
+                return result;
             }
-            // Check for circular reference
-            if (LocationState.isAncestorOf(data.id, data.parentId)) {
-                return { valid: false, reason: 'Would create circular reference' };
+            if (data.id && LocationState.isAncestorOf(data.id, data.parentId)) {
+                result.valid = false;
+                result.reason = 'Would create circular reference';
+                return result;
             }
         }
 
-        return { valid: true };
+        return result;
     }
 
-    function _validateLocationType(data, isUpdate) {
+    function validateLocationType(data, isUpdate) {
         isUpdate = isUpdate || false;
+        var result = { valid: true, reason: '' };
 
         if (!isUpdate) {
             if (!data.displayName || data.displayName.trim() === '') {
-                return { valid: false, reason: 'Location type name is required' };
+                result.valid = false;
+                result.reason = 'Location type name is required';
+                return result;
             }
         }
 
         if (data.displayName) {
             var trimmed = data.displayName.trim();
             if (trimmed.length < 2) {
-                return { valid: false, reason: 'Location type name must be at least 2 characters' };
+                result.valid = false;
+                result.reason = 'Location type name must be at least 2 characters';
+                return result;
             }
         }
 
         if (data.priority !== undefined) {
             if (typeof data.priority !== 'number' || data.priority < 1 || data.priority > 5) {
-                return { valid: false, reason: 'Priority must be between 1 and 5' };
+                result.valid = false;
+                result.reason = 'Priority must be between 1 and 5';
+                return result;
             }
         }
 
-        return { valid: true };
+        return result;
     }
 
-    function _validateMove(characterId, locationId, year) {
+    function validateMove(characterId, locationId, year) {
+        var result = { valid: true, reason: '' };
+
         if (!characterId) {
-            return { valid: false, reason: 'Character is required' };
+            result.valid = false;
+            result.reason = 'Character is required';
+            return result;
         }
 
         var character = _getCharacterById(characterId);
         if (!character) {
-            return { valid: false, reason: 'Character not found' };
+            result.valid = false;
+            result.reason = 'Character not found';
+            return result;
         }
 
         if (!locationId) {
-            return { valid: false, reason: 'Destination location is required' };
+            result.valid = false;
+            result.reason = 'Destination location is required';
+            return result;
         }
 
         var place = LocationState.getPlace(locationId);
         if (!place) {
-            return { valid: false, reason: 'Location not found' };
+            result.valid = false;
+            result.reason = 'Location not found';
+            return result;
         }
 
         if (character.isDeceased) {
-            return { valid: false, reason: 'Character is deceased' };
+            result.valid = false;
+            result.reason = 'Character is deceased';
+            return result;
         }
 
         var moveYear = year || _getCurrentYear();
         if (character.birthYear && moveYear < character.birthYear) {
-            return { valid: false, reason: 'Move year cannot be before character birth' };
+            result.valid = false;
+            result.reason = 'Move year cannot be before character birth';
+            return result;
         }
 
         var moves = LocationState.getMoveHistory(characterId);
         for (var i = 0; i < moves.length; i++) {
             if (moves[i].year > moveYear) {
-                return { valid: false, reason: 'Move year is before a later recorded move' };
+                result.valid = false;
+                result.reason = 'Move year is before a later recorded move';
+                return result;
             }
         }
 
-        return { valid: true };
+        return result;
     }
 
     // =========================================================================
@@ -186,12 +234,13 @@
 
     function createPlace(data) {
         if (_processingCommand) {
+            _showToast('Command already in progress', 'warning');
             return null;
         }
         _processingCommand = true;
 
         try {
-            var validation = _validatePlace(data, false);
+            var validation = validatePlace(data, false);
             if (!validation.valid) {
                 _showToast(validation.reason, 'error');
                 return null;
@@ -205,16 +254,14 @@
                 variableKey: data.variableKey || data.displayName.toLowerCase().replace(/[^a-z0-9]/g, '_'),
                 status: data.status || 'active',
                 isCapital: data.isCapital || false,
+                cultureId: data.cultureId || null,
                 notes: data.notes || '',
                 createdAt: Date.now(),
                 updatedAt: Date.now()
             };
 
+            // Use LocationState's internal method
             LocationState._addPlace(place);
-
-            _logEvent('location', 'place_created',
-                'Place "' + place.displayName + '" created',
-                []);
 
             _showToast('Place "' + place.displayName + '" created', 'success');
             return place;
@@ -226,6 +273,7 @@
 
     function updatePlace(placeId, updates) {
         if (_processingCommand) {
+            _showToast('Command already in progress', 'warning');
             return null;
         }
         _processingCommand = true;
@@ -237,17 +285,13 @@
                 return null;
             }
 
-            var validation = _validatePlace(updates, true);
+            var validation = validatePlace(updates, true);
             if (!validation.valid) {
                 _showToast(validation.reason, 'error');
                 return null;
             }
 
             var result = LocationState._updatePlace(placeId, updates);
-
-            _logEvent('location', 'place_updated',
-                'Place "' + place.displayName + '" updated',
-                []);
 
             _showToast('Place updated', 'success');
             return result;
@@ -259,6 +303,7 @@
 
     function deletePlace(placeId, options) {
         if (_processingCommand) {
+            _showToast('Command already in progress', 'warning');
             return false;
         }
         _processingCommand = true;
@@ -288,10 +333,6 @@
 
             var result = LocationState._deletePlace(placeId);
 
-            _logEvent('location', 'place_deleted',
-                'Place "' + place.displayName + '" deleted' + (cascade ? ' (cascade)' : ''),
-                []);
-
             _showToast('Place deleted', 'info');
             return result;
 
@@ -306,12 +347,13 @@
 
     function createLocationType(data) {
         if (_processingCommand) {
+            _showToast('Command already in progress', 'warning');
             return null;
         }
         _processingCommand = true;
 
         try {
-            var validation = _validateLocationType(data, false);
+            var validation = validateLocationType(data, false);
             if (!validation.valid) {
                 _showToast(validation.reason, 'error');
                 return null;
@@ -327,10 +369,6 @@
 
             LocationState._addLocationType(type);
 
-            _logEvent('location', 'type_created',
-                'Location type "' + type.displayName + '" created',
-                []);
-
             _showToast('Location type "' + type.displayName + '" created', 'success');
             return type;
 
@@ -341,6 +379,7 @@
 
     function updateLocationType(typeId, updates) {
         if (_processingCommand) {
+            _showToast('Command already in progress', 'warning');
             return null;
         }
         _processingCommand = true;
@@ -352,17 +391,13 @@
                 return null;
             }
 
-            var validation = _validateLocationType(updates, true);
+            var validation = validateLocationType(updates, true);
             if (!validation.valid) {
                 _showToast(validation.reason, 'error');
                 return null;
             }
 
             var result = LocationState._updateLocationType(typeId, updates);
-
-            _logEvent('location', 'type_updated',
-                'Location type "' + type.displayName + '" updated',
-                []);
 
             _showToast('Location type updated', 'success');
             return result;
@@ -374,6 +409,7 @@
 
     function deleteLocationType(typeId) {
         if (_processingCommand) {
+            _showToast('Command already in progress', 'warning');
             return false;
         }
         _processingCommand = true;
@@ -393,10 +429,6 @@
 
             var result = LocationState._deleteLocationType(typeId);
 
-            _logEvent('location', 'type_deleted',
-                'Location type "' + type.displayName + '" deleted',
-                []);
-
             _showToast('Location type deleted', 'info');
             return result;
 
@@ -411,6 +443,7 @@
 
     function recordMove(characterId, locationId, options) {
         if (_processingCommand) {
+            _showToast('Command already in progress', 'warning');
             return false;
         }
         _processingCommand = true;
@@ -419,10 +452,9 @@
             options = options || {};
             var year = options.year || _getCurrentYear();
             var note = options.note || null;
-            var skipBirthRecord = options.skipBirthRecord || false;
             var fromLocationId = options.fromLocationId || null;
 
-            var validation = _validateMove(characterId, locationId, year);
+            var validation = validateMove(characterId, locationId, year);
             if (!validation.valid) {
                 _showToast(validation.reason, 'error');
                 return false;
@@ -449,12 +481,8 @@
 
             if (result) {
                 var character = _getCharacterById(characterId);
-                _logEvent('movement', 'move_recorded',
-                    (character ? character.name : 'Character') + ' moved to ' + (place ? place.displayName : 'unknown location') +
-                    (note ? ' (' + note + ')' : ''),
-                    character ? [character] : []);
-
-                _showToast('Move recorded', 'success');
+                var name = character ? character.name : 'Character';
+                _showToast(name + ' moved to ' + (place ? place.displayName : 'unknown location'), 'success');
             }
 
             return result;
@@ -466,6 +494,7 @@
 
     function editMove(characterId, moveIndex, updates) {
         if (_processingCommand) {
+            _showToast('Command already in progress', 'warning');
             return false;
         }
         _processingCommand = true;
@@ -494,10 +523,6 @@
             var result = LocationState._editMove(characterId, moveIndex, updates);
 
             if (result) {
-                _logEvent('movement', 'move_edited',
-                    character.name + ' move edited',
-                    [character]);
-
                 _showToast('Move updated', 'success');
             }
 
@@ -510,6 +535,7 @@
 
     function deleteMove(characterId, moveIndex) {
         if (_processingCommand) {
+            _showToast('Command already in progress', 'warning');
             return false;
         }
         _processingCommand = true;
@@ -530,10 +556,6 @@
             var result = LocationState._deleteMove(characterId, moveIndex);
 
             if (result) {
-                _logEvent('movement', 'move_deleted',
-                    character.name + ' move deleted',
-                    [character]);
-
                 _showToast('Move deleted', 'info');
             }
 
@@ -546,6 +568,7 @@
 
     function bulkRecordMoves(moves) {
         if (_processingCommand) {
+            _showToast('Command already in progress', 'warning');
             return null;
         }
         _processingCommand = true;
@@ -565,7 +588,6 @@
                     {
                         year: move.year,
                         note: move.note,
-                        skipBirthRecord: move.skipBirthRecord || false,
                         fromLocationId: move.fromLocationId || null,
                         isBirthMove: move.isBirthMove || false
                     }
@@ -592,6 +614,7 @@
 
     function assignGovernment(placeId, governmentTypeId, governmentStyle) {
         if (_processingCommand) {
+            _showToast('Command already in progress', 'warning');
             return false;
         }
         _processingCommand = true;
@@ -609,10 +632,6 @@
             });
 
             if (result) {
-                _logEvent('government', 'assigned',
-                    'Government assigned to ' + place.displayName,
-                    []);
-
                 _showToast('Government assigned', 'success');
             }
 
@@ -629,6 +648,7 @@
 
     function assignLeader(placeId, characterId, startYear, title) {
         if (_processingCommand) {
+            _showToast('Command already in progress', 'warning');
             return null;
         }
         _processingCommand = true;
@@ -655,11 +675,12 @@
             for (var i = 0; i < place.leaderAssignments.length; i++) {
                 if (place.leaderAssignments[i].isActive && !place.leaderAssignments[i].endYear) {
                     place.leaderAssignments[i].isActive = false;
-                    place.leaderAssignments[i].endYear = startYear - 1;
+                    place.leaderAssignments[i].endYear = (startYear || _getCurrentYear()) - 1;
                 }
             }
 
             var assignment = {
+                id: _generateId('lead'),
                 characterId: characterId,
                 characterName: character.name,
                 startYear: startYear || _getCurrentYear(),
@@ -677,10 +698,6 @@
             _saveMasterData();
             LocationState.invalidateCache();
 
-            _logEvent('leadership', 'assigned',
-                character.name + ' assigned as leader of ' + place.displayName,
-                [character]);
-
             _showToast('Leader assigned', 'success');
             return assignment;
 
@@ -691,6 +708,7 @@
 
     function endLeaderTerm(placeId, characterId, endYear) {
         if (_processingCommand) {
+            _showToast('Command already in progress', 'warning');
             return false;
         }
         _processingCommand = true;
@@ -729,10 +747,6 @@
             _saveMasterData();
             LocationState.invalidateCache();
 
-            _logEvent('leadership', 'term_ended',
-                'Leader term ended',
-                []);
-
             _showToast('Leader term ended', 'info');
             return true;
 
@@ -742,11 +756,61 @@
     }
 
     // =========================================================================
-    // 9. FIX UNKNOWN LOCATIONS
+    // 9. CULTURE COMMANDS
+    // =========================================================================
+
+    function updatePlaceCulture(placeId, cultureId) {
+        if (_processingCommand) {
+            _showToast('Command already in progress', 'warning');
+            return false;
+        }
+        _processingCommand = true;
+
+        try {
+            var place = LocationState.getPlace(placeId);
+            if (!place) {
+                _showToast('Place not found', 'error');
+                return false;
+            }
+
+            // If cultureId is provided, verify it exists (if CultureState available)
+            if (cultureId) {
+                try {
+                    if (typeof window.CultureState !== 'undefined' &&
+                        typeof window.CultureState.getCulture === 'function') {
+                        var culture = window.CultureState.getCulture(cultureId);
+                        if (!culture) {
+                            _showToast('Culture not found', 'error');
+                            return false;
+                        }
+                    }
+                } catch (e) {
+                    // CultureState not available, skip validation
+                }
+            }
+
+            var result = LocationState._updatePlace(placeId, {
+                cultureId: cultureId || null
+            });
+
+            if (result) {
+                _showToast('Culture updated for ' + place.displayName, 'success');
+            }
+
+            return !!result;
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    // =========================================================================
+    // 10. FIX UNKNOWN LOCATIONS
     // =========================================================================
 
     function fixUnknownLocations(options) {
         if (_processingCommand) {
+            _showToast('Command already in progress', 'warning');
             return 0;
         }
         _processingCommand = true;
@@ -755,9 +819,9 @@
             options = options || {};
             var saveAfter = options.saveAfter !== false;
 
-            var characters = typeof window.getCharacters === 'function' ? window.getCharacters() : [];
+            var characters = _getCharacters();
             var fixed = 0;
-            var places = typeof window.getPlaces === 'function' ? window.getPlaces() : [];
+            var places = _getPlaces();
             var placeMap = {};
 
             for (var i = 0; i < places.length; i++) {
@@ -818,7 +882,7 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 11. EXPORTS
     // =========================================================================
 
     window.LocationCommands = {
@@ -845,13 +909,16 @@
         assignLeader: assignLeader,
         endLeaderTerm: endLeaderTerm,
 
+        // Culture
+        updatePlaceCulture: updatePlaceCulture,
+
         // Fix locations
         fixUnknownLocations: fixUnknownLocations,
 
         // Validation (exposed for UI)
-        validatePlace: _validatePlace,
-        validateLocationType: _validateLocationType,
-        validateMove: _validateMove
+        validatePlace: validatePlace,
+        validateLocationType: validateLocationType,
+        validateMove: validateMove
     };
 
 })();

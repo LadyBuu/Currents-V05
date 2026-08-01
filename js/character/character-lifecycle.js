@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * STILL WATERS - CHARACTER LIFECYCLE (js/core/character/character-lifecycle.js)
+ * STILL WATERS - CHARACTER LIFECYCLE js/character/character-lifecycle.js
  * =============================================================================
  * 
  * Business logic for character lifecycle (birth, aging, death, inheritance).
@@ -16,6 +16,7 @@
  *   - getLifeStageName(), isElderly()
  *   - groupCharactersByAgeGroup()
  *   - getExpectedRemainingYears()
+ *   - FAMILY ACCESSORS - Uses FamilyAccessors for heir finding
  * 
  * ICON STYLE: Uses SVG icons from icons.js - NO EMOJIS
  * 
@@ -25,6 +26,7 @@
  *   - character-queries.js (CharacterQueries)
  *   - time.js (calculateAge, getCurrentYearSafe)
  *   - constants.js (AGE_GROUPS, LIFE_STAGES, DEATH_CAUSES)
+ *   - family-accessors.js (FamilyAccessors) - NEW
  * 
  * =============================================================================
  */
@@ -131,7 +133,53 @@
     }
 
     // =========================================================================
-    // 3. DEPENDENCY WRAPPERS
+    // 3. FAMILY ACCESSORS WRAPPER (NEW)
+    // =========================================================================
+
+    function _getFamilyAccessors() {
+        return typeof window.FamilyAccessors !== 'undefined' ? window.FamilyAccessors : null;
+    }
+
+    function _getChildrenViaFamilyAccessors(parentId, includeDeceased) {
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.getAllChildren === 'function') {
+            var result = fa.getAllChildren(parentId, includeDeceased || false);
+            if (result) {
+                return result.map(function(item) { return item.character; });
+            }
+        }
+        return null;
+    }
+
+    function _getParentsViaFamilyAccessors(childId) {
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.getParents === 'function') {
+            return fa.getParents(childId);
+        }
+        return null;
+    }
+
+    function _getSiblingsViaFamilyAccessors(childId, includeHalfSiblings, includeDeceased) {
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.getSiblings === 'function') {
+            var result = fa.getSiblings(childId, includeHalfSiblings !== false, includeDeceased || false);
+            if (result) {
+                return result.map(function(item) { return item.character; });
+            }
+        }
+        return null;
+    }
+
+    function _getFamilyStatisticsViaFamilyAccessors(characterId) {
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.getFamilyStatistics === 'function') {
+            return fa.getFamilyStatistics(characterId);
+        }
+        return null;
+    }
+
+    // =========================================================================
+    // 4. DEPENDENCY WRAPPERS
     // =========================================================================
 
     function _getState() {
@@ -247,14 +295,14 @@
     }
 
     // =========================================================================
-    // 4. RECURSION GUARD
+    // 5. RECURSION GUARD
     // =========================================================================
 
     var _processing = false;
     var _processingInheritance = false;
 
     // =========================================================================
-    // 5. DEATH CAUSES
+    // 6. DEATH CAUSES
     // =========================================================================
 
     var DEATH_CAUSES = window.DEATH_CAUSES;
@@ -286,7 +334,7 @@
     }
 
     // =========================================================================
-    // 6. LIFE STAGES FUNCTIONS
+    // 7. LIFE STAGES FUNCTIONS
     // =========================================================================
 
     function getLifeStage(charOrAge) {
@@ -393,7 +441,7 @@
     }
 
     // =========================================================================
-    // 7. KILL CHARACTER (Unified with inheritance)
+    // 8. KILL CHARACTER (Unified with inheritance)
     // =========================================================================
 
     function killCharacter(character, deathYear, deathCause, options) {
@@ -467,7 +515,7 @@
                 }
             }
 
-            // 4. PROCESS HOUSEHOLD INHERITANCE
+            // 4. PROCESS HOUSEHOLD INHERITANCE (UPDATED - Uses FamilyAccessors)
             var inheritanceResults = null;
             if (!options.skipInheritance) {
                 inheritanceResults = processHouseholdInheritance(characterId);
@@ -518,7 +566,7 @@
     }
 
     // =========================================================================
-    // 8. HOUSEHOLD INHERITANCE
+    // 9. HOUSEHOLD INHERITANCE (UPDATED - Uses FamilyAccessors)
     // =========================================================================
 
     function processHouseholdInheritance(characterId) {
@@ -537,7 +585,7 @@
                 if (result) return result;
             }
 
-            // Fallback implementation
+            // Fallback implementation - UPDATED to use FamilyAccessors
             var households = _getAllHouseholds();
             var character = _getCharacterById(characterId);
 
@@ -557,27 +605,74 @@
                 }
 
                 if (isHead) {
-                    // Find heirs using household assignment if available
+                    // ============================================================
+                    // UPDATED: Find heirs using FamilyAccessors
+                    // ============================================================
                     var heirs = [];
-                    if (typeof window.getHouseholdHeirs === 'function') {
-                        heirs = window.getHouseholdHeirs(household.id, characterId);
-                    } else {
-                        // Simple heir finding: look for eldest living child
-                        var children = [];
+
+                    // Try FamilyAccessors first
+                    var fa = _getFamilyAccessors();
+                    if (fa && typeof fa.getAllChildren === 'function') {
+                        var childrenResult = fa.getAllChildren(characterId, false);
+                        if (childrenResult) {
+                            // Children are already sorted by birth year (eldest first)
+                            for (var c = 0; c < childrenResult.length; c++) {
+                                var child = childrenResult[c].character;
+                                if (!child.isDeceased) {
+                                    heirs.push({ character: child, relationship: childrenResult[c].type });
+                                }
+                            }
+                        }
+                    }
+
+                    // Fallback: use CharacterQueries
+                    if (heirs.length === 0 && typeof window.CharacterQueries !== 'undefined') {
+                        var queries = window.CharacterQueries;
+                        if (typeof queries.getCharacterChildren === 'function') {
+                            var childChars = queries.getCharacterChildren(characterId, false);
+                            for (var c = 0; c < childChars.length; c++) {
+                                heirs.push({ character: childChars[c], relationship: 'biological' });
+                            }
+                        }
+                    }
+
+                    // Ultimate fallback: direct data access
+                    if (heirs.length === 0) {
                         var allChars = _getCharacters();
                         for (var c = 0; c < allChars.length; c++) {
                             if (allChars[c].motherId === characterId || allChars[c].fatherId === characterId) {
                                 if (!allChars[c].isDeceased) {
-                                    children.push(allChars[c]);
+                                    heirs.push({ character: allChars[c], relationship: 'biological' });
                                 }
                             }
                         }
-                        children.sort(function(a, b) {
-                            return (a.birthYear || 0) - (b.birthYear || 0);
+                        // Sort by birth year (eldest first)
+                        heirs.sort(function(a, b) {
+                            return (a.character.birthYear || 0) - (b.character.birthYear || 0);
                         });
-                        for (var c = 0; c < children.length; c++) {
-                            heirs.push({ character: children[c] });
+                    }
+
+                    // Additional: Check for adopted children
+                    if (character.adoptedChildren) {
+                        for (var c = 0; c < character.adoptedChildren.length; c++) {
+                            var adopted = _getCharacterById(character.adoptedChildren[c].childId);
+                            if (adopted && !adopted.isDeceased) {
+                                var exists = false;
+                                for (var h = 0; h < heirs.length; h++) {
+                                    if (heirs[h].character.id === adopted.id) {
+                                        exists = true;
+                                        break;
+                                    }
+                                }
+                                if (!exists) {
+                                    heirs.push({ character: adopted, relationship: 'adopted' });
+                                }
+                            }
                         }
+                        // Re-sort after adding adopted children
+                        heirs.sort(function(a, b) {
+                            return (a.character.birthYear || 0) - (b.character.birthYear || 0);
+                        });
                     }
 
                     if (heirs.length > 0) {
@@ -587,15 +682,32 @@
                             results.push({
                                 household: household.name,
                                 heir: heir.name,
+                                relationship: heirs[0].relationship || 'unknown',
                                 success: transferResult ? true : false
                             });
                         } else {
-                            results.push({
-                                household: household.name,
-                                heir: heir.name,
-                                success: false,
-                                reason: 'Transfer function not available'
-                            });
+                            // Attempt to add heir as household head directly
+                            if (typeof window.addHouseholdMember === 'function') {
+                                var added = window.addHouseholdMember(household.id, heir.id, 'family', {
+                                    role: 'Head of Household',
+                                    isHead: true,
+                                    joinedYear: _getCurrentYear(),
+                                    notes: 'Inherited from ' + character.name
+                                });
+                                results.push({
+                                    household: household.name,
+                                    heir: heir.name,
+                                    success: added ? true : false,
+                                    reason: added ? null : 'Failed to transfer'
+                                });
+                            } else {
+                                results.push({
+                                    household: household.name,
+                                    heir: heir.name,
+                                    success: false,
+                                    reason: 'Transfer function not available'
+                                });
+                            }
                         }
                     } else {
                         // No heirs - mark as abandoned
@@ -658,9 +770,49 @@
                 }
 
                 if (deceasedHead) {
+                    // ============================================================
+                    // UPDATED: Find heirs using FamilyAccessors
+                    // ============================================================
                     var heirs = [];
-                    if (typeof window.getHouseholdHeirs === 'function') {
-                        heirs = window.getHouseholdHeirs(household.id, deceasedHead.id);
+
+                    // Try FamilyAccessors first
+                    var fa = _getFamilyAccessors();
+                    if (fa && typeof fa.getAllChildren === 'function') {
+                        var childrenResult = fa.getAllChildren(deceasedHead.id, false);
+                        if (childrenResult) {
+                            for (var c = 0; c < childrenResult.length; c++) {
+                                var child = childrenResult[c].character;
+                                if (!child.isDeceased) {
+                                    heirs.push({ character: child, relationship: childrenResult[c].type });
+                                }
+                            }
+                        }
+                    }
+
+                    // Fallback: use CharacterQueries
+                    if (heirs.length === 0 && typeof window.CharacterQueries !== 'undefined') {
+                        var queries = window.CharacterQueries;
+                        if (typeof queries.getCharacterChildren === 'function') {
+                            var childChars = queries.getCharacterChildren(deceasedHead.id, false);
+                            for (var c = 0; c < childChars.length; c++) {
+                                heirs.push({ character: childChars[c], relationship: 'biological' });
+                            }
+                        }
+                    }
+
+                    // Ultimate fallback: direct data access
+                    if (heirs.length === 0) {
+                        var allChars = _getCharacters();
+                        for (var c = 0; c < allChars.length; c++) {
+                            if (allChars[c].motherId === deceasedHead.id || allChars[c].fatherId === deceasedHead.id) {
+                                if (!allChars[c].isDeceased) {
+                                    heirs.push({ character: allChars[c], relationship: 'biological' });
+                                }
+                            }
+                        }
+                        heirs.sort(function(a, b) {
+                            return (a.character.birthYear || 0) - (b.character.birthYear || 0);
+                        });
                     }
 
                     if (heirs && heirs.length > 0) {
@@ -682,6 +834,41 @@
                                     heir: heir.name,
                                     success: false,
                                     reason: 'Failed to transfer'
+                                });
+                            }
+                        } else {
+                            // Attempt to add heir as household head directly
+                            if (typeof window.addHouseholdMember === 'function') {
+                                var added = window.addHouseholdMember(household.id, heir.id, 'family', {
+                                    role: 'Head of Household',
+                                    isHead: true,
+                                    joinedYear: _getCurrentYear(),
+                                    notes: 'Inherited from ' + deceasedHead.name
+                                });
+                                if (added) {
+                                    successCount++;
+                                    results.push({
+                                        household: household.name,
+                                        heir: heir.name,
+                                        success: true,
+                                        reason: 'Succession complete'
+                                    });
+                                } else {
+                                    failCount++;
+                                    results.push({
+                                        household: household.name,
+                                        heir: heir.name,
+                                        success: false,
+                                        reason: 'Failed to transfer'
+                                    });
+                                }
+                            } else {
+                                failCount++;
+                                results.push({
+                                    household: household.name,
+                                    heir: heir.name,
+                                    success: false,
+                                    reason: 'Transfer function not available'
                                 });
                             }
                         }
@@ -735,7 +922,7 @@
     }
 
     // =========================================================================
-    // 9. AGING MORTALITY
+    // 10. AGING MORTALITY
     // =========================================================================
 
     function applyAgingMortality(character, yearsAdvanced) {
@@ -779,7 +966,7 @@
     }
 
     // =========================================================================
-    // 10. LIFESPAN PREDICTION
+    // 11. LIFESPAN PREDICTION
     // =========================================================================
 
     function predictLifespan(character) {
@@ -810,7 +997,7 @@
     }
 
     // =========================================================================
-    // 11. DEATH EVENT WRAPPERS (Natural & Accidental)
+    // 12. DEATH EVENT WRAPPERS (Natural & Accidental)
     // =========================================================================
 
     function triggerNaturalDeath(character, deathYear, options) {
@@ -865,7 +1052,244 @@
     }
 
     // =========================================================================
-    // 12. EXPORTS
+    // 13. FAMILY STATISTICS HELPERS (NEW - Using FamilyAccessors)
+    // =========================================================================
+
+    /**
+     * Gets family statistics for a character (using FamilyAccessors if available)
+     * @param {string} characterId - Character ID
+     * @returns {Object|null} Family statistics
+     */
+    function getCharacterFamilyStatistics(characterId) {
+        if (_processing) return null;
+        _processing = true;
+
+        try {
+            // Prefer FamilyAccessors
+            var fa = _getFamilyAccessors();
+            if (fa && typeof fa.getFamilyStatistics === 'function') {
+                return fa.getFamilyStatistics(characterId);
+            }
+
+            // Fallback: use CharacterQueries
+            if (typeof window.CharacterQueries !== 'undefined' &&
+                typeof window.CharacterQueries.getCharacterFamilyStatistics === 'function') {
+                return window.CharacterQueries.getCharacterFamilyStatistics(characterId);
+            }
+
+            return null;
+        } finally {
+            _processing = false;
+        }
+    }
+
+    /**
+     * Gets the primary heir for a character (using FamilyAccessors)
+     * @param {string} characterId - Character ID
+     * @param {Object} options - Options
+     * @param {boolean} options.includeAdopted - Include adopted children (default: true)
+     * @param {boolean} options.onlyLegitimate - Only legitimate children (default: false)
+     * @param {string} options.genderPreference - 'male', 'female', or null
+     * @returns {Object|null} Heir character or null
+     */
+    function getPrimaryHeir(characterId, options) {
+        if (_processing) return null;
+        _processing = true;
+
+        try {
+            options = options || {};
+            var fa = _getFamilyAccessors();
+
+            // Use FamilyAccessors if available
+            if (fa && typeof fa.getAllChildren === 'function') {
+                var children = fa.getAllChildren(characterId, false);
+                if (!children) return null;
+
+                // Filter by legitimacy
+                if (options.onlyLegitimate) {
+                    children = children.filter(function(c) { return c.character.isLegitimate !== false; });
+                }
+
+                // Filter by gender preference
+                if (options.genderPreference) {
+                    children = children.filter(function(c) { return c.character.gender === options.genderPreference; });
+                }
+
+                // Filter adopted if needed
+                if (!options.includeAdopted) {
+                    children = children.filter(function(c) { return c.type === 'biological'; });
+                }
+
+                if (children.length === 0) return null;
+
+                // Return eldest living child
+                for (var i = 0; i < children.length; i++) {
+                    if (!children[i].character.isDeceased) {
+                        return children[i].character;
+                    }
+                }
+
+                // If all deceased, return eldest
+                return children[0].character;
+            }
+
+            // Fallback: use CharacterQueries
+            if (typeof window.CharacterQueries !== 'undefined' &&
+                typeof window.CharacterQueries.getCharacterChildren === 'function') {
+                var children = window.CharacterQueries.getCharacterChildren(characterId, false);
+                if (!children || children.length === 0) return null;
+
+                // Filter by legitimacy
+                if (options.onlyLegitimate) {
+                    children = children.filter(function(c) { return c.isLegitimate !== false; });
+                }
+
+                // Filter by gender preference
+                if (options.genderPreference) {
+                    children = children.filter(function(c) { return c.gender === options.genderPreference; });
+                }
+
+                // Filter adopted if needed
+                if (!options.includeAdopted) {
+                    children = children.filter(function(c) {
+                        return c.motherId === characterId || c.fatherId === characterId;
+                    });
+                }
+
+                // Return eldest living child
+                for (var i = 0; i < children.length; i++) {
+                    if (!children[i].isDeceased) {
+                        return children[i];
+                    }
+                }
+
+                return children[0];
+            }
+
+            return null;
+        } finally {
+            _processing = false;
+        }
+    }
+
+    /**
+     * Gets all potential heirs for a character (including siblings and extended family)
+     * @param {string} characterId - Character ID
+     * @param {Object} options - Options
+     * @returns {Array} Array of potential heir characters with relationship info
+     */
+    function getPotentialHeirs(characterId, options) {
+        if (_processing) return [];
+        _processing = true;
+
+        try {
+            options = options || {};
+            var fa = _getFamilyAccessors();
+            var heirs = [];
+
+            // 1. Primary heirs: children
+            var children = [];
+            if (fa && typeof fa.getAllChildren === 'function') {
+                var childrenResult = fa.getAllChildren(characterId, false);
+                if (childrenResult) {
+                    children = childrenResult.map(function(c) { return { character: c.character, relationship: c.type }; });
+                }
+            } else if (typeof window.CharacterQueries !== 'undefined' &&
+                typeof window.CharacterQueries.getCharacterChildren === 'function') {
+                var childChars = window.CharacterQueries.getCharacterChildren(characterId, false);
+                children = childChars.map(function(c) { return { character: c, relationship: 'biological' }; });
+            }
+
+            // Filter children
+            if (options.onlyLegitimate) {
+                children = children.filter(function(c) { return c.character.isLegitimate !== false; });
+            }
+            if (options.genderPreference) {
+                children = children.filter(function(c) { return c.character.gender === options.genderPreference; });
+            }
+            if (!options.includeAdopted) {
+                children = children.filter(function(c) { return c.relationship !== 'adopted'; });
+            }
+
+            for (var i = 0; i < children.length; i++) {
+                heirs.push({
+                    character: children[i].character,
+                    relationship: children[i].relationship === 'biological' ? 'Child' : 'Adopted Child',
+                    priority: 1
+                });
+            }
+
+            // 2. Secondary heirs: siblings (if no children)
+            if (heirs.length === 0 || options.includeSiblings) {
+                var siblings = [];
+                if (fa && typeof fa.getSiblings === 'function') {
+                    var siblingsResult = fa.getSiblings(characterId, true, false);
+                    if (siblingsResult) {
+                        siblings = siblingsResult.map(function(s) { return s.character; });
+                    }
+                } else if (typeof window.CharacterQueries !== 'undefined' &&
+                    typeof window.CharacterQueries.getCharacterSiblings === 'function') {
+                    siblings = window.CharacterQueries.getCharacterSiblings(characterId, true, false);
+                }
+
+                for (var i = 0; i < siblings.length; i++) {
+                    heirs.push({
+                        character: siblings[i],
+                        relationship: 'Sibling',
+                        priority: 2
+                    });
+                }
+            }
+
+            // 3. Tertiary heirs: parents (if no children or siblings)
+            if (heirs.length === 0 || options.includeParents) {
+                var parents = [];
+                if (fa && typeof fa.getParents === 'function') {
+                    var parentsResult = fa.getParents(characterId);
+                    if (parentsResult) {
+                        if (parentsResult.father) parents.push(parentsResult.father);
+                        if (parentsResult.mother) parents.push(parentsResult.mother);
+                    }
+                } else if (typeof window.CharacterQueries !== 'undefined' &&
+                    typeof window.CharacterQueries.getCharacterParents === 'function') {
+                    var parentsResult = window.CharacterQueries.getCharacterParents(characterId, false);
+                    if (parentsResult.father) parents.push(parentsResult.father);
+                    if (parentsResult.mother) parents.push(parentsResult.mother);
+                }
+
+                for (var i = 0; i < parents.length; i++) {
+                    heirs.push({
+                        character: parents[i],
+                        relationship: 'Parent',
+                        priority: 3
+                    });
+                }
+            }
+
+            // Remove duplicates
+            var seenIds = {};
+            var uniqueHeirs = [];
+            for (var i = 0; i < heirs.length; i++) {
+                if (heirs[i].character && !seenIds[heirs[i].character.id]) {
+                    seenIds[heirs[i].character.id] = true;
+                    uniqueHeirs.push(heirs[i]);
+                }
+            }
+
+            // Sort by priority then birth year
+            uniqueHeirs.sort(function(a, b) {
+                if (a.priority !== b.priority) return a.priority - b.priority;
+                return (a.character.birthYear || 0) - (b.character.birthYear || 0);
+            });
+
+            return uniqueHeirs;
+        } finally {
+            _processing = false;
+        }
+    }
+
+    // =========================================================================
+    // 14. EXPORTS
     // =========================================================================
 
     window.CharacterLifecycle = {
@@ -899,7 +1323,12 @@
         // Inheritance
         processHouseholdInheritance: processHouseholdInheritance,
         processAllPendingInheritance: processAllPendingInheritance,
-        hasPendingInheritance: hasPendingInheritance
+        hasPendingInheritance: hasPendingInheritance,
+
+        // Family Statistics (NEW)
+        getCharacterFamilyStatistics: getCharacterFamilyStatistics,
+        getPrimaryHeir: getPrimaryHeir,
+        getPotentialHeirs: getPotentialHeirs
     };
 
     if (typeof module !== 'undefined' && module.exports) {

@@ -1,14 +1,25 @@
 /**
  * =============================================================================
- * STILL WATERS - FAMILY LOGIC
+ * STILL WATERS - FAMILY LOGIC (js/social/family-logic.js)
  * =============================================================================
  * 
- * Family-specific business logic built on top of the relationship registry.
+ * Family-specific business logic built on top of FamilyAccessors and
+ * the relationship registry.
+ * 
+ * FEATURES:
+ *   - Parent-child relationship management
+ *   - Sibling relationship management
+ *   - Grandparent/grandchild queries
+ *   - Consanguinity calculations
+ *   - Relationship descriptions
+ *   - FAMILY ACCESSORS - Uses FamilyAccessors for data access
+ *   - RELATIONSHIP REGISTRY - Uses social system for relationship tracking
  * 
  * DEPENDENCIES:
  *   - relationship-registry.js (createRelationship, getRelationshipBetween)
  *   - relationship-types.js (RELATIONSHIP_ARCHETYPES, RELATIONSHIP_STATUS)
  *   - accessors.js (getCharacterById, getCharacters)
+ *   - family-accessors.js (FamilyAccessors) - NEW
  * 
  * =============================================================================
  */
@@ -60,8 +71,110 @@
         }
     }
 
+    function _invalidateCaches() {
+        if (typeof window.clearFamilyCache === 'function') {
+            window.clearFamilyCache();
+        }
+        if (typeof window.invalidateAccessorCaches === 'function') {
+            window.invalidateAccessorCaches();
+        }
+        var state = _getState();
+        if (state && typeof state.invalidateCache === 'function') {
+            state.invalidateCache();
+        }
+    }
+
     // =========================================================================
-    // 2. RELATIONSHIP REGISTRY WRAPPERS
+    // 2. FAMILY ACCESSORS WRAPPER (NEW)
+    // =========================================================================
+
+    function _getFamilyAccessors() {
+        return typeof window.FamilyAccessors !== 'undefined' ? window.FamilyAccessors : null;
+    }
+
+    function _getChildrenViaFamilyAccessors(parentId, includeDeceased) {
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.getAllChildren === 'function') {
+            var result = fa.getAllChildren(parentId, includeDeceased || false);
+            if (result) {
+                return result.map(function(item) { return item.character; });
+            }
+        }
+        return null;
+    }
+
+    function _getParentsViaFamilyAccessors(childId) {
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.getParents === 'function') {
+            return fa.getParents(childId);
+        }
+        return null;
+    }
+
+    function _getSiblingsViaFamilyAccessors(childId, includeHalfSiblings, includeDeceased) {
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.getSiblings === 'function') {
+            var result = fa.getSiblings(childId, includeHalfSiblings !== false, includeDeceased || false);
+            if (result) {
+                return result.map(function(item) { return item.character; });
+            }
+        }
+        return null;
+    }
+
+    function _getGrandparentsViaFamilyAccessors(childId, generation) {
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.getGrandparents === 'function') {
+            return fa.getGrandparents(childId, generation || 1);
+        }
+        return null;
+    }
+
+    function _getGrandchildrenViaFamilyAccessors(parentId, includeDeceased) {
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.getGrandchildren === 'function') {
+            return fa.getGrandchildren(parentId, includeDeceased || false);
+        }
+        return null;
+    }
+
+    function _getSpousesViaFamilyAccessors(characterId, activeOnly) {
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.getSpouses === 'function') {
+            var result = fa.getSpouses(characterId, activeOnly !== false);
+            if (result) {
+                return result.map(function(item) { return item.character; });
+            }
+        }
+        return null;
+    }
+
+    function _getConsanguinityViaFamilyAccessors(id1, id2) {
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.getConsanguinity === 'function') {
+            return fa.getConsanguinity(id1, id2);
+        }
+        return null;
+    }
+
+    function _getRelationshipDescriptionViaFamilyAccessors(id1, id2) {
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.getRelationshipDescription === 'function') {
+            return fa.getRelationshipDescription(id1, id2);
+        }
+        return null;
+    }
+
+    function _getConsanguinityDegreeViaFamilyAccessors(id1, id2) {
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.getConsanguinityDegree === 'function') {
+            return fa.getConsanguinityDegree(id1, id2);
+        }
+        return null;
+    }
+
+    // =========================================================================
+    // 3. RELATIONSHIP REGISTRY WRAPPERS
     // =========================================================================
 
     function _createRelationship(idA, idB, options) {
@@ -100,14 +213,14 @@
     }
 
     // =========================================================================
-    // 3. CONSTANTS
+    // 4. CONSTANTS
     // =========================================================================
 
     var ARCHETYPES = window.RELATIONSHIP_ARCHETYPES || {};
     var STATUS = window.RELATIONSHIP_STATUS || { ONGOING: 'ongoing' };
 
     // =========================================================================
-    // 4. PARENT-CHILD RELATIONSHIPS
+    // 5. PARENT-CHILD RELATIONSHIPS (UPDATED)
     // =========================================================================
 
     function setParent(childId, parentId, parentType, options) {
@@ -118,6 +231,47 @@
         if (!child || !parent) return null;
         if (childId === parentId) return null;
 
+        // ================================================================
+        // NEW: Use FamilyAccessors for data validation
+        // ================================================================
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.getParents === 'function') {
+            var existingParents = fa.getParents(childId);
+            // Check if this parent already exists
+            if (parentType === 'father' && existingParents.father && existingParents.father.id === parentId) {
+                // Update existing relationship metadata
+                var existing = _getRelationshipBetween(parentId, childId);
+                if (existing && existing.type === ARCHETYPES.PARENT_CHILD) {
+                    if (options.biological !== undefined) {
+                        _updateRelationship(existing.id, {
+                            metadata: {
+                                ...existing.metadata,
+                                parentType: parentType,
+                                biological: options.biological !== false
+                            }
+                        });
+                    }
+                    return existing;
+                }
+            }
+            if (parentType === 'mother' && existingParents.mother && existingParents.mother.id === parentId) {
+                var existing = _getRelationshipBetween(parentId, childId);
+                if (existing && existing.type === ARCHETYPES.PARENT_CHILD) {
+                    if (options.biological !== undefined) {
+                        _updateRelationship(existing.id, {
+                            metadata: {
+                                ...existing.metadata,
+                                parentType: parentType,
+                                biological: options.biological !== false
+                            }
+                        });
+                    }
+                    return existing;
+                }
+            }
+        }
+
+        // Check for existing relationship
         var existing = _getRelationshipBetween(parentId, childId);
         if (existing && existing.type === ARCHETYPES.PARENT_CHILD) {
             if (options.biological !== undefined) {
@@ -135,6 +289,16 @@
         var startYear = options.startYear || child.birthYear || _getCurrentYear();
         var biological = options.biological !== undefined ? options.biological : true;
 
+        // ================================================================
+        // NEW: Also update child's direct parent references for compatibility
+        // ================================================================
+        if (parentType === 'father' && !child.fatherId) {
+            child.fatherId = parentId;
+        } else if (parentType === 'mother' && !child.motherId) {
+            child.motherId = parentId;
+        }
+
+        // Create relationship
         var relationship = _createRelationship(parentId, childId, {
             type: ARCHETYPES.PARENT_CHILD,
             status: STATUS.ONGOING,
@@ -151,6 +315,8 @@
                 parent.name + ' set as ' + parentType + ' of ' + child.name,
                 [parent, child]);
             _synchronizeSiblingRelationships(parentId, childId);
+            _saveMasterData();
+            _invalidateCaches();
         }
 
         return relationship;
@@ -168,14 +334,33 @@
         var result = _endRelationship(relationship.id, endYear, options.reason || 'Parent removed');
 
         if (result) {
+            // ================================================================
+            // NEW: Also remove from direct parent references for compatibility
+            // ================================================================
+            var child = _getCharacterById(childId);
+            if (child) {
+                if (child.fatherId === parentId) child.fatherId = null;
+                if (child.motherId === parentId) child.motherId = null;
+            }
+
             _cleanupSiblingRelationships(parentId, childId);
             _saveMasterData();
+            _invalidateCaches();
         }
 
         return result;
     }
 
     function getParents(characterId) {
+        // ================================================================
+        // UPDATED: Prefer FamilyAccessors
+        // ================================================================
+        var faResult = _getParentsViaFamilyAccessors(characterId);
+        if (faResult !== null) {
+            return faResult;
+        }
+
+        // Fallback: use relationship registry
         var relationships = _getRelationshipsForCharacter(characterId, {
             type: ARCHETYPES.PARENT_CHILD,
             activeOnly: true
@@ -207,6 +392,16 @@
 
     function getChildren(characterId, activeOnly) {
         activeOnly = activeOnly !== undefined ? activeOnly : true;
+
+        // ================================================================
+        // UPDATED: Prefer FamilyAccessors
+        // ================================================================
+        var faResult = _getChildrenViaFamilyAccessors(characterId, false);
+        if (faResult !== null) {
+            return faResult;
+        }
+
+        // Fallback: use relationship registry
         var allChars = _getCharacters();
         var children = [];
 
@@ -225,22 +420,29 @@
     }
 
     // =========================================================================
-    // 5. SIBLING RELATIONSHIPS
+    // 6. SIBLING RELATIONSHIPS (UPDATED)
     // =========================================================================
 
     function _synchronizeSiblingRelationships(parentId, childId) {
         var parent = _getCharacterById(parentId);
         if (!parent) return;
 
-        var allChars = _getCharacters();
+        // ================================================================
+        // UPDATED: Use FamilyAccessors to get children
+        // ================================================================
         var siblings = [];
-
-        for (var i = 0; i < allChars.length; i++) {
-            var c = allChars[i];
-            if (c.id === parentId) continue;
-            var rel = _getRelationshipBetween(parentId, c.id);
-            if (rel && rel.type === ARCHETYPES.PARENT_CHILD) {
-                siblings.push(c);
+        var faResult = _getChildrenViaFamilyAccessors(parentId, false);
+        if (faResult !== null) {
+            siblings = faResult;
+        } else {
+            var allChars = _getCharacters();
+            for (var i = 0; i < allChars.length; i++) {
+                var c = allChars[i];
+                if (c.id === parentId) continue;
+                var rel = _getRelationshipBetween(parentId, c.id);
+                if (rel && rel.type === ARCHETYPES.PARENT_CHILD) {
+                    siblings.push(c);
+                }
             }
         }
 
@@ -275,11 +477,28 @@
             var sibling = siblings[i];
             var sharesParent = false;
 
-            var relA = _getRelationshipBetween(parentId, childId);
-            var relB = _getRelationshipBetween(parentId, sibling.id);
-            if (relA && relA.type === ARCHETYPES.PARENT_CHILD &&
-                relB && relB.type === ARCHETYPES.PARENT_CHILD) {
-                sharesParent = true;
+            // ================================================================
+            // UPDATED: Check if they still share a parent using FamilyAccessors
+            // ================================================================
+            var fa = _getFamilyAccessors();
+            if (fa && typeof fa.getParents === 'function') {
+                var childParents = fa.getParents(childId);
+                var siblingParents = fa.getParents(sibling.id);
+                if (childParents.father && siblingParents.father && childParents.father.id === siblingParents.father.id) {
+                    sharesParent = true;
+                }
+                if (childParents.mother && siblingParents.mother && childParents.mother.id === siblingParents.mother.id) {
+                    sharesParent = true;
+                }
+            }
+
+            if (!sharesParent) {
+                var relA = _getRelationshipBetween(parentId, childId);
+                var relB = _getRelationshipBetween(parentId, sibling.id);
+                if (relA && relA.type === ARCHETYPES.PARENT_CHILD &&
+                    relB && relB.type === ARCHETYPES.PARENT_CHILD) {
+                    sharesParent = true;
+                }
             }
 
             if (!sharesParent) {
@@ -293,6 +512,16 @@
 
     function getSiblings(characterId, activeOnly) {
         activeOnly = activeOnly !== undefined ? activeOnly : true;
+
+        // ================================================================
+        // UPDATED: Prefer FamilyAccessors
+        // ================================================================
+        var faResult = _getSiblingsViaFamilyAccessors(characterId, true, false);
+        if (faResult !== null) {
+            return faResult;
+        }
+
+        // Fallback: use relationship registry
         var relationships = _getRelationshipsForCharacter(characterId, {
             type: ARCHETYPES.SIBLING
         });
@@ -313,11 +542,21 @@
     }
 
     // =========================================================================
-    // 6. GRANDPARENT RELATIONSHIPS
+    // 7. GRANDPARENT RELATIONSHIPS (UPDATED)
     // =========================================================================
 
     function getGrandparents(characterId, generation) {
         generation = generation || 1;
+
+        // ================================================================
+        // UPDATED: Prefer FamilyAccessors
+        // ================================================================
+        var faResult = _getGrandparentsViaFamilyAccessors(characterId, generation);
+        if (faResult !== null) {
+            return faResult;
+        }
+
+        // Fallback: manual calculation
         var result = [];
 
         if (generation === 0) {
@@ -344,6 +583,16 @@
 
     function getGrandchildren(characterId, activeOnly) {
         activeOnly = activeOnly !== undefined ? activeOnly : true;
+
+        // ================================================================
+        // UPDATED: Prefer FamilyAccessors
+        // ================================================================
+        var faResult = _getGrandchildrenViaFamilyAccessors(characterId, false);
+        if (faResult !== null) {
+            return faResult;
+        }
+
+        // Fallback: manual calculation
         var children = getChildren(characterId, activeOnly);
         var grandchildren = [];
 
@@ -358,10 +607,19 @@
     }
 
     // =========================================================================
-    // 7. CONSANGUINITY
+    // 8. CONSANGUINITY (UPDATED)
     // =========================================================================
 
     function getConsanguinityDegree(charId1, charId2) {
+        // ================================================================
+        // UPDATED: Prefer FamilyAccessors
+        // ================================================================
+        var faResult = _getConsanguinityViaFamilyAccessors(charId1, charId2);
+        if (faResult !== null) {
+            return faResult;
+        }
+
+        // Fallback: manual calculation
         if (charId1 === charId2) return 'Self';
 
         var char1 = _getCharacterById(charId1);
@@ -416,24 +674,165 @@
     }
 
     function getRelationshipDescription(charId1, charId2) {
+        // ================================================================
+        // UPDATED: Prefer FamilyAccessors
+        // ================================================================
+        var faResult = _getRelationshipDescriptionViaFamilyAccessors(charId1, charId2);
+        if (faResult !== null) {
+            return faResult;
+        }
+
+        // Fallback: manual calculation
         var degree = getConsanguinityDegree(charId1, charId2);
         return degree || 'Unrelated';
     }
 
     // =========================================================================
-    // 8. EXPORTS
+    // 9. SPOUSE RELATIONSHIPS (NEW)
+    // =========================================================================
+
+    function getSpouses(characterId, activeOnly) {
+        activeOnly = activeOnly !== undefined ? activeOnly : true;
+
+        // Prefer FamilyAccessors
+        var faResult = _getSpousesViaFamilyAccessors(characterId, activeOnly);
+        if (faResult !== null) {
+            return faResult;
+        }
+
+        // Fallback: use relationship registry
+        var character = _getCharacterById(characterId);
+        if (!character) return [];
+
+        var spouses = [];
+
+        if (character.relationships) {
+            for (var i = 0; i < character.relationships.length; i++) {
+                var rel = character.relationships[i];
+                if (activeOnly && rel.status !== 'ongoing' && rel.status !== 'active') continue;
+
+                var isMarriage = rel.type === 'marriage' || rel.type === 'committed' || rel.type === 'romance';
+                if (!isMarriage) continue;
+
+                var spouseId = rel.participantB || rel.partnerId;
+                if (spouseId === characterId) {
+                    spouseId = rel.participantA;
+                }
+                var spouse = _getCharacterById(spouseId);
+                if (spouse) {
+                    spouses.push(spouse);
+                }
+            }
+        }
+
+        return spouses;
+    }
+
+    function getCurrentSpouse(characterId) {
+        var spouses = getSpouses(characterId, true);
+        return spouses.length > 0 ? spouses[0] : null;
+    }
+
+    // =========================================================================
+    // 10. FAMILY STATISTICS (NEW)
+    // =========================================================================
+
+    function getFamilyStatistics(characterId) {
+        // Prefer FamilyAccessors
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.getFamilyStatistics === 'function') {
+            return fa.getFamilyStatistics(characterId);
+        }
+
+        // Fallback: manual calculation
+        var character = _getCharacterById(characterId);
+        if (!character) return null;
+
+        var children = getChildren(characterId, false);
+        var livingChildren = children.filter(function(c) { return !c.isDeceased; });
+        var siblings = getSiblings(characterId, false);
+        var livingSiblings = siblings.filter(function(s) { return !s.isDeceased; });
+        var grandchildren = getGrandchildren(characterId, false);
+        var livingGrandchildren = grandchildren.filter(function(g) { return !g.isDeceased; });
+        var spouses = getSpouses(characterId, true);
+        var currentSpouse = spouses.length > 0 ? spouses[0] : null;
+        var parents = getParents(characterId);
+
+        var fullSiblings = [];
+        var halfSiblings = [];
+        for (var i = 0; i < siblings.length; i++) {
+            var s = siblings[i];
+            var sharesFather = parents.father && s.fatherId && parents.father.id === s.fatherId;
+            var sharesMother = parents.mother && s.motherId && parents.mother.id === s.motherId;
+            if (sharesFather && sharesMother) {
+                fullSiblings.push(s);
+            } else if (sharesFather || sharesMother) {
+                halfSiblings.push(s);
+            }
+        }
+
+        return {
+            character: character,
+            parents: {
+                father: parents.father || null,
+                mother: parents.mother || null,
+                hasParents: parents.father !== null || parents.mother !== null
+            },
+            children: {
+                total: children.length,
+                living: livingChildren.length,
+                eldest: children.length > 0 ? children[0] : null,
+                youngest: children.length > 0 ? children[children.length - 1] : null
+            },
+            siblings: {
+                total: siblings.length,
+                living: livingSiblings.length,
+                full: fullSiblings.length,
+                half: halfSiblings.length,
+                eldest: siblings.length > 0 ? siblings[0] : null,
+                youngest: siblings.length > 0 ? siblings[siblings.length - 1] : null
+            },
+            grandchildren: {
+                total: grandchildren.length,
+                living: livingGrandchildren.length
+            },
+            spouse: currentSpouse ? {
+                character: currentSpouse
+            } : null,
+            isOrphan: !parents.father && !parents.mother,
+            hasChildren: children.length > 0,
+            totalFamilyMembers: 1 + children.length + siblings.length + grandchildren.length
+        };
+    }
+
+    // =========================================================================
+    // 11. EXPORTS
     // =========================================================================
 
     window.FamilyLogic = {
+        // Parent-child
         setParent: setParent,
         removeParent: removeParent,
         getParents: getParents,
         getChildren: getChildren,
+
+        // Siblings
         getSiblings: getSiblings,
+
+        // Grandparents
         getGrandparents: getGrandparents,
         getGrandchildren: getGrandchildren,
+
+        // Spouses (NEW)
+        getSpouses: getSpouses,
+        getCurrentSpouse: getCurrentSpouse,
+
+        // Consanguinity
         getConsanguinityDegree: getConsanguinityDegree,
-        getRelationshipDescription: getRelationshipDescription
+        getRelationshipDescription: getRelationshipDescription,
+
+        // Statistics (NEW)
+        getFamilyStatistics: getFamilyStatistics
     };
 
     // Legacy aliases
@@ -446,6 +845,9 @@
     window.getGrandchildren = getGrandchildren;
     window.getConsanguinityDegree = getConsanguinityDegree;
     window.getRelationshipDescription = getRelationshipDescription;
+    window.getSpouses = getSpouses;
+    window.getCurrentSpouse = getCurrentSpouse;
+    window.getFamilyStatistics = getFamilyStatistics;
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.FamilyLogic;

@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * SETTLEMENT FEATURES - Business logic for settlement features
+ * SETTLEMENT FEATURES - Business logic for settlement features js/settlement/settlement-features.js
  * =============================================================================
  * 
  * This file contains business logic for:

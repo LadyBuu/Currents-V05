@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * GOVERNMENT DEPARTMENT MODALS (modals-government-departments.js)
+ * GOVERNMENT DEPARTMENT MODALS (js/government/modals-government-departments.js)
  * =============================================================================
  * 
  * PURPOSE: UI modals for government department management.

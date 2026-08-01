@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * SETTLEMENT ECONOMY CORE - Income, expenses, surplus, and reporting
+ * SETTLEMENT ECONOMY CORE - Income, expenses, surplus, and reporting js/settlement/settlement-economy-core.js
  * =============================================================================
  * 
  * This file contains business logic for:

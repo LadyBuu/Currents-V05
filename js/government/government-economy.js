@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * GOVERNMENT ECONOMY - Business logic for government finances
+ * GOVERNMENT ECONOMY - Business logic for government finances js/government/government-economy.js
  * =============================================================================
  * 
  * This file contains business logic for:

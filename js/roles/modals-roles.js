@@ -13,6 +13,7 @@
  * 
  * UPDATED: Removed SUGGESTED_ROLES references
  * UPDATED: Removed household/government role suggestions
+ * UPDATED: Uses SkillUtils for skill level names
  * 
  * DEPENDENCIES:
  *   - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
@@ -21,6 +22,7 @@
  *   - role-commands.js (RoleCommands)
  *   - role-queries.js (RoleQueries)
  *   - role-constants.js (BASE_SALARY_BY_CATEGORY, LITERACY_LEVEL_NAMES)
+ *   - skill-utils.js (SkillUtils)
  *   - accessors.js (getCharacterById, getCharacters, getPlaceById, getPlaces)
  *   - constants.js (AGE_GROUPS, AGE_GROUPS_MAP)
  * 
@@ -78,7 +80,32 @@
     }
 
     // =========================================================================
-    // 4. DEPENDENCY WRAPPERS
+    // 4. SKILL UTILITIES
+    // =========================================================================
+
+    function _getSkillLevelName(level) {
+        if (typeof window.SkillUtils !== 'undefined') {
+            return window.SkillUtils.getSkillLevelName(level);
+        }
+        if (typeof window._getSkillLevelName === 'function') {
+            return window._getSkillLevelName(level);
+        }
+        if (typeof window.getSkillLevelName === 'function') {
+            return window.getSkillLevelName(level);
+        }
+        if (typeof window.ApprenticeshipQueries !== 'undefined' && window.ApprenticeshipQueries.getSkillLevelName) {
+            return window.ApprenticeshipQueries.getSkillLevelName(level);
+        }
+        if (level >= 91) return 'Master';
+        if (level >= 76) return 'Expert';
+        if (level >= 51) return 'Journeyman';
+        if (level >= 26) return 'Apprentice';
+        if (level >= 1) return 'Novice';
+        return 'Untrained';
+    }
+
+    // =========================================================================
+    // 5. DEPENDENCY WRAPPERS
     // =========================================================================
 
     function _escapeHtml(str) {
@@ -106,6 +133,9 @@
         if (typeof window.openModal === 'function') {
             return window.openModal(options);
         }
+        if (typeof window._openModal === 'function') {
+            return window._openModal(options);
+        }
         return null;
     }
 
@@ -113,11 +143,17 @@
         if (typeof window.closeTopModal === 'function') {
             window.closeTopModal();
         }
+        if (typeof window._closeTopModal === 'function') {
+            window._closeTopModal();
+        }
     }
 
     function _confirmDialog(message, title, onConfirm) {
         if (typeof window.confirmDialog === 'function') {
             return window.confirmDialog(message, title, onConfirm);
+        }
+        if (typeof window._confirmDialog === 'function') {
+            return window._confirmDialog(message, title, onConfirm);
         }
         if (confirm(message)) {
             onConfirm();
@@ -128,12 +164,18 @@
         if (typeof window.getCharacterById === 'function') {
             return window.getCharacterById(id);
         }
+        if (typeof window._getCharacterById === 'function') {
+            return window._getCharacterById(id);
+        }
         return null;
     }
 
     function _getCharacters() {
         if (typeof window.getCharacters === 'function') {
             return window.getCharacters();
+        }
+        if (typeof window._getCharacters === 'function') {
+            return window._getCharacters();
         }
         return [];
     }
@@ -155,6 +197,9 @@
         if (typeof window.calculateAge === 'function') {
             return window.calculateAge(birthYear, isDeceased, deathYear);
         }
+        if (typeof window._calculateAge === 'function') {
+            return window._calculateAge(birthYear, isDeceased, deathYear);
+        }
         var currentYear = _getCurrentYear();
         if (!birthYear) return 0;
         if (isDeceased && deathYear) return Math.max(0, deathYear - birthYear);
@@ -165,12 +210,18 @@
         if (typeof window.getCurrentLocation === 'function') {
             return window.getCurrentLocation(character);
         }
+        if (typeof window._getCurrentLocation === 'function') {
+            return window._getCurrentLocation(character);
+        }
         return 'Unknown';
     }
 
     function _getLocationTypeById(id) {
         if (typeof window.getLocationTypeById === 'function') {
             return window.getLocationTypeById(id);
+        }
+        if (typeof window._getLocationTypeById === 'function') {
+            return window._getLocationTypeById(id);
         }
         return null;
     }
@@ -179,6 +230,9 @@
         if (typeof window.getPlaces === 'function') {
             return window.getPlaces();
         }
+        if (typeof window._getPlaces === 'function') {
+            return window._getPlaces();
+        }
         return [];
     }
 
@@ -186,11 +240,14 @@
         if (typeof window.getPlaceById === 'function') {
             return window.getPlaceById(id);
         }
+        if (typeof window._getPlaceById === 'function') {
+            return window._getPlaceById(id);
+        }
         return null;
     }
 
     // =========================================================================
-    // 5. CHARACTER SELECTOR
+    // 6. CHARACTER SELECTOR
     // =========================================================================
 
     function _openCharacterSelectorForRoles(title, onSelect, options) {
@@ -236,7 +293,7 @@
     }
 
     // =========================================================================
-    // 6. LOCATION DROPDOWN
+    // 7. LOCATION DROPDOWN
     // =========================================================================
 
     function _getLocationOptions(selectedId, placeholderText, includeAll) {
@@ -269,7 +326,7 @@
     }
 
     // =========================================================================
-    // 7. ROLE COMMAND WRAPPERS
+    // 8. ROLE COMMAND WRAPPERS
     // =========================================================================
 
     function _createRole(data) {
@@ -278,6 +335,9 @@
         }
         if (typeof window.createRole === 'function') {
             return window.createRole(data);
+        }
+        if (typeof window._createRole === 'function') {
+            return window._createRole(data);
         }
         _showToast('Create role not available', 'error');
         return null;
@@ -290,6 +350,9 @@
         if (typeof window.updateRole === 'function') {
             return window.updateRole(roleId, updates);
         }
+        if (typeof window._updateRole === 'function') {
+            return window._updateRole(roleId, updates);
+        }
         _showToast('Update role not available', 'error');
         return null;
     }
@@ -300,6 +363,9 @@
         }
         if (typeof window.deleteRole === 'function') {
             return window.deleteRole(roleId, removeFromCharacters);
+        }
+        if (typeof window._deleteRole === 'function') {
+            return window._deleteRole(roleId, removeFromCharacters);
         }
         _showToast('Delete role not available', 'error');
         return false;
@@ -312,6 +378,9 @@
         if (typeof window.assignRoleToCharacter === 'function') {
             return window.assignRoleToCharacter(characterId, roleId, options);
         }
+        if (typeof window._assignRoleToCharacter === 'function') {
+            return window._assignRoleToCharacter(characterId, roleId, options);
+        }
         _showToast('Assign role not available', 'error');
         return { success: false };
     }
@@ -322,6 +391,9 @@
         }
         if (typeof window.updateCharacterSkill === 'function') {
             return window.updateCharacterSkill(characterId, roleId, skillLevel);
+        }
+        if (typeof window._updateCharacterSkill === 'function') {
+            return window._updateCharacterSkill(characterId, roleId, skillLevel);
         }
         _showToast('Update skill not available', 'error');
         return { success: false };
@@ -334,12 +406,15 @@
         if (typeof window.bulkAssignRole === 'function') {
             return window.bulkAssignRole(characterIds, roleId, options);
         }
+        if (typeof window._bulkAssignRole === 'function') {
+            return window._bulkAssignRole(characterIds, roleId, options);
+        }
         _showToast('Bulk assign not available', 'error');
         return { success: 0, failed: 0, errors: [] };
     }
 
     // =========================================================================
-    // 8. ROLE QUERY WRAPPERS
+    // 9. ROLE QUERY WRAPPERS
     // =========================================================================
 
     function _getAllRoles() {
@@ -348,6 +423,9 @@
         }
         if (typeof window.getRoles === 'function') {
             return window.getRoles();
+        }
+        if (typeof window._getRoles === 'function') {
+            return window._getRoles();
         }
         return [];
     }
@@ -359,6 +437,9 @@
         if (typeof window.getRole === 'function') {
             return window.getRole(id);
         }
+        if (typeof window._getRoleById === 'function') {
+            return window._getRoleById(id);
+        }
         return null;
     }
 
@@ -368,6 +449,9 @@
         }
         if (typeof window.getRoleStatistics === 'function') {
             return window.getRoleStatistics(roleId);
+        }
+        if (typeof window._getRoleStatistics === 'function') {
+            return window._getRoleStatistics(roleId);
         }
         return {};
     }
@@ -379,6 +463,9 @@
         if (typeof window.getCharactersWithRoleDetails === 'function') {
             return window.getCharactersWithRoleDetails(roleId, mastersOnly);
         }
+        if (typeof window._getCharactersWithRoleDetails === 'function') {
+            return window._getCharactersWithRoleDetails(roleId, mastersOnly);
+        }
         return [];
     }
 
@@ -388,6 +475,9 @@
         }
         if (typeof window.getCharactersWithRole === 'function') {
             return window.getCharactersWithRole(roleId, mastersOnly);
+        }
+        if (typeof window._getCharactersWithRole === 'function') {
+            return window._getCharactersWithRole(roleId, mastersOnly);
         }
         return [];
     }
@@ -399,6 +489,9 @@
         if (typeof window.getRoleCategories === 'function') {
             return window.getRoleCategories();
         }
+        if (typeof window._getRoleCategories === 'function') {
+            return window._getRoleCategories();
+        }
         return {};
     }
 
@@ -409,36 +502,14 @@
         if (typeof window.getRoleCategoryList === 'function') {
             return window.getRoleCategoryList();
         }
+        if (typeof window._getRoleCategoryList === 'function') {
+            return window._getRoleCategoryList();
+        }
         return [];
     }
 
-    function _getSkillLevel(characterId, roleId) {
-        if (typeof window.ApprenticeshipQueries !== 'undefined') {
-            return window.ApprenticeshipQueries.getSkillLevel(characterId, roleId);
-        }
-        if (typeof window.getSkillLevel === 'function') {
-            return window.getSkillLevel(characterId, roleId);
-        }
-        return 0;
-    }
-
-    function _getSkillLevelName(level) {
-        if (typeof window.ApprenticeshipQueries !== 'undefined') {
-            return window.ApprenticeshipQueries.getSkillLevelName(level);
-        }
-        if (typeof window.getSkillLevelName === 'function') {
-            return window.getSkillLevelName(level);
-        }
-        if (level >= 91) return 'Master';
-        if (level >= 76) return 'Expert';
-        if (level >= 51) return 'Journeyman';
-        if (level >= 26) return 'Apprentice';
-        if (level >= 1) return 'Novice';
-        return 'Untrained';
-    }
-
     // =========================================================================
-    // 9. GET SALARY OPTIONS
+    // 10. GET SALARY OPTIONS
     // =========================================================================
 
     function _getBaseSalaryByCategory(category) {
@@ -460,7 +531,7 @@
     }
 
     // =========================================================================
-    // 10. CREATE ROLE MODAL
+    // 11. CREATE ROLE MODAL
     // =========================================================================
 
     function openCreateRoleModal(onSuccess) {
@@ -474,7 +545,6 @@
             var plusIcon = _getIcon('PLUS');
             var infoIcon = _getIcon('CIRCLE_DOT');
 
-            // Build category options
             var categoryOptions = Object.keys(categories).map(function(key) {
                 var cat = categories[key];
                 return '<option value="' + key + '">' + (cat.icon || '⌇') + ' ' + cat.name + '</option>';
@@ -618,7 +688,7 @@
     }
 
     // =========================================================================
-    // 11. EDIT ROLE MODAL
+    // 12. EDIT ROLE MODAL
     // =========================================================================
 
     function openEditRoleModal(roleId, onSuccess) {
@@ -849,7 +919,7 @@
     }
 
     // =========================================================================
-    // 12. DELETE ROLE MODAL
+    // 13. DELETE ROLE MODAL
     // =========================================================================
 
     function openDeleteRoleModal(roleId, onSuccess) {
@@ -920,7 +990,7 @@
     }
 
     // =========================================================================
-    // 13. ASSIGN ROLE MODAL
+    // 14. ASSIGN ROLE MODAL
     // =========================================================================
 
     function openAssignRoleModal(roleId, onSuccess) {
@@ -1177,7 +1247,7 @@
     }
 
     // =========================================================================
-    // 14. BULK ASSIGN ROLE MODAL
+    // 15. BULK ASSIGN ROLE MODAL
     // =========================================================================
 
     function openBulkAssignRoleModal(roleId, onSuccess) {
@@ -1486,7 +1556,7 @@
     }
 
     // =========================================================================
-    // 15. VIEW CHARACTERS WITH ROLE MODAL
+    // 16. VIEW CHARACTERS WITH ROLE MODAL
     // =========================================================================
 
     function openViewCharactersWithRoleModal(roleId) {
@@ -1570,7 +1640,7 @@
     }
 
     // =========================================================================
-    // 16. EDIT ROLE SKILL MODAL
+    // 17. EDIT ROLE SKILL MODAL
     // =========================================================================
 
     function openEditRoleSkillModal(roleId, characterId, onSuccess) {
@@ -1588,7 +1658,15 @@
                 return;
             }
 
-            var currentSkill = _getSkillLevel(characterId, roleId);
+            var currentSkill = 0;
+            if (character.professions) {
+                for (var i = 0; i < character.professions.length; i++) {
+                    if (character.professions[i].id === roleId) {
+                        currentSkill = character.professions[i].skillLevel || 0;
+                        break;
+                    }
+                }
+            }
             var skillLevel = currentSkill || 0;
 
             var modalContent =
@@ -1647,7 +1725,7 @@
     }
 
     // =========================================================================
-    // 17. LIST ROLES MODAL
+    // 18. LIST ROLES MODAL
     // =========================================================================
 
     function openListRolesModal(onSelect) {
@@ -1666,7 +1744,6 @@
             var searchIcon = _getIcon('SEARCH');
             var infoIcon = _getIcon('CIRCLE_DOT');
 
-            // Build category options
             var categoryOptions = '<option value="all">All Categories</option>';
             for (var catId in categories) {
                 if (categories.hasOwnProperty(catId)) {
@@ -1780,7 +1857,6 @@
                 }
 
                 function attachHandlers() {
-                    // Select buttons
                     var selectBtns = container.querySelectorAll('.role-select-btn');
                     for (var i = 0; i < selectBtns.length; i++) {
                         (function(btn) {
@@ -1797,7 +1873,6 @@
                         })(selectBtns[i]);
                     }
 
-                    // View buttons
                     var viewBtns = container.querySelectorAll('.role-view-btn');
                     for (var i = 0; i < viewBtns.length; i++) {
                         (function(btn) {
@@ -1811,7 +1886,6 @@
                         })(viewBtns[i]);
                     }
 
-                    // Role item click
                     var items = container.querySelectorAll('.role-item');
                     for (var i = 0; i < items.length; i++) {
                         (function(item) {
@@ -1857,7 +1931,7 @@
     }
 
     // =========================================================================
-    // 18. CATEGORY MANAGER MODAL
+    // 19. CATEGORY MANAGER MODAL
     // =========================================================================
 
     function openCategoryManagerModal(onSuccess) {
@@ -1940,6 +2014,14 @@
                                     _processingModal = false;
                                     openCategoryManagerModal(onSuccess);
                                 }
+                            } else if (typeof window._addCategory === 'function') {
+                                var result = window._addCategory(id, name.trim());
+                                if (result) {
+                                    _showToast('Category "' + name.trim() + '" created', 'success');
+                                    _closeTopModal();
+                                    _processingModal = false;
+                                    openCategoryManagerModal(onSuccess);
+                                }
                             } else {
                                 _showToast('Category manager not available', 'error');
                             }
@@ -1959,6 +2041,14 @@
                                 if (newName !== null && newName.trim()) {
                                     if (typeof window.updateCategory === 'function') {
                                         var result = window.updateCategory(catId, { name: newName.trim() });
+                                        if (result) {
+                                            _showToast('Category updated', 'success');
+                                            _closeTopModal();
+                                            _processingModal = false;
+                                            openCategoryManagerModal(onSuccess);
+                                        }
+                                    } else if (typeof window._updateCategory === 'function') {
+                                        var result = window._updateCategory(catId, { name: newName.trim() });
                                         if (result) {
                                             _showToast('Category updated', 'success');
                                             _closeTopModal();
@@ -1996,6 +2086,14 @@
                                             _processingModal = false;
                                             openCategoryManagerModal(onSuccess);
                                         }
+                                    } else if (typeof window._deleteCategory === 'function') {
+                                        var result = window._deleteCategory(catId);
+                                        if (result) {
+                                            _showToast('Category deleted', 'info');
+                                            _closeTopModal();
+                                            _processingModal = false;
+                                            openCategoryManagerModal(onSuccess);
+                                        }
                                     } else {
                                         _showToast('Category manager not available', 'error');
                                     }
@@ -2012,7 +2110,7 @@
     }
 
     // =========================================================================
-    // 19. EXPORTS
+    // 20. EXPORTS
     // =========================================================================
 
     window.openCreateRoleModal = openCreateRoleModal;

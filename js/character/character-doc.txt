@@ -1,5 +1,9 @@
 # COMPLETE CHARACTER SYSTEM DOCUMENTATION
 
+## DOCUMENTATION GENERATED: 2026-07-15
+
+---
+
 ## SYSTEM OVERVIEW
 
 The Character System manages all characters in the game world, providing comprehensive CRUD operations, profession management, rank assignments, religion tracking, surname history, household history, soft delete functionality, bulk operations, random character generation, and character lifecycle management (birth, aging, death, inheritance).
@@ -16,6 +20,7 @@ The Character System manages all characters in the game world, providing compreh
 - **Random Generation**: Fully automatic with cultural name support
 - **Religion Integration**: Full religion assignment and conversion tracking
 - **Complete Schema**: All character fields with history tracking
+- **No Core Dependencies**: Character system depends on core, not the other way around
 
 ---
 
@@ -35,24 +40,20 @@ The Character System manages all characters in the game world, providing compreh
 12. [Icon Policy](#icon-policy)
 13. [Complete Function List](#complete-function-list)
 14. [Cross-System Integration](#cross-system-integration)
+15. [Load Order](#load-order)
 
 ---
 
 ## FILE STRUCTURE
 
 ```
-js/core/character/
+js/character/
 ├── character-state.js        # Single source of truth + cache + notifications
 ├── character-commands.js     # All write operations (CRUD, professions, religion, bulk)
 ├── character-queries.js      # All read operations (search, summary, stats)
 ├── character-lifecycle.js    # Lifecycle management (birth, aging, death, inheritance)
 ├── character-ui-list.js      # UI rendering (lists, cards)
 └── modals-character.js       # UI modals (create, edit, delete, details)
-
-js/core/modals/
-├── modals-character.js       # Character modals
-├── modals-charSelect.js      # Character selector
-└── modals-death.js           # Death modal
 ```
 
 ---
@@ -60,6 +61,11 @@ js/core/modals/
 ## CHARACTER-STATE.JS
 
 **PURPOSE:** Single source of truth for all character data. Manages caching, subscriptions, and data persistence.
+
+**DEPENDENCIES:**
+- `storage.js` (masterData, saveMasterData)
+- `ids.js` (generateId)
+- `time.js` (getCurrentYearSafe, calculateAge - optional)
 
 ### Cache Structure
 
@@ -74,7 +80,8 @@ cache = {
     byProfession: new Map(),   // Role ID → Character[]
     byRank: new Map(),         // Rank ID → Character[]
     byBirthDecade: new Map(),  // Decade → Character[]
-    byReligion: new Map()      // Religion ID → Character[] (NEW)
+    byReligion: new Map(),     // Religion ID → Character[]
+    byCulture: new Map()       // Culture ID → Character[]
 }
 ```
 
@@ -93,7 +100,8 @@ cache = {
 | `CharacterState.getCharactersByProfession(roleId)` | `roleId` (string) | `Array` | Gets characters by profession |
 | `CharacterState.getCharactersByRank(rankId)` | `rankId` (string) | `Array` | Gets characters by rank |
 | `CharacterState.getCharactersByBirthDecade(decade)` | `decade` (number) | `Array` | Gets characters by birth decade |
-| `CharacterState.getCharactersByReligion(religionId)` | `religionId` (string) | `Array` | **NEW:** Gets characters by religion |
+| `CharacterState.getCharactersByReligion(religionId)` | `religionId` (string) | `Array` | Gets characters by religion |
+| `CharacterState.getCharactersByCulture(cultureId)` | `cultureId` (string) | `Array` | Gets characters by culture |
 | `CharacterState.searchByName(query)` | `query` (string) | `Array` | Searches characters by name |
 | `CharacterState.getCharactersByAgeRange(minAge, maxAge)` | `minAge`, `maxAge` | `Array` | Gets characters by age range |
 
@@ -115,6 +123,19 @@ cache = {
 
 **PURPOSE:** All write operations for character management.
 
+**DEPENDENCIES:**
+- `character-state.js`
+- `accessors.js` (getCharacterById, getCharacters, getPlaceById)
+- `ids.js` (generateId)
+- `names.js` (name generation)
+- `world.js` (location functions)
+- `time.js` (getCurrentYearSafe)
+- `storage.js` (saveMasterData)
+- `ReligionCommands` (optional - Religion system)
+- `ReligionState` (optional - Religion system)
+- `CultureGeneration` (optional - Culture system)
+- `family-accessors.js` (FamilyAccessors)
+
 ### Character Creation
 
 | Function | Parameters | Returns | Description |
@@ -133,6 +154,10 @@ cache = {
 | `religionId` | string | null | Religion ID |
 | `notes` | string | '' | Notes |
 | `isDeceased` | boolean | false | Deceased flag |
+| `cultureId` | string | null | Culture ID |
+| `appearance` | object | {} | Appearance attributes |
+| `motherId` | string | null | Mother character ID |
+| `fatherId` | string | null | Father character ID |
 
 ### Character Update
 
@@ -149,12 +174,12 @@ cache = {
 | Function | Parameters | Returns | Description |
 |----------|------------|---------|-------------|
 | `CharacterCommands.deleteCharacter(id)` | `id` (string) | `Object` | Permanently deletes a character |
-| `CharacterCommands.softDeleteCharacter(id)` | `id` (string) | `Object` | **NEW:** Soft deletes a character |
-| `CharacterCommands.restoreSoftDeletedCharacter(id)` | `id` (string) | `Object` | **NEW:** Restores a soft-deleted character |
-| `CharacterCommands.getSoftDeletedCharacters()` | None | `Array` | **NEW:** Gets soft-deleted characters |
-| `CharacterCommands.purgeSoftDeletedCharacters()` | None | `Object` | **NEW:** Permanently removes soft-deleted characters |
+| `CharacterCommands.softDeleteCharacter(id)` | `id` (string) | `Object` | Soft deletes a character |
+| `CharacterCommands.restoreSoftDeletedCharacter(id)` | `id` (string) | `Object` | Restores a soft-deleted character |
+| `CharacterCommands.getSoftDeletedCharacters()` | None | `Array` | Gets soft-deleted characters |
+| `CharacterCommands.purgeSoftDeletedCharacters()` | None | `Object` | Permanently removes soft-deleted characters |
 
-### Bulk Operations (NEW)
+### Bulk Operations
 
 | Function | Parameters | Returns | Description |
 |----------|------------|---------|-------------|
@@ -162,7 +187,7 @@ cache = {
 | `CharacterCommands.bulkUpdateCharacters(updates)` | `updates` (Object) | `Object` | Bulk updates characters |
 | `CharacterCommands.bulkDeleteCharacters(ids, softDelete)` | `ids` (Array), `softDelete` (boolean) | `Object` | Bulk deletes characters |
 
-### Random Character Generation (NEW)
+### Random Character Generation
 
 | Function | Parameters | Returns | Description |
 |----------|------------|---------|-------------|
@@ -199,7 +224,7 @@ cache = {
 | `CharacterCommands.recordCharacterSurnameChange(id, newSurname, year, reason, options)` | Various | `Object` | Records surname change |
 | `CharacterCommands.revertCharacterSurnameChange(id)` | `id` (string) | `Object` | Reverts last surname change |
 
-### Religion Management (NEW)
+### Religion Management
 
 | Function | Parameters | Returns | Description |
 |----------|------------|---------|-------------|
@@ -209,11 +234,26 @@ cache = {
 | `CharacterCommands.getCharacterReligionHistory(characterId)` | `characterId` (string) | `Array` | Gets religion history |
 | `CharacterCommands.getCharacterReligion(characterId)` | `characterId` (string) | `Object\|null` | Gets current religion |
 
+### Family Commands
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `CharacterCommands.addChildToParent(parentId, childId, parentType, options)` | `parentId`, `childId`, `parentType`, `options` | `Object` | Adds a child to a parent |
+| `CharacterCommands.getCharacterChildren(characterId, includeDeceased)` | `characterId`, `includeDeceased` | `Array` | Gets children of a character |
+| `CharacterCommands.getCharacterParents(characterId)` | `characterId` (string) | `{ father, mother }` | Gets parents of a character |
+
 ---
 
 ## CHARACTER-QUERIES.JS
 
 **PURPOSE:** High-level character query operations.
+
+**DEPENDENCIES:**
+- `accessors.js` (getCharacters, getCharacterById)
+- `time.js` (calculateAge, getCurrentYear)
+- `EducationState` (optional - Education system)
+- `ReligionState` (optional - Religion system)
+- `family-accessors.js` (FamilyAccessors)
 
 ### Search Queries
 
@@ -244,6 +284,21 @@ cache = {
 |----------|------------|---------|-------------|
 | `CharacterQueries.getCharactersByEducationStatus(status, institutionId)` | `status`, `institutionId` | `Array` | Gets characters by education status |
 | `CharacterQueries.getCharactersNotInEducation(minAge, maxAge)` | `minAge`, `maxAge` | `Array` | Gets unenrolled school-age characters |
+
+### Family Queries
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `CharacterQueries.getCharacterChildren(characterId, includeDeceased, includeAdopted)` | `characterId`, `includeDeceased`, `includeAdopted` | `Array` | Gets children of a character |
+| `CharacterQueries.getCharacterParents(characterId, includeAdoptive)` | `characterId`, `includeAdoptive` | `Object` | Gets parents of a character |
+| `CharacterQueries.getCharacterSiblings(characterId, includeHalfSiblings, includeDeceased, includeAdopted)` | Various | `Array` | Gets siblings of a character |
+| `CharacterQueries.getCharacterGrandparents(characterId, generation)` | `characterId`, `generation` | `Array` | Gets grandparents of a character |
+| `CharacterQueries.getCharacterGrandchildren(characterId, includeDeceased)` | `characterId`, `includeDeceased` | `Array` | Gets grandchildren of a character |
+| `CharacterQueries.getCharacterSpouses(characterId, activeOnly)` | `characterId`, `activeOnly` | `Array` | Gets spouses of a character |
+| `CharacterQueries.getCharacterCurrentSpouse(characterId)` | `characterId` | `Object\|null` | Gets current spouse |
+| `CharacterQueries.getCharacterRelationshipDescription(charId1, charId2)` | `charId1`, `charId2` | `string` | Gets relationship description between two characters |
+| `CharacterQueries.getCharacterConsanguinityDegree(charId1, charId2)` | `charId1`, `charId2` | `number` | Gets consanguinity degree between two characters |
+| `CharacterQueries.getCharacterFamilyStatistics(characterId)` | `characterId` | `Object` | Gets comprehensive family statistics |
 
 ### Character Statistics
 
@@ -277,6 +332,15 @@ cache = {
 ## CHARACTER-LIFECYCLE.JS
 
 **PURPOSE:** Business logic for character lifecycle (birth, aging, death, inheritance).
+
+**DEPENDENCIES:**
+- `character-state.js`
+- `character-commands.js`
+- `character-queries.js`
+- `time.js` (calculateAge, getCurrentYearSafe)
+- `constants.js` (AGE_GROUPS, LIFE_STAGES, DEATH_CAUSES)
+- `HouseholdState` (optional - Household system)
+- `family-accessors.js` (FamilyAccessors)
 
 ### Life Stage Constants
 
@@ -358,11 +422,25 @@ cache = {
 | Accident | 5 | - | - | |
 | Childbed fever | 4 | 14 | 45 | Female only |
 
+### Family Statistics Functions
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `CharacterLifecycle.getCharacterFamilyStatistics(characterId)` | `characterId` | `Object\|null` | Gets family statistics |
+| `CharacterLifecycle.getPrimaryHeir(characterId, options)` | `characterId`, `options` | `Object\|null` | Gets primary heir |
+| `CharacterLifecycle.getPotentialHeirs(characterId, options)` | `characterId`, `options` | `Array` | Gets all potential heirs |
+
 ---
 
 ## CHARACTER-UI-LIST.JS
 
 **PURPOSE:** UI rendering for character lists and cards.
+
+**DEPENDENCIES:**
+- `character-queries.js`
+- `formatting.js` (escapeHtml)
+- `icons.js` (Icons)
+- `CultureState` (optional - Culture system)
 
 ### Render Functions
 
@@ -381,6 +459,7 @@ cache = {
 | `showStatus` | boolean | true | Show living/deceased status |
 | `showLocation` | boolean | true | Show location |
 | `showAge` | boolean | true | Show age |
+| `showCulture` | boolean | true | Show culture badge |
 | `rowClass` | string | 'character-row' | CSS class for rows |
 
 ---
@@ -389,6 +468,16 @@ cache = {
 
 **PURPOSE:** UI modals for character operations.
 
+**DEPENDENCIES:**
+- `modals-core.js` (openModal, closeTopModal)
+- `character-state.js`
+- `character-commands.js`
+- `character-queries.js`
+- `character-lifecycle.js`
+- `accessors.js` (getCharacterById, getCharacters)
+- `selectors/modals-char-selector.js` (openCharacterSelector)
+- `family-accessors.js` (FamilyAccessors)
+
 ### Modal Functions
 
 | Function | Parameters | Returns | Description |
@@ -396,7 +485,8 @@ cache = {
 | `openCreateCharacterModal(onSuccess)` | `onSuccess` (function) | None | Opens create character modal |
 | `openEditCharacterModal(characterId, onSuccess)` | `characterId`, `onSuccess` | None | Opens edit character modal |
 | `openDeleteCharacterModal(characterId, onSuccess)` | `characterId`, `onSuccess` | None | Opens delete character modal |
-| `openCharacterDetailsModal(characterId, onSuccess)` | `characterId`, `onSuccess` | None | Opens character details modal |
+| `openCharacterDetailsModal(characterId, onSuccess)` | `characterId`, `onSuccess` | None | Opens character details modal with family info |
+| `openFamilyViewModal(characterId)` | `characterId` | None | Opens family view modal |
 
 ---
 
@@ -442,10 +532,11 @@ cache = {
 | `notes` | string | Notes |
 | `appearance` | object | Appearance attributes |
 | `surnameHistory` | object | Surname history |
-| `religionId` | string | **NEW:** Religion ID |
-| `religionHistory` | array | **NEW:** Religion change history |
-| `isDeleted` | boolean | **NEW:** Soft delete flag |
-| `deletedAt` | number | **NEW:** Soft delete timestamp |
+| `religionId` | string | Religion ID |
+| `religionHistory` | array | Religion change history |
+| `cultureId` | string | Culture ID |
+| `isDeleted` | boolean | Soft delete flag |
+| `deletedAt` | number | Soft delete timestamp |
 | `createdAt` | number | Creation timestamp |
 | `updatedAt` | number | Update timestamp |
 
@@ -480,7 +571,7 @@ cache = {
 }
 ```
 
-### Religion History Schema (NEW)
+### Religion History Schema
 
 ```javascript
 [
@@ -515,15 +606,18 @@ cache = {
 │  ├── names.js (name generation)                                           │ │
 │  ├── world.js (location functions)                                       │ │
 │  ├── time.js (getCurrentYearSafe)                                         │ │
-│  ├── religion-commands.js (ReligionCommands)                              │ │
-│  ├── religion-state.js (ReligionState)                                   │ │
-│  └── storage.js (saveMasterData)                                          │ │
+│  ├── storage.js (saveMasterData)                                          │ │
+│  ├── ReligionCommands (optional)                                          │ │
+│  ├── ReligionState (optional)                                             │ │
+│  ├── CultureGeneration (optional)                                         │ │
+│  └── family-accessors.js (FamilyAccessors)                               │ │
 │                                                                             │
 │  character-queries.js ──────────────────────────────────────────────────┐ │
 │  ├── accessors.js (getCharacters, getCharacterById)                      │ │
 │  ├── time.js (calculateAge, getCurrentYear)                              │ │
-│  ├── education-state.js (EducationState)                                 │ │
-│  └── religion-state.js (ReligionState)                                   │ │
+│  ├── EducationState (optional)                                            │ │
+│  ├── ReligionState (optional)                                             │ │
+│  └── family-accessors.js (FamilyAccessors)                               │ │
 │                                                                             │
 │  character-lifecycle.js ─────────────────────────────────────────────────┐ │
 │  ├── character-state.js                                                   │ │
@@ -531,22 +625,24 @@ cache = {
 │  ├── character-queries.js                                                 │ │
 │  ├── time.js (calculateAge, getCurrentYearSafe)                          │ │
 │  ├── constants.js (AGE_GROUPS, LIFE_STAGES, DEATH_CAUSES)               │ │
-│  └── household-state.js (getAllHouseholds)                               │ │
+│  ├── HouseholdState (optional)                                            │ │
+│  └── family-accessors.js (FamilyAccessors)                               │ │
 │                                                                             │
 │  character-ui-list.js ──────────────────────────────────────────────────┐ │
 │  ├── character-queries.js                                                 │ │
 │  ├── formatting.js (escapeHtml)                                          │ │
-│  └── icons.js (Icons)                                                    │ │
+│  ├── icons.js (Icons)                                                    │ │
+│  └── CultureState (optional)                                              │ │
 │                                                                             │
 │  modals-character.js ────────────────────────────────────────────────────┐ │
-│  ├── modals-core.js (openModal, closeTopModal, _showToast)              │ │
-│  ├── modals-charSelect.js (openCharacterSelector)                       │ │
-│  ├── modals-death.js (openDeathModal)                                   │ │
+│  ├── modals-core.js (openModal, closeTopModal)                          │ │
 │  ├── character-state.js                                                  │ │
 │  ├── character-commands.js                                               │ │
 │  ├── character-queries.js                                                │ │
 │  ├── character-lifecycle.js                                              │ │
-│  └── accessors.js                                                        │ │
+│  ├── accessors.js                                                        │ │
+│  ├── selectors/modals-char-selector.js (openCharacterSelector)          │ │
+│  └── family-accessors.js (FamilyAccessors)                               │ │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -584,11 +680,6 @@ All icons must come from `icons.js` via the `_getIcon()` function:
 | Gender (Male) | MALE |
 | Gender (Female) | FEMALE |
 | Gender (Unknown) | GENDER_NEUTRAL |
-| Child | CHILD |
-| Youth | YOUTH |
-| Adult | ADULT |
-| Elder | ELDER |
-| Deceased | DEATH |
 | Rank | CROWN |
 | Profession | GEAR |
 | Household | HOME |
@@ -617,7 +708,8 @@ All icons must come from `icons.js` via the `_getIcon()` function:
 | `getCharactersByProfession(roleId)` | Query | Get characters by profession |
 | `getCharactersByRank(rankId)` | Query | Get characters by rank |
 | `getCharactersByBirthDecade(decade)` | Query | Get characters by birth decade |
-| `getCharactersByReligion(religionId)` | Query | **NEW:** Get characters by religion |
+| `getCharactersByReligion(religionId)` | Query | Get characters by religion |
+| `getCharactersByCulture(cultureId)` | Query | Get characters by culture |
 | `searchByName(query)` | Query | Search characters by name |
 | `getCharactersByAgeRange(minAge, maxAge)` | Query | Get characters by age range |
 | `invalidateCache()` | Command | Clear all caches |
@@ -635,13 +727,13 @@ All icons must come from `icons.js` via the `_getIcon()` function:
 | `updateCharacterDeath(id, isDeceased, deathYear, deathCause)` | Command | Update death info |
 | `updateCharacterEpithet(id, epithet)` | Command | Update epithet |
 | `deleteCharacter(id)` | Command | Permanently delete character |
-| `softDeleteCharacter(id)` | Command | **NEW:** Soft delete character |
-| `restoreSoftDeletedCharacter(id)` | Command | **NEW:** Restore soft-deleted character |
-| `getSoftDeletedCharacters()` | Query | **NEW:** Get soft-deleted characters |
-| `purgeSoftDeletedCharacters()` | Command | **NEW:** Purge soft-deleted characters |
-| `bulkCreateCharacters(dataArray)` | Command | **NEW:** Bulk create characters |
-| `bulkUpdateCharacters(updates)` | Command | **NEW:** Bulk update characters |
-| `bulkDeleteCharacters(ids, softDelete)` | Command | **NEW:** Bulk delete characters |
+| `softDeleteCharacter(id)` | Command | Soft delete character |
+| `restoreSoftDeletedCharacter(id)` | Command | Restore soft-deleted character |
+| `getSoftDeletedCharacters()` | Query | Get soft-deleted characters |
+| `purgeSoftDeletedCharacters()` | Command | Purge soft-deleted characters |
+| `bulkCreateCharacters(dataArray)` | Command | Bulk create characters |
+| `bulkUpdateCharacters(updates)` | Command | Bulk update characters |
+| `bulkDeleteCharacters(ids, softDelete)` | Command | Bulk delete characters |
 | `addProfession(characterId, roleId, options)` | Command | Add profession |
 | `removeProfession(characterId, roleId)` | Command | Remove profession |
 | `updateProfessionSkill(characterId, roleId, newSkillLevel)` | Command | Update skill level |
@@ -653,11 +745,14 @@ All icons must come from `icons.js` via the `_getIcon()` function:
 | `getCharacterSurnameChanges(id)` | Query | Get surname changes |
 | `recordCharacterSurnameChange(id, newSurname, year, reason, options)` | Command | Record surname change |
 | `revertCharacterSurnameChange(id)` | Command | Revert surname change |
-| `assignCharacterReligion(characterId, religionId, options)` | Command | **NEW:** Assign religion |
-| `removeCharacterReligion(characterId)` | Command | **NEW:** Remove religion |
-| `convertCharacterReligion(characterId, newReligionId, options)` | Command | **NEW:** Convert religion |
-| `getCharacterReligionHistory(characterId)` | Query | **NEW:** Get religion history |
-| `getCharacterReligion(characterId)` | Query | **NEW:** Get current religion |
+| `assignCharacterReligion(characterId, religionId, options)` | Command | Assign religion |
+| `removeCharacterReligion(characterId)` | Command | Remove religion |
+| `convertCharacterReligion(characterId, newReligionId, options)` | Command | Convert religion |
+| `getCharacterReligionHistory(characterId)` | Query | Get religion history |
+| `getCharacterReligion(characterId)` | Query | Get current religion |
+| `addChildToParent(parentId, childId, parentType, options)` | Command | Add child to parent |
+| `getCharacterChildren(characterId, includeDeceased)` | Query | Get children |
+| `getCharacterParents(characterId)` | Query | Get parents |
 
 ### character-queries.js
 
@@ -673,6 +768,16 @@ All icons must come from `icons.js` via the `_getIcon()` function:
 | `getMasterCharacters(roleId)` | Query | Get master characters |
 | `getCharactersByEducationStatus(status, institutionId)` | Query | Get characters by education status |
 | `getCharactersNotInEducation(minAge, maxAge)` | Query | Get unenrolled school-age chars |
+| `getCharacterChildren(characterId, includeDeceased, includeAdopted)` | Query | Get children |
+| `getCharacterParents(characterId, includeAdoptive)` | Query | Get parents |
+| `getCharacterSiblings(characterId, includeHalfSiblings, includeDeceased, includeAdopted)` | Query | Get siblings |
+| `getCharacterGrandparents(characterId, generation)` | Query | Get grandparents |
+| `getCharacterGrandchildren(characterId, includeDeceased)` | Query | Get grandchildren |
+| `getCharacterSpouses(characterId, activeOnly)` | Query | Get spouses |
+| `getCharacterCurrentSpouse(characterId)` | Query | Get current spouse |
+| `getCharacterRelationshipDescription(charId1, charId2)` | Query | Get relationship description |
+| `getCharacterConsanguinityDegree(charId1, charId2)` | Query | Get consanguinity degree |
+| `getCharacterFamilyStatistics(characterId)` | Query | Get family statistics |
 | `getCharacterStatistics()` | Query | Get comprehensive statistics |
 
 ### character-lifecycle.js
@@ -698,6 +803,9 @@ All icons must come from `icons.js` via the `_getIcon()` function:
 | `processHouseholdInheritance(characterId)` | Command | Process inheritance |
 | `processAllPendingInheritance(showNotifications)` | Command | Process all pending inheritance |
 | `hasPendingInheritance(characterId)` | Query | Check for pending inheritance |
+| `getCharacterFamilyStatistics(characterId)` | Query | Get family statistics |
+| `getPrimaryHeir(characterId, options)` | Query | Get primary heir |
+| `getPotentialHeirs(characterId, options)` | Query | Get potential heirs |
 
 ### character-ui-list.js
 
@@ -714,12 +822,13 @@ All icons must come from `icons.js` via the `_getIcon()` function:
 | `openEditCharacterModal(characterId, onSuccess)` | UI | Open edit character modal |
 | `openDeleteCharacterModal(characterId, onSuccess)` | UI | Open delete character modal |
 | `openCharacterDetailsModal(characterId, onSuccess)` | UI | Open character details modal |
+| `openFamilyViewModal(characterId)` | UI | Open family view modal |
 
 ---
 
 ## CROSS-SYSTEM INTEGRATION
 
-### Character ↔ Religion Integration (NEW)
+### Character ↔ Religion Integration
 
 | Direction | Mechanism | Status |
 |-----------|-----------|--------|
@@ -764,6 +873,75 @@ All icons must come from `icons.js` via the `_getIcon()` function:
 | Character → Education | Student enrollment | ✅ Complete |
 | Character → Education | Literacy tracking | ✅ Complete |
 | Character → Education | Education level tracking | ✅ Complete |
+
+### Character ↔ Culture Integration
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Character → Culture | `cultureId` field | ✅ Complete |
+| Character → Culture | Appearance generation | ✅ Complete |
+| Culture → Character | `getCharactersByCulture()` | ✅ Complete |
+
+### Character ↔ Family Integration
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Character → Family | `motherId`, `fatherId` fields | ✅ Complete |
+| Character → Family | `children` array | ✅ Complete |
+| Character → Family | `adoptedParents`, `adoptedChildren` | ✅ Complete |
+| Family → Character | `FamilyAccessors` core module | ✅ Complete |
+| Family → Character | `getAllChildren()`, `getParents()`, etc. | ✅ Complete |
+
+---
+
+## LOAD ORDER
+
+```html
+<!-- ============================================================ -->
+<!-- CORE - MUST LOAD FIRST                                       -->
+<!-- ============================================================ -->
+
+<script src="js/core/constants.js"></script>
+<script src="js/core/randomness.js"></script>
+<script src="js/core/collections.js"></script>
+<script src="js/core/validation.js"></script>
+<script src="js/core/formatting.js"></script>
+<script src="js/core/time.js"></script>
+<script src="js/core/ids.js"></script>
+<script src="js/core/storage.js"></script>
+<script src="js/core/accessors.js"></script>
+<script src="js/core/world.js"></script>
+<script src="js/core/names.js"></script>
+<script src="js/core/state.js"></script>
+<script src="js/core/integrity.js"></script>
+<script src="js/core/query-helpers.js"></script>
+<script src="js/core/family-accessors.js"></script>   <!-- PURE family queries -->
+<script src="js/core/icons.js"></script>
+<script src="js/core/ui.js"></script>
+<script src="js/core/collapsible.js"></script>
+<script src="js/core/responsive.js"></script>
+<script src="js/core/modals-core.js"></script>
+<script src="js/core/exportUtils.js"></script>
+
+<!-- ============================================================ -->
+<!-- CHARACTER SYSTEM - LOAD IN THIS ORDER                        -->
+<!-- ============================================================ -->
+
+<script src="js/character/character-state.js"></script>      <!-- 1. Foundation -->
+<script src="js/character/character-commands.js"></script>   <!-- 2. Commands -->
+<script src="js/character/character-queries.js"></script>    <!-- 3. Queries -->
+<script src="js/character/character-lifecycle.js"></script>  <!-- 4. Lifecycle -->
+<script src="js/character/character-ui-list.js"></script>    <!-- 5. UI List -->
+<script src="js/character/modals-character.js"></script>     <!-- 6. Modals -->
+
+<!-- ============================================================ -->
+<!-- SELECTORS                                                     -->
+<!-- ============================================================ -->
+
+<script src="js/selectors/locationDropdown.js"></script>
+<script src="js/selectors/modals-char-selector.js"></script>
+<script src="js/selectors/modals-household-selector.js"></script>
+```
 
 ---
 
@@ -821,12 +999,23 @@ console.log('Died of:', deathResult.deathCause);
 
 // Process inheritance
 var inheritance = CharacterLifecycle.processHouseholdInheritance('char_123');
+
+// Get family statistics
+var familyStats = CharacterQueries.getCharacterFamilyStatistics('char_123');
+console.log('Children:', familyStats.children.total);
+console.log('Siblings:', familyStats.siblings.total);
+console.log('Spouse:', familyStats.spouse?.character?.name);
+
+// Get potential heirs
+var heirs = CharacterLifecycle.getPotentialHeirs('char_123');
+console.log('Heirs:', heirs.map(h => h.character.name + ' (' + h.relationship + ')'));
 ```
 
 ---
 
 # END OF DOCUMENTATION
 
-**Generated:** 2026-07-13
-**Version:** 3.0
+**Generated:** 2026-07-15
+**Version:** 4.0
 **Files:** 6 core modules
+**Dependencies:** Core only (no circular dependencies)

@@ -105,28 +105,81 @@
     }
 
     // =========================================================================
-    // 2. RELATIONSHIP SYSTEM WRAPPERS
+    // 2. RELATIONSHIP SYSTEM WRAPPERS - USING THE REAL SYSTEM
     // =========================================================================
 
+    /**
+     * Gets the primary partner (spouse) of a character using RomanceLogic
+     * This is the CORRECT way to get a spouse
+     */
     function _getPrimaryPartner(characterId) {
+        // Try RomanceLogic.getPrimaryPartner first (most accurate)
         if (typeof window.RomanceLogic !== 'undefined' && 
             typeof window.RomanceLogic.getPrimaryPartner === 'function') {
             return window.RomanceLogic.getPrimaryPartner(characterId);
         }
-        if (typeof window.getPrimaryPartner === 'function') {
-            return window.getPrimaryPartner(characterId);
+        
+        // Fallback: RomanceLogic.getActiveRomanticRelationships
+        if (typeof window.RomanceLogic !== 'undefined' && 
+            typeof window.RomanceLogic.getActiveRomanticRelationships === 'function') {
+            var rels = window.RomanceLogic.getActiveRomanticRelationships(characterId);
+            if (rels && rels.length > 0) {
+                // Get the partner from the first active relationship
+                var rel = rels[0];
+                if (rel.participantA === characterId) {
+                    return _getCharacterById(rel.participantB);
+                } else {
+                    return _getCharacterById(rel.participantA);
+                }
+            }
         }
+        
+        // Fallback: FamilyLogic.getCurrentSpouse
+        if (typeof window.FamilyLogic !== 'undefined' && 
+            typeof window.FamilyLogic.getCurrentSpouse === 'function') {
+            return window.FamilyLogic.getCurrentSpouse(characterId);
+        }
+        
+        // Last resort: check character.relationships array directly
+        var char = _getCharacterById(characterId);
+        if (char && char.relationships) {
+            for (var i = 0; i < char.relationships.length; i++) {
+                var rel = char.relationships[i];
+                if (rel.status === 'ongoing' || rel.status === 'active') {
+                    var relType = rel.details?.type || rel.type;
+                    if (relType === 'committed' || relType === 'marriage' || relType === 'romance') {
+                        return _getCharacterById(rel.partnerId);
+                    }
+                }
+            }
+        }
+        
         return null;
     }
 
-    function _getActiveRomanticRelationships(characterId) {
+    /**
+     * Gets all spouses of a character using FamilyLogic
+     */
+    function _getSpouses(characterId) {
+        if (typeof window.FamilyLogic !== 'undefined' && 
+            typeof window.FamilyLogic.getSpouses === 'function') {
+            return window.FamilyLogic.getSpouses(characterId, true);
+        }
+        
+        // Fallback: RomanceLogic.getActiveRomanticRelationships
         if (typeof window.RomanceLogic !== 'undefined' && 
             typeof window.RomanceLogic.getActiveRomanticRelationships === 'function') {
-            return window.RomanceLogic.getActiveRomanticRelationships(characterId);
+            var rels = window.RomanceLogic.getActiveRomanticRelationships(characterId);
+            var spouses = [];
+            for (var i = 0; i < rels.length; i++) {
+                var rel = rels[i];
+                var partnerId = rel.participantA === characterId ? rel.participantB : rel.participantA;
+                var partner = _getCharacterById(partnerId);
+                if (partner) spouses.push(partner);
+            }
+            return spouses;
         }
-        if (typeof window.getActiveRomanticRelationships === 'function') {
-            return window.getActiveRomanticRelationships(characterId);
-        }
+        
         return [];
     }
 
@@ -235,21 +288,37 @@
         return false;
     }
 
+    /**
+     * Gets the source of inheritance for a character's rank
+     * Returns the character ID of the parent or spouse who passed down the rank
+     */
     function _getInheritanceSource(characterId, rankId) {
         var char = _getCharacterById(characterId);
         if (!char) return null;
         
-        var parents = _getParents(characterId);
-        if (parents.father && parents.father.activeRankId === rankId) {
-            return parents.father.id;
-        }
-        if (parents.mother && parents.mother.activeRankId === rankId) {
-            return parents.mother.id;
+        var rank = _getRankById(rankId);
+        if (!rank) return null;
+        
+        // Check if rank is inherited from spouse
+        if (rank.inheritanceSource === 'spouse' || rank.spouseInheritance) {
+            var spouse = _getPrimaryPartner(characterId);
+            if (spouse && spouse.activeRankId === rank.sourceRankId) {
+                return spouse.id;
+            }
+            if (spouse && rank.spouseInheritance && spouse.activeRankId === rank.spouseInheritance) {
+                return spouse.id;
+            }
         }
         
-        var spouse = _getPrimaryPartner(characterId);
-        if (spouse && spouse.activeRankId === rankId) {
-            return spouse.id;
+        // Check if rank is inherited from parent
+        if (rank.inheritanceSource === 'parent') {
+            var parents = _getParents(characterId);
+            if (parents.father && parents.father.activeRankId === rank.sourceRankId) {
+                return parents.father.id;
+            }
+            if (parents.mother && parents.mother.activeRankId === rank.sourceRankId) {
+                return parents.mother.id;
+            }
         }
         
         return null;
@@ -341,7 +410,7 @@
     }
 
     // =========================================================================
-    // 7. SPOUSE INHERITANCE CHECKS WITH AUTO-FIX
+    // 7. SPOUSE INHERITANCE CHECKS WITH AUTO-FIX - USING RELATIONSHIP SYSTEM
     // =========================================================================
 
     function _checkSpouseInheritance() {
@@ -358,6 +427,7 @@
             var char = characters[i];
             if (char.isDeceased) continue;
             
+            // Get spouse using the relationship system
             var spouse = _getPrimaryPartner(char.id);
             if (!spouse) continue;
             
@@ -366,19 +436,31 @@
             var spouseRank = rankMap[spouse.activeRankId];
             if (!spouseRank) continue;
             
-            if (!spouseRank.spouseInheritance) continue;
+            // Check if the spouse's rank grants an inherited rank
+            var inheritedRankId = null;
             
-            var inheritedRankId = spouseRank.spouseInheritance;
+            // Check spouseInheritance field on the rank
+            if (spouseRank.spouseInheritance) {
+                inheritedRankId = spouseRank.spouseInheritance;
+            }
+            
+            // Check inheritanceSource with sourceRankId
+            if (spouseRank.inheritanceSource === 'spouse' && spouseRank.sourceRankId) {
+                inheritedRankId = spouseRank.sourceRankId;
+            }
+            
+            if (!inheritedRankId) continue;
+            
             var inheritedRank = rankMap[inheritedRankId];
             if (!inheritedRank) continue;
             
             var hasRank = _hasRankAssignment(char.id, inheritedRankId);
             if (!hasRank) {
                 // Create auto-fix function
-                var fixFn = function(charId, rankId, spouseId, spouseName) {
+                var fixFn = function(charId, rankId, spouseId, spouseName, rankName) {
                     return function() {
                         var result = _assignRankToCharacter(charId, rankId, {
-                            notes: 'Inherited from spouse ' + spouseName,
+                            notes: 'Inherited from spouse ' + spouseName + ' via ' + rankName,
                             assignedYear: _getCurrentYear()
                         });
                         if (result && result.success !== false) {
@@ -389,7 +471,7 @@
                         _showToast('Failed to add rank', 'error');
                         return false;
                     };
-                }(char.id, inheritedRankId, spouse.id, spouse.name);
+                }(char.id, inheritedRankId, spouse.id, spouse.name, spouseRank.name);
                 
                 var issue = new RankIssue(
                     'Spouse Inheritance',

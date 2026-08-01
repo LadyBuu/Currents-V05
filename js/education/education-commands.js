@@ -17,7 +17,7 @@
  * - SETTLEMENT FUNDING SUMMARY
  * - DEMOLISH INSTITUTION
  * - REBUILD INSTITUTION
- * - RELIGIOUS SCHOOL CREATION (NEW)
+ * - RELIGIOUS SCHOOL CREATION
  * 
  * DEPENDENCIES:
  *   - education-state.js (EducationState)
@@ -444,11 +444,6 @@
                     governmentFundingYear: currentYear,
                     lastFunded: currentYear
                 });
-
-                _logEvent('education', 'institution_funded',
-                    'Institution ' + inst.name + ' received ' + Math.round(perInstitution) + 
-                    ' gold from settlement budget',
-                    []);
             }
 
             _showToast('Distributed ' + totalBudget + ' gold to ' + institutions.length + ' institutions', 'success');
@@ -551,9 +546,7 @@
                 tuitionPerYear = window.DEFAULT_TUITION_BY_TYPE?.[type.id] || window.DEFAULT_TUITION || 10;
             }
 
-            // ================================================================
-            // NEW: Religion fields
-            // ================================================================
+            // Religion fields
             var religionId = options.religionId || null;
             var religionName = null;
             var isReligiousSchool = false;
@@ -672,9 +665,7 @@
                 destroyedBy: null,
                 disasterId: null,
                 demolishedRecord: null,
-                // ================================================================
-                // NEW: Religion fields
-                // ================================================================
+                // Religion fields
                 religionId: religionId,
                 religionName: religionName,
                 isReligiousSchool: isReligiousSchool,
@@ -703,17 +694,9 @@
     }
 
     // =========================================================================
-    // 7. CREATE RELIGIOUS SCHOOL (NEW)
+    // 7. CREATE RELIGIOUS SCHOOL
     // =========================================================================
 
-    /**
-     * Creates a religious school linked to a specific religion
-     * @param {string} religionId - ID of the religion
-     * @param {string} name - School name
-     * @param {string} locationId - Location ID
-     * @param {Object} options - Additional options
-     * @returns {Object} Created institution or null
-     */
     function createReligiousSchool(religionId, name, locationId, options) {
         if (_processingCommand) {
             return null;
@@ -805,7 +788,7 @@
     }
 
     // =========================================================================
-    // 8. GET RELIGIOUS SCHOOLS (NEW)
+    // 8. GET RELIGIOUS SCHOOLS
     // =========================================================================
 
     function getReligiousSchools(religionId, locationId) {
@@ -871,9 +854,7 @@
                 }
             }
 
-            // ================================================================
-            // NEW: Religion update handling
-            // ================================================================
+            // Religion update handling
             if (updates.religionId !== undefined) {
                 if (updates.religionId) {
                     var religion = _getReligion(updates.religionId);
@@ -1073,7 +1054,77 @@
     }
 
     // =========================================================================
-    // 10. TEACHER MANAGEMENT
+    // 10. DELETE INSTITUTION
+    // =========================================================================
+
+    function deleteInstitution(institutionId, cascade) {
+        if (_processingCommand) {
+            return false;
+        }
+        _processingCommand = true;
+
+        try {
+            var institution = EducationState.getInstitution(institutionId);
+            if (!institution) {
+                _showToast('Institution not found', 'error');
+                return false;
+            }
+
+            // If cascade is true, remove all students and teachers first
+            if (cascade) {
+                // Remove all students
+                if (institution.students) {
+                    var students = institution.students.slice();
+                    for (var i = 0; i < students.length; i++) {
+                        try {
+                            withdrawStudent(institutionId, students[i].studentId, 'Institution deleted');
+                        } catch (e) {
+                            // Continue with others
+                        }
+                    }
+                }
+
+                // Remove all teachers
+                if (institution.teachers) {
+                    var teachers = institution.teachers.slice();
+                    for (var i = 0; i < teachers.length; i++) {
+                        try {
+                            fireTeacher(institutionId, teachers[i].teacherId, 'Institution deleted');
+                        } catch (e) {
+                            // Continue with others
+                        }
+                    }
+                }
+
+                // End headmaster term
+                if (institution.headmaster) {
+                    try {
+                        endHeadmasterTerm(institutionId, _getCurrentYear(), 'Institution deleted');
+                    } catch (e) {
+                        // Continue
+                    }
+                }
+            }
+
+            var result = EducationState._deleteInstitution(institutionId);
+            
+            if (result) {
+                _logEvent('education', 'Institution Deleted',
+                    'Institution "' + institution.name + '" deleted',
+                    []);
+                _showToast('Institution "' + institution.name + '" deleted', 'info');
+                return true;
+            }
+
+            return false;
+
+        } finally {
+            _processingCommand = false;
+        }
+    }
+
+    // =========================================================================
+    // 11. TEACHER MANAGEMENT
     // =========================================================================
 
     function hireTeacher(institutionId, teacherId, subjectId) {
@@ -1205,7 +1256,7 @@
     }
 
     // =========================================================================
-    // 11. STUDENT MANAGEMENT
+    // 12. STUDENT MANAGEMENT
     // =========================================================================
 
     function enrollStudent(institutionId, studentId, startYear) {
@@ -1316,7 +1367,7 @@
     }
 
     // =========================================================================
-    // 12. GRADUATION WITH ROLE GRANTING
+    // 13. GRADUATION WITH ROLE GRANTING
     // =========================================================================
 
     function graduateStudent(institutionId, studentId, graduationYear, selectedRoleId) {
@@ -1524,7 +1575,7 @@
     }
 
     // =========================================================================
-    // 13. HEADMASTER MANAGEMENT
+    // 14. HEADMASTER MANAGEMENT
     // =========================================================================
 
     function setHeadmaster(institutionId, characterId, title, startYear) {
@@ -1631,7 +1682,7 @@
     }
 
     // =========================================================================
-    // 14. INSTITUTIONS NEEDING TEACHERS
+    // 15. INSTITUTIONS NEEDING TEACHERS
     // =========================================================================
 
     function getInstitutionsNeedingTeachers(maxReputation, minStudents) {
@@ -1691,7 +1742,7 @@
     }
 
     // =========================================================================
-    // 15. UPDATE REPUTATION
+    // 16. UPDATE REPUTATION
     // =========================================================================
 
     function updateReputation(institutionId, delta) {
@@ -1721,7 +1772,7 @@
     }
 
     // =========================================================================
-    // 16. DEMOLISH INSTITUTION
+    // 17. DEMOLISH INSTITUTION
     // =========================================================================
 
     function demolishInstitution(institutionId, reason, year, options) {
@@ -1769,8 +1820,8 @@
                 ownershipType: institution.ownershipType || 'public',
                 ownerId: institution.ownerId || null,
                 ownerName: institution.ownerName || null,
-                religionId: institution.religionId || null,  // NEW
-                religionName: institution.religionName || null,  // NEW
+                religionId: institution.religionId || null,
+                religionName: institution.religionName || null,
                 timestamp: Date.now()
             };
 
@@ -1881,7 +1932,7 @@
     }
 
     // =========================================================================
-    // 17. REBUILD INSTITUTION
+    // 18. REBUILD INSTITUTION
     // =========================================================================
 
     function rebuildInstitution(institutionId, rebuildYear, options) {
@@ -1981,7 +2032,7 @@
     }
 
     // =========================================================================
-    // 18. DEMOLISHED INSTITUTION QUERIES
+    // 19. DEMOLISHED INSTITUTION QUERIES
     // =========================================================================
 
     function getDemolishedInstitutions(options) {
@@ -2097,7 +2148,7 @@
     }
 
     // =========================================================================
-    // 19. EXPORTS
+    // 20. EXPORTS
     // =========================================================================
 
     window.EducationCommands = {
@@ -2786,7 +2837,7 @@
         receiveSettlementBudget: receiveSettlementBudget,
         getSettlementFundingSummary: getSettlementFundingSummary,
 
-        // NEW: Religious school functions
+        // Religious school functions
         createReligiousSchool: createReligiousSchool,
         getReligiousSchools: getReligiousSchools,
 

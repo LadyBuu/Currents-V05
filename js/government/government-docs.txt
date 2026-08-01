@@ -1,1388 +1,143 @@
 # GOVERNMENT SYSTEM - COMPLETE DOCUMENTATION
 
-## SYSTEM OVERVIEW
-
-The Government System manages all government structures, departments, positions, assignments, and leadership within the game world. It provides a complete API for government CRUD operations, position management, assignment tracking, leadership (leaders), and justice system integration.
-
-**Key Design Principles:**
-- **Single Source of Truth**: `government-state.js` holds all government data
-- **Command-Query Separation**: Commands (writes) vs Queries (reads) separated
-- **Separation of Concerns**: State, commands, queries, economy, UI all separate
-- **Recursion Guards**: All public functions protected from infinite loops
-- **Role Integration**: Positions can require roles (generic professions)
-- **Settlement Integration**: Government salaries are paid from settlement allocations
-- **Industry Integration**: Government collects industry taxes
-- **Justice Integration**: Crime rate reacts to justice severity and watch presence
-- **Leader History Tracking**: Full leader assignment history with term tracking
-- **Hierarchical Structure**: Departments and positions support parent-child relationships
+## Version 4.0 | Generated: 2026-07-14
 
 ---
 
-## FILE STRUCTURE
+# TABLE OF CONTENTS
+
+1. [SYSTEM OVERVIEW](#1-system-overview)
+2. [FILE STRUCTURE](#2-file-structure)
+3. [GOVERNMENT-STATE.JS](#3-government-statejs)
+4. [GOVERNMENT-COMMANDS.JS](#4-government-commandsjs)
+5. [GOVERNMENT-QUERIES.JS](#5-government-queriesjs)
+6. [GOVERNMENT-ECONOMY.JS](#6-government-economyjs)
+7. [GOVERNMENT-ASSIGNMENT.JS](#7-government-assignmentjs)
+8. [GOVERNMENT-LAWS.JS](#8-government-lawsjs)
+9. [GOVERNMENT-SYSTEM.JS](#9-government-systemjs)
+10. [GOVERNMENT-UI-LIST.JS](#10-government-ui-listjs)
+11. [MODALS-GOVERNMENT.JS](#11-modals-governmentjs)
+12. [MODALS-GOVERNMENT-ASSIGN.JS](#12-modals-government-assignjs)
+13. [MODALS-GOVERNMENT-DEPARTMENTS.JS](#13-modals-government-departmentsjs)
+14. [MODALS-GOVERNMENT-POSITIONS.JS](#14-modals-government-positionsjs)
+15. [MODALS-GOVERNMENT-ECONOMY.JS](#15-modals-government-economyjs)
+16. [DATA SCHEMAS](#16-data-schemas)
+17. [CROSS-SYSTEM INTEGRATION](#17-cross-system-integration)
+18. [DEPENDENCY MAP](#18-dependency-map)
+19. [RECURSION GUARDS](#19-recursion-guards)
+20. [ICON POLICY](#20-icon-policy)
+21. [COMPLETE FUNCTION LIST](#21-complete-function-list)
+22. [USAGE EXAMPLES](#22-usage-examples)
+
+---
+
+# 1. SYSTEM OVERVIEW
+
+## Purpose
+
+The Government System manages all government structures, departments, positions, assignments, leadership, and civil laws within the game world. It provides:
+
+- **Department Management** - Create, update, delete departments with hierarchy
+- **Position Management** - Define positions with role requirements and skill levels
+- **Assignment Tracking** - Assign characters to positions with full history
+- **Civil Laws** - Define and manage settlement civil laws (NEW)
+- **Leadership** - Assign leaders to locations with term tracking
+- **Justice System** - Justice severity and watch management
+- **Industry Integration** - Tax revenue from industry enterprises
+- **Settlement Integration** - Government salaries paid from settlement allocations
+- **Role Integration** - Positions can require specific roles
+- **Salary Management** - Position salary calculation with overrides
+- **Hierarchical Structure** - Departments and positions support parent-child relationships
+
+## Key Design Principles
+
+| Principle | Description |
+|-----------|-------------|
+| **Single Source of Truth** | `government-state.js` holds all government data |
+| **Command-Query Separation** | Commands (writes) vs Queries (reads) separated |
+| **Separation of Concerns** | State, commands, queries, economy, laws, UI all separate |
+| **Recursion Guards** | All public functions protected from infinite loops |
+| **No Emojis** | All icons from `icons.js` via `_getIcon()` |
+| **Civil Laws** | Settlements define their own civil laws via GovernmentLaws |
+
+## Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         GOVERNMENT SYSTEM                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────────────┐    ┌─────────────────────────┐                │
+│  │  GOVERNMENT-STATE.JS    │    │  GOVERNMENT-QUERIES.JS │                │
+│  │  (Data Layer + Cache)   │◄───│  (Read Layer)          │                │
+│  └─────────────────────────┘    └─────────────────────────┘                │
+│           │                              │                                  │
+│           ▼                              ▼                                  │
+│  ┌─────────────────────────┐    ┌─────────────────────────┐                │
+│  │  GOVERNMENT-COMMANDS    │    │  GOVERNMENT-UI-LIST.JS │                │
+│  │  .JS                    │    │  (UI Rendering)         │                │
+│  │  (Write Layer)          │    └─────────────────────────┘                │
+│  └─────────────────────────┘                                               │
+│           │                                                                │
+│           ├──────────────┬───────────────┬──────────────┬──────────────────┤
+│           ▼              ▼               ▼              ▼                  │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────────┐      │
+│  │ GOVERNMENT- │ │ GOVERNMENT- │ │ GOVERNMENT- │ │ MODALS-         │      │
+│  │ ECONOMY.JS  │ │ ASSIGNMENT  │ │ LAWS.JS     │ │ GOVERNMENT-*.JS │      │
+│  │             │ │ .JS         │ │ (CIVIL)     │ │ (UI Modals)     │      │
+│  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────────┘      │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    masterData.data.governmentDepartments                   │
+│                    masterData.data.governmentTypes                         │
+│                    masterData.data.governmentHistory                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+# 2. FILE STRUCTURE
 
 ```
 js/systems/government/
-├── government-state.js              # Single source of truth + cache + notifications
-├── government-commands.js           # All write operations (depts, positions, assignments, leaders)
-├── government-queries.js            # All read operations (search, filter, stats, leadership)
-├── government-economy.js            # Salary calculation and requirements (for settlement allocation)
-├── government-assignment.js         # Business logic for qualification and succession planning
-├── government-ui-list.js            # UI list rendering
+├── government-state.js              # Single source of truth + cache + subscriptions
+├── government-commands.js           # All write operations (depts, positions, leaders)
+├── government-queries.js            # All read operations (search, stats, leadership)
+├── government-economy.js            # Salary calculation and requirements
+├── government-assignment.js         # Business logic for qualification and succession
+├── government-laws.js               # Civil law definitions (NEW)
 ├── government-system.js             # Wrapper for backward compatibility
-└── modals-government-*.js           # UI modals (departments, positions, assignments, economy)
-
-js/core/modals/
-├── modals-government.js                 # Main government modals
-├── modals-government-assign.js          # Assignment modals (bulk, history, succession)
-├── modals-government-departments.js     # Department modals
-├── modals-government-positions.js       # Position modals
-├── modals-government-economy.js         # Economy modals (budget, salary, tax)
-├── modals-government-ui.js              # UI modals
-└── modals-char-select.js                # Character selector
+├── government-ui-list.js            # UI list rendering
+├── modals-government.js             # Main government modals
+├── modals-government-assign.js      # Assignment modals (bulk, history, succession)
+├── modals-government-departments.js # Department modals
+├── modals-government-positions.js   # Position modals
+├── modals-government-economy.js     # Economy modals (budget, salary, tax)
+└── government-docs.txt              # This documentation
 ```
 
 ---
 
-# 1. GOVERNMENT-STATE.JS
+# 3. GOVERNMENT-STATE.JS
 
-**PURPOSE:** Single source of truth for all government data. Manages caching, subscriptions, and data loading.
+## Purpose
 
-**DEPENDENCIES:**
-- `accessors.js` - `getPlaces`, `getPlaceById`, `getCharacters`, `getCharacterById`
-- `storage.js` - `saveMasterData`
-- `ids.js` - `generateId`
+Single source of truth for all government data. Manages caching, subscriptions, and data persistence.
 
----
+## Dependencies
 
-## Constants
+| Module | Functions Used |
+|--------|----------------|
+| `accessors.js` | `getPlaces`, `getPlaceById`, `getCharacters`, `getCharacterById` |
+| `storage.js` | `saveMasterData` |
+| `ids.js` | `generateId` |
 
-### Government Types Structure
-Government types define the structure of governance for locations. They include:
-- `id`: Unique identifier
-- `name`: Display name (e.g., "Monarchy", "Republic", "Theocracy")
-- `description`: Description of the government type
-- `allowedRankIds`: Array of rank IDs permitted to hold positions
+## Data Structure
 
----
-
-## Data Access Functions
-
-### `GovernmentState.getState(options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a snapshot of the current state |
-| **Parameters** | `options.includeUI` (boolean) - Include UI state |
-| **Returns** | `{ departments: [], types: [], history: [], version: number, timestamp: number }` |
-
-### `GovernmentState.getDepartment(departmentId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a single department by ID |
-| **Parameters** | `departmentId` (string) - Department ID |
-| **Returns** | `Object|null` - Department object or null |
-
-### `GovernmentState.getAllDepartments(options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all departments |
-| **Parameters** | `options.includeDeprecated` (boolean), `options.locationId` (string) |
-| **Returns** | `Array` - Array of department objects |
-
-### `GovernmentState.getDepartmentsByLocation(locationId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets departments by location |
-| **Parameters** | `locationId` (string), `options.includeDeprecated` (boolean) |
-| **Returns** | `Array` - Array of department objects |
-
-### `GovernmentState.getDepartmentsByParent(parentId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets departments by parent department |
-| **Parameters** | `parentId` (string), `options.includeDeprecated` (boolean) |
-| **Returns** | `Array` - Array of department objects |
-
-### `GovernmentState.getDepartmentsByCharacter(characterId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets departments a character is assigned to |
-| **Parameters** | `characterId` (string), `options.includeDeprecated` (boolean) |
-| **Returns** | `Array` - Array of department objects |
-
-### `GovernmentState.getDepartmentTree(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets department hierarchy tree for a location |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Array` - Tree structure of departments |
-
----
-
-## Position Functions
-
-### `GovernmentState.getPositionsForDepartment(departmentId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all positions in a department |
-| **Parameters** | `departmentId` (string) |
-| **Returns** | `Array` - Array of position objects |
-
-### `GovernmentState.getPositionById(departmentId, positionId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a position by ID |
-| **Parameters** | `departmentId` (string), `positionId` (string) |
-| **Returns** | `Object|null` - Position object or null |
-
-### `GovernmentState.getPositionHierarchy(departmentId, positionId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets position hierarchy (parent chain) |
-| **Parameters** | `departmentId` (string), `positionId` (string) |
-| **Returns** | `Array|null` - Array of positions or null |
-
----
-
-## Assignment Functions
-
-### `GovernmentState.getAssignmentsForDepartment(departmentId, activeOnly)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets assignments for a department |
-| **Parameters** | `departmentId` (string), `activeOnly` (boolean) |
-| **Returns** | `Array` - Array of assignment objects |
-
-### `GovernmentState.getAssignmentsForPosition(departmentId, positionId, activeOnly)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets assignments for a position |
-| **Parameters** | `departmentId` (string), `positionId` (string), `activeOnly` (boolean) |
-| **Returns** | `Array` - Array of assignment objects |
-
-### `GovernmentState.getAssignmentsForCharacter(characterId, activeOnly)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets assignments for a character |
-| **Parameters** | `characterId` (string), `activeOnly` (boolean) |
-| **Returns** | `Array` - Array of assignment objects |
-
-### `GovernmentState.getAssignmentById(departmentId, assignmentId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets an assignment by ID |
-| **Parameters** | `departmentId` (string), `assignmentId` (string) |
-| **Returns** | `Object|null` - Assignment object or null |
-
----
-
-## Government Type Functions
-
-### `GovernmentState.getGovernmentTypes()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all government types |
-| **Returns** | `Array` - Array of government type objects |
-
-### `GovernmentState.getGovernmentTypeById(typeId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a government type by ID |
-| **Parameters** | `typeId` (string) |
-| **Returns** | `Object|null` - Government type or null |
-
-### `GovernmentState.getGovernmentHistory(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets government history for a location |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Array` - Array of history entries |
-
----
-
-## Industry Integration
-
-### `GovernmentState.getIndustryTaxRevenue(locationId, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets industry tax revenue for a location |
-| **Parameters** | `locationId` (string), `year` (number) |
-| **Returns** | `number` - Tax revenue amount |
-
-### `GovernmentState.getIndustryEnterpriseStats(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets industry enterprise statistics for a location |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object` - Enterprise statistics |
-
-### `GovernmentState.getIndustryTaxRate(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets industry tax rate for a location |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` - Tax rate (0-1) |
-
-### `GovernmentState.getIndustryIncomeForLocation(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets total industry income for a location |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` - Total income |
-
----
-
-## UI State Management
-
-### `GovernmentState.getUIState()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the current UI state |
-| **Returns** | `{ selectedDepartmentId, selectedPositionId, selectedLocationId, viewMode, expandedDepartments, filters }` |
-
-### `GovernmentState.setUIState(key, value, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Sets a UI state value |
-| **Parameters** | `key` (string), `value` (*), `options.notify` (boolean) |
-
-### `GovernmentState.updateUIState(updates, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates multiple UI state values |
-| **Parameters** | `updates` (Object), `options.notify` (boolean) |
-
----
-
-## Cache Management
-
-### `GovernmentState.refreshFromMasterData()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Refreshes state from masterData |
-
-### `GovernmentState.invalidateCache()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Invalidates all caches |
-
----
-
-## Subscriptions
-
-### `GovernmentState.subscribe(callback)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Subscribes to state changes |
-| **Parameters** | `callback` (function) - Receives event object |
-| **Returns** | `function` - Unsubscribe function |
-
----
-
-# 2. GOVERNMENT-COMMANDS.JS
-
-**PURPOSE:** All write operations for government management including departments, positions, assignments, leaders, and justice.
-
-**DEPENDENCIES:**
-- `government-state.js` - `GovernmentState`
-- `accessors.js` - `getCharacterById`, `getPlaceById`, `getCurrentYear`
-- `eventLogger.js` - `logEvent`
-- `storage.js` - `saveMasterData`
-- `location-state.js` - `LocationState`
-- `settlement-state.js` - `SettlementState`
-- `settlement-commands.js` - `SettlementCommands`
-
----
-
-## Department Commands
-
-### `GovernmentCommands.createDepartment(data)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Creates a new government department |
-| **Parameters** | `data.name` (string), `data.description` (string), `data.locationId` (string), `data.parentDepartmentId` (string) |
-| **Returns** | `Object|null` - Created department or null |
-
-### `GovernmentCommands.updateDepartment(departmentId, updates)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates a government department |
-| **Parameters** | `departmentId` (string), `updates` (Object) |
-| **Returns** | `Object|null` - Updated department or null |
-
-### `GovernmentCommands.deleteDepartment(departmentId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Deletes a government department |
-| **Parameters** | `departmentId` (string), `options.cascade` (boolean) |
-| **Returns** | `boolean` - True if deleted |
-
----
-
-## Position Commands
-
-### `GovernmentCommands.addPosition(departmentId, data)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Adds a position to a department |
-| **Parameters** | `departmentId` (string), `data.name` (string), `data.description` (string), `data.priority` (number), `data.parentPositionId` (string), `data.requiredRoleId` (string), `data.minSkillLevel` (number), `data.genderRestriction` (string), `data.requiredRankId` (string), `data.minExperience` (number) |
-| **Returns** | `Object|null` - Created position or null |
-
-### `GovernmentCommands.updatePosition(departmentId, positionId, updates)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates a position |
-| **Parameters** | `departmentId` (string), `positionId` (string), `updates` (Object) |
-| **Returns** | `boolean` - True if updated |
-
-### `GovernmentCommands.deletePosition(departmentId, positionId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Deletes a position |
-| **Parameters** | `departmentId` (string), `positionId` (string) |
-| **Returns** | `boolean` - True if deleted |
-
----
-
-## Assignment Commands (with Settlement Salary Integration)
-
-### `GovernmentCommands.assignCharacterToPosition(departmentId, positionId, characterId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Assigns a character to a government position (pays salary from settlement allocation) |
-| **Parameters** | `departmentId` (string), `positionId` (string), `characterId` (string), `options.startYear` (number), `options.endYear` (number), `options.title` (string), `options.notes` (string), `options.addRoleIfMissing` (boolean), `options.defaultSkillLevel` (number) |
-| **Returns** | `Object|null` - Created assignment or null |
-
-**Integration Features:**
-- Checks settlement salary budget before assignment
-- Auto-adds required role if missing (optional)
-- Pays salary to character's household
-- Logs salary payment to economy log
-
-### `GovernmentCommands.endAssignment(departmentId, assignmentId, endYear, reason)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Ends a government assignment |
-| **Parameters** | `departmentId` (string), `assignmentId` (string), `endYear` (number), `reason` (string) |
-| **Returns** | `boolean` - True if ended |
-
-### `GovernmentCommands.removeAssignment(departmentId, assignmentId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Removes a government assignment permanently |
-| **Parameters** | `departmentId` (string), `assignmentId` (string) |
-| **Returns** | `boolean` - True if removed |
-
----
-
-## Salary Budget Functions (NEW)
-
-### `GovernmentCommands.checkSalaryBudgetSufficiency(departmentId, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Checks if there is sufficient settlement allocation for government salaries |
-| **Parameters** | `departmentId` (string), `year` (number) |
-| **Returns** | `{ sufficient: boolean, allocated: number, required: number, shortfall: number, surplus: number }` |
-
----
-
-## Government Type Commands
-
-### `GovernmentCommands.createGovernmentType(data)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Creates a new government type |
-| **Parameters** | `data.name` (string), `data.description` (string), `data.allowedRankIds` (Array) |
-| **Returns** | `Object|null` - Created type or null |
-
-### `GovernmentCommands.updateGovernmentType(typeId, updates)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates a government type |
-| **Parameters** | `typeId` (string), `updates` (Object) |
-| **Returns** | `Object|null` - Updated type or null |
-
-### `GovernmentCommands.deleteGovernmentType(typeId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Deletes a government type |
-| **Parameters** | `typeId` (string) |
-| **Returns** | `boolean` - True if deleted |
-
----
-
-## Bulk Operations
-
-### `GovernmentCommands.bulkAssignCharacters(departmentId, positionId, assignments)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Bulk assigns characters to a position |
-| **Parameters** | `departmentId` (string), `positionId` (string), `assignments` (Array) |
-| **Returns** | `{ success: Array, failed: Array, total: number }` |
-
----
-
-## Leader Commands (with Settlement Prosperity Integration)
-
-### `GovernmentCommands.assignLeader(placeId, characterId, startYear, title)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Assigns a leader to a location |
-| **Parameters** | `placeId` (string), `characterId` (string), `startYear` (number), `title` (string) |
-| **Returns** | `Object|null` - Created leader assignment or null |
-
-**Integration Features:**
-- Ends previous leader's term
-- Updates settlement prosperity
-- Logs leadership change
-
-### `GovernmentCommands.endLeaderTerm(placeId, characterId, endYear)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Ends a leader's term |
-| **Parameters** | `placeId` (string), `characterId` (string), `endYear` (number) |
-| **Returns** | `boolean` - True if ended |
-
-**Integration Features:**
-- Updates settlement prosperity
-- Logs term end
-
----
-
-## Justice Commands (with Crime Rate Integration)
-
-### `GovernmentCommands.updateJusticeSeverity(locationId, severity)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates justice severity for a location |
-| **Parameters** | `locationId` (string), `severity` (string - 'lenient', 'medium', 'harsh', 'extreme') |
-| **Returns** | `{ success: boolean, data: object }` |
-
-**Integration Features:**
-- Recalculates crime rate
-- Logs justice change
-
-### `GovernmentCommands.updateWatch(locationId, hasWatch, size)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates watch presence for a location |
-| **Parameters** | `locationId` (string), `hasWatch` (boolean), `size` (number) |
-| **Returns** | `{ success: boolean, data: object }` |
-
-**Integration Features:**
-- Recalculates crime rate
-- Logs watch change
-
----
-
-# 3. GOVERNMENT-QUERIES.JS
-
-**PURPOSE:** All read-only queries for government data. No side effects, no mutations.
-
-**DEPENDENCIES:**
-- `government-state.js` - `GovernmentState`
-- `accessors.js` - `getCharacterById`, `getPlaceById`, `getPlaces`, `getCurrentYear`
-- `role-queries.js` - `RoleQueries`
-
----
-
-## Search Functions
-
-### `GovernmentQueries.searchDepartments(options, queryOptions)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Searches departments with various filters |
-| **Parameters** | `options.search` (string), `options.locationId` (string), `options.parentDepartmentId` (string), `options.characterId` (string), `options.minPositions` (number), `options.maxPositions` (number), `options.minAssignments` (number), `options.maxAssignments` (number), `options.hasPositions` (boolean), `options.hasAssignments` (boolean), `options.sortBy` (string), `options.sortOrder` (string), `options.limit` (number) |
-| **Returns** | `Array` - Array of matching department objects |
-
-### `GovernmentQueries.searchPositions(options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Searches positions with various filters |
-| **Parameters** | `options.departmentId` (string), `options.search` (string), `options.requiredRoleId` (string), `options.minSkillLevel` (number), `options.hasRoleRequirement` (boolean), `options.genderRestriction` (string), `options.minPriority` (number), `options.maxPriority` (number), `options.sortBy` (string), `options.sortOrder` (string), `options.limit` (number) |
-| **Returns** | `Array` - Array of position objects with department info |
-
----
-
-## Statistics Functions
-
-### `GovernmentQueries.getStatistics(options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates comprehensive government statistics |
-| **Parameters** | `options.includeDeprecated` (boolean) |
-| **Returns** | `{ totalDepartments, totalPositions, totalAssignments, activeAssignments, departmentsWithPositions, departmentsWithAssignments, positionsWithRoleRequirement, byLocation, byParent, byRole, averagePositionsPerDepartment, averageAssignmentsPerDepartment, percentagePositionsWithRole }` |
-
-### `GovernmentQueries.getPositionStatistics(departmentId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets position statistics for a department |
-| **Parameters** | `departmentId` (string) |
-| **Returns** | `{ total, withAssignments, withoutAssignments, activeAssignments, totalAssignments, withRoleRequirement, byPriority, byParent }` |
-
-### `GovernmentQueries.getAssignmentStatistics(departmentId, characterId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets assignment statistics |
-| **Parameters** | `departmentId` (string), `characterId` (string) |
-| **Returns** | `{ total, active, ended, byPosition, byYear, withRoles }` |
-
----
-
-## Comparison Functions
-
-### `GovernmentQueries.compareDepartments(id1, id2)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Compares two departments |
-| **Parameters** | `id1` (string), `id2` (string) |
-| **Returns** | `Object` - Comparison results |
-
----
-
-## Ranking Functions
-
-### `GovernmentQueries.getLargestDepartments(limit, locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets largest departments by position count |
-| **Parameters** | `limit` (number), `locationId` (string) |
-| **Returns** | `Array` - Ranked departments |
-
-### `GovernmentQueries.getMostActiveDepartments(limit, locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets most active departments by assignment count |
-| **Parameters** | `limit` (number), `locationId` (string) |
-| **Returns** | `Array` - Ranked departments |
-
-### `GovernmentQueries.getPositionsByRoleRequirement(roleId, departmentId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets positions by role requirement |
-| **Parameters** | `roleId` (string), `departmentId` (string) |
-| **Returns** | `Array` - Matching positions |
-
----
-
-## Hierarchy Queries
-
-### `GovernmentQueries.getDepartmentPath(departmentId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the parent path of a department |
-| **Parameters** | `departmentId` (string) |
-| **Returns** | `Array` - Department path |
-
-### `GovernmentQueries.getDepartmentDescendants(departmentId, includeSelf)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all descendants of a department |
-| **Parameters** | `departmentId` (string), `includeSelf` (boolean) |
-| **Returns** | `Array` - Descendant departments |
-
-### `GovernmentQueries.getPositionPath(departmentId, positionId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the parent path of a position |
-| **Parameters** | `departmentId` (string), `positionId` (string) |
-| **Returns** | `Array` - Position path |
-
----
-
-## Assignment History Queries
-
-### `GovernmentQueries.getAssignmentHistory(departmentId, positionId, characterId, limit)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets assignment history |
-| **Parameters** | `departmentId` (string), `positionId` (string), `characterId` (string), `limit` (number) |
-| **Returns** | `Array` - History entries |
-
----
-
-## Location Analytics
-
-### `GovernmentQueries.getLocationGovernmentSummary(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a summary of government at a location |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object` - Location government summary |
-
----
-
-## Leader Queries
-
-### `GovernmentQueries.getCurrentLeader(placeId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the current leader of a location |
-| **Parameters** | `placeId` (string) |
-| **Returns** | `Object|null` - Leader assignment or null |
-
-### `GovernmentQueries.getLeaderHistory(placeId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets leader history for a location |
-| **Parameters** | `placeId` (string) |
-| **Returns** | `Array` - Leader history entries |
-
-### `GovernmentQueries.getLeaderCount(placeId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the number of leaders for a location |
-| **Parameters** | `placeId` (string) |
-| **Returns** | `number` - Leader count |
-
-### `GovernmentQueries.getActiveLeaderCount()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the total number of active leaders |
-| **Returns** | `number` - Active leader count |
-
-### `GovernmentQueries.getLeadersByLocation(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets leaders by location |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Array` - Leaders with place info |
-
----
-
-## Industry Queries
-
-### `GovernmentQueries.getIndustryTaxRevenue(locationId, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets industry tax revenue for a location |
-| **Parameters** | `locationId` (string), `year` (number) |
-| **Returns** | `number` - Tax revenue |
-
-### `GovernmentQueries.getIndustryEnterpriseStats(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets industry enterprise statistics |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object` - Enterprise stats |
-
-### `GovernmentQueries.getIndustryTaxRate(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets industry tax rate |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` - Tax rate |
-
-### `GovernmentQueries.getIndustryHealthScore(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets industry health score |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` - Health score (0-100) |
-
-### `GovernmentQueries.getGovernmentIndustrySummary(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets comprehensive industry summary |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object` - Industry summary |
-
----
-
-## Role-Based Position Queries
-
-### `GovernmentQueries.getPositionsRequiringRole(roleId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets positions requiring a specific role |
-| **Parameters** | `roleId` (string) |
-| **Returns** | `Array` - Matching positions |
-
-### `GovernmentQueries.getCharactersQualifiedForPosition(departmentId, positionId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets characters qualified for a position |
-| **Parameters** | `departmentId` (string), `positionId` (string), `options.limit` (number) |
-| **Returns** | `Array` - Qualified characters with skill info |
-
----
-
-# 4. GOVERNMENT-ECONOMY.JS
-
-**PURPOSE:** Business logic for government finances, salary calculation, and salary requirements (for settlement allocation).
-
-**DEPENDENCIES:**
-- `government-state.js` - `GovernmentState`
-- `government-queries.js` - `GovernmentQueries`
-- `accessors.js` - `getCharacterById`, `getPlaceById`, `getCurrentYear`
-
----
-
-## Constants
-
-### Salary Tiers
-
-| Tier | base | multiplier | Description |
-|------|------|------------|-------------|
-| MINISTER | 100 | 1.5 | Minister/Department Head |
-| DIRECTOR | 60 | 1.2 | Director/Senior Position |
-| OFFICER | 35 | 1.0 | Officer/Mid-level |
-| CLERK | 20 | 0.8 | Clerk/Entry-level |
-| STAFF | 12 | 0.6 | Staff/Support |
-
----
-
-## Salary Calculation
-
-### `GovernmentEconomy.calculatePositionSalary(positionId, department)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates salary for a position |
-| **Parameters** | `positionId` (string), `department` (Object) |
-| **Returns** | `number` - Salary amount |
-
-**Calculation Factors:**
-1. Position priority determines tier
-2. Location prosperity modifies salary
-3. Experience in position adds modifier
-4. Salary overrides can be applied
-
----
-
-## Department Salary Requirements (for Settlement Allocation)
-
-### `GovernmentEconomy.calculateDepartmentSalaryRequirements(departmentId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates salary requirements for all positions in a department |
-| **Parameters** | `departmentId` (string) |
-| **Returns** | `Object` - Salary requirements |
-
-**Returns:**
-```javascript
-{
-  departmentId: string,
-  departmentName: string,
-  locationId: string,
-  totalPositions: number,
-  filledPositions: number,
-  vacantPositions: number,
-  totalSalaryRequirement: number,
-  averageSalary: number,
-  details: [
-    { assignmentId, characterId, characterName, positionId, positionName, salary }
-  ]
-}
-```
-
-### `GovernmentEconomy.calculateLocationSalaryRequirements(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates total salary requirements for all departments in a location |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `{ totalSalaryRequirement: number, departments: Array, departmentCount: number }` |
-
----
-
-## Salary Management
-
-### `GovernmentEconomy.updatePositionSalary(departmentId, positionId, newSalary)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates a position's salary override |
-| **Parameters** | `departmentId` (string), `positionId` (string), `newSalary` (number) |
-| **Returns** | `boolean` - True if updated |
-
-### `GovernmentEconomy.getPositionSalaryHistory(departmentId, positionId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets salary history for a position |
-| **Parameters** | `departmentId` (string), `positionId` (string) |
-| **Returns** | `Array` - Salary history entries |
-
----
-
-# 5. GOVERNMENT-ASSIGNMENT.JS
-
-**PURPOSE:** Business logic for qualification checking and succession planning.
-
-**DEPENDENCIES:**
-- `government-state.js` - `GovernmentState`
-- `government-queries.js` - `GovernmentQueries`
-- `accessors.js` - `getCharacterById`, `getCharacters`, `getCurrentYear`
-
----
-
-## Qualification Checks
-
-### `GovernmentAssignment.isCharacterQualifiedForPosition(characterId, departmentId, positionId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Checks if a character is qualified for a position |
-| **Parameters** | `characterId` (string), `departmentId` (string), `positionId` (string) |
-| **Returns** | `boolean` - True if qualified |
-
-**Qualification Criteria:**
-- Age >= 18
-- Not already assigned to this position
-- Meets rank requirement (if any)
-- Meets experience requirement (if any)
-- Meets gender restriction (if any)
-
-### `GovernmentAssignment.getQualifiedCandidates(departmentId, positionId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets qualified candidates for a position |
-| **Parameters** | `departmentId` (string), `positionId` (string), `options.limit` (number) |
-| **Returns** | `Array` - Qualified candidates with scores |
-
----
-
-## Succession Planning
-
-### `GovernmentAssignment.getSuccessionPlan(departmentId, positionId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets succession plan for a position |
-| **Parameters** | `departmentId` (string), `positionId` (string) |
-| **Returns** | `Object` - Succession plan |
-
-**Returns:**
-```javascript
-{
-  positionId: string,
-  positionName: string,
-  departmentId: string,
-  currentHolder: { characterId, characterName, startYear, title } | null,
-  candidates: [ { characterId, characterName, age, experience, rank, isReady, score } ],
-  hasSuccessor: boolean,
-  successorCount: number,
-  topCandidate: { characterId, characterName } | null
-}
-```
-
----
-
-## Assignment History Analysis
-
-### `GovernmentAssignment.analyzeAssignmentHistory(departmentId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Analyzes assignment history for a department |
-| **Parameters** | `departmentId` (string) |
-| **Returns** | `Object` - Analysis results |
-
-**Returns:**
-```javascript
-{
-  departmentId: string,
-  departmentName: string,
-  totalAssignments: number,
-  activeAssignments: number,
-  endedAssignments: number,
-  averageTenure: number,
-  byPosition: { positionId: count },
-  byYear: { year: count },
-  byCharacter: { characterId: count },
-  longestServing: { characterId, characterName, startYear, endYear, tenure, positionId },
-  mostRecent: { characterId, characterName, startYear, positionId }
-}
-```
-
----
-
-# 6. GOVERNMENT-UI-LIST.JS
-
-**PURPOSE:** UI list rendering for government departments, positions, and assignments.
-
-**DEPENDENCIES:**
-- `government-state.js` - `GovernmentState`
-- `government-queries.js` - `GovernmentQueries`
-- `role-queries.js` - `RoleQueries`
-- `modals-core.js` - `_escapeHtml`, `_getIcon`, `_showToast`
-
----
-
-## Render Functions
-
-### `GovernmentUI.renderDepartmentList(containerId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Renders a list of government departments |
-| **Parameters** | `containerId` (string), `options.locationId` (string), `options.searchTerm` (string), `options.onSelect` (function), `options.selectedId` (string), `options.sortBy` (string), `options.sortOrder` (string), `options.showStats` (boolean), `options.showActions` (boolean) |
-
-### `GovernmentUI.renderPositionList(containerId, departmentId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Renders a list of positions for a department |
-| **Parameters** | `containerId` (string), `departmentId` (string), `options.onSelect` (function), `options.selectedId` (string), `options.showRoleInfo` (boolean), `options.showActions` (boolean) |
-
-### `GovernmentUI.renderAssignmentList(containerId, departmentId, positionId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Renders a list of assignments |
-| **Parameters** | `containerId` (string), `departmentId` (string), `positionId` (string), `options.onSelect` (function), `options.selectedId` (string), `options.showRoleInfo` (boolean) |
-
-### `GovernmentUI.renderPositionSummaryCard(containerId, position)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Renders a summary card for a position |
-| **Parameters** | `containerId` (string), `position` (Object) |
-
-### `GovernmentUI.renderDepartmentSummaryCard(containerId, department)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Renders a summary card for a department |
-| **Parameters** | `containerId` (string), `department` (Object) |
-
-### `GovernmentUI.renderAssignmentSummaryCard(containerId, assignment)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Renders a summary card for an assignment |
-| **Parameters** | `containerId` (string), `assignment` (Object) |
-
----
-
-# 7. MODALS-GOVERNMENT.JS
-
-**PURPOSE:** Main UI modals for government management.
-
-**DEPENDENCIES:**
-- `modals-core.js` - `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon`
-- `government-state.js` - `GovernmentState`
-- `government-commands.js` - `GovernmentCommands`
-- `government-queries.js` - `GovernmentQueries`
-- `modals-char-select.js` - `openCharacterSelector`
-
----
-
-## Government Type Modals
-
-### `openAddGovernmentTypeModal(onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to add a government type |
-| **Parameters** | `onSuccess` (function) |
-
-### `openEditGovernmentTypeModal(typeId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to edit a government type |
-| **Parameters** | `typeId` (string), `onSuccess` (function) |
-
-### `openDeleteGovernmentTypeModal(typeId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to delete a government type |
-| **Parameters** | `typeId` (string), `onSuccess` (function) |
-
----
-
-## Government Assignment Modals
-
-### `openAssignGovernmentModal(placeId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to assign government to a location |
-| **Parameters** | `placeId` (string), `onSuccess` (function) |
-
----
-
-## Department Modals
-
-### `openCreateGovernmentDepartmentModal(locationId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to create a government department |
-| **Parameters** | `locationId` (string), `onSuccess` (function) |
-
-### `openEditGovernmentDepartmentModal(deptId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to edit a government department |
-| **Parameters** | `deptId` (string), `onSuccess` (function) |
-
-### `openDeleteGovernmentDepartmentModal(deptId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to delete a government department |
-| **Parameters** | `deptId` (string), `onSuccess` (function) |
-
----
-
-## Position Modals
-
-### `openAddPositionModal(deptId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to add a position to a department |
-| **Parameters** | `deptId` (string), `onSuccess` (function) |
-
-### `openEditPositionModal(deptId, positionId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to edit a position |
-| **Parameters** | `deptId` (string), `positionId` (string), `onSuccess` (function) |
-
-### `openDeletePositionModal(deptId, positionId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to delete a position |
-| **Parameters** | `deptId` (string), `positionId` (string), `onSuccess` (function) |
-
----
-
-## Assignment Modals
-
-### `openAssignCharacterToPositionModal(deptId, positionId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to assign a character to a position |
-| **Parameters** | `deptId` (string), `positionId` (string), `onSuccess` (function) |
-
-### `openRemoveAssignmentModal(deptId, assignmentId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to end an assignment |
-| **Parameters** | `deptId` (string), `assignmentId` (string), `onSuccess` (function) |
-
----
-
-## View Modals
-
-### `openViewGovernmentDepartmentsModal(locationId, onSelect)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to view government departments |
-| **Parameters** | `locationId` (string), `onSelect` (function) |
-
-### `openViewGovernmentStatisticsModal(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to view government statistics |
-| **Parameters** | `locationId` (string) |
-
----
-
-# 8. MODALS-GOVERNMENT-ASSIGN.JS
-
-**PURPOSE:** Assignment-specific UI modals (bulk, history, succession, statistics).
-
-**DEPENDENCIES:**
-- `modals-core.js` - `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon`
-- `government-state.js` - `GovernmentState`
-- `government-queries.js` - `GovernmentQueries`
-- `government-assignment.js` - `GovernmentAssignment`
-- `government-commands.js` - `GovernmentCommands`
-
----
-
-## Bulk Assignment Modal
-
-### `openBulkAssignModal(departmentId, positionId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal for bulk assignment of characters |
-| **Parameters** | `departmentId` (string), `positionId` (string), `onSuccess` (function) |
-
----
-
-## Assignment History Modal
-
-### `openAssignmentHistoryModal(departmentId, positionId, characterId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to view assignment history |
-| **Parameters** | `departmentId` (string), `positionId` (string), `characterId` (string) |
-
----
-
-## Succession Planning Modal
-
-### `openSuccessionPlanningModal(departmentId, positionId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to view succession planning |
-| **Parameters** | `departmentId` (string), `positionId` (string) |
-
----
-
-## Assignment Statistics Modal
-
-### `openAssignmentStatsModal(departmentId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to view assignment statistics |
-| **Parameters** | `departmentId` (string) |
-
----
-
-# 9. MODALS-GOVERNMENT-DEPARTMENTS.JS
-
-**PURPOSE:** Department-specific UI modals.
-
-**DEPENDENCIES:**
-- `modals-core.js` - `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon`
-- `government-state.js` - `GovernmentState`
-- `government-commands.js` - `GovernmentCommands`
-- `government-queries.js` - `GovernmentQueries`
-- `modals-char-select.js` - `openCharacterSelector`
-
----
-
-## Department Details Modal
-
-### `openViewDepartmentDetailsModal(departmentId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal with department details and actions |
-| **Parameters** | `departmentId` (string) |
-
-**Modal Sections:**
-1. Header - Name, location, parent
-2. Stats - Positions, assignments, active assignments, role positions
-3. Positions List - With assignment counts and role requirements
-4. Assignments List - With active status and roles
-5. Action Buttons - Edit, Add Position, Delete, Close
-
----
-
-# 10. MODALS-GOVERNMENT-POSITIONS.JS
-
-**PURPOSE:** Position-specific UI modals.
-
-**DEPENDENCIES:**
-- `modals-core.js` - `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon`
-- `government-state.js` - `GovernmentState`
-- `government-commands.js` - `GovernmentCommands`
-- `government-queries.js` - `GovernmentQueries`
-- `modals-char-select.js` - `openCharacterSelector`
-- `role-state.js` - `RoleState`
-
----
-
-## Position Details Modal
-
-### `openViewPositionDetailsModal(deptId, positionId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal with position details and actions |
-| **Parameters** | `deptId` (string), `positionId` (string) |
-
-**Modal Sections:**
-1. Header - Name, department, parent
-2. Requirements - Role, skill level, gender restriction
-3. Stats - Priority, active assignments, total assignments
-4. Assignments List - With character names, titles, roles
-5. Action Buttons - Edit, Assign Character, Delete, Close
-
----
-
-# 11. MODALS-GOVERNMENT-ECONOMY.JS
-
-**PURPOSE:** Economy-specific UI modals (budget, salary, tax, financial reports).
-
-**DEPENDENCIES:**
-- `modals-core.js` - `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon`
-- `government-state.js` - `GovernmentState`
-- `government-economy.js` - `GovernmentEconomy`
-- `government-queries.js` - `GovernmentQueries`
-
----
-
-## Budget Viewer Modal
-
-### `openGovernmentBudgetModal(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to view government budget |
-| **Parameters** | `locationId` (string) |
-
-**Displays:**
-- Total budget
-- Salary breakdown
-- Department breakdown
-- Tax revenue integration
-
----
-
-## Salary Management Modal
-
-### `openSalaryManagementModal(departmentId, positionId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to manage position salary |
-| **Parameters** | `departmentId` (string), `positionId` (string), `onSuccess` (function) |
-
-**Displays:**
-- Current salary
-- Salary tier
-- Salary history
-- Salary override controls
-
----
-
-## Tax Revenue Modal
-
-### `openTaxRevenueModal(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to view tax revenue |
-| **Parameters** | `locationId` (string) |
-
-**Displays:**
-- Total revenue
-- Revenue sources (taxes, trade tariffs, industry tax)
-- Rates (tax rate, trade tariff, industry tax rate)
-- Surplus calculation
-
----
-
-## Financial Report Modal
-
-### `openFinancialReportModal(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to view financial report |
-| **Parameters** | `locationId` (string) |
-
-**Displays:**
-- 5-year summary
-- Revenue/expense trends
-- Yearly breakdown
-
----
-
-## Efficiency Score Modal
-
-### `openEfficiencyScoreModal(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to view government efficiency score |
-| **Parameters** | `locationId` (string) |
-
-**Displays:**
-- Efficiency score (0-100)
-- Rating (Excellent, Good, Average, Poor, Terrible)
-- Revenue per department
-- Average salary
-- Surplus
-
----
-
-# 12. GOVERNMENT DATA SCHEMA
-
-## Department Object Schema
+### Department Object Schema
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -1397,9 +152,7 @@ Government types define the structure of governance for locations. They include:
 | `createdAt` | number | Creation year |
 | `updatedAt` | number | Update year |
 
----
-
-## Position Object Schema
+### Position Object Schema
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -1415,9 +168,7 @@ Government types define the structure of governance for locations. They include:
 | `minExperience` | number | Minimum experience in years |
 | `salaryOverrides` | array | Salary override history |
 
----
-
-## Assignment Object Schema
+### Assignment Object Schema
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -1433,9 +184,7 @@ Government types define the structure of governance for locations. They include:
 | `roleIdAtAssignment` | string | Role ID at assignment time |
 | `skillLevelAtAssignment` | number | Skill level at assignment |
 
----
-
-## Government Type Schema
+### Government Type Schema
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -1444,9 +193,7 @@ Government types define the structure of governance for locations. They include:
 | `description` | string | Description |
 | `allowedRankIds` | array | Array of rank IDs |
 
----
-
-## Leader Assignment Schema
+### Leader Assignment Schema
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -1460,9 +207,830 @@ Government types define the structure of governance for locations. They include:
 | `notes` | string | Notes |
 | `timestamp` | number | Timestamp |
 
+## Key Functions
+
+### Data Access
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getState(options)` | Object | Object | Gets state snapshot |
+| `getDepartment(departmentId)` | string | Object\|null | Gets department by ID |
+| `getAllDepartments(options)` | Object | Array | Gets all departments |
+| `getDepartmentsByLocation(locationId, options)` | string, Object | Array | Gets departments by location |
+| `getDepartmentsByParent(parentId, options)` | string, Object | Array | Gets departments by parent |
+| `getDepartmentsByCharacter(characterId, options)` | string, Object | Array | Gets departments by character |
+| `getDepartmentTree(locationId)` | string | Array | Gets department hierarchy tree |
+
+### Position Functions
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getPositionsForDepartment(departmentId)` | string | Array | Gets positions in department |
+| `getPositionById(departmentId, positionId)` | string, string | Object\|null | Gets position by ID |
+| `getPositionHierarchy(departmentId, positionId)` | string, string | Array\|null | Gets position hierarchy |
+
+### Assignment Functions
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getAssignmentsForDepartment(departmentId, activeOnly)` | string, boolean | Array | Gets assignments for department |
+| `getAssignmentsForPosition(departmentId, positionId, activeOnly)` | string, string, boolean | Array | Gets assignments for position |
+| `getAssignmentsForCharacter(characterId, activeOnly)` | string, boolean | Array | Gets assignments for character |
+| `getAssignmentById(departmentId, assignmentId)` | string, string | Object\|null | Gets assignment by ID |
+
+### Government Type Functions
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getGovernmentTypes()` | None | Array | Gets all government types |
+| `getGovernmentTypeById(typeId)` | string | Object\|null | Gets government type by ID |
+| `getGovernmentHistory(locationId)` | string | Array | Gets government history |
+
+### Industry Integration Functions
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getIndustryTaxRevenue(locationId, year)` | string, number | number | Gets industry tax revenue |
+| `getIndustryEnterpriseStats(locationId)` | string | Object | Gets industry enterprise stats |
+| `getIndustryTaxRate(locationId)` | string | number | Gets industry tax rate |
+| `getIndustryIncomeForLocation(locationId)` | string | number | Gets total industry income |
+
+### UI State Management
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getUIState()` | None | Object | Gets UI state |
+| `setUIState(key, value, options)` | string, any, Object | void | Sets UI state |
+| `updateUIState(updates, options)` | Object, Object | void | Updates UI state |
+
+### Cache Management
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `invalidateCache()` | None | void | Invalidates all caches |
+| `refreshFromMasterData()` | None | void | Refreshes from master data |
+
+### Internal Mutators (For Commands)
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `_addDepartment(department)` | Object | Object | Adds a department |
+| `_updateDepartment(departmentId, updates)` | string, Object | Object\|null | Updates a department |
+| `_deleteDepartment(departmentId)` | string | boolean | Deletes a department |
+| `_addPosition(departmentId, position)` | string, Object | Object\|null | Adds a position |
+| `_updatePosition(departmentId, positionId, updates)` | string, string, Object | boolean | Updates a position |
+| `_deletePosition(departmentId, positionId)` | string, string | boolean | Deletes a position |
+| `_addAssignment(departmentId, assignment)` | string, Object | Object\|null | Adds an assignment |
+| `_updateAssignment(departmentId, assignmentId, updates)` | string, string, Object | boolean | Updates an assignment |
+| `_deleteAssignment(departmentId, assignmentId)` | string, string | boolean | Deletes an assignment |
+| `_addGovernmentType(type)` | Object | Object | Adds a government type |
+| `_updateGovernmentType(typeId, updates)` | string, Object | Object\|null | Updates a government type |
+| `_deleteGovernmentType(typeId)` | string | boolean | Deletes a government type |
+
+### Subscription
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `subscribe(callback)` | Function | Function | Subscribes to state changes |
+
 ---
 
-# 13. DEPENDENCY MAP
+# 4. GOVERNMENT-COMMANDS.JS
+
+## Purpose
+
+All write operations for government management including departments, positions, assignments, leaders, justice, and salary budget checks.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `government-state.js` | `GovernmentState` |
+| `accessors.js` | `getCharacterById`, `getPlaceById`, `getCurrentYear` |
+| `eventLogger.js` | `logEvent` |
+| `storage.js` | `saveMasterData` |
+| `settlement-state.js` | `SettlementState` |
+| `settlement-commands.js` | `SettlementCommands` |
+
+## Key Functions
+
+### Department Commands
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `createDepartment(data)` | Object | Object\|null | Creates a department |
+| `updateDepartment(departmentId, updates)` | string, Object | Object\|null | Updates a department |
+| `deleteDepartment(departmentId, options)` | string, Object | boolean | Deletes a department |
+
+### Position Commands
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `addPosition(departmentId, data)` | string, Object | Object\|null | Adds a position |
+| `updatePosition(departmentId, positionId, updates)` | string, string, Object | boolean | Updates a position |
+| `deletePosition(departmentId, positionId)` | string, string | boolean | Deletes a position |
+
+### Assignment Commands
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `assignCharacterToPosition(departmentId, positionId, characterId, options)` | string, string, string, Object | Object\|null | Assigns character to position |
+| `endAssignment(departmentId, assignmentId, endYear, reason)` | string, string, number, string | boolean | Ends an assignment |
+| `removeAssignment(departmentId, assignmentId)` | string, string | boolean | Removes an assignment |
+
+### Government Type Commands
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `createGovernmentType(data)` | Object | Object\|null | Creates a government type |
+| `updateGovernmentType(typeId, updates)` | string, Object | Object\|null | Updates a government type |
+| `deleteGovernmentType(typeId)` | string | boolean | Deletes a government type |
+
+### Bulk Operations
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `bulkAssignCharacters(departmentId, positionId, assignments)` | string, string, Array | Object | Bulk assigns characters |
+
+### Leader Commands
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `assignLeader(placeId, characterId, startYear, title)` | string, string, number, string | Object\|null | Assigns a leader |
+| `endLeaderTerm(placeId, characterId, endYear)` | string, string, number | boolean | Ends a leader's term |
+
+### Justice Commands
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `updateJusticeSeverity(locationId, severity)` | string, string | Object | Updates justice severity |
+| `updateWatch(locationId, hasWatch, size)` | string, boolean, number | Object | Updates watch |
+
+### Salary Budget Check (NEW)
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `checkSalaryBudgetSufficiency(departmentId, year)` | string, number | Object | Checks salary budget sufficiency |
+
+### Validation Helpers
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `validateDepartment(data, isUpdate)` | Object, boolean | Object | Validates department data |
+| `validatePosition(data, isUpdate)` | Object, boolean | Object | Validates position data |
+| `validateAssignment(data)` | Object | Object | Validates assignment data |
+| `validateGovernmentType(data, isUpdate)` | Object, boolean | Object | Validates government type data |
+| `validateLeaderAssignment(placeId, characterId, startYear)` | string, string, number | Object | Validates leader assignment |
+
+---
+
+# 5. GOVERNMENT-QUERIES.JS
+
+## Purpose
+
+All read-only queries for government data. No side effects, no mutations.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `government-state.js` | `GovernmentState` |
+| `accessors.js` | `getCharacterById`, `getPlaceById`, `getPlaces`, `getCurrentYear` |
+| `role-queries.js` | `RoleQueries` |
+
+## Key Functions
+
+### Search Functions
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `searchDepartments(options, queryOptions)` | Object, Object | Array | Searches departments |
+| `searchPositions(options)` | Object | Array | Searches positions |
+
+### Statistics Functions
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getStatistics(options)` | Object | Object | Gets government statistics |
+| `getPositionStatistics(departmentId)` | string | Object | Gets position statistics |
+| `getAssignmentStatistics(departmentId, characterId)` | string, string | Object | Gets assignment statistics |
+
+### Comparison & Ranking
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `compareDepartments(departmentId1, departmentId2)` | string, string | Object | Compares two departments |
+| `getLargestDepartments(limit, locationId)` | number, string | Array | Gets largest departments |
+| `getMostActiveDepartments(limit, locationId)` | number, string | Array | Gets most active departments |
+| `getPositionsByRoleRequirement(roleId, departmentId)` | string, string | Array | Gets positions by role requirement |
+
+### Hierarchy Queries
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getDepartmentPath(departmentId)` | string | Array | Gets department path |
+| `getDepartmentDescendants(departmentId, includeSelf)` | string, boolean | Array | Gets department descendants |
+| `getPositionPath(departmentId, positionId)` | string, string | Array | Gets position path |
+
+### Assignment History
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getAssignmentHistory(departmentId, positionId, characterId, limit)` | string, string, string, number | Array | Gets assignment history |
+
+### Location Analytics
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getLocationGovernmentSummary(locationId)` | string | Object | Gets location government summary |
+
+### Leader Queries
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCurrentLeader(placeId)` | string | Object\|null | Gets current leader |
+| `getLeaderHistory(placeId)` | string | Array | Gets leader history |
+| `getLeaderCount(placeId)` | string | number | Gets leader count |
+| `getActiveLeaderCount()` | None | number | Gets active leader count |
+| `getLeadersByLocation(locationId)` | string | Array | Gets leaders by location |
+
+### Industry Queries
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getIndustryTaxRevenue(locationId, year)` | string, number | number | Gets industry tax revenue |
+| `getIndustryEnterpriseStats(locationId)` | string | Object | Gets industry enterprise stats |
+| `getIndustryTaxRate(locationId)` | string | number | Gets industry tax rate |
+| `getIndustryHealthScore(locationId)` | string | number | Gets industry health score |
+| `getGovernmentIndustrySummary(locationId)` | string | Object | Gets government industry summary |
+
+### Role-Based Position Queries
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getPositionsRequiringRole(roleId)` | string | Array | Gets positions requiring a role |
+| `getCharactersQualifiedForPosition(departmentId, positionId, options)` | string, string, Object | Array | Gets qualified characters |
+
+---
+
+# 6. GOVERNMENT-ECONOMY.JS
+
+## Purpose
+
+Business logic for government finances: salary calculation, department salary requirements, and salary management.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `government-state.js` | `GovernmentState` |
+| `government-queries.js` | `GovernmentQueries` |
+| `accessors.js` | `getCharacterById`, `getPlaceById`, `getCurrentYear` |
+
+## Salary Tiers
+
+| Tier | base | multiplier | Description |
+|------|------|------------|-------------|
+| MINISTER | 100 | 1.5 | Minister/Department Head |
+| DIRECTOR | 60 | 1.2 | Director/Senior Position |
+| OFFICER | 35 | 1.0 | Officer/Mid-level |
+| CLERK | 20 | 0.8 | Clerk/Entry-level |
+| STAFF | 12 | 0.6 | Staff/Support |
+
+## Key Functions
+
+### Salary Calculation
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `calculatePositionSalary(positionId, department)` | string, Object | number | Calculates position salary |
+
+**Calculation Factors:**
+1. Position priority determines tier
+2. Location prosperity modifies salary
+3. Experience in position adds modifier
+4. Salary overrides can be applied
+
+### Department Salary Requirements (For Settlement Allocation)
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `calculateDepartmentSalaryRequirements(departmentId)` | string | Object | Calculates department salary requirements |
+| `calculateLocationSalaryRequirements(locationId)` | string | Object | Calculates location salary requirements |
+
+### Salary Management
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `updatePositionSalary(departmentId, positionId, newSalary)` | string, string, number | boolean | Updates position salary |
+| `getPositionSalaryHistory(departmentId, positionId)` | string, string | Array | Gets position salary history |
+
+---
+
+# 7. GOVERNMENT-ASSIGNMENT.JS
+
+## Purpose
+
+Business logic for qualification checking and succession planning.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `government-state.js` | `GovernmentState` |
+| `government-queries.js` | `GovernmentQueries` |
+| `accessors.js` | `getCharacterById`, `getCharacters`, `getCurrentYear` |
+
+## Key Functions
+
+### Qualification Checks
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `isCharacterQualifiedForPosition(characterId, departmentId, positionId)` | string, string, string | boolean | Checks if character is qualified |
+| `getQualifiedCandidates(departmentId, positionId, options)` | string, string, Object | Array | Gets qualified candidates |
+
+**Qualification Criteria:**
+- Age >= 18
+- Not already assigned to this position
+- Meets rank requirement (if any)
+- Meets experience requirement (if any)
+- Meets gender restriction (if any)
+
+### Succession Planning
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getSuccessionPlan(departmentId, positionId)` | string, string | Object | Gets succession plan |
+
+**Returns:**
+```javascript
+{
+    positionId: string,
+    positionName: string,
+    departmentId: string,
+    currentHolder: { characterId, characterName, startYear, title } | null,
+    candidates: [ { characterId, characterName, age, experience, rank, isReady, score } ],
+    hasSuccessor: boolean,
+    successorCount: number,
+    topCandidate: { characterId, characterName } | null
+}
+```
+
+### Assignment History Analysis
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `analyzeAssignmentHistory(departmentId)` | string | Object | Analyzes assignment history |
+
+**Returns:**
+```javascript
+{
+    departmentId: string,
+    departmentName: string,
+    totalAssignments: number,
+    activeAssignments: number,
+    endedAssignments: number,
+    averageTenure: number,
+    byPosition: { positionId: count },
+    byYear: { year: count },
+    byCharacter: { characterId: count },
+    longestServing: { characterId, characterName, startYear, endYear, tenure, positionId },
+    mostRecent: { characterId, characterName, startYear, positionId }
+}
+```
+
+---
+
+# 8. GOVERNMENT-LAWS.JS (NEW)
+
+## Purpose
+
+Civil law definitions for settlements. Mirrors `religion-laws.js` but stores laws in settlement data.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `settlement-state.js` | `SettlementState` |
+| `crime-constants.js` | `CRIME_TYPES`, `LAW_TYPES`, `LAW_CATEGORIES`, `LAW_DOMAINS`, `LAW_SEVERITY` |
+| `ids.js` | `generateId` |
+| `storage.js` | `saveMasterData` |
+
+## Key Functions
+
+### Civil Law CRUD
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `addCivilLaw(locationId, lawData)` | string, Object | Object | Adds a civil law |
+| `updateCivilLaw(locationId, lawId, updates)` | string, string, Object | Object | Updates a civil law |
+| `removeCivilLaw(locationId, lawId)` | string, string | Object | Removes a civil law |
+
+### Civil Law Queries
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCivilLaws(locationId)` | string | Array | Gets civil laws |
+| `getCivilLawsByDomain(locationId, domain)` | string, string | Array | Gets civil laws by domain |
+| `getCivilLawsByType(locationId, type)` | string, string | Array | Gets civil laws by type |
+| `getCivilLawsBySeverity(locationId, severity)` | string, string | Array | Gets civil laws by severity |
+| `getEnforcedCivilLaws(locationId)` | string | Array | Gets enforced civil laws |
+| `getCivilLaw(locationId, lawId)` | string, string | Object | Gets a civil law |
+| `getCivilLawCount(locationId)` | string | number | Gets civil law count |
+
+### Crime Mapping
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCivilLawsByCrimeType(crimeType)` | string | Array | Gets civil laws by crime type |
+| `getEnforcedCivilLawsByCrimeType(crimeType)` | string | Array | Gets enforced civil laws by crime type |
+
+### Statistics
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCivilLawStatistics(locationId)` | string | Object | Gets civil law statistics |
+
+### Helpers
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getLawTypeName(type)` | string | string | Gets law type name |
+| `getLawCategoryName(category)` | string | string | Gets law category name |
+| `getLawDomainName(domain)` | string | string | Gets law domain name |
+| `getLawSeverityName(severity)` | string | string | Gets law severity name |
+| `getLawSeverityColor(severity)` | string | string | Gets law severity color |
+| `getLawTypeIcon(type)` | string | string | Gets law type icon |
+
+---
+
+# 9. GOVERNMENT-SYSTEM.JS
+
+## Purpose
+
+Wrapper file for backward compatibility. Re-exports all government functions from the modular structure.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `government-state.js` | All state functions |
+| `government-commands.js` | All command functions |
+| `government-queries.js` | All query functions |
+
+## Key Re-Exports
+
+| Category | Functions |
+|----------|-----------|
+| State | `getGovernmentState`, `getGovernmentDepartment`, `getAllGovernmentDepartments`, `getGovernmentDepartmentsByLocation`, `getGovernmentDepartmentsByParent`, `getGovernmentDepartmentsByCharacter`, `getGovernmentDepartmentTree` |
+| Positions | `getGovernmentPositions`, `getGovernmentPositionById`, `getGovernmentPositionHierarchy` |
+| Assignments | `getGovernmentAssignments`, `getGovernmentAssignmentsForPosition`, `getGovernmentAssignmentsForCharacter`, `getGovernmentAssignmentById` |
+| Types | `getGovernmentTypes`, `getGovernmentTypeById`, `getGovernmentHistory` |
+| Industry | `getGovernmentIndustryTaxRevenue`, `getGovernmentIndustryEnterpriseStats`, `getGovernmentIndustryTaxRate`, `getGovernmentIndustryIncome` |
+| UI | `getGovernmentUIState`, `setGovernmentUIState`, `updateGovernmentUIState` |
+| Cache | `invalidateGovernmentCache`, `refreshGovernmentData` |
+| Subscription | `subscribeGovernment` |
+| Queries | `searchGovernmentDepartments`, `searchGovernmentPositions`, `getGovernmentStatistics`, `getGovernmentPositionStats`, `getGovernmentAssignmentStats`, `compareGovernmentDepartments`, `getLargestGovernmentDepartments`, `getMostActiveGovernmentDepartments`, `getGovernmentPositionsByRole`, `getGovernmentDepartmentPath`, `getGovernmentDepartmentDescendants`, `getGovernmentPositionPath`, `getGovernmentAssignmentHistory`, `getLocationGovernmentSummary`, `getCurrentLeader`, `getLeaderHistory`, `getLeaderCount`, `getActiveLeaderCount`, `getLeadersByLocation`, `getGovernmentIndustrySummary`, `getGovernmentIndustryHealthScore`, `getGovernmentPositionsRequiringRole`, `getCharactersQualifiedForGovernmentPosition` |
+| Commands | `createGovernmentDepartment`, `updateGovernmentDepartment`, `deleteGovernmentDepartment`, `addGovernmentPosition`, `updateGovernmentPosition`, `deleteGovernmentPosition`, `assignCharacterToGovernmentPosition`, `endGovernmentAssignment`, `removeGovernmentAssignment`, `createGovernmentType`, `updateGovernmentType`, `deleteGovernmentType`, `bulkAssignGovernmentCharacters`, `assignLeader`, `endLeaderTerm`, `updateJusticeSeverity`, `updateWatch`, `assignGovernment` |
+
+---
+
+# 10. GOVERNMENT-UI-LIST.JS
+
+## Purpose
+
+UI list rendering for government departments, positions, and assignments.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `government-state.js` | `GovernmentState` |
+| `government-queries.js` | `GovernmentQueries` |
+| `role-queries.js` | `RoleQueries` |
+| `modals-core.js` | `_escapeHtml`, `_getIcon`, `_showToast` |
+
+## Key Functions
+
+| Function | Parameters | Description |
+|----------|------------|-------------|
+| `renderDepartmentList(containerId, options)` | string, Object | Renders department list |
+| `renderPositionList(containerId, departmentId, options)` | string, string, Object | Renders position list |
+| `renderAssignmentList(containerId, departmentId, positionId, options)` | string, string, string, Object | Renders assignment list |
+| `renderPositionSummaryCard(containerId, position)` | string, Object | Renders position summary card |
+| `renderDepartmentSummaryCard(containerId, department)` | string, Object | Renders department summary card |
+| `renderAssignmentSummaryCard(containerId, assignment)` | string, Object | Renders assignment summary card |
+
+---
+
+# 11. MODALS-GOVERNMENT.JS
+
+## Purpose
+
+Main UI modals for government management.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `modals-core.js` | `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon` |
+| `government-state.js` | `GovernmentState` |
+| `government-commands.js` | `GovernmentCommands` |
+| `government-queries.js` | `GovernmentQueries` |
+| `modals-char-select.js` | `openCharacterSelector` |
+
+## Key Functions
+
+| Function | Description |
+|----------|-------------|
+| `openAddGovernmentTypeModal(onSuccess)` | Opens modal to add a government type |
+| `openEditGovernmentTypeModal(typeId, onSuccess)` | Opens modal to edit a government type |
+| `openDeleteGovernmentTypeModal(typeId, onSuccess)` | Opens modal to delete a government type |
+| `openAssignGovernmentModal(placeId, onSuccess)` | Opens modal to assign government to a location |
+| `openCreateGovernmentDepartmentModal(locationId, onSuccess)` | Opens modal to create a government department |
+| `openEditGovernmentDepartmentModal(deptId, onSuccess)` | Opens modal to edit a government department |
+| `openDeleteGovernmentDepartmentModal(deptId, onSuccess)` | Opens modal to delete a government department |
+| `openAddPositionModal(deptId, onSuccess)` | Opens modal to add a position |
+| `openEditPositionModal(deptId, positionId, onSuccess)` | Opens modal to edit a position |
+| `openDeletePositionModal(deptId, positionId, onSuccess)` | Opens modal to delete a position |
+| `openAssignCharacterToPositionModal(deptId, positionId, onSuccess)` | Opens modal to assign a character to a position |
+| `openRemoveAssignmentModal(deptId, assignmentId, onSuccess)` | Opens modal to end an assignment |
+| `openViewGovernmentDepartmentsModal(locationId, onSelect)` | Opens modal to view government departments |
+| `openViewGovernmentStatisticsModal(locationId)` | Opens modal to view government statistics |
+
+---
+
+# 12. MODALS-GOVERNMENT-ASSIGN.JS
+
+## Purpose
+
+Assignment-specific UI modals: bulk assignment, history viewer, succession planning, statistics.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `modals-core.js` | `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon` |
+| `government-state.js` | `GovernmentState` |
+| `government-queries.js` | `GovernmentQueries` |
+| `government-assignment.js` | `GovernmentAssignment` |
+| `government-commands.js` | `GovernmentCommands` |
+
+## Key Functions
+
+| Function | Parameters | Description |
+|----------|------------|-------------|
+| `openBulkAssignModal(departmentId, positionId, onSuccess)` | string, string, Function | Opens bulk assignment modal |
+| `openAssignmentHistoryModal(departmentId, positionId, characterId)` | string, string, string | Opens assignment history modal |
+| `openSuccessionPlanningModal(departmentId, positionId)` | string, string | Opens succession planning modal |
+| `openAssignmentStatsModal(departmentId)` | string | Opens assignment statistics modal |
+
+---
+
+# 13. MODALS-GOVERNMENT-DEPARTMENTS.JS
+
+## Purpose
+
+Department-specific UI modals.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `modals-core.js` | `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon` |
+| `government-state.js` | `GovernmentState` |
+| `government-commands.js` | `GovernmentCommands` |
+| `government-queries.js` | `GovernmentQueries` |
+| `modals-char-select.js` | `openCharacterSelector` |
+
+## Key Functions
+
+| Function | Parameters | Description |
+|----------|------------|-------------|
+| `openCreateGovernmentDepartmentModal(locationId, onSuccess)` | string, Function | Opens create department modal |
+| `openEditGovernmentDepartmentModal(deptId, onSuccess)` | string, Function | Opens edit department modal |
+| `openDeleteGovernmentDepartmentModal(deptId, onSuccess)` | string, Function | Opens delete department modal |
+| `openViewDepartmentDetailsModal(departmentId)` | string | Opens department details modal |
+
+---
+
+# 14. MODALS-GOVERNMENT-POSITIONS.JS
+
+## Purpose
+
+Position-specific UI modals.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `modals-core.js` | `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon` |
+| `government-state.js` | `GovernmentState` |
+| `government-commands.js` | `GovernmentCommands` |
+| `government-queries.js` | `GovernmentQueries` |
+| `modals-char-select.js` | `openCharacterSelector` |
+| `role-state.js` | `RoleState` |
+
+## Key Functions
+
+| Function | Parameters | Description |
+|----------|------------|-------------|
+| `openAddPositionModal(deptId, onSuccess)` | string, Function | Opens add position modal |
+| `openEditPositionModal(deptId, positionId, onSuccess)` | string, string, Function | Opens edit position modal |
+| `openDeletePositionModal(deptId, positionId, onSuccess)` | string, string, Function | Opens delete position modal |
+| `openViewPositionDetailsModal(deptId, positionId)` | string, string | Opens position details modal |
+
+---
+
+# 15. MODALS-GOVERNMENT-ECONOMY.JS
+
+## Purpose
+
+Economy-specific UI modals: budget viewer, salary management, tax revenue, financial reports, efficiency score.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `modals-core.js` | `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon` |
+| `government-state.js` | `GovernmentState` |
+| `government-economy.js` | `GovernmentEconomy` |
+| `government-queries.js` | `GovernmentQueries` |
+
+## Key Functions
+
+| Function | Parameters | Description |
+|----------|------------|-------------|
+| `openGovernmentBudgetModal(locationId)` | string | Opens budget viewer modal |
+| `openSalaryManagementModal(departmentId, positionId, onSuccess)` | string, string, Function | Opens salary management modal |
+| `openTaxRevenueModal(locationId)` | string | Opens tax revenue modal |
+| `openFinancialReportModal(locationId)` | string | Opens financial report modal |
+| `openEfficiencyScoreModal(locationId)` | string | Opens efficiency score modal |
+
+---
+
+# 16. DATA SCHEMAS
+
+## Department Object
+
+```javascript
+{
+    id: string,                     // 'govdept_1234567890_abc123'
+    name: string,                   // 'Ministry of Education'
+    description: string,
+    locationId: string,
+    parentDepartmentId: string | null,
+    positions: [PositionObject],
+    assignments: [AssignmentObject],
+    isDeprecated: boolean,
+    createdAt: number,
+    updatedAt: number
+}
+```
+
+## Position Object
+
+```javascript
+{
+    id: string,                     // 'govpos_1234567890_abc123'
+    name: string,                   // 'Minister of Education'
+    description: string,
+    priority: number,               // 1-100, lower = higher
+    parentPositionId: string | null,
+    requiredRoleId: string | null,  // Link to role
+    minSkillLevel: number,          // 0-100
+    genderRestriction: 'either' | 'male' | 'female',
+    requiredRankId: string | null,  // Link to rank
+    minExperience: number,          // Years
+    salaryOverrides: [
+        {
+            salary: number,
+            year: number,
+            reason: string
+        }
+    ]
+}
+```
+
+## Assignment Object
+
+```javascript
+{
+    id: string,                     // 'govassign_1234567890_abc123'
+    positionId: string,
+    characterId: string,
+    characterName: string,
+    startYear: number,
+    endYear: number | null,
+    endReason: string | null,
+    title: string,                  // Custom title
+    notes: string,
+    roleIdAtAssignment: string | null,
+    skillLevelAtAssignment: number
+}
+```
+
+## Government Type Object
+
+```javascript
+{
+    id: string,                     // 'govtype_1234567890_abc123'
+    name: string,                   // 'Monarchy'
+    description: string,
+    allowedRankIds: [string]        // Ranks permitted to hold positions
+}
+```
+
+## Leader Assignment Object
+
+```javascript
+{
+    id: string,                     // 'leader_1234567890_abc123'
+    characterId: string,
+    characterName: string,
+    startYear: number,
+    endYear: number | null,
+    title: string,                  // 'King', 'Mayor', etc.
+    isActive: boolean,
+    notes: string,
+    timestamp: number
+}
+```
+
+## Civil Law Object (GovernmentLaws)
+
+```javascript
+{
+    id: string,                     // 'civillaw_1234567890_abc123'
+    name: string,                   // 'No Murder'
+    type: 'law' | 'taboo' | 'guideline',
+    lawCategory: 'civil',
+    domain: 'marriage' | 'behavior' | 'worship' | 'food' | 'social' | 
+            'economic' | 'political' | 'sexual' | 'violence' | 'death',
+    description: string,
+    severity: 'minor' | 'major' | 'mortal',
+    crimeMapping: {
+        crimeType: string | null,   // Link to CRIME_TYPES
+        crimeSeverity: number | null, // Override default severity (1-10)
+        isEnforced: boolean,        // Is this enforced by law?
+        punishment: string | null,  // Default punishment description
+        notes: string
+    },
+    createdAt: number,
+    updatedAt: number,
+    notes: string
+}
+```
+
+---
+
+# 17. CROSS-SYSTEM INTEGRATION
+
+## Government ↔ Settlement Integration
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Government Salary → Settlement Allocation | `checkSalaryBudgetSufficiency()` | ✅ Integrated |
+| Salary Payment → Household Wealth | `_payGovernmentSalary()` | ✅ Integrated |
+| Government Efficiency → Settlement Data | `getGovernmentEfficiencyScore()` | ✅ Integrated |
+| Government Budget → Settlement Budget | Settlement allocation system | ✅ Integrated |
+| Civil Laws → Settlement Data | `settlement.civilLaws` | ✅ Integrated |
+
+## Government ↔ Industry Integration
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Industry Tax → Government Revenue | `getIndustryTaxRevenue()` | ✅ Integrated |
+| Enterprise Stats → Government Analytics | `getIndustryEnterpriseStats()` | ✅ Integrated |
+| Industry Health Score → Government Report | `getIndustryHealthScore()` | ✅ Integrated |
+
+## Government ↔ Justice Integration
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Justice Severity → Crime Rate | `updateJusticeSeverity()` | ✅ Integrated |
+| Watch Presence → Crime Rate | `updateWatch()` | ✅ Integrated |
+| Crime Rate → Settlement Data | SettlementState | ✅ Integrated |
+
+## Government ↔ Leadership Integration
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Leader Assignment → Prosperity | `assignLeader()` | ✅ Integrated |
+| Leader Term End → Prosperity | `endLeaderTerm()` | ✅ Integrated |
+| Leader History → Government History | GovernmentState | ✅ Integrated |
+
+## Government ↔ Household Integration
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Salary Payment → Household Wealth | `_updateHouseholdWealth()` | ✅ Integrated |
+| Character → Household | `_getHouseholdForCharacter()` | ✅ Integrated |
+
+---
+
+# 18. DEPENDENCY MAP
 
 ## Core Dependencies
 
@@ -1511,7 +1079,7 @@ Government types define the structure of governance for locations. They include:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    GOVERNMENT SYSTEM DEPENDENCIES                         │
+│                    GOVERNMENT SYSTEM DEPENDENCIES                          │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  government-state.js ────────────────────────────────────────────────────┐ │
@@ -1541,77 +1109,42 @@ Government types define the structure of governance for locations. They include:
 │  ├── government-queries.js                                               │ │
 │  └── accessors.js                                                        │ │
 │                                                                             │
-│  modals-government.js ──────────────────────────────────────────────────┐ │
-│  ├── modals-core.js                                                      │ │
-│  ├── government-state.js                                                 │ │
-│  ├── government-commands.js                                              │ │
-│  ├── government-queries.js                                               │ │
-│  └── accessors.js                                                        │ │
+│  government-laws.js ────────────────────────────────────────────────────┐ │
+│  ├── settlement-state.js                                                 │ │
+│  ├── crime-constants.js                                                  │ │
+│  └── ids.js                                                              │ │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-# 14. INTEGRATION WITH OTHER SYSTEMS
-
-## Government ↔ Settlement Integration
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Government Salary → Settlement Allocation | `GovernmentCommands.checkSalaryBudgetSufficiency()` | ✅ Integrated |
-| Salary Payment → Household Wealth | `GovernmentCommands._payGovernmentSalary()` | ✅ Integrated |
-| Government Efficiency → Settlement Data | `GovernmentEconomy.getGovernmentEfficiencyScore()` | ✅ Integrated |
-| Government Budget → Settlement Budget | Settlement allocation system | ✅ Integrated |
-
-## Government ↔ Industry Integration
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Industry Tax → Government Revenue | `GovernmentState.getIndustryTaxRevenue()` | ✅ Integrated |
-| Enterprise Stats → Government Analytics | `GovernmentState.getIndustryEnterpriseStats()` | ✅ Integrated |
-| Industry Health Score → Government Report | `GovernmentQueries.getIndustryHealthScore()` | ✅ Integrated |
-
-## Government ↔ Justice Integration
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Justice Severity → Crime Rate | `GovernmentCommands.updateJusticeSeverity()` | ✅ Integrated |
-| Watch Presence → Crime Rate | `GovernmentCommands.updateWatch()` | ✅ Integrated |
-| Crime Rate → Settlement Data | SettlementState | ✅ Integrated |
-
-## Government ↔ Leadership Integration
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Leader Assignment → Prosperity | `GovernmentCommands.assignLeader()` | ✅ Integrated |
-| Leader Term End → Prosperity | `GovernmentCommands.endLeaderTerm()` | ✅ Integrated |
-| Leader History → Government History | GovernmentState | ✅ Integrated |
-
-## Government ↔ Household Integration
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Salary Payment → Household Wealth | `_updateHouseholdWealth()` | ✅ Integrated |
-| Character → Household | `_getHouseholdForCharacter()` | ✅ Integrated |
-
----
-
-# 15. RECURSION GUARDS
+# 19. RECURSION GUARDS
 
 | Guard Name | Location | Purpose |
 |------------|----------|---------|
+| `_processingState` | government-state.js | Prevent state mutation re-entry |
 | `_processingCommand` | government-commands.js | Prevent command re-entry |
 | `_processingQuery` | government-queries.js | Prevent query re-entry |
 | `_processingEconomy` | government-economy.js | Prevent economy re-entry |
 | `_processingAssignment` | government-assignment.js | Prevent assignment re-entry |
-| `_processingModal` | modals-government.js | Prevent modal re-entry |
+| `_processingLaw` | government-laws.js | Prevent law operation re-entry |
+| `_rendering` | government-ui-list.js | Prevent render re-entry |
+| `_openingModal` | modals-government-*.js | Prevent modal re-entry |
 
 ---
 
-# 16. ICON POLICY
+# 20. ICON POLICY
 
 All icons must come from `icons.js` via the `_getIcon()` function.
+
+## Rules
+
+| Rule | Description |
+|------|-------------|
+| **Rule 1** | NO emojis in code or UI |
+| **Rule 2** | All icons from icons.js via `_getIcon()` |
+| **Rule 3** | NO icons in confirm/cancel buttons (plain text only) |
 
 ## Available Icons for Government System
 
@@ -1622,6 +1155,7 @@ All icons must come from `icons.js` via the `_getIcon()` function.
 | Assignment | PERSON |
 | Leader | CROWN |
 | Government Type | STAR_4 |
+| Civil Law | SHIELD |
 | Edit | EDIT |
 | Delete | X_HEAVY |
 | Warning | WARNING |
@@ -1633,18 +1167,276 @@ All icons must come from `icons.js` via the `_getIcon()` function.
 
 ---
 
+# 21. COMPLETE FUNCTION LIST
+
+## government-state.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `getState(options)` | Query | Gets state snapshot |
+| `getDepartment(departmentId)` | Query | Gets department by ID |
+| `getAllDepartments(options)` | Query | Gets all departments |
+| `getDepartmentsByLocation(locationId, options)` | Query | Gets departments by location |
+| `getDepartmentsByParent(parentId, options)` | Query | Gets departments by parent |
+| `getDepartmentsByCharacter(characterId, options)` | Query | Gets departments by character |
+| `getDepartmentTree(locationId)` | Query | Gets department hierarchy |
+| `getPositionsForDepartment(departmentId)` | Query | Gets positions in department |
+| `getPositionById(departmentId, positionId)` | Query | Gets position by ID |
+| `getPositionHierarchy(departmentId, positionId)` | Query | Gets position hierarchy |
+| `getAssignmentsForDepartment(departmentId, activeOnly)` | Query | Gets assignments for department |
+| `getAssignmentsForPosition(departmentId, positionId, activeOnly)` | Query | Gets assignments for position |
+| `getAssignmentsForCharacter(characterId, activeOnly)` | Query | Gets assignments for character |
+| `getAssignmentById(departmentId, assignmentId)` | Query | Gets assignment by ID |
+| `getGovernmentTypes()` | Query | Gets government types |
+| `getGovernmentTypeById(typeId)` | Query | Gets government type by ID |
+| `getGovernmentHistory(locationId)` | Query | Gets government history |
+| `getIndustryTaxRevenue(locationId, year)` | Query | Gets industry tax revenue |
+| `getIndustryEnterpriseStats(locationId)` | Query | Gets industry enterprise stats |
+| `getIndustryTaxRate(locationId)` | Query | Gets industry tax rate |
+| `getIndustryIncomeForLocation(locationId)` | Query | Gets industry income |
+| `getUIState()` | Query | Gets UI state |
+| `setUIState(key, value, options)` | Command | Sets UI state |
+| `updateUIState(updates, options)` | Command | Updates UI state |
+| `invalidateCache()` | Command | Invalidates caches |
+| `refreshFromMasterData()` | Command | Refreshes from master data |
+| `subscribe(callback)` | Command | Subscribes to changes |
+
+## government-commands.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `createDepartment(data)` | Command | Creates a department |
+| `updateDepartment(departmentId, updates)` | Command | Updates a department |
+| `deleteDepartment(departmentId, options)` | Command | Deletes a department |
+| `addPosition(departmentId, data)` | Command | Adds a position |
+| `updatePosition(departmentId, positionId, updates)` | Command | Updates a position |
+| `deletePosition(departmentId, positionId)` | Command | Deletes a position |
+| `assignCharacterToPosition(departmentId, positionId, characterId, options)` | Command | Assigns character to position |
+| `endAssignment(departmentId, assignmentId, endYear, reason)` | Command | Ends an assignment |
+| `removeAssignment(departmentId, assignmentId)` | Command | Removes an assignment |
+| `createGovernmentType(data)` | Command | Creates a government type |
+| `updateGovernmentType(typeId, updates)` | Command | Updates a government type |
+| `deleteGovernmentType(typeId)` | Command | Deletes a government type |
+| `bulkAssignCharacters(departmentId, positionId, assignments)` | Command | Bulk assigns characters |
+| `assignLeader(placeId, characterId, startYear, title)` | Command | Assigns a leader |
+| `endLeaderTerm(placeId, characterId, endYear)` | Command | Ends a leader's term |
+| `updateJusticeSeverity(locationId, severity)` | Command | Updates justice severity |
+| `updateWatch(locationId, hasWatch, size)` | Command | Updates watch |
+| `checkSalaryBudgetSufficiency(departmentId, year)` | Query | Checks salary budget sufficiency |
+
+## government-queries.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `searchDepartments(options, queryOptions)` | Query | Searches departments |
+| `searchPositions(options)` | Query | Searches positions |
+| `getStatistics(options)` | Query | Gets government statistics |
+| `getPositionStatistics(departmentId)` | Query | Gets position statistics |
+| `getAssignmentStatistics(departmentId, characterId)` | Query | Gets assignment statistics |
+| `compareDepartments(departmentId1, departmentId2)` | Query | Compares two departments |
+| `getLargestDepartments(limit, locationId)` | Query | Gets largest departments |
+| `getMostActiveDepartments(limit, locationId)` | Query | Gets most active departments |
+| `getPositionsByRoleRequirement(roleId, departmentId)` | Query | Gets positions by role requirement |
+| `getDepartmentPath(departmentId)` | Query | Gets department path |
+| `getDepartmentDescendants(departmentId, includeSelf)` | Query | Gets department descendants |
+| `getPositionPath(departmentId, positionId)` | Query | Gets position path |
+| `getAssignmentHistory(departmentId, positionId, characterId, limit)` | Query | Gets assignment history |
+| `getLocationGovernmentSummary(locationId)` | Query | Gets location government summary |
+| `getCurrentLeader(placeId)` | Query | Gets current leader |
+| `getLeaderHistory(placeId)` | Query | Gets leader history |
+| `getLeaderCount(placeId)` | Query | Gets leader count |
+| `getActiveLeaderCount()` | Query | Gets active leader count |
+| `getLeadersByLocation(locationId)` | Query | Gets leaders by location |
+| `getIndustryTaxRevenue(locationId, year)` | Query | Gets industry tax revenue |
+| `getIndustryEnterpriseStats(locationId)` | Query | Gets industry enterprise stats |
+| `getIndustryTaxRate(locationId)` | Query | Gets industry tax rate |
+| `getIndustryHealthScore(locationId)` | Query | Gets industry health score |
+| `getGovernmentIndustrySummary(locationId)` | Query | Gets government industry summary |
+| `getPositionsRequiringRole(roleId)` | Query | Gets positions requiring a role |
+| `getCharactersQualifiedForPosition(departmentId, positionId, options)` | Query | Gets qualified characters |
+
+## government-economy.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `calculatePositionSalary(positionId, department)` | Query | Calculates position salary |
+| `calculateDepartmentSalaryRequirements(departmentId)` | Query | Calculates department salary requirements |
+| `calculateLocationSalaryRequirements(locationId)` | Query | Calculates location salary requirements |
+| `updatePositionSalary(departmentId, positionId, newSalary)` | Command | Updates position salary |
+| `getPositionSalaryHistory(departmentId, positionId)` | Query | Gets position salary history |
+
+## government-assignment.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `isCharacterQualifiedForPosition(characterId, departmentId, positionId)` | Query | Checks if character is qualified |
+| `getQualifiedCandidates(departmentId, positionId, options)` | Query | Gets qualified candidates |
+| `getSuccessionPlan(departmentId, positionId)` | Query | Gets succession plan |
+| `analyzeAssignmentHistory(departmentId)` | Query | Analyzes assignment history |
+
+## government-laws.js (NEW)
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `addCivilLaw(locationId, lawData)` | Command | Adds a civil law |
+| `updateCivilLaw(locationId, lawId, updates)` | Command | Updates a civil law |
+| `removeCivilLaw(locationId, lawId)` | Command | Removes a civil law |
+| `getCivilLaws(locationId)` | Query | Gets civil laws |
+| `getCivilLawsByDomain(locationId, domain)` | Query | Gets civil laws by domain |
+| `getCivilLawsByType(locationId, type)` | Query | Gets civil laws by type |
+| `getCivilLawsBySeverity(locationId, severity)` | Query | Gets civil laws by severity |
+| `getEnforcedCivilLaws(locationId)` | Query | Gets enforced civil laws |
+| `getCivilLaw(locationId, lawId)` | Query | Gets a civil law |
+| `getCivilLawCount(locationId)` | Query | Gets civil law count |
+| `getCivilLawsByCrimeType(crimeType)` | Query | Gets civil laws by crime type |
+| `getEnforcedCivilLawsByCrimeType(crimeType)` | Query | Gets enforced civil laws by crime type |
+| `getCivilLawStatistics(locationId)` | Query | Gets civil law statistics |
+
+---
+
+# 22. USAGE EXAMPLES
+
+## Example 1: Creating a Department
+
+```javascript
+var result = window.GovernmentCommands.createDepartment({
+    name: 'Ministry of Education',
+    description: 'Oversees all education institutions',
+    locationId: 'loc_123',
+    parentDepartmentId: null
+});
+
+if (result) {
+    console.log('Department created:', result.id);
+}
+```
+
+## Example 2: Adding a Position
+
+```javascript
+var result = window.GovernmentCommands.addPosition('dept_123', {
+    name: 'Minister of Education',
+    description: 'Head of the Education Ministry',
+    priority: 5,
+    requiredRoleId: 'role_educator',
+    minSkillLevel: 50,
+    genderRestriction: 'either'
+});
+
+if (result) {
+    console.log('Position created:', result.id);
+}
+```
+
+## Example 3: Assigning a Character
+
+```javascript
+var result = window.GovernmentCommands.assignCharacterToPosition(
+    'dept_123',
+    'pos_456',
+    'char_789',
+    {
+        startYear: 1250,
+        title: 'Minister of Education',
+        notes: 'Appointed by the Crown'
+    }
+);
+
+if (result) {
+    console.log('Character assigned');
+}
+```
+
+## Example 4: Setting a Leader
+
+```javascript
+var result = window.GovernmentCommands.assignLeader(
+    'loc_123',
+    'char_456',
+    1250,
+    'Mayor'
+);
+
+if (result) {
+    console.log('Leader assigned');
+}
+```
+
+## Example 5: Managing Civil Laws (NEW)
+
+```javascript
+// Add a civil law
+var lawData = {
+    name: 'No Murder',
+    description: 'Murder is illegal in this settlement',
+    type: 'law',
+    domain: 'violence',
+    severity: 'mortal',
+    crimeType: 'murder',
+    punishment: 'Execution',
+    isEnforced: true
+};
+
+var result = window.GovernmentLaws.addCivilLaw('loc_123', lawData);
+if (result.success) {
+    console.log('Civil law added:', result.data.name);
+}
+
+// Get civil laws
+var laws = window.GovernmentLaws.getCivilLaws('loc_123');
+for (var i = 0; i < laws.length; i++) {
+    console.log(laws[i].name, '-', laws[i].severity);
+}
+
+// Update a civil law
+window.GovernmentLaws.updateCivilLaw('loc_123', lawId, {
+    punishment: 'Life Imprisonment'
+});
+
+// Remove a civil law
+window.GovernmentLaws.removeCivilLaw('loc_123', lawId);
+```
+
+## Example 6: Checking Salary Budget
+
+```javascript
+var result = window.GovernmentCommands.checkSalaryBudgetSufficiency('dept_123', 1250);
+console.log('Sufficient:', result.sufficient);
+console.log('Allocated:', result.allocated);
+console.log('Required:', result.required);
+console.log('Shortfall:', result.shortfall);
+```
+
+## Example 7: Getting Government Statistics
+
+```javascript
+var stats = window.GovernmentQueries.getStatistics({ includeDeprecated: false });
+console.log('Total departments:', stats.totalDepartments);
+console.log('Total positions:', stats.totalPositions);
+console.log('Active assignments:', stats.activeAssignments);
+```
+
+## Example 8: Getting Leader Information
+
+```javascript
+// Get current leader
+var leader = window.GovernmentQueries.getCurrentLeader('loc_123');
+if (leader) {
+    console.log('Leader:', leader.characterName);
+    console.log('Title:', leader.title);
+}
+
+// Get leader history
+var history = window.GovernmentQueries.getLeaderHistory('loc_123');
+for (var i = 0; i < history.length; i++) {
+    console.log(history[i].characterName, history[i].startYear, '-', history[i].endYear);
+}
+```
+
+---
+
 # END OF DOCUMENTATION
 
-**Generated:** 2026-07-12
-**Version:** 3.0
-**File Count:** 6 core modules + 5 modal files
-**Key Updates:**
-- Settlement salary integration (v3.0)
-- Industry tax integration
-- Justice/crime rate integration
-- Salary budget sufficiency checks
-- Department salary requirements (for settlement allocation)
-- Leader prosperity integration
-- Role-based position queries
-- Industry health scores
-- Comprehensive assignment statistics
+**Generated:** 2026-07-14
+**Version:** 4.0
+**File Count:** 14 core modules + 5 modal files

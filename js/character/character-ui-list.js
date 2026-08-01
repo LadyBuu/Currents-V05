@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * STILL WATERS - CHARACTER UI LIST (js/core/character/character-ui-list.js)
+ * STILL WATERS - CHARACTER UI LIST (js/character/character-ui-list.js)
  * =============================================================================
  * 
  * UI rendering for character lists.
@@ -9,6 +9,7 @@
  *   - character-queries.js (CharacterQueries)
  *   - formatting.js (escapeHtml)
  *   - icons.js (Icons)
+ *   - culture-queries.js (CultureQueries) - NEW
  * 
  * =============================================================================
  */
@@ -63,6 +64,28 @@
     }
 
     // =========================================================================
+    // NEW: Culture Helpers
+    // =========================================================================
+
+    function _getCultureName(cultureId) {
+        if (typeof window.CultureState !== 'undefined' &&
+            typeof window.CultureState.getCulture === 'function') {
+            var culture = window.CultureState.getCulture(cultureId);
+            return culture ? (culture.displayName || culture.name) : null;
+        }
+        return null;
+    }
+
+    function _getCultureIcon(cultureId) {
+        if (typeof window.CultureState !== 'undefined' &&
+            typeof window.CultureState.getCulture === 'function') {
+            var culture = window.CultureState.getCulture(cultureId);
+            return culture ? (culture.icon || '✦') : null;
+        }
+        return null;
+    }
+
+    // =========================================================================
     // 2. RENDER CHARACTER LIST
     // =========================================================================
 
@@ -89,6 +112,7 @@
         var showStatus = options.showStatus !== undefined ? options.showStatus : true;
         var showLocation = options.showLocation !== undefined ? options.showLocation : true;
         var showAge = options.showAge !== undefined ? options.showAge : true;
+        var showCulture = options.showCulture !== undefined ? options.showCulture : true;  // NEW
 
         if (!characters || characters.length === 0) {
             container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--dim);">' + _escapeHtml(emptyMessage) + '</div>';
@@ -114,6 +138,19 @@
             var rowClass = options.rowClass || 'character-row';
             var clickable = onSelect ? 'cursor:pointer;' : '';
 
+            // NEW: Culture badge
+            var cultureBadge = '';
+            if (showCulture && c.cultureId) {
+                var cultureName = _getCultureName(c.cultureId);
+                var cultureIcon = _getCultureIcon(c.cultureId);
+                if (cultureName) {
+                    cultureBadge = '<span style="font-size:0.5rem;background:var(--bg2);padding:1px 6px;border-radius:10px;border:1px solid var(--border-light);margin-left:6px;">' +
+                        (cultureIcon ? _escapeHtml(cultureIcon) + ' ' : '') +
+                        _escapeHtml(cultureName) +
+                        '</span>';
+                }
+            }
+
             html += '<div class="' + _escapeHtml(rowClass) + '" data-character-id="' + _escapeHtml(c.id) + '" style="' +
                 'display:flex;justify-content:space-between;align-items:center;' +
                 'padding:8px 12px;background:var(--bg3);border-radius:6px;' +
@@ -126,6 +163,7 @@
                 genderSymbol + ' ' +
                 _escapeHtml(c.name) + ' ' + _escapeHtml(c.surname || '') +
                 (isDeceased ? ' <span style="font-size:0.6rem;color:var(--dim);">†</span>' : '') +
+                cultureBadge +
                 '</div>';
 
             var details = [];
@@ -179,6 +217,10 @@
         return true;
     }
 
+    // =========================================================================
+    // 3. RENDER CHARACTER CARD
+    // =========================================================================
+
     function renderCharacterCard(character) {
         if (!character) {
             return '<div style="text-align:center;padding:20px;color:var(--dim);">Character not found</div>';
@@ -191,6 +233,36 @@
         var statusColor = isDeceased ? 'var(--dim)' : 'var(--success)';
         var statusText = isDeceased ? 'Deceased' : 'Living';
 
+        // NEW: Culture badge
+        var cultureBadge = '';
+        if (character.cultureId) {
+            var cultureName = _getCultureName(character.cultureId);
+            var cultureIcon = _getCultureIcon(character.cultureId);
+            if (cultureName) {
+                cultureBadge = '<span style="font-size:0.55rem;background:var(--bg3);padding:2px 10px;border-radius:12px;border:1px solid var(--border-light);">' +
+                    (cultureIcon ? _escapeHtml(cultureIcon) + ' ' : '') +
+                    _escapeHtml(cultureName) +
+                    '</span>';
+            }
+        }
+
+        // Appearance preview (NEW)
+        var appearancePreview = '';
+        if (character.appearance && Object.keys(character.appearance).length > 0) {
+            var app = character.appearance;
+            var parts = [];
+            if (app.skinTone) parts.push(app.skinTone);
+            if (app.eyeColor) parts.push(app.eyeColor + ' eyes');
+            if (app.hairColor) parts.push(app.hairColor + ' hair');
+            if (app.build) parts.push(app.build);
+            if (app.height) parts.push(app.height + 'cm');
+            if (parts.length > 0) {
+                appearancePreview = '<div style="font-size:0.55rem;color:var(--dim);margin-top:4px;">' +
+                    parts.join(' · ') +
+                    '</div>';
+            }
+        }
+
         return '<div class="character-card" style="' +
             'background:var(--bg2);border-radius:8px;padding:16px;' +
             'border:1px solid var(--border);' +
@@ -199,21 +271,25 @@
             '<h4 style="margin:0;font-size:0.9rem;">' +
             genderSymbol + ' ' + _escapeHtml(character.name) + ' ' + _escapeHtml(character.surname || '') +
             '</h4>' +
+            '<div style="display:flex;align-items:center;gap:6px;">' +
+            cultureBadge +
             '<span style="font-size:0.6rem;color:' + statusColor + ';padding:2px 10px;border-radius:12px;border:1px solid ' + statusColor + ';">' +
             statusText +
             '</span>' +
+            '</div>' +
             '</div>' +
             '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:0.65rem;">' +
             '<div><span style="color:var(--dim);">Age</span><br><strong>' + age + ' years</strong></div>' +
             '<div><span style="color:var(--dim);">Gender</span><br><strong>' + _escapeHtml(character.gender || 'Unknown') + '</strong></div>' +
             '<div><span style="color:var(--dim);">Location</span><br><strong>' + _escapeHtml(character.currentLocation || 'Unknown') + '</strong></div>' +
             '</div>' +
+            appearancePreview +
             (character.notes ? '<div style="margin-top:8px;font-size:0.55rem;color:var(--dim);padding-top:8px;border-top:1px solid var(--border-light);">' + _escapeHtml(character.notes) + '</div>' : '') +
             '</div>';
     }
 
     // =========================================================================
-    // 3. EXPORTS
+    // 4. EXPORTS
     // =========================================================================
 
     window.CharacterUI = {

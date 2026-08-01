@@ -14,13 +14,14 @@
  *   - Recursion guard
  *   - Event emission
  *   - RELIGION INHERITANCE - Children inherit religion from parents at birth
+ *   - FAMILY ACCESSORS - Uses FamilyAccessors for family relationship management
  * 
  * DEPENDENCIES:
  *   - children-state.js (ChildrenState)
  *   - character-commands.js (CharacterCommands)
- *   - family-logic.js (FamilyLogic)
  *   - accessors.js (getCharacterById, getCharacters)
  *   - religion-inheritance.js (ReligionInheritance)
+ *   - family-accessors.js (FamilyAccessors) - NEW
  * 
  * =============================================================================
  */
@@ -107,51 +108,257 @@
     }
 
     // =========================================================================
-    // 2. FAMILY LOGIC WRAPPERS
+    // 2. FAMILY ACCESSORS WRAPPER (NEW)
     // =========================================================================
 
-    function _setParent(childId, parentId, parentType, options) {
-        if (typeof window.FamilyLogic !== 'undefined') {
-            return window.FamilyLogic.setParent(childId, parentId, parentType, options);
-        }
-        if (typeof window.setParent === 'function') {
-            return window.setParent(childId, parentId, parentType, options);
+    function _getFamilyAccessors() {
+        return typeof window.FamilyAccessors !== 'undefined' ? window.FamilyAccessors : null;
+    }
+
+    function _setParentViaFamilyAccessors(childId, parentId, parentType, options) {
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.setParent === 'function') {
+            return fa.setParent(childId, parentId, parentType, options);
         }
         return null;
     }
 
-    function _removeParent(childId, parentId, options) {
-        if (typeof window.FamilyLogic !== 'undefined') {
-            return window.FamilyLogic.removeParent(childId, parentId, options);
-        }
-        if (typeof window.removeParent === 'function') {
-            return window.removeParent(childId, parentId, options);
+    function _removeParentViaFamilyAccessors(childId, parentId, options) {
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.removeParent === 'function') {
+            return fa.removeParent(childId, parentId, options);
         }
         return false;
     }
 
-    function _getParents(childId) {
+    function _getChildrenViaFamilyAccessors(parentId, includeDeceased) {
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.getAllChildren === 'function') {
+            var result = fa.getAllChildren(parentId, includeDeceased || false);
+            if (result) {
+                return result.map(function(item) { return item.character; });
+            }
+        }
+        return null;
+    }
+
+    function _getParentsViaFamilyAccessors(childId) {
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.getParents === 'function') {
+            return fa.getParents(childId);
+        }
+        return null;
+    }
+
+    function _getSiblingsViaFamilyAccessors(childId, includeHalfSiblings, includeDeceased) {
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.getSiblings === 'function') {
+            var result = fa.getSiblings(childId, includeHalfSiblings !== false, includeDeceased || false);
+            if (result) {
+                return result.map(function(item) { return item.character; });
+            }
+        }
+        return null;
+    }
+
+    // =========================================================================
+    // 3. LEGACY FAMILY LOGIC WRAPPERS (Fallback)
+    // =========================================================================
+
+    function _setParentLegacy(childId, parentId, parentType, options) {
+        if (typeof window.FamilyLogic !== 'undefined') {
+            return window.FamilyLogic.setParent(childId, parentId, parentType, options);
+        }
+        return null;
+    }
+
+    function _removeParentLegacy(childId, parentId, options) {
+        if (typeof window.FamilyLogic !== 'undefined') {
+            return window.FamilyLogic.removeParent(childId, parentId, options);
+        }
+        return false;
+    }
+
+    function _getParentsLegacy(childId) {
         if (typeof window.FamilyLogic !== 'undefined') {
             return window.FamilyLogic.getParents(childId);
-        }
-        if (typeof window.getParents === 'function') {
-            return window.getParents(childId);
         }
         return { father: null, mother: null };
     }
 
-    function _getSiblings(childId) {
+    function _getSiblingsLegacy(childId) {
         if (typeof window.FamilyLogic !== 'undefined') {
             return window.FamilyLogic.getSiblings(childId);
-        }
-        if (typeof window.getSiblings === 'function') {
-            return window.getSiblings(childId);
         }
         return [];
     }
 
     // =========================================================================
-    // 3. RELIGION INHERITANCE WRAPPERS (NEW)
+    // 4. UNIFIED FAMILY OPERATIONS (NEW - Using FamilyAccessors with fallback)
+    // =========================================================================
+
+    function _setParent(childId, parentId, parentType, options) {
+        // Prefer FamilyAccessors (core)
+        var result = _setParentViaFamilyAccessors(childId, parentId, parentType, options);
+        if (result !== null) {
+            return result;
+        }
+
+        // Fallback to FamilyLogic (social system)
+        result = _setParentLegacy(childId, parentId, parentType, options);
+        if (result !== null) {
+            return result;
+        }
+
+        // Ultimate fallback: direct data access
+        var child = _getCharacterById(childId);
+        var parent = _getCharacterById(parentId);
+        if (!child || !parent) return null;
+
+        if (parentType === 'father' || parentType === 'male') {
+            child.fatherId = parentId;
+        } else if (parentType === 'mother' || parentType === 'female') {
+            child.motherId = parentId;
+        } else {
+            return null;
+        }
+
+        if (!parent.children) parent.children = [];
+        if (parent.children.indexOf(childId) === -1) {
+            parent.children.push(childId);
+        }
+
+        child.updatedAt = Date.now();
+        parent.updatedAt = Date.now();
+        _saveMasterData();
+
+        return { success: true };
+    }
+
+    function _removeParent(childId, parentId, options) {
+        // Prefer FamilyAccessors (core)
+        var result = _removeParentViaFamilyAccessors(childId, parentId, options);
+        if (result !== false) {
+            return result;
+        }
+
+        // Fallback to FamilyLogic (social system)
+        result = _removeParentLegacy(childId, parentId, options);
+        if (result !== false) {
+            return result;
+        }
+
+        // Ultimate fallback: direct data access
+        var child = _getCharacterById(childId);
+        if (!child) return false;
+
+        if (child.fatherId === parentId) {
+            child.fatherId = null;
+        } else if (child.motherId === parentId) {
+            child.motherId = null;
+        } else {
+            return false;
+        }
+
+        child.updatedAt = Date.now();
+        _saveMasterData();
+        return true;
+    }
+
+    function _getParents(childId) {
+        // Prefer FamilyAccessors (core)
+        var result = _getParentsViaFamilyAccessors(childId);
+        if (result !== null) {
+            return result;
+        }
+
+        // Fallback to FamilyLogic (social system)
+        result = _getParentsLegacy(childId);
+        if (result && (result.father || result.mother)) {
+            return result;
+        }
+
+        // Ultimate fallback: direct data access
+        var child = _getCharacterById(childId);
+        if (!child) return { father: null, mother: null };
+
+        return {
+            father: child.fatherId ? _getCharacterById(child.fatherId) : null,
+            mother: child.motherId ? _getCharacterById(child.motherId) : null
+        };
+    }
+
+    function _getChildren(parentId, includeDeceased) {
+        // Prefer FamilyAccessors (core)
+        var result = _getChildrenViaFamilyAccessors(parentId, includeDeceased || false);
+        if (result !== null) {
+            return result;
+        }
+
+        // Fallback to FamilyLogic (social system)
+        if (typeof window.FamilyLogic !== 'undefined') {
+            var children = window.FamilyLogic.getChildren(parentId);
+            if (children && children.length > 0) {
+                return children;
+            }
+        }
+
+        // Ultimate fallback: direct data access
+        var allChars = _getCharacters();
+        var children = [];
+        for (var i = 0; i < allChars.length; i++) {
+            var child = allChars[i];
+            if (includeDeceased === false && child.isDeceased) continue;
+            if (child.motherId === parentId || child.fatherId === parentId) {
+                children.push(child);
+            }
+        }
+        return children;
+    }
+
+    function _getSiblings(childId, includeHalfSiblings, includeDeceased) {
+        // Prefer FamilyAccessors (core)
+        var result = _getSiblingsViaFamilyAccessors(childId, includeHalfSiblings, includeDeceased);
+        if (result !== null) {
+            return result;
+        }
+
+        // Fallback to FamilyLogic (social system)
+        if (typeof window.FamilyLogic !== 'undefined') {
+            return window.FamilyLogic.getSiblings(childId);
+        }
+
+        // Ultimate fallback: direct data access
+        var child = _getCharacterById(childId);
+        if (!child) return [];
+
+        var allChars = _getCharacters();
+        var siblings = [];
+        var seenIds = {};
+
+        for (var i = 0; i < allChars.length; i++) {
+            var sibling = allChars[i];
+            if (sibling.id === childId) continue;
+            if (seenIds[sibling.id]) continue;
+            if (includeDeceased === false && sibling.isDeceased) continue;
+
+            var sameFather = child.fatherId && sibling.fatherId && child.fatherId === sibling.fatherId;
+            var sameMother = child.motherId && sibling.motherId && child.motherId === sibling.motherId;
+
+            if (sameFather && sameMother) {
+                seenIds[sibling.id] = true;
+                siblings.push(sibling);
+            } else if (includeHalfSiblings !== false && (sameFather || sameMother)) {
+                seenIds[sibling.id] = true;
+                siblings.push(sibling);
+            }
+        }
+
+        return siblings;
+    }
+
+    // =========================================================================
+    // 5. RELIGION INHERITANCE WRAPPERS
     // =========================================================================
 
     function _inheritReligionForChild(childId, motherId, fatherId, locationId, options) {
@@ -198,13 +405,13 @@
     }
 
     // =========================================================================
-    // 4. RECURSION GUARD
+    // 6. RECURSION GUARD
     // =========================================================================
 
     var _processing = false;
 
     // =========================================================================
-    // 5. RECORD BIRTH (with Religion Inheritance)
+    // 7. RECORD BIRTH (with Religion Inheritance and FamilyAccessors)
     // =========================================================================
 
     /**
@@ -277,7 +484,26 @@
             }
 
             // ================================================================
-            // NEW: INHERIT RELIGION FROM PARENTS
+            // UPDATED: Set parents using unified family operations
+            // ================================================================
+            if (mother) {
+                _setParent(child.id, mother.id, 'mother', {
+                    biological: true,
+                    startYear: birthYear,
+                    notes: 'Birth mother'
+                });
+            }
+
+            if (father) {
+                _setParent(child.id, father.id, 'father', {
+                    biological: true,
+                    startYear: birthYear,
+                    notes: 'Birth father'
+                });
+            }
+
+            // ================================================================
+            // NEW: Inherit religion from parents
             // ================================================================
             if (options.inheritReligion !== false && !child.isDeceased) {
                 var religionResult = _inheritReligionForChild(
@@ -293,7 +519,6 @@
 
                 if (religionResult && religionResult.success) {
                     // Religion was inherited
-                    // The child's religionId is already set by the inheritance function
                 }
             }
 
@@ -329,7 +554,7 @@
     }
 
     // =========================================================================
-    // 6. RECORD ADOPTION (with optional religion inheritance)
+    // 8. RECORD ADOPTION (with optional religion inheritance)
     // =========================================================================
 
     /**
@@ -396,7 +621,9 @@
                 status: 'active'
             });
 
-            // Set parent in family logic
+            // ================================================================
+            // UPDATED: Set parent using unified family operations
+            // ================================================================
             _setParent(child.id, parent.id, parentType, {
                 biological: false,
                 startYear: year,
@@ -435,13 +662,13 @@
             }
 
             // ================================================================
-            // NEW: INHERIT RELIGION FROM ADOPTIVE PARENTS
+            // NEW: Inherit religion from adoptive parents
             // ================================================================
             if (options.inheritReligion !== false && child.religionId === null) {
                 var religionResult = _inheritReligionForChild(
                     child.id,
-                    parent,
-                    options.partner || null,
+                    parent.id,
+                    options.partner ? options.partner.id : null,
                     parent.currentLocationId || null,
                     {
                         year: year,
@@ -487,7 +714,7 @@
     }
 
     // =========================================================================
-    // 7. REMOVE ADOPTION
+    // 9. REMOVE ADOPTION
     // =========================================================================
 
     /**
@@ -552,7 +779,9 @@
                 }
             }
 
-            // Remove parent from family logic
+            // ================================================================
+            // UPDATED: Remove parent using unified family operations
+            // ================================================================
             if (!keepHistory) {
                 _removeParent(child.id, parent.id, {
                     endYear: endYear,
@@ -598,7 +827,7 @@
     }
 
     // =========================================================================
-    // 8. LEGITIMIZE CHILD (with optional religion inheritance)
+    // 10. LEGITIMIZE CHILD (with optional religion inheritance)
     // =========================================================================
 
     /**
@@ -637,7 +866,9 @@
             var inheritanceRights = options.inheritanceRights || 'full';
             var oldSurname = child.surname;
 
-            // Set parents
+            // ================================================================
+            // UPDATED: Set parents using unified family operations
+            // ================================================================
             if (father) {
                 _setParent(child.id, father.id, 'father', {
                     biological: true,
@@ -664,7 +895,7 @@
             }
 
             // ================================================================
-            // NEW: INHERIT RELIGION FROM LEGITIMIZING PARENTS
+            // NEW: Inherit religion from legitimizing parents
             // ================================================================
             if (options.inheritReligion !== false && child.religionId === null) {
                 var religionResult = _inheritReligionForChild(
@@ -722,7 +953,7 @@
     }
 
     // =========================================================================
-    // 9. RECORD SURROGACY (with optional religion inheritance)
+    // 11. RECORD SURROGACY (with optional religion inheritance)
     // =========================================================================
 
     /**
@@ -811,7 +1042,60 @@
                     }
 
                     // ============================================================
-                    // NEW: INHERIT RELIGION FROM INTENDED PARENTS
+                    // UPDATED: Set parents using unified family operations
+                    // ============================================================
+                    if (!isStillborn) {
+                        // Set surrogate as birth mother
+                        _setParent(child.id, surrogate.id, 'mother', {
+                            biological: false, // Surrogate is not genetic mother
+                            startYear: birthYear,
+                            notes: 'Surrogate mother'
+                        });
+
+                        // Set intended parent(s) as legal parents
+                        var intendedParentChar = _getCharacterById(intendedParentId);
+                        if (intendedParentChar) {
+                            var parentType = intendedParentChar.gender === 'male' ? 'father' : 'mother';
+                            _setParent(child.id, intendedParentChar.id, parentType, {
+                                biological: geneticMother && geneticMother.id === intendedParentChar.id,
+                                startYear: birthYear,
+                                notes: 'Intended parent via surrogacy'
+                            });
+                        }
+
+                        if (intendedPartnerId) {
+                            var intendedPartnerChar = _getCharacterById(intendedPartnerId);
+                            if (intendedPartnerChar) {
+                                var partnerType = intendedPartnerChar.gender === 'male' ? 'father' : 'mother';
+                                _setParent(child.id, intendedPartnerChar.id, partnerType, {
+                                    biological: geneticMother && geneticMother.id === intendedPartnerChar.id,
+                                    startYear: birthYear,
+                                    notes: 'Intended parent via surrogacy'
+                                });
+                            }
+                        }
+
+                        // Set genetic parent info
+                        if (geneticFather && geneticFather.id !== intendedParentId && geneticFather.id !== intendedPartnerId) {
+                            _setParent(child.id, geneticFather.id, 'father', {
+                                biological: true,
+                                startYear: birthYear,
+                                notes: 'Genetic father (sperm donor)'
+                            });
+                        }
+
+                        if (geneticMother && geneticMother.id !== surrogate.id && 
+                            geneticMother.id !== intendedParentId && geneticMother.id !== intendedPartnerId) {
+                            _setParent(child.id, geneticMother.id, 'mother', {
+                                biological: true,
+                                startYear: birthYear,
+                                notes: 'Genetic mother (egg donor)'
+                            });
+                        }
+                    }
+
+                    // ============================================================
+                    // NEW: Inherit religion from intended parents
                     // ============================================================
                     if (options.inheritReligion !== false && !child.isDeceased) {
                         var intendedParentChar = _getCharacterById(intendedParentId);
@@ -834,33 +1118,6 @@
                     }
 
                     children.push(child);
-
-                    // Create adoption for intended parents
-                    if (!isStillborn && typeof window.ChildrenCommands !== 'undefined') {
-                        try {
-                            var parentChar = _getCharacterById(intendedParentId);
-                            if (parentChar) {
-                                window.ChildrenCommands.recordAdoption(parentChar, child, {
-                                    year: birthYear,
-                                    type: 'legal',
-                                    notes: 'Surrogacy arrangement',
-                                    parentType: parentChar.gender === 'male' ? 'father' : 'mother',
-                                    inheritReligion: false  // Already inherited above
-                                });
-                            }
-                        } catch (e) {
-                            // Fallback: direct adoption
-                            if (!child.adoptedParents) child.adoptedParents = [];
-                            child.adoptedParents.push({
-                                parentId: intendedParentId,
-                                parentName: intendedParent.name || 'Intended Parent',
-                                year: birthYear,
-                                type: 'legal',
-                                notes: 'Surrogacy arrangement',
-                                status: 'active'
-                            });
-                        }
-                    }
                 }
             }
 
@@ -911,7 +1168,7 @@
     }
 
     // =========================================================================
-    // 10. UPDATE SURROGACY RECORD
+    // 12. UPDATE SURROGACY RECORD
     // =========================================================================
 
     function updateSurrogacyRecord(recordId, updates) {
@@ -945,7 +1202,7 @@
     }
 
     // =========================================================================
-    // 11. BULK BIRTH WITH RELIGION INHERITANCE (NEW)
+    // 13. BULK BIRTH WITH RELIGION INHERITANCE (UPDATED)
     // =========================================================================
 
     /**
@@ -998,7 +1255,62 @@
     }
 
     // =========================================================================
-    // 12. EXPORTS
+    // 14. FAMILY QUERY HELPERS (NEW - Using FamilyAccessors)
+    // =========================================================================
+
+    /**
+     * Gets all children of a character (using FamilyAccessors if available)
+     * @param {string} characterId - Character ID
+     * @param {boolean} includeDeceased - Include deceased children
+     * @returns {Array} Array of child characters
+     */
+    function getCharacterChildren(characterId, includeDeceased) {
+        if (_processing) return [];
+        _processing = true;
+
+        try {
+            return _getChildren(characterId, includeDeceased || false);
+        } finally {
+            _processing = false;
+        }
+    }
+
+    /**
+     * Gets parents of a character (using FamilyAccessors if available)
+     * @param {string} characterId - Character ID
+     * @returns {Object} { father, mother }
+     */
+    function getCharacterParents(characterId) {
+        if (_processing) return { father: null, mother: null };
+        _processing = true;
+
+        try {
+            return _getParents(characterId);
+        } finally {
+            _processing = false;
+        }
+    }
+
+    /**
+     * Gets siblings of a character (using FamilyAccessors if available)
+     * @param {string} characterId - Character ID
+     * @param {boolean} includeHalfSiblings - Include half-siblings
+     * @param {boolean} includeDeceased - Include deceased siblings
+     * @returns {Array} Array of sibling characters
+     */
+    function getCharacterSiblings(characterId, includeHalfSiblings, includeDeceased) {
+        if (_processing) return [];
+        _processing = true;
+
+        try {
+            return _getSiblings(characterId, includeHalfSiblings, includeDeceased);
+        } finally {
+            _processing = false;
+        }
+    }
+
+    // =========================================================================
+    // 15. EXPORTS
     // =========================================================================
 
     window.ChildrenCommands = {
@@ -1008,7 +1320,12 @@
         legitimizeChild: legitimizeChild,
         recordSurrogacy: recordSurrogacy,
         updateSurrogacyRecord: updateSurrogacyRecord,
-        generateChildrenForCouple: generateChildrenForCouple  // NEW
+        generateChildrenForCouple: generateChildrenForCouple,
+
+        // Family Query Helpers (NEW)
+        getCharacterChildren: getCharacterChildren,
+        getCharacterParents: getCharacterParents,
+        getCharacterSiblings: getCharacterSiblings
     };
 
     // Legacy aliases
@@ -1039,6 +1356,11 @@
         }
         return result;
     };
+
+    // Legacy family aliases
+    window.getChildren = getCharacterChildren;
+    window.getParents = getCharacterParents;
+    window.getSiblings = getCharacterSiblings;
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.ChildrenCommands;

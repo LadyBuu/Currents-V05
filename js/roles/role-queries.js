@@ -11,7 +11,7 @@
  *   - role-state.js (RoleState)
  *   - role-constants.js (TEACHING_THRESHOLDS)
  *   - accessors.js (getCharacterById, getCharacters, getRoleById)
- *   - apprenticeship-queries.js (getSkillLevel, getSkillLevelName)
+ *   - skill-utils.js (SkillUtils)
  * 
  * =============================================================================
  */
@@ -26,24 +26,46 @@
     var _processingQuery = false;
 
     // =========================================================================
-    // 2. DEPENDENCIES - Direct references to global functions
+    // 2. DEPENDENCY WRAPPERS
     // =========================================================================
 
-    // All functions are available globally from accessors.js
-    // No wrapper functions needed - use them directly!
+    function _getCharacterById(id) {
+        if (typeof window.getCharacterById === 'function') {
+            return window.getCharacterById(id);
+        }
+        if (typeof window._getCharacterById === 'function') {
+            return window._getCharacterById(id);
+        }
+        return null;
+    }
 
-    // =========================================================================
-    // 3. HELPER FUNCTIONS
-    // =========================================================================
+    function _getCharacters() {
+        if (typeof window.getCharacters === 'function') {
+            return window.getCharacters();
+        }
+        if (typeof window._getCharacters === 'function') {
+            return window._getCharacters();
+        }
+        return [];
+    }
+
+    function _getRoleById(id) {
+        if (typeof window.getRoleById === 'function') {
+            return window.getRoleById(id);
+        }
+        if (typeof window._getRoleById === 'function') {
+            return window._getRoleById(id);
+        }
+        return null;
+    }
 
     function _getSkillLevelName(level) {
-        if (typeof window.ApprenticeshipQueries !== 'undefined') {
-            return window.ApprenticeshipQueries.getSkillLevelName(level);
+        if (typeof window.SkillUtils !== 'undefined') {
+            return window.SkillUtils.getSkillLevelName(level);
         }
-        if (typeof window.getSkillLevelName === 'function') {
-            return window.getSkillLevelName(level);
+        if (typeof window._getSkillLevelName === 'function') {
+            return window._getSkillLevelName(level);
         }
-        // Fallback
         if (level >= 91) return 'Master';
         if (level >= 76) return 'Expert';
         if (level >= 51) return 'Journeyman';
@@ -53,6 +75,9 @@
     }
 
     function _getTeachingThresholds() {
+        if (typeof window.SkillUtils !== 'undefined') {
+            return window.SkillUtils.getThresholds();
+        }
         return window.TEACHING_THRESHOLDS || {
             NOVICE: 0,
             APPRENTICE: 26,
@@ -62,18 +87,8 @@
         };
     }
 
-    function _getSkillLevel(characterId, roleId) {
-        if (typeof window.ApprenticeshipQueries !== 'undefined') {
-            return window.ApprenticeshipQueries.getSkillLevel(characterId, roleId);
-        }
-        if (typeof window.getSkillLevel === 'function') {
-            return window.getSkillLevel(characterId, roleId);
-        }
-        return 0;
-    }
-
     // =========================================================================
-    // 4. ROLE QUERIES
+    // 3. ROLE QUERIES
     // =========================================================================
 
     /**
@@ -142,7 +157,7 @@
             var role = RoleState.getRole(roleId);
             if (!role) return [];
 
-            var characters = window.getCharacters();
+            var characters = _getCharacters();
             var results = [];
             var thresholds = _getTeachingThresholds();
 
@@ -442,6 +457,45 @@
     }
 
     // =========================================================================
+    // 4. SKILL LEVEL QUERY (NEW)
+    // =========================================================================
+
+    /**
+     * Gets a character's skill level for a specific role
+     * @param {string} characterId - Character ID
+     * @param {string} roleId - Role ID
+     * @returns {number} Skill level (0-100), or 0 if not found
+     */
+    function getSkillLevel(characterId, roleId) {
+        if (_processingQuery) {
+            return 0;
+        }
+        _processingQuery = true;
+
+        try {
+            if (!characterId || !roleId) {
+                return 0;
+            }
+
+            var char = _getCharacterById(characterId);
+            if (!char || !char.professions) {
+                return 0;
+            }
+
+            for (var i = 0; i < char.professions.length; i++) {
+                if (char.professions[i].id === roleId) {
+                    return char.professions[i].skillLevel || 0;
+                }
+            }
+
+            return 0;
+
+        } finally {
+            _processingQuery = false;
+        }
+    }
+
+    // =========================================================================
     // 5. EXPORTS
     // =========================================================================
 
@@ -454,7 +508,8 @@
         getRoleCategoryList: getRoleCategoryList,
         searchRoles: searchRoles,
         getRoleCategoriesWithCounts: getRoleCategoriesWithCounts,
-        getTeachingThresholdName: getTeachingThresholdName
+        getTeachingThresholdName: getTeachingThresholdName,
+        getSkillLevel: getSkillLevel  // NEW
     };
 
     // Legacy aliases
@@ -467,6 +522,7 @@
     window._searchRoles = searchRoles;
     window._getRoleCategoriesWithCounts = getRoleCategoriesWithCounts;
     window._getTeachingThresholdName = getTeachingThresholdName;
+    window._getSkillLevel = getSkillLevel;  // NEW
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
@@ -478,7 +534,8 @@
             getRoleCategoryList: getRoleCategoryList,
             searchRoles: searchRoles,
             getRoleCategoriesWithCounts: getRoleCategoriesWithCounts,
-            getTeachingThresholdName: getTeachingThresholdName
+            getTeachingThresholdName: getTeachingThresholdName,
+            getSkillLevel: getSkillLevel  // NEW
         };
     }
 

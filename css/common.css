@@ -4,6 +4,7 @@
    Complete, consolidated styles for ALL tools.
    Unified dark blue TRON theme with consistent scrollbars,
    tab bars, and responsive design.
+   NO BLUR EFFECTS - all backgrounds are fully opaque for mobile performance.
    ============================================================================ */
 
 /* ============================================================================
@@ -18,7 +19,7 @@
     --accent-glow: rgba(106, 158, 207, 0.4);
     --accent-glow-strong: rgba(106, 158, 207, 0.6);
 
-    /* --- Background Colors (SOLID - no transparency) --- */
+    /* --- Background Colors (SOLID - no transparency, no blur) --- */
     --bg: #090c12;
     --bg2: #0d1119;
     --bg3: #121820;
@@ -43,32 +44,6 @@
     --danger-lt: #c08080;
     --success: #4a9060;
     --ok: #4a9060;
-
-    /* --- Rank Colors --- */
-    --rank-chief: #c9a87c;
-    --rank-sacred-sons: #a87898;
-    --rank-sacred: #7a9eb0;
-    --rank-sacred-daughters: #b88aa8;
-    --rank-consort: #c89880;
-    --rank-elder: #6a9ecf;
-    --rank-master: #8a9eb0;
-    --rank-commoner: #6a8098;
-
-    /* --- Relationship Colors --- */
-    --rel-parent: #4a7ab0;
-    --rel-partner: #c89880;
-    --rel-child: #6aac80;
-    --rel-sibling: #a87898;
-    --rel-friend: #9988cc;
-    --rel-ongoing: #4a9060;
-    --rel-ended: #8b4040;
-    --rel-widowed: #8f5e5e;
-    --adopted: #7a9eb0;
-
-    /* --- Age Group Colors --- */
-    --age-young: #c87040;
-    --age-prime: #4a9060;
-    --age-mature: #6a9ecf;
 
     /* --- Shadow & Glow --- */
     --glow-sm: 0 0 5px var(--accent-glow);
@@ -100,258 +75,32 @@ html,
 body {
     height: 100%;
     margin: 0;
-    background: #090c12;
+    background: var(--bg);
     color: var(--text);
     font-family: 'Crimson Pro', Georgia, serif;
     font-size: 16px;
-    overflow-x: hidden;
-}
-
-.floating-bg {
-    pointer-events: none;
-    position: fixed;
-    inset: 0;
-    background: radial-gradient(ellipse at 20% 40%, rgba(106, 158, 207, 0.03) 0%, transparent 60%);
-    z-index: -1;
-}
-
-/* TRON Grid Background (reusable) */
-.tron-grid {
-    position: relative;
-}
-.tron-grid::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background-image:
-        linear-gradient(var(--accent-glow) 1px, transparent 1px),
-        linear-gradient(90deg, var(--accent-glow) 1px, transparent 1px);
-    background-size: 30px 30px;
-    opacity: 0.04;
-    pointer-events: none;
+    overflow: hidden;
 }
 
 /* ============================================================================
-   3.  TYPOGRAPHY
-   ============================================================================ */
-h1,
-h2,
-h3,
-h4,
-h5,
-.cinzel,
-.title {
-    font-family: 'Cinzel', serif;
-    letter-spacing: 0.05em;
-}
-
-h1 {
-    font-size: 0.85rem;
-    letter-spacing: 0.2em;
-    color: var(--accent);
-    text-transform: uppercase;
-}
-h2 {
-    font-size: 0.8rem;
-    letter-spacing: 0.15em;
-    color: var(--accent);
-}
-h3 {
-    font-size: 0.7rem;
-    letter-spacing: 0.12em;
-    color: var(--accent);
-}
-h4 {
-    font-size: 0.65rem;
-    letter-spacing: 0.1em;
-    color: var(--accent);
-    text-transform: uppercase;
-}
-
-.text-accent { color: var(--accent); }
-.text-dim { color: var(--dim); }
-.text-deceased { color: var(--deceased); }
-.text-warning { color: var(--warn); }
-.text-success { color: var(--success); }
-.text-center { text-align: center; }
-.text-mono { font-family: monospace; }
-
-/* ============================================================================
-   4.  BUTTONS (Unified .btn & .tb-btn)
-   ============================================================================ */
-button,
-.btn,
-.tb-btn {
-    padding: 6px 12px;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-    background: rgba(13, 17, 25, 0.9);
-    color: var(--text);
-    cursor: pointer;
-    font-family: 'Cinzel', serif;
-    font-size: 0.65rem;
-    transition: all 0.2s ease;
-    white-space: nowrap;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-}
-
-button:hover,
-.btn:hover,
-.tb-btn:hover {
-    background: rgba(26, 45, 72, 0.9);
-    border-color: var(--accent);
-    transform: translateY(-1px);
-    box-shadow: var(--glow-sm);
-}
-
-/* Variants */
-.btn.primary,
-.tb-btn.primary {
-    background: rgba(26, 45, 72, 0.9);
-    border-color: var(--accent);
-    color: var(--accent);
-    text-shadow: 0 0 3px var(--accent);
-}
-.btn.primary:hover,
-.tb-btn.primary:hover {
-    background: rgba(26, 45, 72, 1);
-    box-shadow: var(--glow-strong);
-}
-
-.btn.danger,
-.tb-btn.danger {
-    background: rgba(139, 64, 64, 0.2);
-    border-color: #8a3020;
-    color: var(--danger-lt);
-}
-.btn.danger:hover,
-.tb-btn.danger:hover {
-    background: rgba(139, 64, 64, 0.4);
-}
-
-.btn.warning,
-.tb-btn.warning {
-    background: rgba(200, 112, 64, 0.2);
-    border-color: var(--warn);
-    color: var(--warn);
-}
-.btn.warning:hover,
-.tb-btn.warning:hover {
-    background: rgba(200, 112, 64, 0.4);
-}
-
-.btn.success {
-    background: rgba(74, 144, 96, 0.2);
-    border-color: var(--success);
-    color: var(--success);
-}
-.btn.success:hover {
-    background: rgba(74, 144, 96, 0.4);
-}
-
-/* Sizes */
-.btn.small,
-.tb-btn.small {
-    padding: 4px 10px;
-    font-size: 0.55rem;
-}
-.btn.tiny {
-    padding: 2px 8px;
-    font-size: 0.5rem;
-}
-
-/* State: Active */
-.btn.active,
-.tb-btn.active {
-    background: var(--accent-dim);
-    border-color: var(--accent);
-    color: var(--accent);
-    box-shadow: var(--glow-sm);
-}
-
-/* ============================================================================
-   5.  FORMS (Inputs, Selects, Textareas)
-   ============================================================================ */
-input[type="text"],
-input[type="search"],
-input[type="number"],
-input[type="password"],
-select,
-textarea {
-    width: 100%;
-    padding: 8px 12px;
-    background: rgba(9, 12, 18, 0.9);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--text);
-    font-size: 0.7rem;
-    font-family: 'Crimson Pro', serif;
-    transition: all 0.3s ease;
-    box-sizing: border-box;
-}
-
-input[type="text"]:focus,
-input[type="search"]:focus,
-input[type="number"]:focus,
-select:focus,
-textarea:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: var(--glow-sm);
-}
-
-input[type="checkbox"],
-input[type="radio"] {
-    width: auto;
-    accent-color: var(--accent);
-    cursor: pointer;
-    margin-right: 4px;
-}
-
-label {
-    font-family: 'Cinzel', serif;
-    font-size: 0.6rem;
-    color: var(--dim);
-    letter-spacing: 0.05em;
-    cursor: pointer;
-}
-
-/* ============================================================================
-   6.  TOPBAR - FIXED (not too cramped)
+   3.  TOPBAR
    ============================================================================ */
 .topbar {
-    background: #0d1119;
+    background: var(--bg2);
     padding: 8px 16px;
     display: flex;
     align-items: center;
     gap: 10px;
-    border-bottom: 1px solid var(--accent);
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
     min-height: var(--topbar-height);
-    position: relative;
-    z-index: 10;
     flex-wrap: wrap;
 }
 
-.topbar::after {
-    content: '';
-    position: absolute;
-    bottom: -1px;
-    left: 0;
-    right: 0;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, var(--accent), var(--accent), transparent);
-    box-shadow: 0 0 6px var(--accent);
-}
-
 .topbar .title {
-    font-family: 'Cinzel', serif;
-    font-size: 0.75rem;
-    letter-spacing: 0.2em;
+    font-weight: 600;
+    font-size: 0.85rem;
     color: var(--accent);
-    text-shadow: var(--glow-sm);
     white-space: nowrap;
 }
 
@@ -360,77 +109,119 @@ label {
     min-width: 12px;
 }
 
-/* Topbar Buttons - reasonable size */
-.topbar .tb-btn,
-.topbar .btn {
-    padding: 5px 10px;
-    font-size: 0.6rem;
-    white-space: nowrap;
-    flex-shrink: 0;
-}
-
-/* Year selector */
-.topbar .year-selector {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.6rem;
-    color: var(--accent);
-    font-family: 'Cinzel', serif;
-    flex-shrink: 0;
-}
-
-.topbar .year-selector .year-input {
-    width: 65px;
-    padding: 4px 6px;
-    background: rgba(9, 12, 18, 0.9);
+.topbar .burger-btn {
+    background: transparent;
     border: 1px solid var(--border);
-    border-radius: 4px;
     color: var(--text);
-    font-size: 0.6rem;
-    text-align: center;
-}
-
-.topbar .year-selector .year-input:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: var(--glow-sm);
-}
-
-/* Burger Menu */
-.burger-menu {
-    background: none;
-    border: 1px solid var(--accent);
-    color: var(--accent);
-    font-size: 1.1rem;
-    width: 34px;
-    height: 34px;
-    border-radius: 6px;
+    font-size: 1.2rem;
+    padding: 4px 10px;
+    border-radius: 4px;
     cursor: pointer;
     display: none;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s;
-    flex-shrink: 0;
 }
 
-.burger-menu:hover {
-    background: var(--accent-dim);
-    box-shadow: var(--glow-sm);
+.topbar .burger-btn:hover {
+    border-color: var(--accent);
+}
+
+.topbar .btn {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 4px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.7rem;
+    transition: border-color 0.2s;
+}
+
+.topbar .btn:hover {
+    border-color: var(--accent);
+}
+
+.topbar .year-input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 4px 6px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    width: 70px;
+}
+
+.topbar .year-input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.topbar label {
+    font-size: 0.7rem;
+    color: var(--dim);
+    font-family: 'Cinzel', serif;
 }
 
 /* ============================================================================
-   7.  TABS - NO SCROLLBAR VISIBLE, LARGER TAP TARGETS ON MOBILE
+   4.  APP LAYOUT
    ============================================================================ */
-.tabs,
+.app-layout {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+/* ============================================================================
+   5.  SIDEBAR
+   ============================================================================ */
+.sidebar {
+    background: var(--bg2);
+    border-right: 1px solid var(--border);
+    width: var(--sidebar-width);
+    flex-shrink: 0;
+    overflow-y: auto;
+    padding: 8px;
+    position: relative;
+    z-index: 10;
+}
+
+.sidebar h3 {
+    font-size: 0.65rem;
+    color: var(--dim);
+    margin: 0 0 8px 4px;
+    font-weight: 400;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-family: 'Cinzel', serif;
+}
+
+/* ============================================================================
+   6.  MAIN PANEL
+   ============================================================================ */
+.main-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg);
+}
+
+.main-panel .placeholder {
+    color: var(--tmut);
+    text-align: center;
+    padding: 40px;
+    font-size: 0.9rem;
+}
+
+/* ============================================================================
+   7.  PANEL TABS
+   ============================================================================ */
 .panel-tabs {
     display: flex;
     gap: 2px;
     padding: 0 12px;
     border-bottom: 1px solid var(--accent);
-    background: #0d1119;
+    background: var(--bg2);
     flex-shrink: 0;
-    position: relative;
     overflow-x: auto;
     white-space: nowrap;
     -webkit-overflow-scrolling: touch;
@@ -438,16 +229,15 @@ label {
     -ms-overflow-style: none;
     min-height: var(--tab-height);
     align-items: center;
+    position: relative;
 }
 
-.tabs::-webkit-scrollbar,
 .panel-tabs::-webkit-scrollbar {
     display: none;
     width: 0;
     height: 0;
 }
 
-.tabs::after,
 .panel-tabs::after {
     content: '';
     position: absolute;
@@ -459,7 +249,7 @@ label {
     box-shadow: 0 0 6px var(--accent);
 }
 
-.tab-btn {
+.panel-tabs .tab-btn {
     padding: 10px 16px;
     background: none;
     border: none;
@@ -478,89 +268,312 @@ label {
     gap: 4px;
 }
 
-.tab-btn:hover {
+.panel-tabs .tab-btn:hover {
     color: var(--accent);
     text-shadow: 0 0 5px var(--accent);
     background: rgba(106, 158, 207, 0.1);
 }
 
-.tab-btn.active {
+.panel-tabs .tab-btn.active {
     color: var(--accent);
     border-bottom-color: var(--accent);
     text-shadow: 0 0 8px var(--accent);
     box-shadow: 0 2px 8px rgba(106, 158, 207, 0.2);
 }
 
+.panel-tabs .tab-btn .tab-icon {
+    font-size: 0.7rem;
+}
+
 /* ============================================================================
-   8.  SIDEBAR - SOLID BACKGROUND (NO TRANSLUCENCY)
+   8.  TAB CONTENT
    ============================================================================ */
-.sidebar {
-    width: var(--sidebar-width);
-    min-width: var(--sidebar-width);
-    background: #0d1119;
-    border-right: 1px solid var(--accent);
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    flex-shrink: 0;
-    position: relative;
-    z-index: 10;
+.tab-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
 }
 
-.sidebar::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    right: -1px;
-    bottom: 0;
-    width: 1px;
-    background: linear-gradient(180deg, transparent, var(--accent), transparent);
-    box-shadow: 0 0 6px var(--accent);
-}
-
-.sidebar-header {
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--accent);
-    background: #121820;
-    flex-shrink: 0;
-}
-
-.sidebar-header h3 {
-    font-size: 0.65rem;
-    letter-spacing: 0.15em;
-    margin: 0;
-    color: var(--accent);
-    text-shadow: var(--glow-sm);
-    font-family: 'Cinzel', serif;
-}
-
-/* Sidebar Overlay - NO BLUR */
-.sidebar-overlay {
+.tab-pane {
     display: none;
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.7);
-    z-index: 98;
+    animation: fadeIn 0.2s ease;
 }
 
-.sidebar-overlay.active {
+.tab-pane.active {
     display: block;
 }
 
 /* ============================================================================
-   9.  SCROLLBARS - ALWAYS VISIBLE ON DESKTOP
+   9.  LOADING & EMPTY STATES
    ============================================================================ */
-/* For WebKit browsers (Chrome, Safari, Edge) */
+.loading-placeholder {
+    padding: 20px;
+    text-align: center;
+    color: var(--tmut);
+    font-size: 0.8rem;
+}
+
+.empty-state {
+    padding: 20px;
+    text-align: center;
+    color: var(--tmut);
+    font-size: 0.8rem;
+}
+
+.error-state {
+    padding: 20px;
+    text-align: center;
+    color: var(--danger-lt);
+    font-size: 0.8rem;
+}
+
+/* ============================================================================
+   10. LOCATION TREE
+   ============================================================================ */
+.location-tree-node {
+    position: relative;
+}
+
+.location-tree-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 6px;
+    margin: 1px 0;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.75rem;
+    background: transparent;
+    border-left: 2px solid transparent;
+    transition: all 0.15s ease;
+    min-height: 26px;
+    color: var(--text);
+}
+
+.location-tree-item:hover {
+    background: rgba(106, 158, 207, 0.08);
+}
+
+.location-tree-item.selected {
+    background: rgba(106, 158, 207, 0.15);
+    border-left-color: var(--accent);
+}
+
+.location-tree-item.disputed {
+    border-left-color: var(--warn);
+    opacity: 0.85;
+}
+
+.location-tree-item.abandoned {
+    opacity: 0.6;
+    text-decoration: line-through;
+    color: var(--tmut);
+}
+
+.location-tree-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    text-align: center;
+    cursor: pointer;
+    font-size: 0.5rem;
+    color: var(--dim);
+    user-select: none;
+    flex-shrink: 0;
+    font-family: monospace;
+}
+
+.location-tree-toggle:hover {
+    color: var(--accent);
+}
+
+.location-tree-toggle.leaf {
+    color: var(--tmut);
+    cursor: default;
+    opacity: 0.3;
+}
+
+.location-tree-toggle.leaf:hover {
+    color: var(--tmut);
+}
+
+.location-tree-icon {
+    margin: 0 2px;
+    flex-shrink: 0;
+    font-size: 0.6rem;
+    color: var(--dim);
+    width: 16px;
+    text-align: center;
+}
+
+.location-tree-name {
+    flex: 1;
+    font-size: 0.75rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+
+.location-tree-children {
+    margin-left: 0;
+    padding-left: 0;
+    border-left: none;
+}
+
+/* ============================================================================
+   11. LOCATION BADGES
+   ============================================================================ */
+.location-tree-badge {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    font-size: 0.45rem;
+    padding: 1px 6px;
+    border-radius: 10px;
+    background: var(--bg2);
+    border: 1px solid var(--border-light);
+    color: var(--dim);
+    line-height: 1.4;
+    font-family: 'Cinzel', serif;
+    letter-spacing: 0.02em;
+    gap: 2px;
+}
+
+.location-tree-badge.type {
+    background: var(--bg3);
+    border-color: var(--border);
+    color: var(--text);
+    font-size: 0.4rem;
+    text-transform: uppercase;
+}
+
+.location-tree-badge.culture {
+    background: rgba(106, 158, 207, 0.12);
+    border-color: rgba(106, 158, 207, 0.2);
+    color: var(--accent-light);
+    font-size: 0.4rem;
+}
+
+.location-tree-badge.population {
+    background: rgba(74, 144, 96, 0.12);
+    border-color: rgba(74, 144, 96, 0.2);
+    color: var(--success);
+    font-size: 0.4rem;
+    font-weight: 500;
+}
+
+.location-tree-badge.capital {
+    background: rgba(255, 215, 0, 0.12);
+    border-color: rgba(255, 215, 0, 0.2);
+    color: #ffd700;
+    font-size: 0.45rem;
+    padding: 1px 4px;
+}
+
+.location-tree-badge.disputed {
+    background: rgba(200, 112, 64, 0.12);
+    border-color: rgba(200, 112, 64, 0.2);
+    color: var(--warn);
+    font-size: 0.45rem;
+    padding: 1px 4px;
+}
+
+.location-tree-badge.abandoned {
+    background: rgba(139, 64, 64, 0.12);
+    border-color: rgba(139, 64, 64, 0.2);
+    color: var(--danger-lt);
+    font-size: 0.45rem;
+    padding: 1px 4px;
+}
+
+.location-tree-badge.ruined {
+    background: rgba(100, 100, 100, 0.15);
+    border-color: rgba(100, 100, 100, 0.2);
+    color: var(--tmut);
+    font-size: 0.45rem;
+    padding: 1px 4px;
+}
+
+/* ============================================================================
+   12. DETAIL VIEW
+   ============================================================================ */
+.detail-container {
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.detail-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px 24px;
+    margin-bottom: 16px;
+}
+
+.detail-title {
+    font-size: 1.1rem;
+    color: var(--accent);
+    margin-bottom: 4px;
+}
+
+.detail-subtitle {
+    font-size: 0.7rem;
+    color: var(--dim);
+    margin-bottom: 12px;
+}
+
+.detail-grid {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    gap: 8px 24px;
+    font-size: 0.75rem;
+}
+
+.detail-label {
+    color: var(--dim);
+}
+
+.detail-value {
+    color: var(--text);
+}
+
+.detail-breadcrumb {
+    font-size: 0.65rem;
+    color: var(--dim);
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+    margin-top: 12px;
+}
+
+.detail-notes {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+}
+
+.notes-label {
+    font-size: 0.65rem;
+    color: var(--dim);
+    margin-bottom: 4px;
+}
+
+.detail-notes p {
+    font-size: 0.75rem;
+}
+
+/* ============================================================================
+   13. SCROLLBARS
+   ============================================================================ */
 ::-webkit-scrollbar {
     width: 8px;
     height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-    background: #090c12;
+    background: var(--bg);
     border-radius: 4px;
 }
 
@@ -575,504 +588,19 @@ label {
     box-shadow: 0 0 8px var(--accent);
 }
 
-/* For Firefox */
 * {
     scrollbar-width: thin;
-    scrollbar-color: var(--accent) #090c12;
-}
-
-/* Force scrollbar visibility on containers that need it */
-.sidebar .place-list,
-.sidebar .char-tree-container,
-.sidebar .household-list-scroll,
-.sidebar .roles-grid,
-.sidebar #rankTree,
-.sidebar .household-list-scroll {
-    overflow-y: auto !important;
-    overflow-x: hidden !important;
-    min-height: 0;
+    scrollbar-color: var(--accent) var(--bg);
 }
 
 /* ============================================================================
-   10. MAIN PANEL - SOLID BACKGROUND
-   ============================================================================ */
-.main-panel {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    background: #0a0e16;
-}
-
-.panel-header {
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--accent);
-    background: #121820;
-    flex-shrink: 0;
-}
-
-.panel-header h2 {
-    margin: 0;
-    font-size: 0.7rem;
-    letter-spacing: 0.1em;
-    color: var(--accent);
-    text-shadow: var(--glow-sm);
-    font-family: 'Cinzel', serif;
-}
-
-.panel-content {
-    flex: 1;
-    overflow-y: auto;
-    padding: 16px;
-}
-
-/* ============================================================================
-   11. MODALS
-   ============================================================================ */
-.modal {
-    display: none;
-    position: fixed;
-    inset: 0;
-    background: var(--modal-overlay);
-    z-index: 10000;
-    align-items: center;
-    justify-content: center;
-    padding: 15px;
-}
-.modal.active {
-    display: flex !important;
-}
-
-.modal-content {
-    background: var(--modal-bg);
-    border: 1px solid var(--accent);
-    border-radius: 12px;
-    width: 90%;
-    max-width: 500px;
-    max-height: 85vh;
-    overflow-y: auto;
-    padding: 20px;
-    box-shadow: var(--glow-lg);
-}
-
-.modal-content h3 {
-    margin-bottom: 16px;
-    font-family: 'Cinzel', serif;
-    color: var(--accent);
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 8px;
-}
-
-.modal-buttons {
-    display: flex;
-    gap: 12px;
-    justify-content: flex-end;
-    margin-top: 16px;
-    padding-top: 12px;
-    border-top: 1px solid var(--border);
-}
-
-/* Form Groups inside Modals */
-.form-group {
-    margin-bottom: 16px;
-}
-.form-group label {
-    display: block;
-    font-size: 0.65rem;
-    color: var(--accent);
-    margin-bottom: 6px;
-    font-family: 'Cinzel', serif;
-}
-.form-group input,
-.form-group select,
-.form-group textarea {
-    width: 100%;
-}
-
-/* ============================================================================
-   12. TOAST NOTIFICATIONS
-   ============================================================================ */
-#toast-container {
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
-    z-index: 9999;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    pointer-events: none;
-}
-
-.toast {
-    background: var(--bg2);
-    border: 1px solid var(--accent);
-    border-radius: 8px;
-    padding: 10px 18px;
-    color: var(--accent);
-    font-family: 'Cinzel', serif;
-    font-size: 0.75rem;
-    box-shadow: var(--glow-md);
-    opacity: 0;
-    transform: translateX(100%);
-    animation: slideIn 0.3s forwards, fadeOut 0.3s 1.7s forwards;
-    pointer-events: none;
-    max-width: 300px;
-}
-
-@keyframes slideIn {
-    to {
-        opacity: 1;
-        transform: translateX(0);
-    }
-}
-@keyframes fadeOut {
-    to {
-        opacity: 0;
-        transform: translateX(100%);
-    }
-}
-
-/* ============================================================================
-   13. TABLES
-   ============================================================================ */
-.table-wrap {
-    overflow-x: auto;
-    width: 100%;
-}
-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.7rem;
-}
-table th {
-    background: var(--bg3);
-    padding: 12px 10px;
-    text-align: left;
-    font-family: 'Cinzel', serif;
-    font-size: 0.65rem;
-    color: var(--accent);
-    border-bottom: 1px solid var(--border);
-}
-table td {
-    padding: 10px 8px;
-    border-bottom: 1px solid var(--border2);
-}
-table tr:hover {
-    background: var(--bg3);
-}
-
-/* ============================================================================
-   14. UTILITY CLASSES
-   ============================================================================ */
-/* Display & Layout */
-.flex {
-    display: flex;
-}
-.flex-col {
-    flex-direction: column;
-}
-.flex-1 {
-    flex: 1;
-}
-.items-center {
-    align-items: center;
-}
-.justify-between {
-    justify-content: space-between;
-}
-.gap-2 {
-    gap: 8px;
-}
-.gap-3 {
-    gap: 12px;
-}
-.w-full {
-    width: 100%;
-}
-.h-full {
-    height: 100%;
-}
-.overflow-auto {
-    overflow: auto;
-}
-.overflow-hidden {
-    overflow: hidden;
-}
-.relative {
-    position: relative;
-}
-
-/* Backgrounds */
-.bg-dark {
-    background: var(--bg);
-}
-.bg-darker {
-    background: var(--bg2);
-}
-
-/* States */
-.empty-state {
-    text-align: center;
-    padding: 60px 20px;
-    color: var(--dim);
-    font-size: 0.75rem;
-    border: 1px dashed var(--accent);
-    border-radius: 16px;
-    margin: 20px;
-    background: rgba(13, 17, 25, 0.5);
-}
-.empty-state.module-error {
-    border-color: var(--danger);
-    color: var(--danger-lt);
-}
-.loading {
-    text-align: center;
-    padding: 40px;
-    color: var(--accent);
-    font-size: 0.7rem;
-    font-family: 'Cinzel', serif;
-}
-
-/* Badges */
-.badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 20px;
-    font-size: 0.55rem;
-    background: var(--bg2);
-    border: 1px solid var(--border2);
-    margin-left: 6px;
-}
-.badge.accent {
-    background: var(--accent-dim);
-    border-color: var(--accent);
-    color: var(--accent);
-}
-.badge.warning {
-    background: rgba(200, 112, 64, 0.2);
-    border-color: var(--warn);
-    color: var(--warn);
-}
-.badge-success {
-    background: rgba(74, 144, 96, 0.2);
-    color: var(--success);
-    border: 1px solid var(--success);
-}
-.badge-danger {
-    background: rgba(139, 64, 64, 0.2);
-    color: var(--danger);
-    border: 1px solid var(--danger);
-}
-
-/* Misc */
-.clickable {
-    cursor: pointer;
-    color: var(--accent);
-}
-.clickable:hover {
-    text-decoration: underline;
-}
-
-.helper-text {
-    font-size: 0.55rem;
-    color: var(--dim);
-    margin-top: 4px;
-}
-.info-note {
-    font-size: 0.6rem;
-    color: var(--dim);
-    margin-top: 8px;
-}
-.warning-text {
-    color: var(--warn);
-    font-size: 0.65rem;
-    text-align: center;
-    padding: 10px;
-}
-
-/* Progress */
-.progress-bar {
-    width: 100%;
-    height: 4px;
-    background: var(--border);
-    border-radius: 2px;
-    overflow: hidden;
-}
-.progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, var(--accent), #8ab0e0);
-    transition: width 0.3s ease;
-    width: 0%;
-    box-shadow: 0 0 4px var(--accent-glow);
-}
-
-/* Glow Text */
-.glow-text {
-    text-shadow: 0 0 5px var(--accent-glow);
-}
-
-/* ============================================================================
-   15. TREE ITEMS (Sidebar lists)
-   ============================================================================ */
-.tree-item {
-    display: flex !important;
-    align-items: center !important;
-    gap: 4px !important;
-    padding: 4px 6px !important;
-    margin: 1px 0 !important;
-    cursor: pointer !important;
-    border-radius: 4px !important;
-    background: var(--bg3) !important;
-    font-size: 0.7rem !important;
-    transition: all 0.2s;
-}
-.tree-item:hover {
-    background: var(--bg4) !important;
-}
-.tree-item.selected {
-    background: var(--accent-dim) !important;
-    border-left: 2px solid var(--accent) !important;
-}
-.tree-toggle {
-    width: 16px !important;
-    font-size: 0.6rem !important;
-    flex-shrink: 0 !important;
-    text-align: center;
-    color: var(--accent);
-    cursor: pointer;
-}
-.tree-children {
-    margin-left: 16px !important;
-    padding-left: 4px !important;
-    border-left: 1px solid var(--border) !important;
-}
-.capital-star {
-    color: #ffd700;
-    font-size: 0.6rem;
-    flex-shrink: 0;
-    text-shadow: 0 0 4px #ffd700;
-}
-.place-name {
-    flex: 1;
-    font-size: 0.7rem;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-.type-badge {
-    font-size: 0.5rem;
-    padding: 1px 6px;
-    background: var(--bg2);
-    border-radius: 10px;
-    color: var(--dim);
-    flex-shrink: 0;
-}
-
-/* ============================================================================
-   16. COLLAPSIBLE SECTION
-   ============================================================================ */
-.collapsible-section {
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    margin-bottom: 12px;
-    overflow: hidden;
-}
-.collapsible-section .section-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 12px 16px;
-    cursor: pointer;
-    font-family: 'Cinzel', serif;
-    font-size: 0.75rem;
-    color: var(--accent);
-    background: var(--bg3);
-    transition: background 0.2s;
-}
-.collapsible-section .section-header:hover {
-    background: var(--bg4);
-}
-.collapsible-section .section-header .arrow {
-    transition: transform 0.3s;
-    font-size: 0.7rem;
-    color: var(--dim);
-}
-.collapsible-section .section-header .arrow.expanded {
-    transform: rotate(90deg);
-}
-.collapsible-section .section-content {
-    display: none;
-    padding: 16px;
-}
-.collapsible-section .section-content.expanded {
-    display: block;
-}
-
-/* ============================================================================
-   17. INFO GRID
-   ============================================================================ */
-.info-grid {
-    display: grid;
-    grid-template-columns: 140px 1fr;
-    gap: 12px;
-    margin-bottom: 24px;
-    background: var(--bg2);
-    border: 1px solid var(--accent);
-    border-radius: 12px;
-    padding: 20px;
-    box-shadow: 0 0 15px rgba(106, 158, 207, 0.1);
-}
-.info-label {
-    font-family: 'Cinzel', serif;
-    font-size: 0.65rem;
-    color: var(--accent);
-    text-shadow: var(--glow-sm);
-}
-.info-value {
-    font-size: 0.75rem;
-    color: var(--text);
-    word-break: break-word;
-}
-
-/* ============================================================================
-   18. STATS GRID
-   ============================================================================ */
-.stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-    gap: 12px;
-    margin-bottom: 24px;
-}
-.stat-card {
-    background: rgba(13, 17, 25, 0.8);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 16px;
-    text-align: center;
-    transition: all 0.2s;
-}
-.stat-card:hover {
-    border-color: var(--accent);
-    transform: translateY(-2px);
-    box-shadow: 0 0 10px rgba(106, 158, 207, 0.1);
-}
-.stat-value {
-    font-size: 1.2rem;
-    font-weight: bold;
-    color: var(--accent);
-}
-.stat-label {
-    font-size: 0.55rem;
-    color: var(--dim);
-    margin-top: 4px;
-}
-
-/* ============================================================================
-   19. RESPONSIVE - MOBILE FIRST
+   14. RESPONSIVE
    ============================================================================ */
 @media (max-width: 768px) {
-    /* Topbar - comfortable on mobile */
+    .topbar .burger-btn {
+        display: inline-block;
+    }
+
     .topbar {
         padding: 6px 10px;
         gap: 6px;
@@ -1081,131 +609,92 @@ table tr:hover {
 
     .topbar .title {
         font-size: 0.6rem;
-        letter-spacing: 0.1em;
     }
 
-    .topbar .tb-btn,
     .topbar .btn {
-        padding: 4px 8px;
-        font-size: 0.5rem;
-    }
-
-    .topbar .year-selector {
-        font-size: 0.5rem;
-        gap: 4px;
-    }
-
-    .topbar .year-selector .year-input {
-        width: 50px;
-        padding: 3px 4px;
-        font-size: 0.5rem;
-    }
-
-    .burger-menu {
-        display: flex;
-        width: 30px;
-        height: 30px;
-        font-size: 0.9rem;
-    }
-
-    /* Tabs - larger tap targets, no scrollbar */
-    .tabs,
-    .panel-tabs {
-        padding: 0 8px;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-        scrollbar-width: none;
-        -ms-overflow-style: none;
-        min-height: 42px;
-    }
-
-    .tabs::-webkit-scrollbar,
-    .panel-tabs::-webkit-scrollbar {
-        display: none;
-        width: 0;
-        height: 0;
-    }
-
-    .tab-btn {
-        padding: 10px 14px;
+        padding: 3px 8px;
         font-size: 0.55rem;
-        flex-shrink: 0;
-        min-height: 42px;
     }
 
-    /* Sidebar - solid, full height */
+    .topbar .year-input {
+        width: 50px;
+        font-size: 0.55rem;
+        padding: 3px 4px;
+    }
+
+    .topbar label {
+        font-size: 0.55rem;
+    }
+
     .sidebar {
         position: fixed;
         top: var(--topbar-height);
         left: 0;
         bottom: 0;
-        width: 85%;
-        max-width: 280px;
+        transform: translateX(-110%);
         z-index: 100;
-        transform: translateX(-100%);
-        transition: transform 0.3s cubic-bezier(0.2, 0.9, 0.4, 1.1);
-        border-right: 1px solid var(--accent);
-        box-shadow: 4px 0 30px rgba(0, 0, 0, 0.8);
-        background: #0d1119;
+        width: 280px;
+        transition: transform 0.25s ease;
+        background: var(--bg2);
+        border-right: 1px solid var(--border);
     }
 
-    .sidebar.visible {
+    .sidebar.open {
         transform: translateX(0);
     }
 
-    .sidebar-overlay.active {
-        display: block;
+    .main-panel {
+        padding: 0;
     }
 
-    .panel-header {
-        padding: 8px 12px;
+    .panel-tabs {
+        padding: 0 8px;
+        min-height: 42px;
     }
 
-    .panel-header h2 {
-        font-size: 0.6rem;
+    .panel-tabs .tab-btn {
+        padding: 10px 14px;
+        font-size: 0.55rem;
+        min-height: 42px;
     }
 
-    .panel-content {
+    .tab-content {
         padding: 12px;
     }
 
-    /* Scrollbars on mobile - thinner */
+    .location-tree-item {
+        font-size: 0.7rem;
+        min-height: 30px;
+        padding: 3px 6px;
+    }
+
+    .location-tree-name {
+        font-size: 0.7rem;
+    }
+
+    .location-tree-badge {
+        font-size: 0.4rem;
+        padding: 1px 4px;
+    }
+
+    .location-tree-toggle {
+        width: 20px;
+        height: 20px;
+        font-size: 0.5rem;
+    }
+
+    .detail-grid {
+        grid-template-columns: 1fr;
+        gap: 6px;
+    }
+
+    .detail-card {
+        padding: 14px 16px;
+    }
+
     ::-webkit-scrollbar {
         width: 4px;
         height: 4px;
-    }
-
-    /* Info grid stacks */
-    .info-grid {
-        grid-template-columns: 1fr;
-        gap: 8px;
-        padding: 14px;
-    }
-
-    .stats-grid {
-        grid-template-columns: repeat(2, 1fr);
-        gap: 10px;
-    }
-
-    .filter-row {
-        flex-direction: column;
-        align-items: stretch;
-    }
-
-    .filter-row input,
-    .filter-row select {
-        width: 100%;
-        min-width: auto;
-    }
-
-    .filter-row label {
-        width: auto;
-    }
-
-    /* Modal */
-    .modal-content {
-        width: 95%;
-        padding: 15px;
     }
 }
 
@@ -1220,34 +709,19 @@ table tr:hover {
         font-size: 0.5rem;
     }
 
-    .topbar .tb-btn,
     .topbar .btn {
-        padding: 3px 6px;
+        padding: 2px 6px;
         font-size: 0.45rem;
     }
 
-    .topbar .year-selector .year-input {
+    .topbar .year-input {
         width: 40px;
-        padding: 2px 3px;
         font-size: 0.45rem;
+        padding: 2px 3px;
     }
 
-    .burger-menu {
-        width: 26px;
-        height: 26px;
-        font-size: 0.8rem;
-    }
-
-    .tabs,
-    .panel-tabs {
-        min-height: 36px;
-        padding: 0 6px;
-    }
-
-    .tab-btn {
-        padding: 8px 10px;
-        font-size: 0.5rem;
-        min-height: 36px;
+    .topbar label {
+        font-size: 0.45rem;
     }
 
     .sidebar {
@@ -1256,31 +730,55 @@ table tr:hover {
         top: 36px;
     }
 
-    .panel-content {
+    .panel-tabs {
+        min-height: 36px;
+        padding: 0 6px;
+    }
+
+    .panel-tabs .tab-btn {
+        padding: 8px 10px;
+        font-size: 0.5rem;
+        min-height: 36px;
+    }
+
+    .tab-content {
         padding: 8px;
     }
 
-    .stats-grid {
+    .location-tree-item {
+        font-size: 0.65rem;
+        min-height: 26px;
+        padding: 2px 4px;
+    }
+
+    .location-tree-name {
+        font-size: 0.65rem;
+    }
+
+    .location-tree-badge {
+        font-size: 0.35rem;
+        padding: 0 4px;
+    }
+
+    .location-tree-toggle {
+        width: 18px;
+        height: 18px;
+        font-size: 0.45rem;
+    }
+
+    .detail-grid {
         grid-template-columns: 1fr;
+        gap: 4px;
+        font-size: 0.7rem;
     }
 
-    .modal-content {
-        width: 95%;
-        max-width: 95%;
-        padding: 12px;
-    }
-
-    .info-grid {
-        padding: 12px;
+    .detail-card {
+        padding: 10px 12px;
     }
 }
 
 @media (min-width: 769px) {
-    .burger-menu {
-        display: none !important;
-    }
-
-    .sidebar-overlay {
+    .burger-btn {
         display: none !important;
     }
 
@@ -1293,36 +791,43 @@ table tr:hover {
 }
 
 /* ============================================================================
-   20. PRINT STYLES
+   15. PRINT STYLES
    ============================================================================ */
 @media print {
     .topbar,
     .sidebar,
-    .tabs,
     .btn,
-    .tb-btn,
-    .filter-bar,
-    .modal-buttons,
-    .no-print {
+    .burger-btn,
+    .panel-tabs {
         display: none !important;
     }
+
     .main-panel {
-        margin: 0;
         padding: 0;
     }
-    .panel-content {
-        overflow: visible !important;
-        height: auto !important;
+
+    .detail-card,
+    .detail-notes {
+        border: 1px solid #333;
+        background: #fff;
+        color: #000;
     }
-    .stats-grid,
-    .chart-card {
-        break-inside: avoid;
-        page-break-inside: avoid;
+
+    .detail-title {
+        color: #000;
+    }
+
+    .detail-label {
+        color: #555;
+    }
+
+    .detail-value {
+        color: #000;
     }
 }
 
 /* ============================================================================
-   21. ANIMATIONS
+   16. ANIMATIONS
    ============================================================================ */
 @keyframes fadeIn {
     from {
@@ -1334,32 +839,26 @@ table tr:hover {
         transform: translateY(0);
     }
 }
-@keyframes fadeSlideIn {
+
+@keyframes locationFadeIn {
     from {
         opacity: 0;
-        transform: translateX(-8px);
+        transform: translateY(-4px);
     }
     to {
         opacity: 1;
-        transform: translateX(0);
-    }
-}
-@keyframes glowPulse {
-    0%,
-    100% {
-        box-shadow: 0 0 5px var(--accent-glow);
-    }
-    50% {
-        box-shadow: 0 0 15px var(--accent-glow-strong);
+        transform: translateY(0);
     }
 }
 
 .fade-in {
     animation: fadeIn 0.2s ease;
 }
-.fade-slide-in {
-    animation: fadeSlideIn 0.2s ease-out;
+
+.location-tree-node {
+    animation: locationFadeIn 0.15s ease;
 }
-.glow-pulse {
-    animation: glowPulse 2s infinite;
+
+.location-tree-node .location-tree-node {
+    animation: none;
 }

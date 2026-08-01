@@ -1,0 +1,863 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Religion Manager</title>
+    <link rel="stylesheet" href="css/common.css" />
+    <link rel="stylesheet" href="css/data-manager.css" />
+</head>
+<body>
+
+<!-- ============================================================ -->
+<!-- RELIGION MANAGER APP WRAPPER                                 -->
+<!-- ============================================================ -->
+<div class="data-manager-app">
+
+    <!-- TOP BAR -->
+    <div class="topbar">
+        <button class="burger-btn" id="burgerBtn">☰</button>
+        <span class="title">✦ Religion Manager</span>
+        <span class="spacer"></span>
+
+        <label for="yearInput">Year</label>
+        <input type="number" class="year-input" id="yearInput" value="1250" />
+        <button class="tb-btn" id="setYearBtn">✓ Set</button>
+        <button class="tb-btn" id="exportBtn">⬇ Export</button>
+        <button class="tb-btn" id="importBtn">⬆ Import</button>
+        <input type="file" id="fileInput" accept=".json" style="display:none;" />
+        <button class="tb-btn primary" id="createReligionBtn">+ Religion</button>
+    </div>
+
+    <!-- APP LAYOUT -->
+    <div class="app-layout">
+
+        <!-- SIDEBAR - RELIGION LIST -->
+        <div class="sidebar" id="sidebar">
+            <h3>Religions</h3>
+            <div id="religionListContainer">
+                <div class="loading-placeholder">Loading religions...</div>
+            </div>
+        </div>
+
+        <!-- MAIN PANEL WITH TABS -->
+        <div class="main-panel" id="mainPanel">
+            <div class="panel-tabs" id="panelTabs">
+                <button class="tab-btn active" data-tab="details">
+                    <span class="tab-icon" id="icon-details"></span> Details
+                </button>
+                <button class="tab-btn" data-tab="gods">
+                    <span class="tab-icon" id="icon-gods"></span> Gods
+                </button>
+                <button class="tab-btn" data-tab="laws">
+                    <span class="tab-icon" id="icon-laws"></span> Laws
+                </button>
+                <button class="tab-btn" data-tab="places">
+                    <span class="tab-icon" id="icon-places"></span> Places
+                </button>
+                <button class="tab-btn" data-tab="followers">
+                    <span class="tab-icon" id="icon-followers"></span> Followers
+                </button>
+            </div>
+
+            <div class="tab-content" id="tabContent">
+                <div class="tab-pane active" id="tab-details">
+                    <div class="empty-state">
+                        <div class="icon" id="empty-details-icon"></div>
+                        <div class="message">Select a religion from the sidebar</div>
+                    </div>
+                </div>
+                <div class="tab-pane" id="tab-gods">
+                    <div class="empty-state">
+                        <div class="icon" id="empty-gods-icon"></div>
+                        <div class="message">Gods will appear here</div>
+                        <div class="sub-message">Select a religion first</div>
+                    </div>
+                </div>
+                <div class="tab-pane" id="tab-laws">
+                    <div class="empty-state">
+                        <div class="icon" id="empty-laws-icon"></div>
+                        <div class="message">Laws will appear here</div>
+                        <div class="sub-message">Select a religion first</div>
+                    </div>
+                </div>
+                <div class="tab-pane" id="tab-places">
+                    <div class="empty-state">
+                        <div class="icon" id="empty-places-icon"></div>
+                        <div class="message">Places of worship will appear here</div>
+                        <div class="sub-message">Select a religion first</div>
+                    </div>
+                </div>
+                <div class="tab-pane" id="tab-followers">
+                    <div class="empty-state">
+                        <div class="icon" id="empty-followers-icon"></div>
+                        <div class="message">Followers will appear here</div>
+                        <div class="sub-message">Select a religion first</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- ============================================================ -->
+<!-- PRELOAD - MUST BE FIRST                                      -->
+<!-- ============================================================ -->
+<script>
+    (function() {
+        'use strict';
+        try {
+            var STORAGE_KEY = 'stillwaters_master';
+            var stored = localStorage.getItem(STORAGE_KEY);
+            if (stored) {
+                var parsed = JSON.parse(stored);
+                if (parsed && parsed.data) {
+                    window.masterData = parsed;
+                }
+            }
+        } catch(e) {}
+
+        if (!window.masterData || !window.masterData.data) {
+            window.masterData = {
+                version: '2.0',
+                lastUpdated: new Date().toISOString(),
+                data: {
+                    characters: [],
+                    places: [],
+                    ranks: [],
+                    roles: [],
+                    locationTypes: [],
+                    governmentTypes: [],
+                    households: [],
+                    residences: [],
+                    religions: [],
+                    nameLists: {},
+                    cityNameParts: {},
+                    currentYear: 1250
+                }
+            };
+        }
+
+        if (!window.masterData.data.religions) window.masterData.data.religions = [];
+        if (!window.masterData.data.nameLists) window.masterData.data.nameLists = {};
+        if (!window.masterData.data.cityNameParts) window.masterData.data.cityNameParts = {};
+        if (!window.masterData.data.locationTypes) window.masterData.data.locationTypes = [];
+        if (!window.masterData.data.governmentTypes) window.masterData.data.governmentTypes = [];
+        if (!window.masterData.data.ranks) window.masterData.data.ranks = [];
+        if (!window.masterData.data.roles) window.masterData.data.roles = [];
+        if (!window.masterData.data.characters) window.masterData.data.characters = [];
+        if (!window.masterData.data.places) window.masterData.data.places = [];
+        if (!window.masterData.data.households) window.masterData.data.households = [];
+        if (!window.masterData.data.residences) window.masterData.data.residences = [];
+
+        try {
+            localStorage.setItem('stillwaters_master', JSON.stringify(window.masterData));
+        } catch(e) {}
+    })();
+</script>
+
+<!-- ============================================================ -->
+<!-- CORE - NO DEPENDENCIES                                       -->
+<!-- ============================================================ -->
+<script src="js/core/constants.js"></script>
+<script src="js/core/randomness.js"></script>
+<script src="js/core/collections.js"></script>
+<script src="js/core/validation.js"></script>
+<script src="js/core/formatting.js"></script>
+<script src="js/core/time.js"></script>
+<script src="js/core/icons.js"></script>
+<script src="js/core/state.js"></script>
+
+<!-- ============================================================ -->
+<!-- CORE - DEPENDS ON randomness.js                              -->
+<!-- ============================================================ -->
+<script src="js/core/ids.js"></script>
+
+<!-- ============================================================ -->
+<!-- CORE - DEPENDS ON formatting.js, icons.js                    -->
+<!-- ============================================================ -->
+<script src="js/core/ui.js"></script>
+
+<!-- ============================================================ -->
+<!-- CORE - DEPENDS ON formatting.js                              -->
+<!-- ============================================================ -->
+<script src="js/core/collapsible.js"></script>
+
+<!-- ============================================================ -->
+<!-- CORE - DEPENDS ON collections.js                             -->
+<!-- ============================================================ -->
+<script src="js/core/responsive.js"></script>
+
+<!-- ============================================================ -->
+<!-- CORE - ACCESSORS (circular - load together)                 -->
+<!-- ============================================================ -->
+<script src="js/core/storage.js"></script>
+<script src="js/core/accessors.js"></script>
+
+<!-- ============================================================ -->
+<!-- CORE - DEPENDS ON accessors.js                               -->
+<!-- ============================================================ -->
+<script src="js/core/world.js"></script>
+<script src="js/core/names.js"></script>
+<script src="js/core/family-accessors.js"></script>
+<script src="js/core/query-helpers.js"></script>
+
+<!-- ============================================================ -->
+<!-- CORE - UI                                                    -->
+<!-- ============================================================ -->
+<script src="js/core/modals-core.js"></script>
+<script src="js/core/exportUtils.js"></script>
+
+<!-- ============================================================ -->
+<!-- CORE - DEPENDS ON accessors.js, storage.js                   -->
+<!-- ============================================================ -->
+<script src="js/core/integrity.js"></script>
+
+<!-- ============================================================ -->
+<!-- SELECTOR SYSTEM - DEPENDS ON CORE ONLY                      -->
+<!-- ============================================================ -->
+<script src="js/selectors/selector-base.js"></script>
+<script src="js/selectors/locationDropdown.js"></script>
+<script src="js/selectors/modals-char-selector.js"></script>
+<script src="js/selectors/modals-household-selector.js"></script>
+
+<!-- ============================================================ -->
+<!-- ROLE SYSTEM                                                  -->
+<!-- ============================================================ -->
+<script src="js/roles/role-constants.js"></script>
+<script src="js/roles/role-state.js"></script>
+<script src="js/roles/role-queries.js"></script>
+<script src="js/roles/role-commands.js"></script>
+<script src="js/roles/role-system.js"></script>
+<script src="js/roles/skill-utils.js"></script>
+<script src="js/roles/role-ui-list.js"></script>
+<script src="js/roles/modals-role-select.js"></script>
+<script src="js/roles/modals-roles.js"></script>
+
+<!-- ============================================================ -->
+<!-- CHARACTER SYSTEM                                             -->
+<!-- ============================================================ -->
+<script src="js/character/character-state.js"></script>
+<script src="js/character/character-commands.js"></script>
+<script src="js/character/character-queries.js"></script>
+<script src="js/character/character-lifecycle.js"></script>
+<script src="js/character/character-ui-list.js"></script>
+<script src="js/character/modals-character.js"></script>
+
+<!-- ============================================================ -->
+<!-- RELATIONSHIP SYSTEM                                          -->
+<!-- ============================================================ -->
+<script src="js/relationships/relationship-types.js"></script>
+<script src="js/relationships/relationship-registry.js"></script>
+<script src="js/relationships/relationship-queries.js"></script>
+<script src="js/relationships/family-logic.js"></script>
+<script src="js/relationships/friendship-logic.js"></script>
+<script src="js/relationships/professional-logic.js"></script>
+<script src="js/relationships/romance-logic.js"></script>
+<script src="js/relationships/affair-system.js"></script>
+<script src="js/relationships/jealousy-system.js"></script>
+<script src="js/relationships/relationshipFinder.js"></script>
+<script src="js/relationships/modals-family.js"></script>
+<script src="js/relationships/modals-friendship.js"></script>
+<script src="js/relationships/modals-relationship.js"></script>
+
+<!-- ============================================================ -->
+<!-- LOCATION SYSTEM                                              -->
+<!-- ============================================================ -->
+<script src="js/location/location-state.js"></script>
+<script src="js/location/location-hierarchy.js"></script>
+<script src="js/location/location-queries.js"></script>
+<script src="js/location/location-commands.js"></script>
+<script src="js/location/location-movement.js"></script>
+<script src="js/location/location-ui-list.js"></script>
+<script src="js/location/modals-location.js"></script>
+<script src="js/location/modals-moves.js"></script>
+
+<!-- ============================================================ -->
+<!-- NAME SYSTEM                                                  -->
+<!-- ============================================================ -->
+<script src="js/names/name-state.js"></script>
+<script src="js/names/name-queries.js"></script>
+<script src="js/names/name-commands.js"></script>
+<script src="js/names/name-rules.js"></script>
+<script src="js/names/name-system.js"></script>
+<script src="js/names/modals-name.js"></script>
+
+<!-- ============================================================ -->
+<!-- RELIGION SYSTEM                                              -->
+<!-- ============================================================ -->
+<script src="js/religion/religion-constants.js"></script>
+<script src="js/religion/religion-state.js"></script>
+<script src="js/religion/religion-queries.js"></script>
+<script src="js/religion/religion-commands.js"></script>
+<script src="js/religion/religion-laws.js"></script>
+<script src="js/religion/religion-inheritance.js"></script>
+<script src="js/religion/religion-ui-list.js"></script>
+<script src="js/religion/modals-religion.js"></script>
+
+<!-- ============================================================ -->
+<!-- RELIGION UI TABS                                             -->
+<!-- ============================================================ -->
+<script src="js/tabs/religion-details-tab.js"></script>
+<script src="js/tabs/religion-gods-tab.js"></script>
+<script src="js/tabs/religion-laws-tab.js"></script>
+<script src="js/tabs/religion-places-tab.js"></script>
+<script src="js/tabs/religion-followers-tab.js"></script>
+
+<!-- ============================================================ -->
+<!-- RANK SYSTEM                                                  -->
+<!-- ============================================================ -->
+<script src="js/ranks/rank-constants.js"></script>
+<script src="js/ranks/rank-state.js"></script>
+<script src="js/ranks/rank-queries.js"></script>
+<script src="js/ranks/rank-commands.js"></script>
+<script src="js/ranks/rank-assignments.js"></script>
+<script src="js/ranks/rank-issues.js"></script>
+<script src="js/ranks/rank-ui-list.js"></script>
+<script src="js/ranks/modals-rank.js"></script>
+
+<!-- ============================================================ -->
+<!-- MORTALITY SYSTEM                                             -->
+<!-- ============================================================ -->
+<script src="js/mortality/mortality-state.js"></script>
+<script src="js/mortality/mortality-queries.js"></script>
+<script src="js/mortality/mortality-commands.js"></script>
+<script src="js/mortality/modals-death.js"></script>
+
+<!-- ============================================================ -->
+<!-- INDUSTRY SYSTEM                                              -->
+<!-- ============================================================ -->
+<script src="js/industry/industry-types.js"></script>
+<script src="js/industry/industry-state.js"></script>
+<script src="js/industry/industry-queries.js"></script>
+<script src="js/industry/industry-commands.js"></script>
+<script src="js/industry/industry-processor.js"></script>
+<script src="js/industry/industry-ui-list.js"></script>
+<script src="js/industry/modals-industry.js"></script>
+
+<!-- ============================================================ -->
+<!-- GOVERNMENT SYSTEM                                            -->
+<!-- ============================================================ -->
+<script src="js/government/government-state.js"></script>
+<script src="js/government/government-queries.js"></script>
+<script src="js/government/government-commands.js"></script>
+<script src="js/government/government-assignment.js"></script>
+<script src="js/government/government-economy.js"></script>
+<script src="js/government/government-laws.js"></script>
+<script src="js/government/government-system.js"></script>
+<script src="js/government/government-ui-list.js"></script>
+<script src="js/government/modals-government.js"></script>
+<script src="js/government/modals-government-assign.js"></script>
+<script src="js/government/modals-government-departments.js"></script>
+<script src="js/government/modals-government-economy.js"></script>
+<script src="js/government/modals-government-positions.js"></script>
+
+<!-- ============================================================ -->
+<!-- SETTLEMENT SYSTEM                                            -->
+<!-- ============================================================ -->
+<script src="js/settlement/settlement-state.js"></script>
+<script src="js/settlement/settlement-queries.js"></script>
+<script src="js/settlement/settlement-crud.js"></script>
+<script src="js/settlement/settlement-commands-core.js"></script>
+<script src="js/settlement/settlement-commands-writes.js"></script>
+<script src="js/settlement/settlement-commands-annual.js"></script>
+<script src="js/settlement/settlement-economy-core.js"></script>
+<script src="js/settlement/settlement-budget.js"></script>
+<script src="js/settlement/settlement-prosperity.js"></script>
+<script src="js/settlement/settlement-government.js"></script>
+<script src="js/settlement/settlement-ranks.js"></script>
+<script src="js/settlement/settlement-enterprises.js"></script>
+<script src="js/settlement/settlement-features.js"></script>
+<script src="js/settlement/settlement-ui-list.js"></script>
+<script src="js/settlement/modals-settlement-core.js"></script>
+<script src="js/settlement/modals-settlement-economy.js"></script>
+<script src="js/settlement/modals-settlement-roles.js"></script>
+
+<!-- ============================================================ -->
+<!-- HOUSEHOLD SYSTEM                                             -->
+<!-- ============================================================ -->
+<script src="js/households/household-state.js"></script>
+<script src="js/households/household-queries.js"></script>
+<script src="js/households/household-commands.js"></script>
+<script src="js/households/household-assignment.js"></script>
+<script src="js/households/household-economy.js"></script>
+<script src="js/households/household-servant.js"></script>
+<script src="js/households/residence-system.js"></script>
+<script src="js/households/household-ui-list.js"></script>
+<script src="js/households/modals-household.js"></script>
+<script src="js/households/modals-household-economy.js"></script>
+<script src="js/households/modals-household-snapshot.js"></script>
+<script src="js/households/modals-household-staff.js"></script>
+<script src="js/households/modals-assign-staff.js"></script>
+<script src="js/households/modals-residence.js"></script>
+<script src="js/households/modals-residence-history.js"></script>
+<script src="js/households/modals-residence-rental.js"></script>
+<script src="js/households/modals-residence-snapshot.js"></script>
+<script src="js/households/modals-residence-staff.js"></script>
+<script src="js/households/modals-residence-vacancy.js"></script>
+<script src="js/households/modals-residence-owner.js"></script>
+
+<!-- ============================================================ -->
+<!-- CRIME SYSTEM                                                 -->
+<!-- ============================================================ -->
+<script src="js/crime/crime-constants.js"></script>
+<script src="js/crime/crime-state.js"></script>
+<script src="js/crime/crime-law-integration.js"></script>
+<script src="js/crime/crime-commands.js"></script>
+<script src="js/crime/crime-queries.js"></script>
+<script src="js/crime/vendetta-system.js"></script>
+<script src="js/crime/crime-ui-stats.js"></script>
+<script src="js/crime/modals-crime.js"></script>
+
+<!-- ============================================================ -->
+<!-- EDUCATION SYSTEM                                             -->
+<!-- ============================================================ -->
+<script src="js/education/education-constants.js"></script>
+<script src="js/education/education-state.js"></script>
+<script src="js/education/education-queries.js"></script>
+<script src="js/education/education-commands.js"></script>
+<script src="js/education/education-system.js"></script>
+<script src="js/education/education-annual.js"></script>
+<script src="js/education/education-learning.js"></script>
+<script src="js/education/education-history.js"></script>
+<script src="js/education/education-ui-list.js"></script>
+<script src="js/education/modals-education.js"></script>
+
+<!-- ============================================================ -->
+<!-- DISASTER SYSTEM                                              -->
+<!-- ============================================================ -->
+<script src="js/disaster/disaster-constants.js"></script>
+<script src="js/disaster/disaster-state.js"></script>
+<script src="js/disaster/disaster-queries.js"></script>
+<script src="js/disaster/disaster-commands.js"></script>
+<script src="js/disaster/disaster-damage.js"></script>
+<script src="js/disaster/disaster-ui-stats.js"></script>
+<script src="js/disaster/modals-disaster.js"></script>
+
+<!-- ============================================================ -->
+<!-- APPRENTICESHIP SYSTEM                                        -->
+<!-- ============================================================ -->
+<script src="js/apprenticeship/apprenticeship-constants.js"></script>
+<script src="js/apprenticeship/apprenticeship-system.js"></script>
+<script src="js/apprenticeship/modals-apprenticeship.js"></script>
+
+<!-- ============================================================ -->
+<!-- CHILDREN SYSTEM                                              -->
+<!-- ============================================================ -->
+<script src="js/children/children-state.js"></script>
+<script src="js/children/children-queries.js"></script>
+<script src="js/children/children-commands.js"></script>
+<script src="js/children/children-lifecycle.js"></script>
+<script src="js/children/adoption-service.js"></script>
+<script src="js/children/pregnancy-service.js"></script>
+<script src="js/children/surrogacy-service.js"></script>
+<script src="js/children/modals-adoption.js"></script>
+<script src="js/children/modals-birth.js"></script>
+<script src="js/children/modals-surrogacy.js"></script>
+
+<!-- ============================================================ -->
+<!-- CULTURE SYSTEM                                               -->
+<!-- ============================================================ -->
+<script src="js/culture/culture-constants.js"></script>
+<script src="js/culture/culture-state.js"></script>
+<script src="js/culture/culture-queries.js"></script>
+<script src="js/culture/culture-commands.js"></script>
+<script src="js/culture/culture-generation.js"></script>
+<script src="js/culture/culture-ui-list.js"></script>
+<script src="js/culture/culture-editor-tabs.js"></script>
+<script src="js/culture/modals-culture.js"></script>
+
+<!-- ============================================================ -->
+<!-- CULTURE UI TABS                                              -->
+<!-- ============================================================ -->
+<script src="js/tabs/culture-details-tab.js"></script>
+<script src="js/tabs/culture-appearance-tab.js"></script>
+<script src="js/tabs/culture-mythology-tab.js"></script>
+<script src="js/tabs/culture-names-tab.js"></script>
+<script src="js/tabs/culture-characters-tab.js"></script>
+
+<!-- ============================================================ -->
+<!-- EVENTS & ANNUAL PROCESSING                                  -->
+<!-- ============================================================ -->
+<script src="js/events/timeline-core.js"></script>
+<script src="js/events/census-core.js"></script>
+<script src="js/events/annualProcessing.js"></script>
+<script src="js/events/social-events-system.js"></script>
+
+<!-- ============================================================ -->
+<!-- UI TABS                                                     -->
+<!-- ============================================================ -->
+<script src="js/tabs/location-tab.js"></script>
+<script src="js/tabs/location-type-manager-tab.js"></script>
+<script src="js/tabs/settlement-overview-tab.js"></script>
+<script src="js/tabs/settlement-economy-tab.js"></script>
+<script src="js/tabs/settlement-education-tab.js"></script>
+<script src="js/tabs/settlement-religion-tab.js"></script>
+<script src="js/tabs/settlement-industry-tab.js"></script>
+<script src="js/tabs/settlement-features-tab.js"></script>
+<script src="js/tabs/settlement-history-tab.js"></script>
+<script src="js/tabs/settlement-roles-tab.js"></script>
+<script src="js/tabs/rank-manager-tab.js"></script>
+<script src="js/tabs/apprenticeship-tab.js"></script>
+<script src="js/tabs/roles-tab.js"></script>
+<script src="js/tabs/roles-analytics-tab.js"></script>
+<script src="js/tabs/government-type-manager-tab.js"></script>
+<script src="js/tabs/household-overview-tab.js"></script>
+<script src="js/tabs/household-members-tab.js"></script>
+<script src="js/tabs/household-departments-tab.js"></script>
+<script src="js/tabs/household-economy-tab.js"></script>
+
+<!-- ============================================================ -->
+<!-- ORCHESTRATOR                                                 -->
+<!-- ============================================================ -->
+<script>
+    (function() {
+        'use strict';
+
+        var religionContainer = document.getElementById('religionListContainer');
+        var sidebar = document.getElementById('sidebar');
+        var burgerBtn = document.getElementById('burgerBtn');
+
+        var selectedReligionId = null;
+        var isInitialized = false;
+
+        var tabButtons = document.querySelectorAll('.panel-tabs .tab-btn');
+        var tabPanes = {
+            details: document.getElementById('tab-details'),
+            gods: document.getElementById('tab-gods'),
+            laws: document.getElementById('tab-laws'),
+            places: document.getElementById('tab-places'),
+            followers: document.getElementById('tab-followers')
+        };
+
+        function injectIcons() {
+            if (typeof window.Icons === 'undefined') {
+                setTimeout(injectIcons, 100);
+                return;
+            }
+
+            var iconMap = {
+                'icon-details': window.Icons.CIRCLE_DOT || window.Icons.CIRCLE,
+                'icon-gods': window.Icons.STAR_4 || window.Icons.CIRCLE,
+                'icon-laws': window.Icons.SHIELD || window.Icons.CIRCLE,
+                'icon-places': window.Icons.HOME || window.Icons.CIRCLE,
+                'icon-places': window.Icons.LOCATION || window.Icons.CIRCLE,
+                'icon-followers': window.Icons.PERSON || window.Icons.CIRCLE,
+                'empty-details-icon': window.Icons.CIRCLE || window.Icons.CIRCLE,
+                'empty-gods-icon': window.Icons.STAR_4 || window.Icons.CIRCLE,
+                'empty-laws-icon': window.Icons.SHIELD || window.Icons.CIRCLE,
+                'empty-places-icon': window.Icons.LOCATION || window.Icons.CIRCLE,
+                'empty-followers-icon': window.Icons.PERSON || window.Icons.CIRCLE
+            };
+
+            for (var id in iconMap) {
+                var el = document.getElementById(id);
+                if (el) {
+                    el.innerHTML = iconMap[id];
+                }
+            }
+        }
+
+        function switchTab(tabId) {
+            tabButtons.forEach(function(btn) {
+                btn.classList.toggle('active', btn.dataset.tab === tabId);
+            });
+            Object.keys(tabPanes).forEach(function(key) {
+                if (tabPanes[key]) {
+                    tabPanes[key].classList.toggle('active', key === tabId);
+                }
+            });
+
+            var RS = window.ReligionState;
+            if (RS && selectedReligionId) {
+                var religion = RS.getReligion(selectedReligionId);
+                if (religion) {
+                    renderTabContent(tabId, religion);
+                }
+            }
+        }
+
+        tabButtons.forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                switchTab(this.dataset.tab);
+            });
+        });
+
+        function renderTabContent(tabId, religion) {
+            if (!religion) return;
+
+            var container = document.getElementById('tab-' + tabId);
+            if (!container) return;
+
+            try {
+                if (tabId === 'details' && typeof window.ReligionDetailsTab !== 'undefined') {
+                    if (typeof window.ReligionDetailsTab.render === 'function') {
+                        window.ReligionDetailsTab.render(container, religion);
+                        return;
+                    }
+                } else if (tabId === 'gods' && typeof window.ReligionGodsTab !== 'undefined') {
+                    if (typeof window.ReligionGodsTab.render === 'function') {
+                        window.ReligionGodsTab.render(container, religion);
+                        return;
+                    }
+                } else if (tabId === 'laws' && typeof window.ReligionLawsTab !== 'undefined') {
+                    if (typeof window.ReligionLawsTab.render === 'function') {
+                        window.ReligionLawsTab.render(container, religion);
+                        return;
+                    }
+                } else if (tabId === 'places' && typeof window.ReligionPlacesTab !== 'undefined') {
+                    if (typeof window.ReligionPlacesTab.render === 'function') {
+                        window.ReligionPlacesTab.render(container, religion);
+                        return;
+                    }
+                } else if (tabId === 'followers' && typeof window.ReligionFollowersTab !== 'undefined') {
+                    if (typeof window.ReligionFollowersTab.render === 'function') {
+                        window.ReligionFollowersTab.render(container, religion);
+                        return;
+                    }
+                }
+            } catch(e) {}
+
+            container.innerHTML = 
+                '<div class="empty-state">' +
+                '<div class="icon">' + (window.Icons ? window.Icons.CIRCLE : '') + '</div>' +
+                '<div class="message">Tab "' + tabId + '" is not available</div>' +
+                '<div class="sub-message">Check that the tab file is loaded correctly</div>' +
+                '</div>';
+        }
+
+        function toggleSidebar() {
+            sidebar.classList.toggle('open');
+        }
+
+        function closeSidebar() {
+            sidebar.classList.remove('open');
+        }
+
+        if (burgerBtn) {
+            burgerBtn.addEventListener('click', toggleSidebar);
+        }
+
+        document.addEventListener('click', function(e) {
+            if (window.innerWidth <= 768) {
+                if (!sidebar.contains(e.target) && e.target !== burgerBtn) {
+                    closeSidebar();
+                }
+            }
+        });
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') closeSidebar();
+        });
+
+        window.addEventListener('resize', function() {
+            if (window.innerWidth > 768) closeSidebar();
+        });
+
+        function renderReligionList() {
+            if (!religionContainer) return;
+
+            var RS = window.ReligionState;
+            var RUI = window.ReligionUI;
+
+            if (!RS || !RUI || typeof RUI.renderReligionList !== 'function') {
+                religionContainer.innerHTML = '<div class="loading-placeholder">Loading religions...</div>';
+                return;
+            }
+
+            if (typeof RS.refreshFromMasterData === 'function') {
+                RS.refreshFromMasterData();
+            }
+
+            var religions = RS.getAllReligions({ includeDeprecated: true });
+            if (!religions || religions.length === 0) {
+                religionContainer.innerHTML = 
+                    '<div class="empty-state" style="padding:20px;text-align:center;">' +
+                    '<div class="icon">' + (window.Icons ? window.Icons.CIRCLE : '✦') + '</div>' +
+                    '<div class="message" style="font-size:0.7rem;color:var(--dim);">No religions found</div>' +
+                    '<div class="sub-message" style="font-size:0.55rem;color:var(--dim);">Click "Create Religion" to add one</div>' +
+                    '</div>';
+                return;
+            }
+
+            try {
+                RUI.renderReligionList('religionListContainer', {
+                    filteredReligions: religions,
+                    selectedId: selectedReligionId,
+                    includeDeprecated: true,
+                    onSelect: function(religion) {
+                        if (religion && religion.id) {
+                            selectedReligionId = religion.id;
+                            renderReligionList();
+                            Object.keys(tabPanes).forEach(function(key) {
+                                if (tabPanes[key]) {
+                                    tabPanes[key].innerHTML = 
+                                        '<div class="empty-state"><div class="icon">' + 
+                                        (window.Icons ? window.Icons.CIRCLE : '') + 
+                                        '</div><div class="message">Loading...</div></div>';
+                                }
+                            });
+                            switchTab('details');
+                            if (window.innerWidth <= 768) closeSidebar();
+                        }
+                    },
+                    showStats: true,
+                    showActions: true
+                });
+            } catch(e) {
+                religionContainer.innerHTML = '<div class="error-state">Error loading religions</div>';
+            }
+        }
+
+        var createBtn = document.getElementById('createReligionBtn');
+        if (createBtn) {
+            createBtn.addEventListener('click', function() {
+                if (typeof window.openCreateReligionModal === 'function') {
+                    window.openCreateReligionModal({
+                        onSuccess: function(religion) {
+                            renderReligionList();
+                            if (religion && religion.id) {
+                                selectedReligionId = religion.id;
+                                renderReligionList();
+                                Object.keys(tabPanes).forEach(function(key) {
+                                    if (tabPanes[key]) {
+                                        tabPanes[key].innerHTML = 
+                                            '<div class="empty-state"><div class="icon">' + 
+                                            (window.Icons ? window.Icons.CIRCLE : '') + 
+                                            '</div><div class="message">Loading...</div></div>';
+                                    }
+                                });
+                                switchTab('details');
+                            }
+                        }
+                    });
+                }
+            });
+        }
+
+        document.getElementById('exportBtn').addEventListener('click', function() {
+            var data = window.masterData;
+            if (!data) { alert('No data to export'); return; }
+            var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = 'stillwaters_export_' + Date.now() + '.json';
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+
+        document.getElementById('importBtn').addEventListener('click', function() {
+            document.getElementById('fileInput').click();
+        });
+
+        document.getElementById('fileInput').addEventListener('change', function() {
+            var file = this.files[0];
+            if (!file) return;
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    var imported = JSON.parse(e.target.result);
+                    var dataToImport = null;
+                    if (imported.data && imported.version) dataToImport = imported;
+                    else if (imported.religions || imported.characters) {
+                        dataToImport = { version: '2.0', lastUpdated: new Date().toISOString(), data: imported };
+                    } else if (imported.data) {
+                        dataToImport = { version: '2.0', lastUpdated: new Date().toISOString(), data: imported.data };
+                    }
+                    if (!dataToImport) { alert('Invalid format'); return; }
+                    
+                    window.masterData = dataToImport;
+                    if (!window.masterData.data.religions) window.masterData.data.religions = [];
+                    if (!window.masterData.data.nameLists) window.masterData.data.nameLists = {};
+                    if (!window.masterData.data.cityNameParts) window.masterData.data.cityNameParts = {};
+                    
+                    try { localStorage.setItem('stillwaters_master', JSON.stringify(window.masterData)); } catch(e) {}
+                    if (typeof window.saveMasterData === 'function') window.saveMasterData(true);
+                    
+                    if (typeof window.ReligionState !== 'undefined' && ReligionState.invalidateCache) {
+                        ReligionState.invalidateCache();
+                    }
+                    if (typeof window.invalidateAccessorCaches === 'function') {
+                        window.invalidateAccessorCaches();
+                    }
+                    
+                    renderReligionList();
+                    selectedReligionId = null;
+                    Object.keys(tabPanes).forEach(function(key) {
+                        if (tabPanes[key]) {
+                            tabPanes[key].innerHTML = 
+                                '<div class="empty-state"><div class="icon">' + 
+                                (window.Icons ? window.Icons.CIRCLE : '') + 
+                                '</div><div class="message">Select a religion from the sidebar</div></div>';
+                        }
+                    });
+                    alert('Import successful!');
+                } catch(err) { alert('Invalid JSON: ' + err.message); }
+            };
+            reader.readAsText(file);
+            this.value = '';
+        });
+
+        document.getElementById('setYearBtn').addEventListener('click', function() {
+            var val = parseInt(document.getElementById('yearInput').value, 10);
+            if (!isNaN(val) && window.masterData) {
+                window.masterData.data.currentYear = val;
+                try { localStorage.setItem('stillwaters_master', JSON.stringify(window.masterData)); } catch(e) {}
+                if (typeof window.saveMasterData === 'function') window.saveMasterData(true);
+            }
+        });
+
+        function init() {
+            if (isInitialized) return;
+            isInitialized = true;
+
+            injectIcons();
+
+            setTimeout(function() {
+                renderReligionList();
+
+                var RS = window.ReligionState;
+                if (RS) {
+                    if (typeof RS.refreshFromMasterData === 'function') {
+                        RS.refreshFromMasterData();
+                    }
+                    
+                    var religions = RS.getAllReligions({ includeDeprecated: true });
+                    if (religions && religions.length > 0) {
+                        if (!selectedReligionId) {
+                            selectedReligionId = religions[0].id;
+                        }
+                        renderReligionList();
+                        var religion = RS.getReligion(selectedReligionId);
+                        if (religion) {
+                            var container = document.getElementById('tab-details');
+                            if (container && typeof window.ReligionDetailsTab !== 'undefined') {
+                                if (typeof window.ReligionDetailsTab.render === 'function') {
+                                    window.ReligionDetailsTab.render(container, religion);
+                                }
+                            }
+                        }
+                    }
+                }
+            }, 100);
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            setTimeout(init, 50);
+        }
+
+        if (typeof window.addEventListener === 'function') {
+            window.addEventListener('masterDataUpdated', function() {
+                renderReligionList();
+            });
+        }
+
+    })();
+</script>
+
+</body>
+</html>

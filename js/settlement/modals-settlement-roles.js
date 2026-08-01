@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * STILL WATERS - SETTLEMENT MODALS ROLES (modals-settlement-roles.js)
+ * STILL WATERS - SETTLEMENT MODALS ROLES js/settlement/modals-settlement-roles.js 
  * =============================================================================
  * 
  * This file contains settlement role-related UI modals:

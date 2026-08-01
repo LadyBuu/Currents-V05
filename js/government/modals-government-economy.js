@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * STILL WATERS - GOVERNMENT ECONOMY MODALS
+ * STILL WATERS - GOVERNMENT ECONOMY MODALS js/government/modals-government-economy.js
  * =============================================================================
  * 
  * This file contains economy-specific UI modals:

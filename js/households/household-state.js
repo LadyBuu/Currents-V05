@@ -12,6 +12,7 @@
  *          Added trackEnterpriseProfit() function
  *          Added getHouseholdEnterpriseProfitHistory() function
  *          Added getHouseholdEnterpriseValue() function
+ *          Added updateHousehold() method for direct updates
  * 
  * DEPENDENCIES:
  *   - accessors.js - getCharacters, getPlaceById, getCurrentYear
@@ -131,13 +132,19 @@
             for (var i = 0; i < master.data.households.length; i++) {
                 var h = master.data.households[i];
                 if (!h.enterprises) h.enterprises = [];
-                if (!h.enterpriseHistory) h.enterpriseHistory = []; // NEW
+                if (!h.enterpriseHistory) h.enterpriseHistory = [];
                 if (!h.eventLog) h.eventLog = [];
                 if (!h.nameHistory) h.nameHistory = [];
                 if (!h.members) h.members = [];
                 if (!h.departments) h.departments = [];
                 if (!h.notes) h.notes = '';
                 if (!h.status) h.status = 'active';
+                if (!h.wealth) h.wealth = 0;
+                if (!h.reputation) h.reputation = 10;
+                if (!h.debt) h.debt = 0;
+                if (!h.powerScore) h.powerScore = 0;
+                if (!h.economy) h.economy = {};
+                if (!h.resources) h.resources = { food: 0, livestock: 0, goods: 0 };
             }
             return master.data.households;
         }
@@ -398,7 +405,7 @@
         var households = _state.households.slice();
         if (!options.includeDeprecated) {
             households = households.filter(function(h) {
-                return h.status !== 'deprecated';
+                return h.status !== 'deprecated' && h.status !== 'destroyed';
             });
         }
         return households;
@@ -421,7 +428,7 @@
         var households = result.slice();
         if (!options.includeDeprecated) {
             households = households.filter(function(h) {
-                return h.status !== 'deprecated';
+                return h.status !== 'deprecated' && h.status !== 'destroyed';
             });
         }
         return households;
@@ -435,7 +442,7 @@
         var households = result.slice();
         if (!options.includeDeprecated) {
             households = households.filter(function(h) {
-                return h.status !== 'deprecated';
+                return h.status !== 'deprecated' && h.status !== 'destroyed';
             });
         }
         return households;
@@ -518,7 +525,11 @@
         var statusMessage = 'Active';
         var statusColor = 'var(--success)';
 
-        if (isEmpty) {
+        if (status === 'destroyed') {
+            statusIcon = '💀';
+            statusMessage = 'Destroyed';
+            statusColor = 'var(--danger)';
+        } else if (isEmpty) {
             status = 'empty';
             statusIcon = '◻️';
             statusMessage = 'Empty';
@@ -551,7 +562,7 @@
     }
 
     // =========================================================================
-    // 9. PUBLIC API - ENTERPRISE INTEGRATION (UPDATED)
+    // 9. PUBLIC API - ENTERPRISE INTEGRATION
     // =========================================================================
 
     /**
@@ -573,7 +584,7 @@
     }
 
     /**
-     * Tracks enterprise profit for a household (NEW)
+     * Tracks enterprise profit for a household
      * @param {string} householdId - Household ID
      * @param {string} enterpriseId - Enterprise ID
      * @param {number} profit - Profit amount (positive or negative)
@@ -601,7 +612,7 @@
     }
 
     /**
-     * Gets enterprise profit history for a household (NEW)
+     * Gets enterprise profit history for a household
      * @param {string} householdId - Household ID
      * @param {number} limit - Number of entries to return
      * @returns {Array} Profit history
@@ -617,7 +628,7 @@
     }
 
     /**
-     * Gets total enterprise value for a household (NEW)
+     * Gets total enterprise value for a household
      * @param {string} householdId - Household ID
      * @returns {number} Total value
      */
@@ -1125,6 +1136,16 @@
         return assignment;
     }
 
+    function getHouseholdAssignment(assignmentId) {
+        var assignments = _state.householdAssignments;
+        for (var i = 0; i < assignments.length; i++) {
+            if (assignments[i].id === assignmentId) {
+                return assignments[i];
+            }
+        }
+        return null;
+    }
+
     function endHouseholdAssignment(assignmentId, endYear, reason) {
         var assignments = _state.householdAssignments;
         var index = -1;
@@ -1199,7 +1220,100 @@
     }
 
     // =========================================================================
-    // 14. REFRESH
+    // 14. PUBLIC API - HOUSEHOLD UPDATE (NEW)
+    // =========================================================================
+
+    /**
+     * Updates a household with the given updates
+     * @param {string} householdId - Household ID
+     * @param {Object} updates - Updates to apply
+     * @param {Object} options - Options
+     * @param {boolean} options.recordHistory - Whether to record in history (default: true)
+     * @returns {Object|null} - Updated household or null
+     */
+    function updateHousehold(householdId, updates, options) {
+        options = options || {};
+        var household = getHousehold(householdId);
+        if (!household) return null;
+
+        // Apply updates
+        var allowedFields = ['name', 'locationId', 'locationName', 'wealth', 'reputation', 'debt', 'powerScore', 'status', 'notes', 'members', 'departments', 'enterprises', 'enterpriseHistory', 'residenceId', 'residenceName', 'residenceType', 'associatedYear', 'residenceUnitNumber', 'residenceNotes', 'residenceHistory', 'eventLog', 'nameHistory', 'currentNameSince', 'economy', 'resources', 'criminalCount', 'victimCount', 'executedCount', 'criminalMembers', 'victimMembers', 'crimeHistory', 'vendettaCount', 'activeVendettaCount', 'vendettas', 'alliances', 'vacancyHistory', 'isVacant', 'isDemolished', 'vacantYear', 'vacantReason', 'destroyedAt', 'destroyedBy', 'demolishedReason', 'demolishedAt', 'demolishedRecord', 'damageHistory', 'foundedYear', 'createdAt', 'updatedAt'];
+
+        for (var i = 0; i < allowedFields.length; i++) {
+            var key = allowedFields[i];
+            if (updates[key] !== undefined) {
+                household[key] = updates[key];
+            }
+        }
+
+        household.updatedAt = Date.now();
+
+        // Save using _setHouseholds
+        var households = _state.households;
+        var index = -1;
+        for (var i = 0; i < households.length; i++) {
+            if (households[i].id === householdId) {
+                index = i;
+                break;
+            }
+        }
+        if (index !== -1) {
+            households[index] = household;
+            _setHouseholds(households);
+        }
+
+        return household;
+    }
+
+    // =========================================================================
+    // 15. PUBLIC API - WEALTH MANAGEMENT (NEW)
+    // =========================================================================
+
+    function getHouseholdWealth(householdId) {
+        var household = getHousehold(householdId);
+        return household ? (household.wealth || 0) : 0;
+    }
+
+    function updateHouseholdWealth(householdId, delta, reason) {
+        var household = getHousehold(householdId);
+        if (!household) return null;
+
+        var oldWealth = household.wealth || 0;
+        household.wealth = Math.max(0, oldWealth + delta);
+
+        if (!household.economy) household.economy = {};
+        if (!household.economy.transactions) household.economy.transactions = [];
+        household.economy.transactions.push({
+            year: _getCurrentYear(),
+            type: 'wealth_change',
+            amount: delta,
+            reason: reason || 'Wealth adjustment',
+            oldWealth: oldWealth,
+            newWealth: household.wealth
+        });
+
+        if (household.economy.transactions.length > 100) {
+            household.economy.transactions = household.economy.transactions.slice(-100);
+        }
+
+        var households = _state.households;
+        var index = -1;
+        for (var i = 0; i < households.length; i++) {
+            if (households[i].id === householdId) {
+                index = i;
+                break;
+            }
+        }
+        if (index !== -1) {
+            households[index] = household;
+            _setHouseholds(households);
+        }
+
+        return household.wealth;
+    }
+
+    // =========================================================================
+    // 16. REFRESH
     // =========================================================================
 
     function refresh() {
@@ -1207,7 +1321,7 @@
     }
 
     // =========================================================================
-    // 15. EXPORTS (UPDATED with enterprise profit functions)
+    // 17. EXPORTS
     // =========================================================================
 
     var HouseholdState = {
@@ -1234,14 +1348,13 @@
         getHouseholdResidence: getHouseholdResidence,
         getHouseholdsByResidence: getHouseholdsByResidence,
 
-        // Enterprise Integration (UPDATED)
+        // Enterprise Integration
         getHouseholdEnterprises: getHouseholdEnterprises,
         getHouseholdEnterpriseHistory: getHouseholdEnterpriseHistory,
         getHouseholdEnterprisesWithData: getHouseholdEnterprisesWithData,
         addEnterpriseToHousehold: addEnterpriseToHousehold,
         removeEnterpriseFromHousehold: removeEnterpriseFromHousehold,
         transferEnterprisesToHousehold: transferEnterprisesToHousehold,
-        // NEW: Enterprise profit tracking
         trackEnterpriseProfit: trackEnterpriseProfit,
         getHouseholdEnterpriseProfitHistory: getHouseholdEnterpriseProfitHistory,
         getHouseholdEnterpriseValue: getHouseholdEnterpriseValue,
@@ -1260,6 +1373,13 @@
         getAssignmentsForPosition: getAssignmentsForPosition,
         getAssignmentsForCharacter: getAssignmentsForCharacter,
         getAssignmentsForHousehold: getAssignmentsForHousehold,
+
+        // Household Update (NEW)
+        updateHousehold: updateHousehold,
+
+        // Wealth Management (NEW)
+        getHouseholdWealth: getHouseholdWealth,
+        updateHouseholdWealth: updateHouseholdWealth,
 
         // UI State
         getUIState: getUIState,
@@ -1286,7 +1406,7 @@
     };
 
     // =========================================================================
-    // 16. AUTO-LOAD
+    // 18. AUTO-LOAD
     // =========================================================================
 
     _loadData();
@@ -1299,7 +1419,7 @@
     }
 
     // =========================================================================
-    // 17. EXPORTS GLOBAL
+    // 19. EXPORTS GLOBAL
     // =========================================================================
 
     window.HouseholdState = HouseholdState;

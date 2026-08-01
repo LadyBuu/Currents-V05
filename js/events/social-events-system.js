@@ -194,10 +194,28 @@ function _closeTopModal() {
     if (typeof window.closeTopModal === 'function') window.closeTopModal();
 }
 
+// =============================================================================
+// FIXED: _getIcon - No recursive calls to avoid infinite loop
+// =============================================================================
+
 function _getIcon(name) {
-    if (typeof window._getIcon === 'function') return window._getIcon(name);
-    if (window.Icons && window.Icons[name]) return window.Icons[name];
-    return '';
+    // Direct access only - no recursive window._getIcon check
+    if (window.Icons && window.Icons[name]) {
+        return window.Icons[name];
+    }
+    // Fallback to emoji if icon not found
+    const fallbackIcons = {
+        'HEART': '❤️',
+        'FRIENDSHIP': '🤝',
+        'GEAR': '⚙️',
+        'WARNING': '⚠️',
+        'CIRCLE': '◉',
+        'EDIT': '✏️',
+        'PERSON': '👤',
+        'X_HEAVY': '✖',
+        'PLUS': '➕'
+    };
+    return fallbackIcons[name] || '';
 }
 
 function _escapeHtml(str) {

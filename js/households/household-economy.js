@@ -11,6 +11,7 @@
  * UPDATED: Enhanced enterprise profit/loss tracking
  *          Added enterprise history tracking
  *          Added enterprise value calculation
+ *          Added rent income/expenses integration
  * 
  * DEPENDENCIES:
  *   - household-state.js (HouseholdState)
@@ -38,6 +39,10 @@
 
     function _getCommands() {
         return typeof window.HouseholdCommands !== 'undefined' ? window.HouseholdCommands : null;
+    }
+
+    function _getResidenceSystem() {
+        return typeof window.ResidenceSystem !== 'undefined' ? window.ResidenceSystem : null;
     }
 
     function _getCharacterById(id) {
@@ -184,7 +189,7 @@
                 household.economy.transactions = household.economy.transactions.slice(-100);
             }
 
-            // Save changes
+            // Save changes using _setHouseholds
             var households = state.getAllHouseholds({ includeDeprecated: true });
             var index = -1;
             for (var i = 0; i < households.length; i++) {
@@ -246,7 +251,7 @@
                 newDebt: household.debt
             });
 
-            // Save changes
+            // Save changes using _setHouseholds
             var households = state.getAllHouseholds({ includeDeprecated: true });
             var index = -1;
             for (var i = 0; i < households.length; i++) {
@@ -346,7 +351,7 @@
                 household.economy.resourceHistory = household.economy.resourceHistory.slice(-100);
             }
 
-            // Save changes
+            // Save changes using _setHouseholds
             var households = state.getAllHouseholds({ includeDeprecated: true });
             var index = -1;
             for (var i = 0; i < households.length; i++) {
@@ -367,7 +372,41 @@
     }
 
     // =========================================================================
-    // 6. INCOME & EXPENSES (UPDATED with Enterprise Integration)
+    // 6. RENT FUNCTIONS (NEW)
+    // =========================================================================
+
+    /**
+     * Calculates rent income for a household from properties they own
+     */
+    function calculateRentIncome(householdId) {
+        try {
+            var residenceSystem = _getResidenceSystem();
+            if (!residenceSystem || typeof residenceSystem.getTotalRentIncome !== 'function') {
+                return 0;
+            }
+            return residenceSystem.getTotalRentIncome(householdId, 'household');
+        } catch (e) {
+            return 0;
+        }
+    }
+
+    /**
+     * Calculates rent expenses for a household from properties they rent
+     */
+    function calculateRentExpenses(householdId) {
+        try {
+            var residenceSystem = _getResidenceSystem();
+            if (!residenceSystem || typeof residenceSystem.getTotalRentExpenses !== 'function') {
+                return 0;
+            }
+            return residenceSystem.getTotalRentExpenses(householdId, 'household');
+        } catch (e) {
+            return 0;
+        }
+    }
+
+    // =========================================================================
+    // 7. INCOME & EXPENSES (UPDATED with Enterprise & Rent Integration)
     // =========================================================================
 
     function calculateAnnualIncome(householdId) {
@@ -411,9 +450,7 @@
                 }
             }
 
-            // ================================================================
-            // 3. ENTERPRISE PROFITS (ENHANCED)
-            // ================================================================
+            // 3. Enterprise profits
             if (queries && typeof queries.getHouseholdEnterpriseSummaries === 'function') {
                 var summaries = queries.getHouseholdEnterpriseSummaries(householdId);
                 var stateObj = _getState();
@@ -438,9 +475,14 @@
                     }
                 }
             }
-            // ================================================================
 
-            // 4. School profits (if household owns schools)
+            // 4. RENT INCOME (NEW)
+            var rentIncome = calculateRentIncome(householdId);
+            if (rentIncome > 0) {
+                income += rentIncome;
+            }
+
+            // 5. School profits (if household owns schools)
             if (household.economy && household.economy.schoolProfits) {
                 var schoolProfits = getSchoolProfits(householdId, _getCurrentYear());
                 income += schoolProfits;
@@ -485,9 +527,7 @@
                 }
             }
 
-            // ================================================================
-            // 3. ENTERPRISE LOSSES (ENHANCED)
-            // ================================================================
+            // 3. Enterprise losses
             if (queries && typeof queries.getHouseholdEnterpriseSummaries === 'function') {
                 var summaries = queries.getHouseholdEnterpriseSummaries(householdId);
                 var stateObj = _getState();
@@ -513,15 +553,20 @@
                     }
                 }
             }
-            // ================================================================
 
-            // 4. Tuition expenses
+            // 4. RENT EXPENSES (NEW)
+            var rentExpenses = calculateRentExpenses(householdId);
+            if (rentExpenses > 0) {
+                expenses += rentExpenses;
+            }
+
+            // 5. Tuition expenses
             if (household.economy && household.economy.tuitionExpenses) {
                 var tuition = getTuitionExpenses(householdId, _getCurrentYear());
                 expenses += tuition;
             }
 
-            // 5. Debt interest
+            // 6. Debt interest
             var debt = household.debt || 0;
             if (debt > 0) {
                 expenses += debt * 0.05; // 5% annual interest
@@ -547,7 +592,7 @@
     }
 
     // =========================================================================
-    // 7. ANNUAL PROCESSING (UPDATED with Enterprise Integration)
+    // 8. ANNUAL PROCESSING (UPDATED with Enterprise & Rent Integration)
     // =========================================================================
 
     function processAnnualEconomy(householdId) {
@@ -579,7 +624,7 @@
                 updateHouseholdWealth(householdId, netChange, 'Annual economy processing');
             }
 
-            // Process enterprise events (ENHANCED)
+            // Process enterprise events
             if (queries && typeof queries.getHouseholdEnterpriseSummaries === 'function') {
                 var summaries = queries.getHouseholdEnterpriseSummaries(householdId);
                 if (!household.eventLog) household.eventLog = [];
@@ -602,6 +647,29 @@
                 if (household.eventLog.length > 200) {
                     household.eventLog = household.eventLog.slice(-200);
                 }
+            }
+
+            // Process rent payments
+            var rentIncome = calculateRentIncome(householdId);
+            var rentExpenses = calculateRentExpenses(householdId);
+            
+            if (rentIncome > 0 && !household.eventLog) household.eventLog = [];
+            if (rentIncome > 0) {
+                household.eventLog.push({
+                    year: year,
+                    type: 'rent_income',
+                    amount: rentIncome,
+                    message: 'Rent income from properties owned'
+                });
+            }
+            
+            if (rentExpenses > 0) {
+                household.eventLog.push({
+                    year: year,
+                    type: 'rent_expense',
+                    amount: rentExpenses,
+                    message: 'Rent expenses for properties rented'
+                });
             }
 
             // Check for bankruptcy
@@ -627,7 +695,7 @@
                 });
             }
 
-            // Save household
+            // Save household using _setHouseholds
             var households = state.getAllHouseholds({ includeDeprecated: true });
             var index = -1;
             for (var i = 0; i < households.length; i++) {
@@ -648,6 +716,8 @@
                 oldWealth: oldWealth,
                 newWealth: household.wealth || 0,
                 netChange: netChange,
+                rentIncome: rentIncome,
+                rentExpenses: rentExpenses,
                 eventCount: household.eventLog ? household.eventLog.filter(function(e) {
                     return e.year === year;
                 }).length : 0,
@@ -701,7 +771,7 @@
                     updateHouseholdWealth(householdId, -cost, 'Emergency food purchase');
                 }
 
-                // Save changes
+                // Save changes using _setHouseholds
                 var households = state.getAllHouseholds({ includeDeprecated: true });
                 var index = -1;
                 for (var i = 0; i < households.length; i++) {
@@ -723,7 +793,7 @@
     }
 
     // =========================================================================
-    // 8. SALARY AND TUITION TRACKING
+    // 9. SALARY AND TUITION TRACKING
     // =========================================================================
 
     function receiveSalary(householdId, characterId, roleId, salary, year) {
@@ -941,7 +1011,7 @@
     }
 
     // =========================================================================
-    // 9. TRADE
+    // 10. TRADE
     // =========================================================================
 
     function executeTrade(sourceId, targetId, trade) {
@@ -1030,7 +1100,7 @@
                 received: sourceGives
             });
 
-            // Save changes
+            // Save changes using _setHouseholds
             var households = state.getAllHouseholds({ includeDeprecated: true });
             var sourceIdx = -1, targetIdx = -1;
             for (var i = 0; i < households.length; i++) {
@@ -1086,7 +1156,7 @@
     }
 
     // =========================================================================
-    // 10. ECONOMIC EVENTS
+    // 11. ECONOMIC EVENTS
     // =========================================================================
 
     var ECONOMIC_EVENTS = {
@@ -1139,7 +1209,6 @@
             delta: function(household) { return -15 - Math.floor(Math.random() * 30); },
             chance: 0.04
         },
-        // NEW: Enterprise-related events
         enterprise_boom: {
             id: 'enterprise_boom',
             name: 'Enterprise Boom',
@@ -1165,6 +1234,34 @@
                     return -(enterprises.length * 3 + Math.floor(Math.random() * 15));
                 }
                 return -(10 + Math.floor(Math.random() * 15));
+            },
+            chance: 0.04
+        },
+        rent_income_boom: {
+            id: 'rent_income_boom',
+            name: 'Rent Income Increase',
+            description: 'Your tenants are paying well!',
+            delta: function(household) {
+                var residenceSystem = _getResidenceSystem();
+                if (residenceSystem && typeof residenceSystem.getTotalRentIncome === 'function') {
+                    var rentIncome = residenceSystem.getTotalRentIncome(household.id, 'household');
+                    return Math.floor(rentIncome * 0.2) + Math.floor(Math.random() * 10);
+                }
+                return 5 + Math.floor(Math.random() * 10);
+            },
+            chance: 0.03
+        },
+        tenant_loss: {
+            id: 'tenant_loss',
+            name: 'Lost Tenant',
+            description: 'A tenant moved out unexpectedly',
+            delta: function(household) {
+                var residenceSystem = _getResidenceSystem();
+                if (residenceSystem && typeof residenceSystem.getTotalRentIncome === 'function') {
+                    var rentIncome = residenceSystem.getTotalRentIncome(household.id, 'household');
+                    return -Math.floor(rentIncome * 0.3) - Math.floor(Math.random() * 10);
+                }
+                return -5 - Math.floor(Math.random() * 10);
             },
             chance: 0.04
         }
@@ -1200,7 +1297,7 @@
                     newWealth: household.wealth || 0
                 });
 
-                // Save household
+                // Save household using _setHouseholds
                 var households = state.getAllHouseholds({ includeDeprecated: true });
                 var index = -1;
                 for (var i = 0; i < households.length; i++) {
@@ -1266,7 +1363,7 @@
     }
 
     // =========================================================================
-    // 11. BANKRUPTCY
+    // 12. BANKRUPTCY
     // =========================================================================
 
     function isBankrupt(householdId) {
@@ -1317,7 +1414,7 @@
                 message: 'Household bankruptcy processed - debt forgiven'
             });
 
-            // Save household
+            // Save household using _setHouseholds
             var households = state.getAllHouseholds({ includeDeprecated: true });
             var index = -1;
             for (var i = 0; i < households.length; i++) {
@@ -1338,7 +1435,7 @@
     }
 
     // =========================================================================
-    // 12. EXPORTS
+    // 13. EXPORTS
     // =========================================================================
 
     window.HouseholdEconomy = {
@@ -1359,12 +1456,16 @@
         getHouseholdResources: getHouseholdResources,
         updateHouseholdResources: updateHouseholdResources,
 
-        // Income & Expenses (UPDATED with Enterprise Integration)
+        // Rent Functions (NEW)
+        calculateRentIncome: calculateRentIncome,
+        calculateRentExpenses: calculateRentExpenses,
+
+        // Income & Expenses (UPDATED with Enterprise & Rent Integration)
         calculateAnnualIncome: calculateAnnualIncome,
         calculateAnnualExpenses: calculateAnnualExpenses,
         computeNetAnnualChange: computeNetAnnualChange,
 
-        // Annual Processing (UPDATED with Enterprise Integration)
+        // Annual Processing (UPDATED with Enterprise & Rent Integration)
         processAnnualEconomy: processAnnualEconomy,
         consumeAnnualFood: consumeAnnualFood,
 

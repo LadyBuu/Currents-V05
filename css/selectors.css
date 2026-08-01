@@ -1,0 +1,467 @@
+/* ================================================================
+   SELECTOR · EXTERNAL CSS
+   ================================================================
+   File: css/selector.css
+   Dependencies: common.css
+   Icons: all from icons.js (no emojis)
+   ================================================================ */
+
+.selector-container {
+    background: transparent;
+    font-family: 'Crimson Pro', serif;
+}
+
+/* ---- FILTERS ---- */
+.selector-container .filter-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+    align-items: center;
+}
+
+.selector-container .filter-row .filter-search {
+    flex: 2;
+    min-width: 120px;
+}
+
+.selector-container .filter-row .filter-search input {
+    width: 100%;
+    padding: 6px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 0.65rem;
+    font-family: 'Crimson Pro', serif;
+}
+
+.selector-container .filter-row .filter-search input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 6px var(--accent-glow);
+}
+
+.selector-container .filter-row .filter-select {
+    flex: 1;
+    min-width: 90px;
+}
+
+.selector-container .filter-row .filter-select select {
+    width: 100%;
+    padding: 6px 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 0.6rem;
+    font-family: 'Cinzel', serif;
+    cursor: pointer;
+}
+
+.selector-container .filter-row .filter-select select:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.selector-container .filter-checkboxes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+    margin: 6px 0 8px;
+    font-size: 0.6rem;
+}
+
+.selector-container .filter-checkboxes label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    color: var(--dim);
+    font-family: 'Crimson Pro', serif;
+    font-size: 0.6rem;
+}
+
+.selector-container .filter-checkboxes label:hover {
+    color: var(--text);
+}
+
+.selector-container .filter-checkboxes input[type="checkbox"] {
+    accent-color: var(--accent);
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+}
+
+.selector-container .filter-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid var(--border);
+}
+
+.selector-container .filter-actions select {
+    padding: 4px 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-size: 0.55rem;
+    font-family: 'Cinzel', serif;
+    cursor: pointer;
+}
+
+.selector-container .filter-actions select:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.selector-container .filter-actions .filter-clear-btn {
+    padding: 4px 10px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--dim);
+    font-size: 0.55rem;
+    font-family: 'Cinzel', serif;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.selector-container .filter-actions .filter-clear-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.selector-container .filter-actions .filter-count {
+    font-size: 0.6rem;
+    color: var(--dim);
+    margin-left: auto;
+    font-family: 'Crimson Pro', serif;
+}
+
+/* ---- LIST ---- */
+.selector-container .selector-list {
+    max-height: 320px;
+    overflow-y: auto;
+    margin: 8px 0;
+    padding-right: 4px;
+}
+
+.selector-container .selector-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.selector-container .selector-list::-webkit-scrollbar-track {
+    background: var(--bg);
+    border-radius: 3px;
+}
+
+.selector-container .selector-list::-webkit-scrollbar-thumb {
+    background: var(--accent);
+    border-radius: 3px;
+}
+
+.selector-container .selector-list .selector-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 10px;
+    margin-bottom: 2px;
+    background: var(--bg3);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-size: 0.7rem;
+    border-left: 2px solid transparent;
+}
+
+.selector-container .selector-list .selector-item:hover {
+    background: var(--bg4);
+    border-left-color: var(--accent);
+}
+
+.selector-container .selector-list .selector-item.is-deceased {
+    opacity: 0.6;
+}
+
+.selector-container .selector-list .selector-item.is-relative {
+    border-left-color: var(--accent);
+}
+
+.selector-container .selector-list .selector-item.is-spouse {
+    border-left-color: var(--rel-partner);
+}
+
+.selector-container .selector-list .selector-item .selector-item-left {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.selector-container .selector-list .selector-item .selector-item-left .selector-item-name {
+    font-weight: 500;
+}
+
+.selector-container .selector-list .selector-item .selector-item-left .selector-item-gender {
+    font-size: 0.6rem;
+    color: var(--dim);
+}
+
+.selector-container .selector-list .selector-item .selector-item-right {
+    font-size: 0.55rem;
+    color: var(--dim);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+}
+
+/* ---- BADGES ---- */
+.selector-container .badge {
+    font-size: 0.45rem;
+    padding: 0 6px;
+    border-radius: 10px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    color: var(--dim);
+    font-family: 'Cinzel', serif;
+}
+
+.selector-container .badge.badge-relative {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.selector-container .badge.badge-spouse {
+    border-color: var(--rel-partner);
+    color: var(--rel-partner);
+}
+
+.selector-container .badge.badge-deceased {
+    border-color: var(--deceased);
+    color: var(--deceased);
+}
+
+.selector-container .badge.badge-role {
+    border-color: var(--accent-dim);
+    color: var(--accent-light);
+}
+
+.selector-container .badge.badge-more {
+    border-color: var(--border);
+    color: var(--dim);
+}
+
+/* ---- EMPTY STATE ---- */
+.selector-container .selector-empty {
+    text-align: center;
+    padding: 30px 10px;
+    color: var(--dim);
+    font-size: 0.7rem;
+    font-family: 'Crimson Pro', serif;
+}
+
+/* ---- FOOTER ---- */
+.selector-container .selector-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    font-size: 0.55rem;
+    color: var(--dim);
+}
+
+.selector-container .selector-footer .selector-hint {
+    font-style: italic;
+}
+
+.selector-container .selector-footer .selector-legend {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.selector-container .selector-footer .selector-legend .legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.selector-container .selector-footer .selector-legend .legend-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+}
+
+.selector-container .selector-footer .selector-legend .legend-dot.legend-relative {
+    background: var(--accent);
+}
+
+.selector-container .selector-footer .selector-legend .legend-dot.legend-spouse {
+    background: var(--rel-partner);
+}
+
+.selector-container .selector-footer .selector-legend .legend-dot.legend-deceased {
+    background: var(--deceased);
+}
+
+/* ---- HOUSEHOLD SELECTOR SPECIFICS ---- */
+.household-item {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.household-item:hover {
+    border-color: var(--accent);
+    background: var(--bg4);
+}
+
+.household-item.is-current {
+    border-left: 3px solid var(--accent);
+}
+
+.household-item.is-selected {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+}
+
+.household-item .household-item-header {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+}
+
+.household-item .household-item-header .household-item-name {
+    font-weight: 600;
+    font-size: 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.household-item .household-item-details {
+    font-size: 0.6rem;
+    color: var(--dim);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+}
+
+.household-item .household-members {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid var(--border);
+}
+
+.household-item .household-members .household-member {
+    font-size: 0.6rem;
+    background: var(--bg2);
+    padding: 1px 8px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+}
+
+.household-item .household-members .household-member.member-deceased {
+    opacity: 0.6;
+}
+
+.household-item .household-members .household-member.member-relative {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.household-item .household-members .household-member.member-spouse {
+    border-color: var(--rel-partner);
+    color: var(--rel-partner);
+}
+
+.household-item .household-members .household-member .member-label {
+    font-size: 0.45rem;
+    color: var(--dim);
+    margin-left: 2px;
+}
+
+.household-item .household-item-action {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid var(--border);
+    font-size: 0.55rem;
+    text-align: right;
+}
+
+.household-item .household-item-action .action-selected {
+    color: var(--accent);
+}
+
+.household-item .household-item-action .action-select {
+    color: var(--dim);
+}
+
+/* ---- RESPONSIVE SELECTOR ---- */
+@media (max-width: 768px) {
+    .selector-container .filter-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .selector-container .filter-row .filter-search,
+    .selector-container .filter-row .filter-select {
+        flex: 1 1 auto;
+        min-width: auto;
+    }
+    .selector-container .filter-checkboxes {
+        gap: 4px 8px;
+    }
+    .selector-container .filter-actions {
+        flex-wrap: wrap;
+    }
+    .selector-container .filter-actions .filter-count {
+        margin-left: 0;
+        width: 100%;
+        text-align: center;
+    }
+    .selector-container .selector-list .selector-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
+    }
+    .selector-container .selector-list .selector-item .selector-item-right {
+        width: 100%;
+    }
+    .household-item .household-item-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}
+
+@media (max-width: 480px) {
+    .selector-container .filter-checkboxes {
+        gap: 4px 6px;
+    }
+    .selector-container .filter-checkboxes label {
+        font-size: 0.55rem;
+    }
+    .selector-container .selector-list .selector-item {
+        font-size: 0.6rem;
+        padding: 5px 8px;
+    }
+}

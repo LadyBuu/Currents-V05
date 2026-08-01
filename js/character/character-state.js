@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * STILL WATERS - CHARACTER STATE (js/core/character/character-state.js)
+ * STILL WATERS - CHARACTER STATE js/character/character-state.js
  * =============================================================================
  * 
  * Single source of truth for all character data.
@@ -15,6 +15,7 @@
  *   - Recursion guard
  *   - Auto-load on masterData updates
  *   - Religion tracking (religionId, religionHistory)
+ *   - CULTURE TRACKING (cultureId, appearance)
  * 
  * =============================================================================
  */
@@ -38,7 +39,8 @@
             byProfession: new Map(),
             byRank: new Map(),
             byBirthDecade: new Map(),
-            byReligion: new Map()  // NEW: religion cache
+            byReligion: new Map(),
+            byCulture: new Map()  // NEW: culture cache
         },
         subscribers: [],
         _processingState: false
@@ -120,7 +122,8 @@
         cache.byProfession.clear();
         cache.byRank.clear();
         cache.byBirthDecade.clear();
-        cache.byReligion.clear();  // NEW
+        cache.byReligion.clear();
+        cache.byCulture.clear();  // NEW
 
         var characters = _state.characters;
         for (var i = 0; i < characters.length; i++) {
@@ -206,12 +209,20 @@
                 cache.byBirthDecade.get(decadeKey).push(c);
             }
 
-            // NEW: By Religion
+            // By Religion
             if (c.religionId) {
                 if (!cache.byReligion.has(c.religionId)) {
                     cache.byReligion.set(c.religionId, []);
                 }
                 cache.byReligion.get(c.religionId).push(c);
+            }
+
+            // NEW: By Culture
+            if (c.cultureId) {
+                if (!cache.byCulture.has(c.cultureId)) {
+                    cache.byCulture.set(c.cultureId, []);
+                }
+                cache.byCulture.get(c.cultureId).push(c);
             }
         }
     }
@@ -347,9 +358,14 @@
             return result ? result.slice() : [];
         },
 
-        // NEW: Get characters by religion
         getCharactersByReligion: function(religionId) {
             var result = _state.cache.byReligion.get(religionId);
+            return result ? result.slice() : [];
+        },
+
+        // NEW: Get characters by culture
+        getCharactersByCulture: function(cultureId) {
+            var result = _state.cache.byCulture.get(cultureId);
             return result ? result.slice() : [];
         },
 

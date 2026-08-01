@@ -2,54 +2,360 @@
 
 ## SYSTEM OVERVIEW
 
-The Household & Residence System manages all household structures, family units, staff, departments, and residence management. It provides a complete API for household CRUD operations, member management, household economy, staff positions, servant relationships, and residence management including units, vacancy, and history.
+The Household & Residence System manages all household structures, family units, staff, departments, residence management, and rental/ownership relationships. It provides a complete API for household CRUD operations, member management, household economy, staff positions, servant relationships, residence management including units, vacancy, history, and full rental/ownership tracking with rent income/expense integration.
 
 **Key Design Principles:**
-- **Single Source of Truth**: `household-state.js` holds all household data
+- **Single Source of Truth**: `household-state.js` holds all household data; `residence-system.js` holds all residence data
 - **Command-Query Separation**: Commands (writes) vs Queries (reads) separated
 - **Separation of Concerns**: State, commands, queries, economy, UI all separate
 - **Recursion Guards**: All public functions protected from infinite loops
 - **Role Integration**: Positions can require roles (generic professions)
-- **Name Period Management**: Full household name history with period tracking
+- **Name Period Management**: Full household and residence name history with period tracking
 - **Deceased Members**: Remain in household (don't stop being part of the family)
 - **History Preservation**: All previous households always stay in history
 - **Residence Integration**: Households can be assigned to residences and units
+- **Rental System**: Full ownership/renter tracking with adjustable annual rent
+- **Rent Income/Expenses**: Rent flows to owner's household wealth; deducted from renter's household wealth
 - **Government Integration**: Government salaries flow into household economy; taxes collected
 - **Enterprise Integration**: Households can own and manage enterprises
+
+---
+
+## LOAD ORDER (IMPORTANT)
+
+The following load order **MUST** be followed to avoid dependency issues:
+
+```html
+<!-- ============================================================ -->
+<!-- CORE - NO SYSTEM DEPENDENCIES                                -->
+<!-- ============================================================ -->
+<script src="js/core/constants.js"></script>
+<script src="js/core/randomness.js"></script>
+<script src="js/core/collections.js"></script>
+<script src="js/core/validation.js"></script>
+<script src="js/core/formatting.js"></script>
+<script src="js/core/ids.js"></script>
+<script src="js/core/names.js"></script>
+<script src="js/core/time.js"></script>
+<script src="js/core/state.js"></script>
+<script src="js/core/storage.js"></script>
+<script src="js/core/accessors.js"></script>
+<script src="js/core/family-accessors.js"></script>
+<script src="js/core/query-helpers.js"></script>
+<script src="js/core/icons.js"></script>
+<script src="js/core/ui.js"></script>
+<script src="js/core/collapsible.js"></script>
+<script src="js/core/responsive.js"></script>
+<script src="js/core/integrity.js"></script>
+<script src="js/core/exportUtils.js"></script>
+<script src="js/core/world.js"></script>
+<script src="js/core/modals-core.js"></script>
+
+<!-- ============================================================ -->
+<!-- SELECTORS                                                    -->
+<!-- ============================================================ -->
+<script src="js/selectors/selector-base.js"></script>
+<script src="js/selectors/locationDropdown.js"></script>
+<script src="js/selectors/modals-char-selector.js"></script>
+<script src="js/selectors/modals-household-selector.js"></script>
+
+<!-- ============================================================ -->
+<!-- ROLE SYSTEM - Load in THIS order                            -->
+<!-- ============================================================ -->
+<script src="js/roles/role-constants.js"></script>
+<script src="js/roles/role-state.js"></script>
+<script src="js/roles/role-queries.js"></script>
+<script src="js/roles/role-commands.js"></script>
+<script src="js/roles/role-system.js"></script>
+<script src="js/roles/skill-utils.js"></script>
+<script src="js/roles/role-ui-list.js"></script>
+<script src="js/roles/modals-role-select.js"></script>
+<script src="js/roles/modals-roles.js"></script>
+
+<!-- ============================================================ -->
+<!-- CHARACTER SYSTEM                                             -->
+<!-- ============================================================ -->
+<script src="js/character/character-state.js"></script>
+<script src="js/character/character-queries.js"></script>
+<script src="js/character/character-commands.js"></script>
+<script src="js/character/character-lifecycle.js"></script>
+<script src="js/character/character-ui-list.js"></script>
+<script src="js/character/modals-character.js"></script>
+
+<!-- ============================================================ -->
+<!-- CHILDREN/PREGNANCY SYSTEM                                    -->
+<!-- ============================================================ -->
+<script src="js/children/children-state.js"></script>
+<script src="js/children/children-queries.js"></script>
+<script src="js/children/children-commands.js"></script>
+<script src="js/children/children-lifecycle.js"></script>
+<script src="js/children/adoption-service.js"></script>
+<script src="js/children/pregnancy-service.js"></script>
+<script src="js/children/surrogacy-service.js"></script>
+<script src="js/children/modals-adoption.js"></script>
+<script src="js/children/modals-birth.js"></script>
+<script src="js/children/modals-surrogacy.js"></script>
+
+<!-- ============================================================ -->
+<!-- LOCATION SYSTEM                                              -->
+<!-- ============================================================ -->
+<script src="js/location/location-state.js"></script>
+<script src="js/location/location-hierarchy.js"></script>
+<script src="js/location/location-queries.js"></script>
+<script src="js/location/location-commands.js"></script>
+<script src="js/location/location-movement.js"></script>
+<script src="js/location/location-ui-list.js"></script>
+<script src="js/location/modals-location.js"></script>
+<script src="js/location/modals-moves.js"></script>
+
+<!-- ============================================================ -->
+<!-- RELIGION SYSTEM - Load in THIS order                        -->
+<!-- ============================================================ -->
+<script src="js/religion/religion-constants.js"></script>
+<script src="js/religion/religion-state.js"></script>
+<script src="js/religion/religion-queries.js"></script>
+<script src="js/religion/religion-commands.js"></script>
+<script src="js/religion/religion-laws.js"></script>
+<script src="js/religion/religion-inheritance.js"></script>
+<script src="js/religion/religion-ui-list.js"></script>
+<script src="js/religion/modals-religion.js"></script>
+
+<!-- ============================================================ -->
+<!-- CULTURE SYSTEM - FULL                                       -->
+<!-- ============================================================ -->
+<script src="js/culture/culture-constants.js"></script>
+<script src="js/culture/culture-state.js"></script>
+<script src="js/culture/culture-queries.js"></script>
+<script src="js/culture/culture-commands.js"></script>
+<script src="js/culture/culture-generation.js"></script>
+<script src="js/culture/culture-ui-list.js"></script>
+<script src="js/culture/modals-culture.js"></script>
+
+<!-- ============================================================ -->
+<!-- SETTLEMENT SYSTEM                                            -->
+<!-- ============================================================ -->
+<script src="js/settlement/settlement-state.js"></script>
+<script src="js/settlement/settlement-queries.js"></script>
+<script src="js/settlement/settlement-crud.js"></script>
+<script src="js/settlement/settlement-commands-core.js"></script>
+<script src="js/settlement/settlement-commands-writes.js"></script>
+<script src="js/settlement/settlement-commands-annual.js"></script>
+<script src="js/settlement/settlement-economy-core.js"></script>
+<script src="js/settlement/settlement-budget.js"></script>
+<script src="js/settlement/settlement-prosperity.js"></script>
+<script src="js/settlement/settlement-government.js"></script>
+<script src="js/settlement/settlement-ranks.js"></script>
+<script src="js/settlement/settlement-enterprises.js"></script>
+<script src="js/settlement/settlement-features.js"></script>
+<script src="js/settlement/settlement-ui-list.js"></script>
+<script src="js/settlement/modals-settlement-core.js"></script>
+<script src="js/settlement/modals-settlement-economy.js"></script>
+<script src="js/settlement/modals-settlement-roles.js"></script>
+
+<!-- ============================================================ -->
+<!-- GOVERNMENT SYSTEM                                            -->
+<!-- ============================================================ -->
+<script src="js/government/government-state.js"></script>
+<script src="js/government/government-queries.js"></script>
+<script src="js/government/government-commands.js"></script>
+<script src="js/government/government-assignment.js"></script>
+<script src="js/government/government-economy.js"></script>
+<script src="js/government/government-laws.js"></script>
+<script src="js/government/government-system.js"></script>
+<script src="js/government/government-ui-list.js"></script>
+<script src="js/government/modals-government.js"></script>
+<script src="js/government/modals-government-assign.js"></script>
+<script src="js/government/modals-government-departments.js"></script>
+<script src="js/government/modals-government-economy.js"></script>
+<script src="js/government/modals-government-positions.js"></script>
+
+<!-- ============================================================ -->
+<!-- INDUSTRY SYSTEM - FULL                                      -->
+<!-- ============================================================ -->
+<script src="js/industry/industry-types.js"></script>
+<script src="js/industry/industry-state.js"></script>
+<script src="js/industry/industry-queries.js"></script>
+<script src="js/industry/industry-commands.js"></script>
+<script src="js/industry/industry-processor.js"></script>
+<script src="js/industry/industry-ui-list.js"></script>
+<script src="js/industry/modals-industry.js"></script>
+
+<!-- ============================================================ -->
+<!-- HOUSEHOLD SYSTEM - FULL                                     -->
+<!-- ============================================================ -->
+<script src="js/households/household-state.js"></script>
+<script src="js/households/household-queries.js"></script>
+<script src="js/households/household-commands.js"></script>
+<script src="js/households/household-assignment.js"></script>
+<script src="js/households/household-economy.js"></script>
+<script src="js/households/household-servant.js"></script>
+<script src="js/households/residence-system.js"></script>
+<script src="js/households/household-ui-list.js"></script>
+<script src="js/households/modals-household.js"></script>
+<script src="js/households/modals-household-economy.js"></script>
+<script src="js/households/modals-household-snapshot.js"></script>
+<script src="js/households/modals-household-staff.js"></script>
+<script src="js/households/modals-assign-staff.js"></script>
+<script src="js/households/modals-residence.js"></script>
+<script src="js/households/modals-residence-history.js"></script>
+<script src="js/households/modals-residence-rental.js"></script>
+<script src="js/households/modals-residence-snapshot.js"></script>
+<script src="js/households/modals-residence-staff.js"></script>
+<script src="js/households/modals-residence-vacancy.js"></script>
+<script src="js/households/modals-residence-owner.js"></script>
+
+<!-- ============================================================ -->
+<!-- NAME SYSTEM - FULL                                          -->
+<!-- ============================================================ -->
+<script src="js/names/name-state.js"></script>
+<script src="js/names/name-queries.js"></script>
+<script src="js/names/name-commands.js"></script>
+<script src="js/names/name-rules.js"></script>
+<script src="js/names/name-system.js"></script>
+<script src="js/names/modals-name.js"></script>
+
+<!-- ============================================================ -->
+<!-- MORTALITY SYSTEM - FULL                                     -->
+<!-- ============================================================ -->
+<script src="js/mortality/mortality-state.js"></script>
+<script src="js/mortality/mortality-queries.js"></script>
+<script src="js/mortality/mortality-commands.js"></script>
+<script src="js/mortality/modals-death.js"></script>
+
+<!-- ============================================================ -->
+<!-- CRIME SYSTEM - MOVED AFTER Government                        -->
+<!-- ============================================================ -->
+<script src="js/crime/crime-constants.js"></script>
+<script src="js/crime/crime-state.js"></script>
+<script src="js/crime/crime-queries.js"></script>
+<script src="js/crime/crime-commands.js"></script>
+<script src="js/crime/crime-law-integration.js"></script>
+<script src="js/crime/vendetta-system.js"></script>
+<script src="js/crime/crime-ui-stats.js"></script>
+<script src="js/crime/modals-crime.js"></script>
+
+<!-- ============================================================ -->
+<!-- RANK SYSTEM                                                  -->
+<!-- ============================================================ -->
+<script src="js/ranks/rank-constants.js"></script>
+<script src="js/ranks/rank-state.js"></script>
+<script src="js/ranks/rank-queries.js"></script>
+<script src="js/ranks/rank-commands.js"></script>
+<script src="js/ranks/rank-assignments.js"></script>
+<script src="js/ranks/rank-issues.js"></script>
+<script src="js/ranks/rank-ui-list.js"></script>
+<script src="js/ranks/modals-rank.js"></script>
+
+<!-- ============================================================ -->
+<!-- RELATIONSHIP SYSTEM - FULL                                  -->
+<!-- ============================================================ -->
+<script src="js/relationships/relationship-types.js"></script>
+<script src="js/relationships/relationship-registry.js"></script>
+<script src="js/relationships/relationship-queries.js"></script>
+<script src="js/relationships/relationshipFinder.js"></script>
+<script src="js/relationships/family-logic.js"></script>
+<script src="js/relationships/friendship-logic.js"></script>
+<script src="js/relationships/professional-logic.js"></script>
+<script src="js/relationships/romance-logic.js"></script>
+<script src="js/relationships/affair-system.js"></script>
+<script src="js/relationships/jealousy-system.js"></script>
+<script src="js/relationships/modals-family.js"></script>
+<script src="js/relationships/modals-friendship.js"></script>
+<script src="js/relationships/modals-relationship.js"></script>
+
+<!-- ============================================================ -->
+<!-- SOCIAL EVENTS SYSTEM - FULL                                  -->
+<!-- ============================================================ -->
+<script src="js/events/timeline-core.js"></script>
+<script src="js/events/census-core.js"></script>
+<script src="js/events/annualProcessing.js"></script>
+<script src="js/events/social-events-system.js"></script>
+
+<!-- ============================================================ -->
+<!-- APPRENTICESHIP SYSTEM - MOVED AFTER Relationship             -->
+<!-- ============================================================ -->
+<script src="js/apprenticeship/apprenticeship-constants.js"></script>
+<script src="js/apprenticeship/apprenticeship-system.js"></script>
+<script src="js/apprenticeship/modals-apprenticeship.js"></script>
+
+<!-- ============================================================ -->
+<!-- EDUCATION SYSTEM                                             -->
+<!-- ============================================================ -->
+<script src="js/education/education-constants.js"></script>
+<script src="js/education/education-state.js"></script>
+<script src="js/education/education-queries.js"></script>
+<script src="js/education/education-commands.js"></script>
+<script src="js/education/education-system.js"></script>
+<script src="js/education/education-annual.js"></script>
+<script src="js/education/education-learning.js"></script>
+<script src="js/education/education-history.js"></script>
+<script src="js/education/education-ui-list.js"></script>
+<script src="js/education/modals-education.js"></script>
+
+<!-- ============================================================ -->
+<!-- DISASTER SYSTEM - MOVED AFTER Education                      -->
+<!-- ============================================================ -->
+<script src="js/disaster/disaster-constants.js"></script>
+<script src="js/disaster/disaster-state.js"></script>
+<script src="js/disaster/disaster-queries.js"></script>
+<script src="js/disaster/disaster-commands.js"></script>
+<script src="js/disaster/disaster-damage.js"></script>
+<script src="js/disaster/disaster-ui-stats.js"></script>
+<script src="js/disaster/modals-disaster.js"></script>
+
+<!-- UI Tabs -->
+<script src="js/tabs/location-tab.js"></script>
+<script src="js/tabs/location-type-manager-tab.js"></script>
+<script src="js/tabs/settlement-overview-tab.js"></script>
+<script src="js/tabs/settlement-economy-tab.js"></script>
+<script src="js/tabs/settlement-education-tab.js"></script>
+<script src="js/tabs/settlement-religion-tab.js"></script>
+<script src="js/tabs/settlement-industry-tab.js"></script>
+<script src="js/tabs/settlement-features-tab.js"></script>
+<script src="js/tabs/settlement-history-tab.js"></script>
+<script src="js/tabs/settlement-roles-tab.js"></script>
+<script src="js/tabs/rank-manager-tab.js"></script>
+<script src="js/tabs/apprenticeship-tab.js"></script>
+<script src="js/tabs/roles-tab.js"></script>
+<script src="js/tabs/roles-analytics-tab.js"></script>
+<script src="js/tabs/government-type-manager-tab.js"></script>
+<script src="js/tabs/household-overview-tab.js"></script>
+<script src="js/tabs/household-members-tab.js"></script>
+<script src="js/tabs/household-departments-tab.js"></script>
+<script src="js/tabs/household-economy-tab.js"></script>
+```
 
 ---
 
 ## FILE STRUCTURE
 
 ```
-js/systems/household/
+js/households/
 ├── household-state.js              # Single source of truth + cache + notifications
 ├── household-commands.js           # All write operations (members, departments, positions, assignments)
 ├── household-queries.js            # All read operations (search, filter, stats, staff)
-├── household-economy.js            # Business logic for household wealth, resources, trade
+├── household-economy.js            # Business logic for household wealth, resources, trade, RENT INTEGRATION
 ├── household-assignment.js         # Business logic for transfers, inheritance, cadet branches
 ├── household-servant.js            # Business logic for master-servant relationships
 ├── household-ui-list.js            # UI list rendering
-├── residence-system.js             # Business logic for residence management
-└── modals-household-*.js           # UI modals (household, residence, staff, economy, snapshot)
-
-js/core/modals/
-├── modals-household.js                 # Main household modals
-├── modals-household-selector.js        # Household selector
-├── modals-household-economy.js         # Economy modals
-├── modals-household-snapshot.js        # Snapshot modals
-├── modals-household-staff.js           # Staff modals
-├── modals-residence.js                 # Residence modals
-├── modals-residence-history.js         # Residence history modals
-├── modals-residence-vacancy.js         # Residence vacancy modals
-├── modals-residence-staff.js           # Residence staff modals
-├── modals-assign-staff.js              # Staff assignment modals
-└── modals-char-select.js               # Character selector
+├── residence-system.js             # Business logic for residence management + RENTAL SYSTEM
+├── modals-household.js             # Main household modals
+├── modals-household-economy.js     # Economy modals
+├── modals-household-snapshot.js    # Snapshot modals
+├── modals-household-staff.js       # Staff modals
+├── modals-assign-staff.js          # Staff assignment modals
+├── modals-residence.js             # Residence modals
+├── modals-residence-history.js     # Residence history modals
+├── modals-residence-rental.js      # RENTAL MODALS (NEW)
+├── modals-residence-snapshot.js    # Residence snapshot modals
+├── modals-residence-staff.js       # Residence staff modals
+├── modals-residence-vacancy.js     # Residence vacancy modals
+└── modals-residence-owner.js       # RESIDENCE OWNER MODALS (NEW)
 ```
 
 ---
 
-# 1. HOUSEHOLD-STATE.JS
+## 1. HOUSEHOLD-STATE.JS
 
 **PURPOSE:** Single source of truth for all household data. Manages caching, subscriptions, and data loading.
 
@@ -57,10 +363,6 @@ js/core/modals/
 - `accessors.js` - `getCharacters`, `getPlaceById`, `getCurrentYear`
 - `storage.js` - `saveMasterData`
 - `ids.js` - `generateId`
-
----
-
-## Constants
 
 ### Household Status Values
 
@@ -72,385 +374,27 @@ js/core/modals/
 | `declining` | Household has few living members |
 | `deprecated` | Household is no longer in use |
 | `bankrupt` | Household is in financial bankruptcy |
+| `destroyed` | Household has been destroyed |
+
+### Key Functions
+
+| Function | Description |
+|----------|-------------|
+| `getHousehold(id)` | Gets a single household by ID |
+| `getAllHouseholds(options)` | Gets all households |
+| `getCharacterHousehold(id)` | Gets the household a character belongs to |
+| `getHouseholdMembersWithCharacters(id)` | Gets members with full character data |
+| `getHouseholdHead(id)` | Gets the head of a household |
+| `getHouseholdStatus(id)` | Gets the status of a household |
+| `updateHousehold(id, updates, options)` | Updates a household (NEW) |
+| `getHouseholdWealth(id)` | Gets household wealth (NEW) |
+| `updateHouseholdWealth(id, delta, reason)` | Updates household wealth (NEW) |
 
 ---
 
-## Data Access Functions
+## 2. HOUSEHOLD-COMMANDS.JS
 
-### `HouseholdState.getState(options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a snapshot of the current state |
-| **Parameters** | `options.includeUI` (boolean) - Include UI state |
-| **Returns** | `{ households: [], householdPositions: [], householdAssignments: [], version: number, timestamp: number }` |
-
-### `HouseholdState.getHousehold(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a single household by ID |
-| **Parameters** | `householdId` (string) - Household ID |
-| **Returns** | `Object|null` - Household object or null |
-
-### `HouseholdState.getAllHouseholds(options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all households |
-| **Parameters** | `options.includeDeprecated` (boolean) - Include deprecated |
-| **Returns** | `Array` - Array of household objects |
-
-### `HouseholdState.getCharacterHousehold(characterId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the household a character belongs to |
-| **Parameters** | `characterId` (string) - Character ID |
-| **Returns** | `Object|null` - Household object or null |
-
-### `HouseholdState.getHouseholdsByLocation(locationId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets households by location |
-| **Parameters** | `locationId` (string), `options.includeDeprecated` (boolean) |
-| **Returns** | `Array` - Array of household objects |
-
-### `HouseholdState.getHouseholdsByStatus(status, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets households by status |
-| **Parameters** | `status` (string), `options.includeDeprecated` (boolean) |
-| **Returns** | `Array` - Array of household objects |
-
-### `HouseholdState.getHouseholdMembersWithCharacters(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets household members with full character data |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `Array` - Array of { characterId, character, characterName, type, departmentId, role, isHead, joinedYear, notes, headSince } |
-
-### `HouseholdState.getHouseholdHead(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the head of a household |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `Object|null` - Character object or null |
-
-### `HouseholdState.getHouseholdStatus(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the status of a household |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `{ exists, isEmpty, isVacant, livingCount, deceasedCount, totalMembers, status, statusIcon, statusMessage, statusColor, householdName }` |
-
----
-
-## Name Period Management
-
-### `HouseholdState.getHouseholdNamePeriods(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all name periods for a household |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `Array` - Array of { oldName, newName, year, periodEnd, isCurrent, reason, changedBy } |
-
-### `HouseholdState.getHouseholdNamePeriodForYear(householdId, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the name period for a specific year |
-| **Parameters** | `householdId` (string), `year` (number) |
-| **Returns** | `Object|null` - Name period or null |
-
-### `HouseholdState.editHouseholdNamePeriod(householdId, periodIndex, updates)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Edits a name period |
-| **Parameters** | `householdId` (string), `periodIndex` (number), `updates` (Object) |
-| **Returns** | `boolean` - True if updated |
-
-### `HouseholdState.deleteHouseholdNamePeriod(householdId, periodIndex)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Deletes a name period |
-| **Parameters** | `householdId` (string), `periodIndex` (number) |
-| **Returns** | `boolean` - True if deleted |
-
----
-
-## Residence Association
-
-### `HouseholdState.associateHouseholdWithResidence(householdId, residenceId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Associates a household with a residence |
-| **Parameters** | `householdId` (string), `residenceId` (string), `options.residenceName` (string), `options.residenceType` (string), `options.year` (number), `options.unitNumber` (number), `options.notes` (string) |
-| **Returns** | `boolean` - True if associated |
-
-### `HouseholdState.disassociateHouseholdFromResidence(householdId, residenceId, reason, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Disassociates a household from a residence |
-| **Parameters** | `householdId` (string), `residenceId` (string), `reason` (string), `year` (number) |
-| **Returns** | `boolean` - True if disassociated |
-
-### `HouseholdState.getHouseholdResidence(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the residence of a household |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `{ residenceId, residenceName, residenceType, associatedYear, unitNumber, notes }` |
-
-### `HouseholdState.getHouseholdsByResidence(residenceId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all households in a residence |
-| **Parameters** | `residenceId` (string) |
-| **Returns** | `Array` - Array of household objects |
-
----
-
-## Enterprise Integration
-
-### `HouseholdState.getHouseholdEnterprises(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all enterprise IDs owned by a household |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `Array` - Array of enterprise IDs |
-
-### `HouseholdState.getHouseholdEnterpriseHistory(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the enterprise history for a household |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `Array` - Array of { enterpriseId, year, action } |
-
-### `HouseholdState.getHouseholdEnterpriseProfitHistory(householdId, limit)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets enterprise profit history for a household |
-| **Parameters** | `householdId` (string), `limit` (number) |
-| **Returns** | `Array` - Array of { enterpriseId, year, profit, type } |
-
-### `HouseholdState.getHouseholdEnterpriseValue(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets total enterprise value for a household |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `number` - Total enterprise value |
-
-### `HouseholdState.trackEnterpriseProfit(householdId, enterpriseId, profit, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Tracks enterprise profit for a household |
-| **Parameters** | `householdId` (string), `enterpriseId` (string), `profit` (number), `year` (number) |
-| **Returns** | `boolean` - True if tracked |
-
-### `HouseholdState.getHouseholdEnterprisesWithData(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all enterprises owned by a household with full data |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `Array` - Array of enterprise objects |
-
-### `HouseholdState.addEnterpriseToHousehold(householdId, enterpriseId, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Adds an enterprise to a household's ownership list |
-| **Parameters** | `householdId` (string), `enterpriseId` (string), `year` (number) |
-| **Returns** | `boolean` - True if added |
-
-### `HouseholdState.removeEnterpriseFromHousehold(householdId, enterpriseId, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Removes an enterprise from a household's ownership list |
-| **Parameters** | `householdId` (string), `enterpriseId` (string), `year` (number) |
-| **Returns** | `boolean` - True if removed |
-
-### `HouseholdState.transferEnterprisesToHousehold(fromHouseholdId, toHouseholdId, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Transfers all enterprises from one household to another |
-| **Parameters** | `fromHouseholdId` (string), `toHouseholdId` (string), `year` (number) |
-| **Returns** | `boolean` - True if any enterprises transferred |
-
----
-
-## Household Position Functions
-
-### `HouseholdState.createHouseholdPosition(data)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Creates a household position |
-| **Parameters** | `data.name` (string), `data.householdId` (string), `data.departmentId` (string), `data.requiredRoleId` (string), `data.minSkillLevel` (number), `data.description` (string), `data.priority` (number) |
-| **Returns** | `Object|null` - Created position or null |
-
-### `HouseholdState.updateHouseholdPosition(positionId, updates)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates a household position |
-| **Parameters** | `positionId` (string), `updates` (Object) |
-| **Returns** | `Object|null` - Updated position or null |
-
-### `HouseholdState.deleteHouseholdPosition(positionId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Deletes a household position |
-| **Parameters** | `positionId` (string), `options.removeAssignments` (boolean) |
-| **Returns** | `boolean` - True if deleted |
-
-### `HouseholdState.getHouseholdPosition(positionId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a household position by ID |
-| **Parameters** | `positionId` (string) |
-| **Returns** | `Object|null` - Position or null |
-
-### `HouseholdState.getHouseholdPositions(options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets household positions with filtering |
-| **Parameters** | `options.householdId` (string), `options.departmentId` (string), `options.includeUnassigned` (boolean) |
-| **Returns** | `Array` - Array of position objects |
-
----
-
-## Household Assignment Functions
-
-### `HouseholdState.assignCharacterToHouseholdPosition(positionId, characterId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Assigns a character to a household position |
-| **Parameters** | `positionId` (string), `characterId` (string), `options.startYear` (number), `options.endYear` (number), `options.title` (string), `options.notes` (string) |
-| **Returns** | `Object|null` - Assignment or null |
-
-### `HouseholdState.endHouseholdAssignment(assignmentId, endYear, reason)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Ends a household assignment |
-| **Parameters** | `assignmentId` (string), `endYear` (number), `reason` (string) |
-| **Returns** | `Object|null` - Updated assignment or null |
-
-### `HouseholdState.deleteHouseholdAssignment(assignmentId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Deletes a household assignment |
-| **Parameters** | `assignmentId` (string) |
-| **Returns** | `boolean` - True if deleted |
-
-### `HouseholdState.getAssignmentsForPosition(positionId, activeOnly)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets assignments for a position |
-| **Parameters** | `positionId` (string), `activeOnly` (boolean) |
-| **Returns** | `Array` - Array of assignment objects |
-
-### `HouseholdState.getAssignmentsForCharacter(characterId, activeOnly)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets assignments for a character |
-| **Parameters** | `characterId` (string), `activeOnly` (boolean) |
-| **Returns** | `Array` - Array of assignment objects |
-
-### `HouseholdState.getAssignmentsForHousehold(householdId, activeOnly)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets assignments for a household |
-| **Parameters** | `householdId` (string), `activeOnly` (boolean) |
-| **Returns** | `Array` - Array of assignment objects |
-
----
-
-## UI State Management
-
-### `HouseholdState.getUIState()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the current UI state |
-| **Returns** | `{ selectedHouseholdId, selectedCharacterId, selectedPositionId, filters: { searchTerm, statusFilter, locationFilter }, viewMode, expandedHouseholds }` |
-
-### `HouseholdState.setUIState(key, value, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Sets a UI state value |
-| **Parameters** | `key` (string), `value` (*), `options.notify` (boolean) |
-
-### `HouseholdState.updateUIState(updates, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates multiple UI state values |
-| **Parameters** | `updates` (Object), `options.notify` (boolean) |
-
----
-
-## Cache Management
-
-### `HouseholdState.refresh()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Refreshes state from masterData |
-
-### `HouseholdState.invalidateCache()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Invalidates all caches |
-
----
-
-## Subscriptions
-
-### `HouseholdState.subscribe(callback)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Subscribes to state changes |
-| **Parameters** | `callback` (function) - Receives event object |
-| **Returns** | `function` - Unsubscribe function |
-
----
-
-# 2. HOUSEHOLD-COMMANDS.JS
-
-**PURPOSE:** All write operations for household management including members, departments, positions, assignments, and enterprise cleanup.
+**PURPOSE:** All write operations for household management.
 
 **DEPENDENCIES:**
 - `household-state.js` - `HouseholdState`
@@ -459,393 +403,66 @@ js/core/modals/
 - `storage.js` - `saveMasterData`
 - `role-system.js` - `getRoleById`
 
----
+### Key Functions
 
-## Household CRUD (with Enterprise Cleanup)
-
-### `HouseholdCommands.createHousehold(data)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Creates a new household with enterprise fields initialized |
-| **Parameters** | `data.name` (string), `data.locationId` (string), `data.wealth` (number), `data.reputation` (number), `data.headId` (string), `data.notes` (string) |
-| **Returns** | `{ success: boolean, data: Object, reason: string }` |
-
-### `HouseholdCommands.updateHousehold(householdId, updates)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates a household |
-| **Parameters** | `householdId` (string), `updates` (Object) |
-| **Returns** | `{ success: boolean, data: Object, reason: string }` |
-
-### `HouseholdCommands.deleteHousehold(householdId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Deletes a household with enterprise cleanup |
-| **Parameters** | `householdId` (string), `options.removeFromCharacters` (boolean), `options.transferEnterprisesToState` (boolean), `options.stateOwnerId` (string), `options.stateOwnerName` (string), `options.permanent` (boolean) |
-| **Returns** | `{ success: boolean, transferredEnterprises: number, totalEnterprises: number, reason: string }` |
-
-### `HouseholdCommands.restoreHousehold(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Restores a deprecated household |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `{ success: boolean, data: Object, reason: string }` |
+| Function | Description |
+|----------|-------------|
+| `addMember(householdId, characterId, type, options)` | Adds a member to a household |
+| `removeMember(householdId, characterId, options)` | Removes a member from a household |
+| `updateMember(householdId, characterId, updates, options)` | Updates a member's role or properties |
+| `transferMember(characterId, targetHouseholdId, options)` | Transfers a member between households |
+| `setHead(householdId, characterId, options)` | Sets the head of a household |
+| `addDepartment(householdId, name, options)` | Adds a department to a household |
+| `removeDepartment(householdId, departmentId, options)` | Removes a department from a household |
+| `updateDepartment(householdId, departmentId, updates)` | Updates a department |
+| `createHouseholdPosition(data)` | Creates a household position |
+| `updateHouseholdPosition(positionId, updates)` | Updates a household position |
+| `deleteHouseholdPosition(positionId, options)` | Deletes a household position |
+| `assignCharacterToHouseholdPosition(positionId, characterId, options)` | Assigns a character to a position |
+| `endHouseholdAssignment(assignmentId, endYear, reason)` | Ends a household assignment |
+| `deleteHouseholdAssignment(assignmentId)` | Deletes a household assignment |
+| `addSalaryToHousehold(householdId, characterId, roleId, amount, reason, year)` | Adds salary income |
+| `deductTuitionFromHousehold(householdId, studentId, institutionId, amount, reason, year)` | Deducts tuition expenses |
+| `addSchoolProfitToHousehold(householdId, amount, institutionId, year)` | Adds school profit income |
+| `repairMemberships(options)` | Repairs household memberships |
+| `fixCharacterHousehold(characterId, householdId, options)` | Fixes a single character's membership |
+| `demolishHousehold(householdId, reason, year, options)` | Destroys a household (NEW) |
+| `getDemolishedHouseholds(options)` | Gets demolished households (NEW) |
+| `getHouseholdDemolitionStats(locationId)` | Gets demolition statistics (NEW) |
 
 ---
 
-## Member Management
+## 3. HOUSEHOLD-QUERIES.JS
 
-### `HouseholdCommands.addMember(householdId, characterId, type, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Adds a member to a household |
-| **Parameters** | `householdId` (string), `characterId` (string), `type` (string - 'family' or 'staff'), `options.role` (string), `options.joinedYear` (number), `options.isHead` (boolean), `options.departmentId` (string), `options.notes` (string), `options.recordHistory` (boolean) |
-| **Returns** | `{ success: boolean, member, household, character, reason? }` |
-
-### `HouseholdCommands.removeMember(householdId, characterId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Removes a member from a household |
-| **Parameters** | `householdId` (string), `characterId` (string), `options.reason` (string), `options.leftYear` (number), `options.recordHistory` (boolean), `options.autoAssignHead` (boolean) |
-| **Returns** | `{ success: boolean, member, household, character, wasHead, reason? }` |
-
-### `HouseholdCommands.updateMember(householdId, characterId, updates, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates a member's role or other properties |
-| **Parameters** | `householdId` (string), `characterId` (string), `updates.role` (string), `updates.type` (string), `updates.departmentId` (string), `updates.isHead` (boolean), `updates.notes` (string), `updates.joinedYear` (number), `options.recordHistory` (boolean) |
-| **Returns** | `{ success: boolean, member, household, character, changes, reason? }` |
-
-### `HouseholdCommands.transferMember(characterId, targetHouseholdId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Transfers a member from one household to another |
-| **Parameters** | `characterId` (string), `targetHouseholdId` (string), `options.year` (number), `options.reason` (string), `options.role` (string), `options.type` (string), `options.departmentId` (string), `options.isHead` (boolean), `options.recordHistory` (boolean) |
-| **Returns** | `{ success: boolean, character, fromHousehold, toHousehold, year, reason? }` |
-
----
-
-## Head Management
-
-### `HouseholdCommands.setHead(householdId, characterId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Sets the head of a household |
-| **Parameters** | `householdId` (string), `characterId` (string or null), `options.year` (number), `options.reason` (string), `options.recordHistory` (boolean) |
-| **Returns** | `{ success: boolean, character, member, oldHead, year, isNewMember, reason? }` |
-
----
-
-## Department Management
-
-### `HouseholdCommands.addDepartment(householdId, name, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Adds a department to a household |
-| **Parameters** | `householdId` (string), `name` (string), `options.headId` (string) |
-| **Returns** | `{ success: boolean, department, household, reason? }` |
-
-### `HouseholdCommands.removeDepartment(householdId, departmentId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Removes a department from a household |
-| **Parameters** | `householdId` (string), `departmentId` (string), `options.transferMembers` (boolean) |
-| **Returns** | `{ success: boolean, department, household, reason? }` |
-
-### `HouseholdCommands.updateDepartment(householdId, departmentId, updates)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates a department |
-| **Parameters** | `householdId` (string), `departmentId` (string), `updates.name` (string), `updates.headId` (string) |
-| **Returns** | `{ success: boolean, department, household, reason? }` |
-
-### `HouseholdCommands.setDepartmentHead(householdId, departmentId, characterId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Sets the head of a department |
-| **Parameters** | `householdId` (string), `departmentId` (string), `characterId` (string or null) |
-| **Returns** | `{ success: boolean, department, household, reason? }` |
-
----
-
-## Household Position Commands
-
-### `HouseholdCommands.createHouseholdPosition(data)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Creates a household position |
-| **Parameters** | `data.name` (string), `data.householdId` (string), `data.departmentId` (string), `data.requiredRoleId` (string), `data.minSkillLevel` (number), `data.description` (string), `data.priority` (number) |
-| **Returns** | `{ success: boolean, position, reason? }` |
-
-### `HouseholdCommands.updateHouseholdPosition(positionId, updates)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates a household position |
-| **Parameters** | `positionId` (string), `updates` (Object) |
-| **Returns** | `{ success: boolean, position, reason? }` |
-
-### `HouseholdCommands.deleteHouseholdPosition(positionId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Deletes a household position |
-| **Parameters** | `positionId` (string), `options.removeAssignments` (boolean) |
-| **Returns** | `{ success: boolean, reason? }` |
-
----
-
-## Household Assignment Commands
-
-### `HouseholdCommands.assignCharacterToHouseholdPosition(positionId, characterId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Assigns a character to a household position |
-| **Parameters** | `positionId` (string), `characterId` (string), `options.startYear` (number), `options.endYear` (number), `options.title` (string), `options.notes` (string), `options.addRoleIfMissing` (boolean), `options.defaultSkillLevel` (number) |
-| **Returns** | `{ success: boolean, assignment, reason? }` |
-
-**Note:** Role auto-creation is disabled by default. To auto-add a missing role, set `options.addRoleIfMissing` to `true`.
-
-### `HouseholdCommands.endHouseholdAssignment(assignmentId, endYear, reason)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Ends a household assignment |
-| **Parameters** | `assignmentId` (string), `endYear` (number), `reason` (string) |
-| **Returns** | `{ success: boolean, assignment, reason? }` |
-
-### `HouseholdCommands.deleteHouseholdAssignment(assignmentId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Deletes a household assignment |
-| **Parameters** | `assignmentId` (string) |
-| **Returns** | `{ success: boolean, reason? }` |
-
-### `HouseholdCommands.bulkAssignHouseholdPositions(assignments, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Bulk assigns characters to household positions |
-| **Parameters** | `assignments` (Array), `options.startYear` (number), `options.addRoleIfMissing` (boolean), `options.defaultSkillLevel` (number) |
-| **Returns** | `{ success: number, failed: number, errors: Array }` |
-
----
-
-## Salary and Tuition Commands
-
-### `HouseholdCommands.addSalaryToHousehold(householdId, characterId, roleId, amount, reason, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Adds salary income to a household |
-| **Parameters** | `householdId` (string), `characterId` (string), `roleId` (string), `amount` (number), `reason` (string), `year` (number) |
-| **Returns** | `{ success: boolean, amount: number, newWealth: number }` |
-
-### `HouseholdCommands.deductTuitionFromHousehold(householdId, studentId, institutionId, amount, reason, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Deducts tuition expenses from a household |
-| **Parameters** | `householdId` (string), `studentId` (string), `institutionId` (string), `amount` (number), `reason` (string), `year` (number) |
-| **Returns** | `{ success: boolean, amount: number, newWealth: number }` |
-
-### `HouseholdCommands.addSchoolProfitToHousehold(householdId, amount, institutionId, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Adds school profit income to a household |
-| **Parameters** | `householdId` (string), `amount` (number), `institutionId` (string), `year` (number) |
-| **Returns** | `{ success: boolean, amount: number, newWealth: number }` |
-
----
-
-## Repair Functions
-
-### `HouseholdCommands.repairMemberships(options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Repairs household memberships across all characters and households |
-| **Parameters** | `options.saveAfter` (boolean), `options.verbose` (boolean) |
-| **Returns** | `Object` - Repair results |
-
-### `HouseholdCommands.fixCharacterHousehold(characterId, householdId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Fixes a single character's household membership |
-| **Parameters** | `characterId` (string), `householdId` (string or null), `options.role` (string), `options.joinedYear` (number), `options.isHead` (boolean), `options.notes` (string) |
-| **Returns** | `{ success: boolean, action, character, household?, reason? }` |
-
----
-
-# 3. HOUSEHOLD-QUERIES.JS
-
-**PURPOSE:** All read-only queries for household data. No side effects, no mutations.
+**PURPOSE:** All read-only queries for household data.
 
 **DEPENDENCIES:**
 - `household-state.js` - `HouseholdState`
 - `accessors.js` - `getCharacterById`, `getCharacters`, `getPlaceById`, `getCurrentYear`
 
----
+### Key Functions
 
-## Search Functions
-
-### `HouseholdQueries.search(options, queryOptions)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Searches households with various filters |
-| **Parameters** | `options.search` (string), `options.locationId` (string), `options.memberId` (string), `options.headId` (string), `options.type` (string), `options.minMembers` (number), `options.maxMembers` (number), `options.hasDepartment` (boolean), `options.status` (string), `options.minWealth` (number), `options.maxWealth` (number), `options.hasHead` (boolean), `options.hasPositions` (boolean), `options.hasAssignments` (boolean), `options.requiredRoleId` (string) |
-| **Returns** | `Array` - Array of matching household objects |
-
-### `HouseholdQueries.advancedSearch(filters, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Advanced household search with complex filters and sorting |
-| **Parameters** | `filters.name` (string), `filters.locationId` (string), `filters.status` (string), `filters.minMembers` (number), `filters.maxMembers` (number), `filters.minWealth` (number), `filters.maxWealth` (number), `filters.minReputation` (number), `filters.maxReputation` (number), `filters.hasHead` (boolean), `filters.memberId` (string), `filters.headId` (string), `filters.type` (string), `filters.hasDepartment` (boolean), `filters.minAge` (number), `filters.maxAge` (number), `filters.sortBy` (string), `filters.sortOrder` (string), `filters.limit` (number) |
-| **Returns** | `Array` - Array of matching household objects |
-
----
-
-## Statistics Functions
-
-### `HouseholdQueries.getStatistics(options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates comprehensive household statistics including positions |
-| **Parameters** | `options.includeDeprecated` (boolean) |
-| **Returns** | `{ totalHouseholds, totalMembers, averageMembersPerHousehold, medianMembersPerHousehold, largestHouseholdSize, largestHouseholdName, smallestHouseholdSize, householdsWithDepartments, totalDepartments, totalFamilyMembers, totalStaffMembers, averageWealth, averageReputation, householdsWithHead, householdsWithoutHead, emptyHouseholds, abandonedHouseholds, totalPositions, totalAssignments, activeAssignments, positionsWithRole, householdsWithPositions, householdsWithAssignments, averagePositionsPerHousehold, averageAssignmentsPerHousehold }` |
-
-### `HouseholdQueries.getMemberBreakdown(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets member type breakdown for a household including position info |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `{ familyCount, staffCount, total, familyPercentage, staffPercentage, staffWithPositions, staffWithoutPositions, staffWithPositionsPercentage }` |
-
-### `HouseholdQueries.getDemographics(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets household demographics (age/gender breakdown) |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `{ total, male, female, unknown, children, youth, adults, elders, living, deceased, byAgeGroup }` |
+| Function | Description |
+|----------|-------------|
+| `search(options, queryOptions)` | Searches households with various filters |
+| `advancedSearch(filters, options)` | Advanced household search |
+| `getStatistics(options)` | Comprehensive household statistics |
+| `getMemberBreakdown(householdId)` | Member type breakdown with position info |
+| `getDemographics(householdId)` | Age/gender demographics |
+| `getHouseholdPositions(options)` | Gets positions with filtering |
+| `getHouseholdPositionsWithDetails(householdId, options)` | Positions with assignment/role details |
+| `getHouseholdPositionStatistics(householdId)` | Position statistics |
+| `getHouseholdStaff(householdId, options)` | Gets staff members with position/role info |
+| `getUnassignedHouseholdStaff(householdId)` | Gets unassigned staff members |
+| `getHouseholdEnterprises(householdId)` | Gets enterprises owned by a household |
+| `getHouseholdEnterpriseSummaries(householdId)` | Enterprise summaries for a household |
+| `getHouseholdEnterpriseStats(householdId)` | Enterprise statistics |
+| `getHouseholdEnterpriseValue(householdId)` | Total enterprise value |
+| `searchHouseholdEnterprises(householdId, query)` | Searches enterprises owned by a household |
 
 ---
 
-## Position Queries
-
-### `HouseholdQueries.getHouseholdPositions(options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets household positions with optional filtering |
-| **Parameters** | `options.householdId` (string), `options.departmentId` (string), `options.requiredRoleId` (string), `options.hasRoleRequirement` (boolean), `options.minSkillLevel` (number), `options.search` (string), `options.sortBy` (string), `options.sortOrder` (string), `options.limit` (number) |
-| **Returns** | `Array` - Array of position objects |
-
-### `HouseholdQueries.getHouseholdPositionsWithDetails(householdId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets positions with assignment and role details |
-| **Parameters** | `householdId` (string), `options.includeAssignments` (boolean), `options.activeOnly` (boolean) |
-| **Returns** | `Array` - Array of position objects with details |
-
-### `HouseholdQueries.getHouseholdPositionStatistics(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets household position statistics |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `{ totalPositions, totalAssignments, activeAssignments, positionsWithRole, positionsWithSkillRequirement, byDepartment, byRole, averageSkillLevel }` |
-
----
-
-## Staff Queries
-
-### `HouseholdQueries.getHouseholdStaff(householdId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets staff members of a household with position and role info |
-| **Parameters** | `householdId` (string), `options.positionId` (string), `options.departmentId` (string), `options.withRole` (boolean), `options.withoutRole` (boolean), `options.minSkillLevel` (number), `options.activeOnly` (boolean) |
-| **Returns** | `Array` - Array of staff members with details |
-
-### `HouseholdQueries.getUnassignedHouseholdStaff(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets unassigned staff members (no position assignment) |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `Array` - Array of unassigned staff members |
-
----
-
-## Enterprise Queries
-
-### `HouseholdQueries.getHouseholdEnterprises(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all enterprises owned by a household |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `Array` - Array of enterprise objects |
-
-### `HouseholdQueries.getHouseholdEnterpriseSummaries(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets enterprise summaries for a household |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `Array` - Array of { id, name, type, category, wealth, debt, workerCount, annualProfit, status, ownershipType } |
-
-### `HouseholdQueries.getHouseholdEnterpriseStats(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets enterprise statistics for a household |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `{ total, profitable, unprofitable, totalProfit, totalWealth, totalDebt, totalWorkers, byStatus, byCategory, byOwnershipType, profitableEnterprises, unprofitableEnterprises, publicCount, privateCount }` |
-
-### `HouseholdQueries.getHouseholdEnterpriseValue(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the total enterprise value for a household |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `number` - Total enterprise value |
-
-### `HouseholdQueries.searchHouseholdEnterprises(householdId, query)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Searches enterprises owned by a household |
-| **Parameters** | `householdId` (string), `query` (string) |
-| **Returns** | `Array` - Array of matching enterprise summaries |
-
----
-
-# 4. HOUSEHOLD-ECONOMY.JS
+## 4. HOUSEHOLD-ECONOMY.JS
 
 **PURPOSE:** Business logic for household economy management including wealth, resources, income, expenses, and enterprise integration.
 
@@ -853,11 +470,8 @@ js/core/modals/
 - `household-state.js` - `HouseholdState`
 - `household-queries.js` - `HouseholdQueries`
 - `household-commands.js` - `HouseholdCommands`
+- `residence-system.js` - `ResidenceSystem` (for rent integration)
 - `accessors.js` - `getCharacterById`, `getCharacters`, `getPlaceById`, `getCurrentYear`
-
----
-
-## Constants
 
 ### Economic Tiers
 
@@ -872,667 +486,66 @@ js/core/modals/
 | VERY_NOBLE | 501 | 1000 | High nobility |
 | ROYAL | 1001+ | ∞ | Royal or Imperial wealth |
 
-### Income Sources
+### Key Functions
 
-| ID | Name | baseIncome |
-|----|------|------------|
-| agriculture | Agriculture | 10 |
-| livestock | Livestock | 8 |
-| trade | Trade | 15 |
-| crafts | Crafts | 12 |
-| taxes | Taxes | 20 |
-| rent | Rent | 10 |
-| tribute | Tribute | 25 |
-| patronage | Patronage | 5 |
-| military | Military Service | 15 |
-| mining | Mining | 18 |
-
-### Expense Categories
-
-| ID | Name | baseExpense |
-|----|------|-------------|
-| food | Food & Supplies | 8 |
-| maintenance | Property Maintenance | 6 |
-| taxes | Taxes Paid | 10 |
-| staff | Staff Wages | 12 |
-| luxury | Luxury Goods | 15 |
-| debt | Debt Payments | 10 |
-| tithe | Religious Tithe | 5 |
-| medical | Medical Expenses | 8 |
-
-### Economic Events
-
-| ID | Name | delta | chance |
-|----|------|-------|--------|
-| good_harvest | Good Harvest | 10-30 | 0.15 |
-| poor_harvest | Poor Harvest | -10 to -25 | 0.10 |
-| trade_bonus | Trade Windfall | 15-45 | 0.08 |
-| tax_increase | Tax Increase | -5 to -15 | 0.12 |
-| theft | Theft | -10 to -30 | 0.05 |
-| inheritance | Inheritance | 20-70 | 0.03 |
-| fire | Fire | -15 to -45 | 0.04 |
-| enterprise_boom | Enterprise Boom | Variable | 0.04 |
-| enterprise_crisis | Enterprise Crisis | Variable | 0.04 |
+| Function | Description |
+|----------|-------------|
+| `getHouseholdWealth(householdId)` | Gets household wealth |
+| `updateHouseholdWealth(householdId, delta, reason)` | Updates household wealth |
+| `getHouseholdDebt(householdId)` | Gets household debt |
+| `modifyHouseholdDebt(householdId, delta)` | Modifies household debt |
+| `getEconomicTier(wealth)` | Gets economic tier for wealth amount |
+| `getHouseholdResources(householdId)` | Gets household resources |
+| `updateHouseholdResources(householdId, resourceType, delta)` | Updates household resources |
+| `calculateRentIncome(householdId)` | Calculates rent income from owned properties (NEW) |
+| `calculateRentExpenses(householdId)` | Calculates rent expenses for rented properties (NEW) |
+| `calculateAnnualIncome(householdId)` | Calculates annual income (includes rent income) |
+| `calculateAnnualExpenses(householdId)` | Calculates annual expenses (includes rent expenses) |
+| `computeNetAnnualChange(householdId)` | Computes net annual change |
+| `processAnnualEconomy(householdId)` | Processes annual economy (includes rent) |
+| `consumeAnnualFood(householdId)` | Consumes annual food supply |
+| `receiveSalary(householdId, characterId, roleId, salary, year)` | Records salary received |
+| `getSalaryIncome(householdId, year)` | Gets salary income |
+| `getTotalSalariesReceived(householdId)` | Gets total salaries received |
+| `trackTuitionExpense(householdId, tuition, institutionId, studentId, year)` | Records tuition expense |
+| `getTuitionExpenses(householdId, year)` | Gets tuition expenses |
+| `receiveSchoolProfit(householdId, amount, institutionId, year)` | Records school profit |
+| `getSchoolProfits(householdId, year)` | Gets school profit income |
+| `executeTrade(sourceId, targetId, trade)` | Executes a trade between households |
+| `getTradePartners(householdId)` | Gets potential trade partners |
+| `triggerEconomicEvent(householdId, eventTypeId)` | Triggers an economic event |
+| `applyRandomEconomicEvent(householdId)` | Applies a random economic event |
+| `isBankrupt(householdId)` | Checks if household is bankrupt |
+| `handleBankruptcy(householdId)` | Handles bankruptcy |
 
 ---
 
-## Wealth Management
+## 5. RESIDENCE-SYSTEM.JS
 
-### `HouseholdEconomy.getHouseholdWealth(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets household wealth |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `number` - Wealth amount |
-
-### `HouseholdEconomy.updateHouseholdWealth(householdId, delta, reason)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates household wealth |
-| **Parameters** | `householdId` (string), `delta` (number), `reason` (string) |
-| **Returns** | `number` - New wealth value |
-
-### `HouseholdEconomy.getHouseholdDebt(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets household debt |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `number` - Debt amount |
-
-### `HouseholdEconomy.modifyHouseholdDebt(householdId, delta)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Modifies household debt |
-| **Parameters** | `householdId` (string), `delta` (number) |
-| **Returns** | `number` - New debt value |
-
-### `HouseholdEconomy.getEconomicTier(wealth)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets economic tier for a wealth amount |
-| **Parameters** | `wealth` (number) |
-| **Returns** | `Object` - Tier object with id, label, icon |
-
----
-
-## Resource Management
-
-### `HouseholdEconomy.getHouseholdResources(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets household resources |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `{ food, livestock, goods }` |
-
-### `HouseholdEconomy.updateHouseholdResources(householdId, resourceType, delta)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates household resources |
-| **Parameters** | `householdId` (string), `resourceType` (string), `delta` (number) |
-| **Returns** | `number` - New resource value |
-
----
-
-## Income & Expenses (with Enterprise Integration)
-
-### `HouseholdEconomy.calculateAnnualIncome(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates annual income for a household (includes salaries, school profits, and enterprise profits) |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `number` - Annual income |
-
-**Income Sources:**
-1. Base income from household economy
-2. Member salaries (government/role salaries)
-3. Enterprise profits
-4. School profits
-
-### `HouseholdEconomy.calculateAnnualExpenses(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates annual expenses for a household (includes tuition and enterprise losses) |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `number` - Annual expenses |
-
-**Expense Sources:**
-1. Base expenses from household economy
-2. Staff wages
-3. Enterprise losses
-4. Tuition expenses
-5. Debt interest (5% of debt)
-
-### `HouseholdEconomy.computeNetAnnualChange(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Computes net annual change (income - expenses) |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `number` - Net change |
-
----
-
-## Annual Processing (with Enterprise Integration)
-
-### `HouseholdEconomy.processAnnualEconomy(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Processes annual economy for a household |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `{ success, householdId, householdName, oldWealth, newWealth, netChange, eventCount, bankrupt, year }` |
-
-**Processing Steps:**
-1. Calculate net annual change (income - expenses)
-2. Apply net change to wealth
-3. Log enterprise profit/loss events
-4. Check for bankruptcy
-5. Update household status
-
-### `HouseholdEconomy.consumeAnnualFood(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Consumes annual food supply |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `boolean` - True if enough food |
-
----
-
-## Salary and Tuition Tracking
-
-### `HouseholdEconomy.receiveSalary(householdId, characterId, roleId, salary, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Records salary received by a household |
-| **Parameters** | `householdId` (string), `characterId` (string), `roleId` (string), `salary` (number), `year` (number) |
-| **Returns** | `boolean` - True if recorded |
-
-### `HouseholdEconomy.getSalaryIncome(householdId, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets salary income for a household |
-| **Parameters** | `householdId` (string), `year` (number) |
-| **Returns** | `number` - Salary income |
-
-### `HouseholdEconomy.getTotalSalariesReceived(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets total salaries received by a household |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `number` - Total salaries |
-
-### `HouseholdEconomy.trackTuitionExpense(householdId, tuition, institutionId, studentId, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Records tuition expense paid by a household |
-| **Parameters** | `householdId` (string), `tuition` (number), `institutionId` (string), `studentId` (string), `year` (number) |
-| **Returns** | `boolean` - True if recorded |
-
-### `HouseholdEconomy.getTuitionExpenses(householdId, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets tuition expenses for a household |
-| **Parameters** | `householdId` (string), `year` (number) |
-| **Returns** | `number` - Tuition expenses |
-
-### `HouseholdEconomy.receiveSchoolProfit(householdId, amount, institutionId, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Records school profit received by a household |
-| **Parameters** | `householdId` (string), `amount` (number), `institutionId` (string), `year` (number) |
-| **Returns** | `boolean` - True if recorded |
-
-### `HouseholdEconomy.getSchoolProfits(householdId, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets school profit income for a household |
-| **Parameters** | `householdId` (string), `year` (number) |
-| **Returns** | `number` - School profits |
-
----
-
-## Trade
-
-### `HouseholdEconomy.executeTrade(sourceId, targetId, trade)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Executes a trade between two households |
-| **Parameters** | `sourceId` (string), `targetId` (string), `trade.sourceGives` (Object), `trade.targetGives` (Object) |
-| **Returns** | `boolean` - True if successful |
-
-### `HouseholdEconomy.getTradePartners(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets potential trade partners for a household |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `Array` - Array of potential trade partners |
-
----
-
-## Economic Events
-
-### `HouseholdEconomy.triggerEconomicEvent(householdId, eventTypeId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Triggers an economic event for a household |
-| **Parameters** | `householdId` (string), `eventTypeId` (string) |
-| **Returns** | `{ event, delta, newWealth }` |
-
-### `HouseholdEconomy.applyRandomEconomicEvent(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Applies a random economic event to a household |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `{ event, delta }` |
-
----
-
-## Bankruptcy
-
-### `HouseholdEconomy.isBankrupt(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Checks if household is bankrupt |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `boolean` - True if bankrupt |
-
-### `HouseholdEconomy.handleBankruptcy(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Handles bankruptcy for a household |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `boolean` - True if handled |
-
----
-
-# 5. HOUSEHOLD-ASSIGNMENT.JS
-
-**PURPOSE:** Business logic for assigning characters to households, inheritance, transfers, cadet branches, mergers, splits, and enterprise transfer on inheritance.
+**PURPOSE:** Business logic for residence management with full rental/ownership tracking.
 
 **DEPENDENCIES:**
 - `household-state.js` - `HouseholdState`
 - `household-commands.js` - `HouseholdCommands`
 - `household-queries.js` - `HouseholdQueries`
-- `household-economy.js` - `HouseholdEconomy`
-- `accessors.js` - `getCharacterById`, `getCharacters`, `getCurrentYear`
-- `family.js` - `getSpouses`, `getChildren`, `getParents`
-
----
-
-## Newborn Assignment
-
-### `HouseholdAssignment.assignNewbornToHousehold(childId, motherId, fatherId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Assigns a newborn to a household |
-| **Parameters** | `childId` (string), `motherId` (string), `fatherId` (string, optional), `options.householdId` (string), `options.year` (number), `options.role` (string), `options.recordHistory` (boolean), `options.residenceId` (string), `options.unitNumber` (number) |
-| **Returns** | `{ success: boolean, child, household, year, role, unitAssigned?, unitNumber? }` |
-
----
-
-## Spouse Assignment
-
-### `HouseholdAssignment.assignToSpouseHousehold(characterId, spouseId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Assigns a character to their spouse's household |
-| **Parameters** | `characterId` (string), `spouseId` (string), `options.marriageYear` (number), `options.patrilocal` (boolean), `options.role` (string), `options.recordHistory` (boolean) |
-| **Returns** | `{ success: boolean, character, spouse, household, year, patrilocal }` |
-
----
-
-## Inheritance (with Enterprise Transfer)
-
-### `HouseholdAssignment.processHouseholdInheritanceOnDeath(characterId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Processes household inheritance when a character dies |
-| **Parameters** | `characterId` (string), `options.deathYear` (number), `options.autoTransfer` (boolean), `options.recordHistory` (boolean), `options.includeExternal` (boolean), `options.maxAge` (number), `options.minAge` (number) |
-| **Returns** | `Array` - Results for each household affected |
-
-### `HouseholdAssignment.getHouseholdHeirs(householdId, deceasedId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets eligible heirs for a household |
-| **Parameters** | `householdId` (string), `deceasedId` (string), `options.includeExternal` (boolean), `options.maxAge` (number), `options.minAge` (number) |
-| **Returns** | `Array` - Array of heir candidates |
-
-### `HouseholdAssignment.transferHouseholdToHeir(householdId, heirId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Transfers a household to an heir (with enterprise transfer) |
-| **Parameters** | `householdId` (string), `heirId` (string), `options.year` (number), `options.recordHistory` (boolean), `options.role` (string) |
-| **Returns** | `{ success: boolean, household, heir, year, isNewMember }` |
-
-**Enterprise Integration:** All enterprises owned by the household are transferred to the heir's household.
-
----
-
-## Transfers
-
-### `HouseholdAssignment.transferCharacterToHousehold(characterId, targetHouseholdId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Transfers a character from one household to another |
-| **Parameters** | `characterId` (string), `targetHouseholdId` (string), `options.year` (number), `options.reason` (string), `options.role` (string), `options.type` (string), `options.departmentId` (string), `options.isHead` (boolean), `options.recordHistory` (boolean), `options.notes` (string) |
-| **Returns** | `{ success: boolean, character, fromHousehold, toHousehold, year, reason }` |
-
----
-
-## Household Management (with Enterprise Transfer)
-
-### `HouseholdAssignment.createCadetBranch(householdId, newHouseholdName, memberIds, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Creates a cadet branch from an existing household (with optional enterprise transfer) |
-| **Parameters** | `householdId` (string), `newHouseholdName` (string), `memberIds` (Array), `options.headId` (string), `options.year` (number), `options.reason` (string), `options.notes` (string), `options.locationId` (string), `options.recordHistory` (boolean), `options.residenceId` (string), `options.unitNumber` (number), `options.transferEnterprises` (boolean), `options.enterpriseIds` (Array) |
-| **Returns** | `{ success: boolean, newHousehold, parentHousehold, transferred, year, headId }` |
-
-**Enterprise Integration:** When `options.transferEnterprises` is true, specified enterprises are transferred to the cadet branch.
-
-### `HouseholdAssignment.mergeHouseholds(householdId1, householdId2, survivingHouseholdId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Merges two households into one (with enterprise transfer) |
-| **Parameters** | `householdId1` (string), `householdId2` (string), `survivingHouseholdId` (string), `options.mergeYear` (number), `options.reason` (string), `options.recordHistory` (boolean), `options.newHeadId` (string) |
-| **Returns** | `{ success: boolean, survivor, merged, transferred, year }` |
-
-**Enterprise Integration:** All enterprises from the absorbed household are transferred to the survivor.
-
-### `HouseholdAssignment.splitHousehold(householdId, newHouseholdName, memberIds, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Splits a household into two (with optional enterprise transfer) |
-| **Parameters** | `householdId` (string), `newHouseholdName` (string), `memberIds` (Array), `options.newHeadId` (string), `options.splitYear` (number), `options.reason` (string), `options.notes` (string), `options.locationId` (string), `options.recordHistory` (boolean), `options.newWealth` (number), `options.newReputation` (number), `options.residenceId` (string), `options.unitNumber` (number), `options.transferEnterprises` (boolean), `options.enterpriseIds` (Array) |
-| **Returns** | `{ success: boolean, newHousehold, parentHousehold, transferred, year, headId }` |
-
-**Enterprise Integration:** When `options.transferEnterprises` is true, specified enterprises are transferred to the split household.
-
-### `HouseholdAssignment.autoAssignHouseholdHead(householdId, deceasedId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Auto-assigns a new head when the current head dies |
-| **Parameters** | `householdId` (string), `deceasedId` (string), `options.successionYear` (number), `options.recordHistory` (boolean), `options.skipIfOnlyMember` (boolean), `options.maxAge` (number), `options.minAge` (number) |
-| **Returns** | `{ success: boolean, newHead, newHeadName, year, household, abandoned?, abandonedYear? }` |
-
----
-
-# 6. HOUSEHOLD-SERVANT.JS
-
-**PURPOSE:** Business logic for master-servant and employer-employee relationships.
-
-**DEPENDENCIES:**
-- `household-state.js` - `HouseholdState`
-- `household-commands.js` - `HouseholdCommands`
-- `household-economy.js` - `HouseholdEconomy`
-- `accessors.js` - `getCharacterById`, `getCharacters`, `getCurrentYear`
-- `relationship-types.js` - `RELATIONSHIP_ARCHETYPES`, `RELATIONSHIP_STATUS`
-- `trust-system.js` - `modifyTrust`
-- `loyalty-system.js` - `modifyLoyalty`
-
----
-
-## Constants
-
-### Service Types
-
-| ID | Name | isDomestic | baseWage |
-|----|------|------------|----------|
-| household_staff | Household Staff | true | 5 |
-| retainer | Retainer | false | 15 |
-| personal_attendant | Personal Attendant | true | 10 |
-| steward | Steward | true | 20 |
-| maid | Maid | true | 6 |
-| cook | Cook | true | 8 |
-| gardener | Gardener | true | 7 |
-| groom | Groom | true | 7 |
-| chamberlain | Chamberlain | true | 25 |
-| butler | Butler | true | 22 |
-| lady_maid | Lady's Maid | true | 12 |
-| valet | Valet | true | 12 |
-
-### Service Status
-
-| ID | Description |
-|----|-------------|
-| active | Currently serving |
-| on_leave | Temporarily away |
-| terminated | Service ended by employer |
-| resigned | Service ended by servant |
-| promoted | Moved to higher position |
-| transferred | Moved to another employer |
-
-### Service Quality
-
-| ID | Name | modifier | minSatisfaction |
-|----|------|----------|-----------------|
-| excellent | Excellent | 1.2 | 90 |
-| good | Good | 1.0 | 70 |
-| average | Average | 0.9 | 50 |
-| poor | Poor | 0.7 | 30 |
-| unsatisfactory | Unsatisfactory | 0.5 | 0 |
-
-### Service Contract Terms
-
-| ID | Name | duration | noticePeriod |
-|----|------|----------|--------------|
-| indefinite | Indefinite | null | 30 days |
-| annual | Annual | 365 days | 30 days |
-| seasonal | Seasonal | 90 days | 14 days |
-| trial | Trial Period | 30 days | 7 days |
-| day_labor | Day Labor | 1 day | 0 days |
-
----
-
-## Service Management
-
-### `HouseholdServant.createServiceRelationship(employerId, servantId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Creates a service relationship (employer-employee) |
-| **Parameters** | `employerId` (string), `servantId` (string), `options.serviceTypeId` (string), `options.startYear` (number), `options.wage` (number), `options.contractTerm` (string), `options.initialQuality` (string), `options.notes` (string), `options.addToHousehold` (boolean) |
-| **Returns** | `Object|null` - Created relationship or null |
-
-### `HouseholdServant.validateServiceRelationship(employerId, servantId, serviceTypeId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Validates if a service relationship can be created |
-| **Parameters** | `employerId` (string), `servantId` (string), `serviceTypeId` (string) |
-| **Returns** | `{ valid: boolean, reason: string }` |
-
-### `HouseholdServant.terminateService(employerId, servantId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Terminates a service relationship |
-| **Parameters** | `employerId` (string), `servantId` (string), `options.endYear` (number), `options.reason` (string), `options.removeFromHousehold` (boolean), `options.recordHistory` (boolean) |
-| **Returns** | `boolean` - True if terminated |
-
-### `HouseholdServant.promoteServant(employerId, servantId, newServiceTypeId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Promotes a servant to a higher position |
-| **Parameters** | `employerId` (string), `servantId` (string), `newServiceTypeId` (string), `options.newWage` (number), `options.promotionYear` (number), `options.notes` (string), `options.updateHouseholdRole` (boolean) |
-| **Returns** | `Object|null` - Updated relationship or null |
-
-### `HouseholdServant.adjustServantWages(employerId, servantId, newWage, reason)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Adjusts a servant's wages |
-| **Parameters** | `employerId` (string), `servantId` (string), `newWage` (number), `reason` (string) |
-| **Returns** | `Object|null` - Updated relationship or null |
-
-### `HouseholdServant.updateServiceQuality(relationshipId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates service quality based on satisfaction |
-| **Parameters** | `relationshipId` (string) |
-| **Returns** | `Object|null` - Updated quality or null |
-
-### `HouseholdServant.recordEmployerSatisfaction(relationshipId, satisfaction, reason)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Records employer satisfaction |
-| **Parameters** | `relationshipId` (string), `satisfaction` (number 0-100), `reason` (string) |
-| **Returns** | `Object|null` - Updated relationship or null |
-
----
-
-## Service Queries
-
-### `HouseholdServant.getServiceBetween(employerId, servantId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the service relationship between employer and servant |
-| **Parameters** | `employerId` (string), `servantId` (string) |
-| **Returns** | `Object|null` - Relationship or null |
-
-### `HouseholdServant.getServants(employerId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all servants of an employer |
-| **Parameters** | `employerId` (string) |
-| **Returns** | `Array` - Array of servant relationships |
-
-### `HouseholdServant.getEmployer(servantId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the employer of a servant |
-| **Parameters** | `servantId` (string) |
-| **Returns** | `Object|null` - Employer relationship or null |
-
-### `HouseholdServant.getActiveService(characterId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets active service for a character (as either employer or servant) |
-| **Parameters** | `characterId` (string) |
-| **Returns** | `Array` - Array of active service relationships |
-
-### `HouseholdServant.getServiceHistory(characterId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets service history for a character |
-| **Parameters** | `characterId` (string) |
-| **Returns** | `Array` - Array of service relationships (including ended) |
-
-### `HouseholdServant.generateServiceReference(employerId, servantId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Generates a service reference letter for a servant |
-| **Parameters** | `employerId` (string), `servantId` (string) |
-| **Returns** | `Object` - Reference object |
-
-### `HouseholdServant.getServiceQuality(relationshipId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the quality of a service relationship |
-| **Parameters** | `relationshipId` (string) |
-| **Returns** | `Object` - Quality object |
-
----
-
-## Household Integration
-
-### `HouseholdServant.assignServantToDepartment(employerId, servantId, departmentId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Assigns a servant to a specific household department |
-| **Parameters** | `employerId` (string), `servantId` (string), `departmentId` (string) |
-| **Returns** | `boolean` - True if assigned |
-
-### `HouseholdServant.getStaffByDepartment(employerId, departmentId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets staff by department for a household |
-| **Parameters** | `employerId` (string), `departmentId` (string) |
-| **Returns** | `Array` - Array of servant relationships |
-
-### `HouseholdServant.transferServantToHousehold(currentEmployerId, servantId, newEmployerId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Transfers a servant to another household |
-| **Parameters** | `currentEmployerId` (string), `servantId` (string), `newEmployerId` (string), `options.transferYear` (number), `options.newWage` (number), `options.notes` (string) |
-| **Returns** | `Object|null` - New service relationship or null |
-
----
-
-# 7. RESIDENCE-SYSTEM.JS
-
-**PURPOSE:** Business logic for residence management.
-
-**DEPENDENCIES:**
-- `household-state.js` - `HouseholdState`
 - `accessors.js` - `getCharacterById`, `getPlaceById`, `getPlaces`, `getCurrentYear`
-
----
-
-## Constants
 
 ### Residence Types
 
-| ID | Name | isMultiUnit | capacity | Description |
-|----|------|------------|----------|-------------|
-| estate | Estate | false | 20 | Large estate |
-| manor | Manor House | false | 15 | Grand manor |
-| house | House | false | 8 | Single-family |
-| cottage | Cottage | false | 4 | Small cottage |
-| apartment | Apartment Building | true | 30 | Multi-unit |
-| tenement | Tenement | true | 25 | Dense housing |
-| suite | Suite | false | 6 | Luxury suite |
-| room | Room | false | 2 | Single room |
-| tower | Tower | false | 10 | Defensive tower |
-| palace | Palace | false | 50 | Royal palace |
-| castle | Castle | false | 40 | Fortified castle |
-| barracks | Barracks | true | 30 | Military housing |
+| ID | Name | isMultiUnit | capacity |
+|----|------|------------|----------|
+| estate | Estate | false | 20 |
+| manor | Manor House | false | 15 |
+| house | House | false | 8 |
+| cottage | Cottage | false | 4 |
+| apartment | Apartment Building | true | 30 |
+| tenement | Tenement | true | 25 |
+| suite | Suite | false | 6 |
+| room | Room | false | 2 |
+| tower | Tower | false | 10 |
+| palace | Palace | false | 50 |
+| castle | Castle | false | 40 |
+| barracks | Barracks | true | 30 |
 
 ### Residence Status
 
@@ -1544,665 +557,547 @@ js/core/modals/
 | under_construction | Under construction |
 | renovating | Being renovated |
 
-### Residence Conditions
+### Rental Status (NEW)
 
-| ID | Name | modifier |
-|----|------|----------|
-| pristine | Pristine | 1.2 |
-| good | Good | 1.0 |
-| fair | Fair | 0.8 |
-| poor | Poor | 0.6 |
-| ruined | Ruined | 0.3 |
+| ID | Description |
+|----|-------------|
+| owner_occupied | Owner lives in the residence |
+| rented | Residence is rented to a tenant |
+| vacant | Residence is vacant |
 
----
+### Key Functions
 
-## CRUD Operations
+| Function | Description |
+|----------|-------------|
+| `createResidence(name, locationId, typeId, options)` | Creates a new residence |
+| `getResidenceById(residenceId)` | Gets a residence by ID |
+| `getResidences()` | Gets all residences |
+| `getResidencesByLocation(locationId)` | Gets residences by location |
+| `getResidencesByType(typeId)` | Gets residences by type |
+| `getResidencesByStatus(status)` | Gets residences by status |
+| `getResidencesByHousehold(householdId)` | Gets residences by household |
+| `updateResidence(residenceId, updates)` | Updates a residence |
+| `deleteResidence(residenceId, options)` | Deletes a residence |
+| `addResidenceHistory(residenceId, action, details, actorId)` | Adds history entry |
+| `getResidenceHistory(residenceId, limit)` | Gets history entries |
+| `addResidenceTimelineEvent(residenceId, event)` | Adds timeline event |
+| `getResidenceTimeline(residenceId, limit)` | Gets timeline events |
+| `getResidenceAssociationHistory(residenceId)` | Gets association history |
+| `endResidenceAssociation(residenceId, householdId, endedYear, reason)` | Ends association |
+| `getResidenceNameHistory(residenceId)` | Gets name history |
+| `getResidenceCurrentNameInfo(residenceId)` | Gets current name info |
+| `getResidenceOriginalName(residenceId)` | Gets original name |
+| `getResidenceNameChangeCount(residenceId)` | Gets name change count |
+| `updateResidenceNameWithHistory(residenceId, newName, options)` | Updates name with history |
+| `addResidenceUnit(residenceId, options)` | Adds a unit |
+| `removeResidenceUnit(residenceId, unitNumber, options)` | Removes a unit |
+| `getResidenceUnits(residenceId)` | Gets all units |
+| `getResidenceUnit(residenceId, unitNumber)` | Gets a specific unit |
+| `getVacantUnits(residenceId)` | Gets vacant units |
+| `getOccupiedUnits(residenceId)` | Gets occupied units |
+| `assignHouseholdToUnit(residenceId, unitNumber, householdId, householdName, year, options)` | Assigns household to unit |
+| `markUnitVacant(residenceId, unitNumber, reason, year)` | Marks unit vacant |
+| `demolishUnit(residenceId, unitNumber, reason, year)` | Demolishes a unit |
+| `getVacantResidences(locationId)` | Gets vacant residences |
+| `markResidenceVacant(residenceId, reason, year)` | Marks residence vacant |
+| `getResidenceVacancyDetails(residenceId)` | Gets vacancy details |
+| `assignHouseholdToVacantResidence(residenceId, householdId, householdName, year, options)` | Assigns household to vacant residence |
+| `calculateRepairCost(residence, targetCondition)` | Calculates repair cost |
+| `rehabilitateResidence(residenceId, targetCondition, year)` | Rehabilitates a residence |
+| `getResidenceRecommendations(residenceId)` | Gets recommendations |
+| `getHouseholdUnits(householdId)` | Gets units occupied by a household |
+| `getHouseholdPrimaryResidence(householdId)` | Gets primary residence |
+| `getHouseholdUnitCount(householdId)` | Gets unit count |
+| `getResidenceHouseholds(residenceId)` | Gets households in residence |
+| `getResidenceCapacity(residenceId)` | Gets capacity |
+| `getAvailableCapacity(residenceId)` | Gets available capacity |
+| `hasAvailableUnits(residenceId)` | Checks if units available |
+| `getResidenceStatistics(locationId)` | Gets residence statistics |
+| `getUnitStats(residenceId)` | Gets unit statistics |
+| `getLocationUnitStats(locationId)` | Gets location unit statistics |
+| `addResidenceStaffPosition(residenceId, data)` | Adds staff position |
+| `removeResidenceStaffPosition(residenceId, positionId, options)` | Removes staff position |
+| `getResidenceStaffPositions(residenceId, options)` | Gets staff positions |
+| `assignCharacterToResidenceStaffPosition(residenceId, positionId, characterId, options)` | Assigns character to staff position |
+| `endResidenceStaffAssignment(residenceId, assignmentId, endYear, reason)` | Ends staff assignment |
+| `getResidenceStaffAssignments(residenceId, options)` | Gets staff assignments |
+| `demolishResidence(residenceId, reason, year, options)` | Demolishes a residence |
+| `getDemolishedResidences(options)` | Gets demolished residences |
+| `getResidenceDamageHistory(residenceId, limit)` | Gets damage history |
+| `getResidenceDemolitionStats(locationId)` | Gets demolition stats |
 
-### `ResidenceSystem.createResidence(name, locationId, typeId, options)`
+### RENTAL FUNCTIONS (NEW)
 
-| Property | Value |
-|----------|-------|
-| **Description** | Creates a new residence |
-| **Parameters** | `name` (string), `locationId` (string), `typeId` (string), `options.foundedYear` (number), `options.builtYear` (number), `options.condition` (string), `options.notes` (string), `options.description` (string), `options.features` (Array), `options.householdId` (string), `options.estimatedValue` (number), `options.maxUnits` (number), `options.unitCount` (number), `options.staffPositions` (Array) |
-| **Returns** | `Object|null` - Created residence or null |
-
-### `ResidenceSystem.getResidenceById(residenceId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a residence by ID |
-| **Parameters** | `residenceId` (string) |
-| **Returns** | `Object|null` - Residence object or null |
-
-### `ResidenceSystem.getResidences()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all residences |
-| **Returns** | `Array` - Array of residence objects |
-
-### `ResidenceSystem.getResidencesByLocation(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets residences by location |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Array` - Array of residence objects |
-
-### `ResidenceSystem.getResidencesByType(typeId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets residences by type |
-| **Parameters** | `typeId` (string) |
-| **Returns** | `Array` - Array of residence objects |
-
-### `ResidenceSystem.getResidencesByStatus(status)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets residences by status |
-| **Parameters** | `status` (string) |
-| **Returns** | `Array` - Array of residence objects |
-
-### `ResidenceSystem.getResidencesByHousehold(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets residences by household |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `Array` - Array of residence objects |
-
-### `ResidenceSystem.updateResidence(residenceId, updates)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates a residence |
-| **Parameters** | `residenceId` (string), `updates` (Object) |
-| **Returns** | `Object|null` - Updated residence or null |
-
-### `ResidenceSystem.deleteResidence(residenceId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Deletes a residence |
-| **Parameters** | `residenceId` (string), `options.force` (boolean) |
-| **Returns** | `boolean` - True if deleted |
-
----
-
-## Residence History
-
-### `ResidenceSystem.addResidenceHistory(residenceId, action, details, actorId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Adds a history entry to a residence |
-| **Parameters** | `residenceId` (string), `action` (string), `details` (string), `actorId` (string) |
-| **Returns** | `boolean` - True if added |
-
-### `ResidenceSystem.getResidenceHistory(residenceId, limit)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets history entries for a residence |
-| **Parameters** | `residenceId` (string), `limit` (number) |
-| **Returns** | `Array` - Array of history entries |
-
-### `ResidenceSystem.addResidenceTimelineEvent(residenceId, event)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Adds a timeline event to a residence |
-| **Parameters** | `residenceId` (string), `event` (Object) |
-| **Returns** | `boolean` - True if added |
-
-### `ResidenceSystem.getResidenceTimeline(residenceId, limit)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets timeline events for a residence |
-| **Parameters** | `residenceId` (string), `limit` (number) |
-| **Returns** | `Array` - Array of timeline events |
-
-### `ResidenceSystem.getResidenceAssociationHistory(residenceId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets association history for a residence |
-| **Parameters** | `residenceId` (string) |
-| **Returns** | `Array` - Array of association entries |
-
-### `ResidenceSystem.endResidenceAssociation(residenceId, householdId, endedYear, reason)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Ends a residence association |
-| **Parameters** | `residenceId` (string), `householdId` (string), `endedYear` (number), `reason` (string) |
-| **Returns** | `boolean` - True if ended |
+| Function | Description |
+|----------|-------------|
+| `setResidenceOwner(residenceId, ownerType, ownerId, options)` | Sets the owner of a residence |
+| `getResidenceOwner(residenceId)` | Gets the owner of a residence |
+| `setResidenceRenter(residenceId, renterType, renterId, rentAmount, options)` | Sets the renter with annual rent |
+| `getResidenceRenter(residenceId)` | Gets the renter of a residence |
+| `endResidenceRental(residenceId, endYear, reason)` | Ends a rental agreement |
+| `updateResidenceRent(residenceId, newRentAmount, effectiveYear, reason)` | Updates annual rent amount |
+| `getResidenceRentalHistory(residenceId, limit)` | Gets rental history |
+| `getResidencesByOwner(ownerId, ownerType)` | Gets residences owned by an owner |
+| `getResidencesByRenter(renterId, renterType)` | Gets residences rented by a renter |
+| `getTotalRentIncome(ownerId, ownerType)` | Gets total annual rent income for an owner |
+| `getTotalRentExpenses(renterId, renterType)` | Gets total annual rent expenses for a renter |
+| `recordRentPayment(residenceId, renterId, amount, year)` | Records a rent payment |
+| `getRentPayments(residenceId, limit)` | Gets rent payment history |
 
 ---
 
-## Residence Name History
+## 6. RENTAL DATA SCHEMA
 
-### `ResidenceSystem.getResidenceNameHistory(residenceId)`
+### Residence Rental Fields (Added to Residence Object)
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets residence name history |
-| **Parameters** | `residenceId` (string) |
-| **Returns** | `Array` - Array of name history entries |
+| Field | Type | Description |
+|-------|------|-------------|
+| `ownerType` | string | 'household' or 'character' |
+| `ownerId` | string | Owner ID |
+| `ownerName` | string | Owner display name |
+| `ownerSince` | number | Year owner acquired |
+| `renterType` | string | 'household' or 'character' |
+| `renterId` | string | Renter ID |
+| `renterName` | string | Renter display name |
+| `rentAmount` | number | Annual rent in gold |
+| `rentStartYear` | number | Year rental started |
+| `rentEffectiveYear` | number | Year current rent took effect |
+| `rentalStatus` | string | 'owner_occupied', 'rented', 'vacant' |
+| `ownershipHistory` | array | Array of ownership history entries |
+| `rentalHistory` | array | Array of rental history entries |
+| `rentPayments` | array | Array of rent payment entries |
 
-### `ResidenceSystem.getResidenceCurrentNameInfo(residenceId)`
+### Ownership History Entry
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets current name information |
-| **Parameters** | `residenceId` (string) |
-| **Returns** | `{ since, original, lastChange }` |
+| Field | Type | Description |
+|-------|------|-------------|
+| `ownerType` | string | 'household' or 'character' |
+| `ownerId` | string | Owner ID |
+| `ownerName` | string | Owner display name |
+| `year` | number | Year of change |
+| `action` | string | 'set_owner', 'transferred' |
+| `previousOwnerId` | string | Previous owner ID |
+| `previousOwnerType` | string | Previous owner type |
+| `previousOwnerName` | string | Previous owner name |
+| `timestamp` | number | Timestamp |
 
-### `ResidenceSystem.getResidenceOriginalName(residenceId)`
+### Rental History Entry
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the original name of a residence |
-| **Parameters** | `residenceId` (string) |
-| **Returns** | `string` - Original name |
+| Field | Type | Description |
+|-------|------|-------------|
+| `renterType` | string | 'household' or 'character' |
+| `renterId` | string | Renter ID |
+| `renterName` | string | Renter display name |
+| `rentAmount` | number | Rent amount |
+| `startYear` | number | Year started |
+| `endYear` | number | Year ended (null if current) |
+| `action` | string | 'rent_started', 'rent_adjusted', 'rent_ended' |
+| `reason` | string | Reason for change |
+| `timestamp` | number | Timestamp |
 
-### `ResidenceSystem.getResidenceNameChangeCount(residenceId)`
+### Rent Payment Entry
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the number of name changes |
-| **Parameters** | `residenceId` (string) |
-| **Returns** | `number` - Name change count |
-
-### `ResidenceSystem.updateResidenceNameWithHistory(residenceId, newName, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates residence name with history |
-| **Parameters** | `residenceId` (string), `newName` (string), `options.year` (number), `options.reason` (string), `options.changedBy` (string), `options.addToHistory` (boolean) |
-| **Returns** | `{ success: boolean, oldName, newName, year, reason }` |
-
-### `ResidenceSystem.getFormattedResidenceNameHistory(residenceId, limit)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets formatted name history |
-| **Parameters** | `residenceId` (string), `limit` (number) |
-| **Returns** | `Array` - Array of formatted name entries |
-
----
-
-## Unit Management
-
-### `ResidenceSystem.addResidenceUnit(residenceId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Adds a unit to a residence |
-| **Parameters** | `residenceId` (string), `options.unitNumber` (number), `options.householdId` (string), `options.notes` (string) |
-| **Returns** | `{ success, unitNumber, unit }` |
-
-### `ResidenceSystem.removeResidenceUnit(residenceId, unitNumber, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Removes a unit from a residence |
-| **Parameters** | `residenceId` (string), `unitNumber` (number), `options.force` (boolean), `options.reason` (string) |
-| **Returns** | `{ success, unitNumber }` |
-
-### `ResidenceSystem.getResidenceUnits(residenceId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all units of a residence |
-| **Parameters** | `residenceId` (string) |
-| **Returns** | `Array` - Array of units |
-
-### `ResidenceSystem.getResidenceUnit(residenceId, unitNumber)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a specific unit |
-| **Parameters** | `residenceId` (string), `unitNumber` (number) |
-| **Returns** | `Object|null` - Unit object or null |
-
-### `ResidenceSystem.getVacantUnits(residenceId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets vacant units of a residence |
-| **Parameters** | `residenceId` (string) |
-| **Returns** | `Array` - Array of vacant units |
-
-### `ResidenceSystem.getOccupiedUnits(residenceId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets occupied units of a residence |
-| **Parameters** | `residenceId` (string) |
-| **Returns** | `Array` - Array of occupied units |
-
-### `ResidenceSystem.assignHouseholdToUnit(residenceId, unitNumber, householdId, householdName, year, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Assigns a household to a unit |
-| **Parameters** | `residenceId` (string), `unitNumber` (number), `householdId` (string), `householdName` (string), `year` (number), `options.notes` (string), `options.reason` (string) |
-| **Returns** | `{ success, unit, unitNumber, residence, year, renamed }` |
-
-### `ResidenceSystem.markUnitVacant(residenceId, unitNumber, reason, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Marks a unit as vacant |
-| **Parameters** | `residenceId` (string), `unitNumber` (number), `reason` (string), `year` (number) |
-| **Returns** | `{ success, unit, unitNumber, residence, year, householdId, householdName }` |
-
-### `ResidenceSystem.demolishUnit(residenceId, unitNumber, reason, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Demolishes a unit |
-| **Parameters** | `residenceId` (string), `unitNumber` (number), `reason` (string), `year` (number) |
-| **Returns** | `{ success, unit, unitNumber, residence, year }` |
+| Field | Type | Description |
+|-------|------|-------------|
+| `renterId` | string | Renter ID |
+| `renterName` | string | Renter display name |
+| `amount` | number | Payment amount |
+| `year` | number | Payment year |
+| `paid` | boolean | Payment status |
+| `timestamp` | number | Timestamp |
 
 ---
 
-## Vacancy Management
+## 7. MODAL FUNCTIONS
 
-### `ResidenceSystem.getVacantResidences(locationId)`
+### Household Modals
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets vacant residences |
-| **Parameters** | `locationId` (string, optional) |
-| **Returns** | `Array` - Array of vacant residences |
+| Modal | Description |
+|-------|-------------|
+| `openCreateHouseholdModal(onSuccess)` | Creates a new household |
+| `openEditHouseholdModal(householdId, onSuccess)` | Edits a household |
+| `openDeleteHouseholdModal(householdId, onSuccess)` | Deletes a household |
+| `openHouseholdDetailsModal(householdId, onSuccess)` | Shows household details with enterprise section |
 
-### `ResidenceSystem.markResidenceVacant(residenceId, reason, year)`
+### Residence Modals
 
-| Property | Value |
-|----------|-------|
-| **Description** | Marks a residence as vacant |
-| **Parameters** | `residenceId` (string), `reason` (string), `year` (number) |
-| **Returns** | `{ success, residence, year, previousHousehold }` |
+| Modal | Description |
+|-------|-------------|
+| `openNewResidenceModal(locationId, locationName, onSuccess)` | Creates a new residence |
+| `openEditResidenceModal(residenceId, onSuccess)` | Edits a residence |
+| `openDeleteResidenceModal(residenceId, onSuccess)` | Deletes a residence |
+| `openResidenceDetailsModal(residenceId, onRefresh)` | Shows residence details |
+| `openRenameResidenceModal(residenceId, onSuccess)` | Renames a residence |
+| `openResidenceNameHistoryModal(residenceId)` | Shows name history |
+| `openAssignResidenceModal(residenceId, onSuccess)` | Assigns household to residence |
+| `openVacateResidenceModal(residenceId, onSuccess)` | Marks residence vacant |
+| `openRehabilitateResidenceModal(residenceId, onSuccess)` | Rehabilitates a residence |
+| `openDemolishResidenceModal(residenceId, onSuccess)` | Demolishes a residence |
+| `openResidenceHeirFinderModal(residenceId)` | Finds heirs for a residence |
+| `openAddUnitModal(residenceId, onSuccess)` | Adds a unit |
+| `openRemoveUnitModal(residenceId, unitNumber, onSuccess)` | Removes a unit |
+| `openAssignUnitModal(residenceId, unitNumber, onSuccess)` | Assigns household to unit |
+| `openMarkUnitVacantModal(residenceId, unitNumber, onSuccess)` | Marks unit vacant |
+| `openUnitDetailsModal(residenceId, unitNumber)` | Shows unit details |
 
-### `ResidenceSystem.getResidenceVacancyDetails(residenceId)`
+### Rental Modals (NEW)
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets vacancy details |
-| **Parameters** | `residenceId` (string) |
-| **Returns** | `{ isVacant, vacantYear, vacantDuration, vacantReason, previousHousehold, previousHouseholdId, vacancyHistory }` |
+| Modal | Description |
+|-------|-------------|
+| `openSetResidenceOwnerModal(residenceId, onSuccess)` | Sets the owner of a residence |
+| `openSetResidenceRenterModal(residenceId, onSuccess)` | Sets the renter with rent amount |
+| `openUpdateRentModal(residenceId, onSuccess)` | Updates annual rent amount |
+| `openEndRentalModal(residenceId, onSuccess)` | Ends a rental agreement |
+| `openResidenceRentalHistoryModal(residenceId)` | Shows rental history |
+| `openHouseholdRentalSummaryModal(householdId)` | Shows household rental summary |
+| `openRentPaymentModal(residenceId, onSuccess)` | Records a rent payment |
+| `openResidenceRentalDetailsModal(residenceId)` | Shows detailed rental info |
 
-### `ResidenceSystem.assignHouseholdToVacantResidence(residenceId, householdId, householdName, year, options)`
+### Owner Modals (NEW)
 
-| Property | Value |
-|----------|-------|
-| **Description** | Assigns a household to a vacant residence |
-| **Parameters** | `residenceId` (string), `householdId` (string), `householdName` (string), `year` (number), `options.renameOnAssign` (boolean), `options.namePattern` (string), `options.notes` (string), `options.reason` (string) |
-| **Returns** | `{ success, residence, household, unit, unitNumber, year, renamed, newName }` |
-
----
-
-## Rehabilitation
-
-### `ResidenceSystem.calculateRepairCost(residence, targetCondition)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates repair cost |
-| **Parameters** | `residence` (Object), `targetCondition` (string) |
-| **Returns** | `number` - Cost in gold |
-
-### `ResidenceSystem.rehabilitateResidence(residenceId, targetCondition, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Rehabilitates a residence |
-| **Parameters** | `residenceId` (string), `targetCondition` (string), `year` (number) |
-| **Returns** | `{ success, residence, oldCondition, newCondition, cost, year }` |
-
-### `ResidenceSystem.getResidenceRecommendations(residenceId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets recommendations for a residence |
-| **Parameters** | `residenceId` (string) |
-| **Returns** | `Array` - Array of recommendations |
+| Modal | Description |
+|-------|-------------|
+| `openResidenceOwnerDetailsModal(residenceId, onRefresh)` | Shows owner details and owned properties |
+| `openManageOwnedPropertiesModal(ownerId, ownerType, onSuccess)` | Manages all properties owned by an owner |
+| `openTransferOwnershipModal(residenceId, onSuccess)` | Transfers ownership to another entity |
+| `openOwnerStatsModal(ownerId, ownerType)` | Shows owner statistics |
 
 ---
 
-## Staff Position Functions
+## 8. DEPENDENCY MAP
 
-### `ResidenceSystem.addResidenceStaffPosition(residenceId, data)`
+### Household System Dependencies
 
-| Property | Value |
-|----------|-------|
-| **Description** | Adds a staff position to a residence |
-| **Parameters** | `residenceId` (string), `data.name` (string), `data.unitNumber` (number), `data.requiredRoleId` (string), `data.minSkillLevel` (number), `data.notes` (string) |
-| **Returns** | `Object|null` - Created position or null |
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    HOUSEHOLD SYSTEM DEPENDENCIES                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  household-state.js ─────────────────────────────────────────────────────┐ │
+│  ├── accessors.js                                                        │ │
+│  └── storage.js                                                          │ │
+│                                                                             │
+│  household-commands.js ─────────────────────────────────────────────────┐ │
+│  ├── household-state.js                                                  │ │
+│  ├── household-queries.js                                                │ │
+│  ├── accessors.js                                                        │ │
+│  ├── storage.js                                                          │ │
+│  └── role-system.js                                                      │ │
+│                                                                             │
+│  household-queries.js ──────────────────────────────────────────────────┐ │
+│  ├── household-state.js                                                  │ │
+│  ├── accessors.js                                                        │ │
+│  └── industry-queries.js (optional)                                      │ │
+│                                                                             │
+│  household-economy.js ──────────────────────────────────────────────────┐ │
+│  ├── household-state.js                                                  │ │
+│  ├── household-commands.js                                               │ │
+│  ├── household-queries.js                                                │ │
+│  ├── residence-system.js (for rent)                                      │ │
+│  └── accessors.js                                                        │ │
+│                                                                             │
+│  residence-system.js ───────────────────────────────────────────────────┐ │
+│  ├── household-state.js                                                  │ │
+│  ├── household-commands.js                                               │ │
+│  ├── household-queries.js                                                │ │
+│  └── accessors.js                                                        │ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
-### `ResidenceSystem.removeResidenceStaffPosition(residenceId, positionId, options)`
+### Rental System Dependencies
 
-| Property | Value |
-|----------|-------|
-| **Description** | Removes a staff position from a residence |
-| **Parameters** | `residenceId` (string), `positionId` (string), `options.removeAssignments` (boolean) |
-| **Returns** | `boolean` - True if removed |
-
-### `ResidenceSystem.getResidenceStaffPositions(residenceId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets staff positions for a residence |
-| **Parameters** | `residenceId` (string), `options.unitNumber` (number), `options.requiredRoleId` (string) |
-| **Returns** | `Array` - Array of staff positions |
-
-### `ResidenceSystem.assignCharacterToResidenceStaffPosition(residenceId, positionId, characterId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Assigns a character to a residence staff position |
-| **Parameters** | `residenceId` (string), `positionId` (string), `characterId` (string), `options.startYear` (number), `options.endYear` (number), `options.title` (string), `options.notes` (string), `options.addRoleIfMissing` (boolean), `options.defaultSkillLevel` (number) |
-| **Returns** | `Object|null` - Assignment or null |
-
-### `ResidenceSystem.endResidenceStaffAssignment(residenceId, assignmentId, endYear, reason)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Ends a residence staff assignment |
-| **Parameters** | `residenceId` (string), `assignmentId` (string), `endYear` (number), `reason` (string) |
-| **Returns** | `Object|null` - Updated assignment or null |
-
-### `ResidenceSystem.getResidenceStaffAssignments(residenceId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets staff assignments for a residence |
-| **Parameters** | `residenceId` (string), `options.activeOnly` (boolean), `options.unitNumber` (number), `options.positionId` (string), `options.characterId` (string) |
-| **Returns** | `Array` - Array of staff assignments |
-
----
-
-## Household Residence Queries
-
-### `ResidenceSystem.getHouseholdUnits(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all units occupied by a household |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `Array` - Array of { residence, unit, residenceId, residenceName } |
-
-### `ResidenceSystem.getHouseholdPrimaryResidence(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the primary residence of a household |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `Object|null` - Primary residence |
-
-### `ResidenceSystem.getHouseholdUnitCount(householdId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the number of units occupied by a household |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `number` - Unit count |
-
-### `ResidenceSystem.getResidenceHouseholds(residenceId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all households in a residence |
-| **Parameters** | `residenceId` (string) |
-| **Returns** | `Array` - Array of { householdId, householdName, unitNumber, assignedYear } |
-
----
-
-## Capacity and Availability
-
-### `ResidenceSystem.getResidenceCapacity(residenceId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the capacity of a residence |
-| **Parameters** | `residenceId` (string) |
-| **Returns** | `number` - Capacity |
-
-### `ResidenceSystem.getAvailableCapacity(residenceId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the available capacity of a residence |
-| **Parameters** | `residenceId` (string) |
-| **Returns** | `number` - Available capacity |
-
-### `ResidenceSystem.hasAvailableUnits(residenceId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Checks if a residence has available units |
-| **Parameters** | `residenceId` (string) |
-| **Returns** | `boolean` - True if available |
-
-### `ResidenceSystem.getRandomAvailableUnit(residenceId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a random available unit |
-| **Parameters** | `residenceId` (string) |
-| **Returns** | `Object|null` - Unit or null |
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    RENTAL SYSTEM DEPENDENCIES                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  residence-system.js ────────────────────────────────────────────────────┐ │
+│  ├── setResidenceOwner()                                                  │ │
+│  ├── getResidenceOwner()                                                  │ │
+│  ├── setResidenceRenter()                                                 │ │
+│  ├── getResidenceRenter()                                                 │ │
+│  ├── endResidenceRental()                                                 │ │
+│  ├── updateResidenceRent()                                                │ │
+│  ├── getResidenceRentalHistory()                                          │ │
+│  ├── getResidencesByOwner()                                               │ │
+│  ├── getResidencesByRenter()                                              │ │
+│  ├── getTotalRentIncome()                                                 │ │
+│  ├── getTotalRentExpenses()                                               │ │
+│  ├── recordRentPayment()                                                  │ │
+│  └── getRentPayments()                                                    │ │
+│                                                                             │
+│  household-economy.js ──────────────────────────────────────────────────┐ │
+│  ├── calculateRentIncome() ──► residence-system.getTotalRentIncome()    │ │
+│  ├── calculateRentExpenses() ──► residence-system.getTotalRentExpenses()│ │
+│  └── calculateAnnualIncome() ──► includes rentIncome                    │ │
+│  └── calculateAnnualExpenses() ──► includes rentExpenses                │ │
+│                                                                             │
+│  modals-residence-rental.js ────────────────────────────────────────────┐ │
+│  ├── openSetResidenceOwnerModal()                                        │ │
+│  ├── openSetResidenceRenterModal()                                       │ │
+│  ├── openUpdateRentModal()                                               │ │
+│  ├── openEndRentalModal()                                                │ │
+│  ├── openResidenceRentalHistoryModal()                                   │ │
+│  ├── openHouseholdRentalSummaryModal()                                   │ │
+│  ├── openRentPaymentModal()                                              │ │
+│  └── openResidenceRentalDetailsModal()                                   │ │
+│                                                                             │
+│  modals-residence-owner.js ─────────────────────────────────────────────┐ │
+│  ├── openResidenceOwnerDetailsModal()                                    │ │
+│  ├── openManageOwnedPropertiesModal()                                    │ │
+│  ├── openTransferOwnershipModal()                                        │ │
+│  └── openOwnerStatsModal()                                               │ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## Statistics
+## 9. RECURSION GUARDS
 
-### `ResidenceSystem.getResidenceStatistics(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets residence statistics |
-| **Parameters** | `locationId` (string, optional) |
-| **Returns** | `Object` - Statistics object |
-
-### `ResidenceSystem.getUnitStats(residenceId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets unit statistics for a residence |
-| **Parameters** | `residenceId` (string) |
-| **Returns** | `{ total, occupied, vacant, demolished, occupancyRate }` |
-
-### `ResidenceSystem.getLocationUnitStats(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets unit statistics for a location |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object` - Unit statistics |
+| Guard Name | Location | Purpose |
+|------------|----------|---------|
+| `_processingCommand` | household-commands.js | Prevent command re-entry |
+| `_processingQuery` | household-queries.js | Prevent query re-entry |
+| `_processingEconomy` | household-economy.js | Prevent economy re-entry |
+| `_processingTrade` | household-economy.js | Prevent trade re-entry |
+| `_processingAssignment` | household-assignment.js | Prevent assignment re-entry |
+| `_recordingHistory` | household-assignment.js | Prevent history re-entry |
+| `_processingService` | household-servant.js | Prevent service re-entry |
+| `_recordingServiceHistory` | household-servant.js | Prevent service history re-entry |
+| `_processingResidence` | residence-system.js | Prevent residence re-entry |
+| `_processingAssignment` | residence-system.js | Prevent assignment re-entry |
+| `_processingRentalModal` | modals-residence-rental.js | Prevent rental modal re-entry |
+| `_processingOwnerModal` | modals-residence-owner.js | Prevent owner modal re-entry |
+| `_processingModal` | modals-household.js | Prevent modal re-entry |
 
 ---
 
-## Bulk Operations
+## 10. ICON POLICY
 
-### `ResidenceSystem.bulkAssignUnits(residenceId, assignments, year)`
+All icons must come from `icons.js` via the `_getIcon()` function.
 
-| Property | Value |
-|----------|-------|
-| **Description** | Bulk assigns households to units |
-| **Parameters** | `residenceId` (string), `assignments` (Array), `year` (number) |
-| **Returns** | `{ success: Array, failed: Array, total: number }` |
-
----
-
-## Type Helpers
-
-### `ResidenceSystem.isMultiUnitResidence(residenceId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Checks if a residence is multi-unit |
-| **Parameters** | `residenceId` (string) |
-| **Returns** | `boolean` - True if multi-unit |
-
-### `ResidenceSystem.getAllResidenceTypes()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all residence types |
-| **Returns** | `Object` - Residence types |
-
-### `ResidenceSystem.getResidenceType(typeId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a residence type |
-| **Parameters** | `typeId` (string) |
-| **Returns** | `Object|null` - Residence type or null |
-
-### `ResidenceSystem.getAllResidenceConditions()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all residence conditions |
-| **Returns** | `Array` - Residence conditions |
-
-### `ResidenceSystem.getResidenceCondition(id)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a residence condition |
-| **Parameters** | `id` (string) |
-| **Returns** | `Object|null` - Condition or null |
+| Usage | Icon |
+|-------|------|
+| Household | HOUSEHOLD |
+| Member | PERSON |
+| Head | CROWN |
+| Department | CIRCLE_DOT |
+| Position | PERSON |
+| Staff | PERSON |
+| Residence | HOME |
+| Unit | SQUARE |
+| Vacant | CIRCLE_OUTLINE |
+| Occupied | CIRCLE_DOT |
+| Owner | CROWN |
+| Renter | PERSON |
+| Rent | COIN |
+| Edit | EDIT |
+| Delete | TRASH |
+| Warning | WARNING |
+| Success | CHECK_SIMPLE |
+| Location | LOCATION |
+| Wealth | COIN |
+| Food | CIRCLE_DOT |
+| Trade | ARROW_DOUBLE_H |
+| Enterprise | INDUSTRY |
 
 ---
 
-## Integration Functions
+## 11. INTEGRATION WITH OTHER SYSTEMS
 
-### `ResidenceSystem.householdHasResidence(householdId)`
+### Household ↔ Character Integration
 
-| Property | Value |
-|----------|-------|
-| **Description** | Checks if a household has a residence |
-| **Parameters** | `householdId` (string) |
-| **Returns** | `boolean` - True if has residence |
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Character → Household | `character.household` / `character.householdId` fields | ✅ Direct |
+| Character → Household | `character.householdHistory` array | ✅ Full history |
+| Household → Character | `household.members[]` array | ✅ Direct |
+| Deceased Characters | Remain in `household.members[]` | ✅ Preserved |
+| Previous Households | Always stay in `character.householdHistory` | ✅ Preserved |
 
-### `ResidenceSystem.getResidenceLocation(residenceId)`
+### Household ↔ Government Integration
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the location of a residence |
-| **Parameters** | `residenceId` (string) |
-| **Returns** | `Object|null` - Location or null |
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Government Salary → Household Wealth | Via `HouseholdEconomy.updateHouseholdWealth()` | ✅ Working |
+| Household Wealth → Government Tax | Via `HouseholdEconomy.updateHouseholdWealth()` | ✅ Working |
 
-### `ResidenceSystem.getHouseholdResidencesByLocation(householdId, locationId)`
+### Household ↔ Residence Integration
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a household's residences by location |
-| **Parameters** | `householdId` (string), `locationId` (string) |
-| **Returns** | `Array` - Residences |
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Household → Residence | `household.residenceId` field | ✅ Direct |
+| Household → Unit | `household.residenceUnitNumber` field | ✅ Direct |
+| Residence → Household | `residence.householdId` field | ✅ Direct |
+| Residence → Unit | `residence.units[]` array | ✅ Direct |
 
----
+### Household ↔ Residence Rental Integration (NEW)
 
-# 8. MODALS-HOUSEHOLD.JS
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Household → Owner | `residence.ownerId` field | ✅ Direct |
+| Household → Renter | `residence.renterId` field | ✅ Direct |
+| Rent Income → Owner Wealth | `HouseholdEconomy.calculateAnnualIncome()` | ✅ Integrated |
+| Rent Expense → Renter Wealth | `HouseholdEconomy.calculateAnnualExpenses()` | ✅ Integrated |
+| Owner → Properties | `residence-system.getResidencesByOwner()` | ✅ Query |
+| Renter → Properties | `residence-system.getResidencesByRenter()` | ✅ Query |
+| Total Rent Income | `residence-system.getTotalRentIncome()` | ✅ Query |
+| Total Rent Expenses | `residence-system.getTotalRentExpenses()` | ✅ Query |
 
-**PURPOSE:** UI modals for household management with enterprise section.
+### Household ↔ Enterprise Integration
 
-**DEPENDENCIES:**
-- `modals-core.js` - `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon`
-- `modals-household-selector.js` - `openHouseholdSelector`
-- `household-state.js` - `HouseholdState`
-- `household-commands.js` - `HouseholdCommands`
-- `household-queries.js` - `HouseholdQueries`
-- `accessors.js` - `getCharacterById`, `getCharacters`, `getPlaceById`, `getPlaces`, `getCurrentYear`
-
----
-
-## Modal Functions
-
-### `openCreateHouseholdModal(onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to create a new household |
-| **Parameters** | `onSuccess` (function) - Callback with created household |
-
-**Modal Fields:**
-- Household Name (required)
-- Location (dropdown)
-- Initial Wealth (number)
-- Initial Reputation (number)
-- Head of Household (character selector)
-- Notes (textarea)
-
-### `openEditHouseholdModal(householdId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to edit a household |
-| **Parameters** | `householdId` (string), `onSuccess` (function) |
-
-**Modal Fields:**
-- Household Name (required)
-- Location (dropdown)
-- Wealth (number)
-- Reputation (number)
-- Status (dropdown: active, vacant, abandoned, declining, deprecated)
-- Notes (textarea)
-
-### `openDeleteHouseholdModal(householdId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to delete a household |
-| **Parameters** | `householdId` (string), `onSuccess` (function) |
-
-**Modal Features:**
-- Shows member count
-- Shows enterprise count (if any)
-- Warning: Enterprises will be transferred to Crown
-- Option to remove from characters
-
-### `openHouseholdDetailsModal(householdId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal with household details and actions (includes enterprise section) |
-| **Parameters** | `householdId` (string), `onSuccess` (function) |
-
-**Modal Sections:**
-1. Header - Name, location, status, founding year
-2. Stats Grid - Members, Wealth, Reputation, Head
-3. Demographics - Male, Female, Children, Elders
-4. Residence - Current residence and unit
-5. Members List - With roles, ages, head indicator
-6. **Enterprise Section**:
-   - List of owned enterprises with profit/status
-   - Total profit and worker count
-   - Ownership type indicators (Public/Private)
-   - View All Enterprises button
-   - Create Enterprise button
-7. Notes
-8. Action Buttons - Edit, Manage Members, Departments, Process Year, Delete
-
-**Enterprise Section Features:**
-- Shows up to 5 enterprises with profit and status
-- Click on enterprise to view details
-- Total profit summary
-- Ownership type breakdown (Public/Private)
-- "View All" button opens enterprise list
-- "Create Enterprise" button opens create modal with household pre-selected
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Household → Enterprise | `household.enterprises[]` array | ✅ Direct |
+| Enterprise → Household | `enterprise.ownerId` field | ✅ Direct |
+| Enterprise Profit → Household Wealth | `HouseholdEconomy.calculateAnnualIncome()` | ✅ Integrated |
+| Enterprise Loss → Household Expenses | `HouseholdEconomy.calculateAnnualExpenses()` | ✅ Integrated |
+| Enterprise Transfer on Inheritance | `HouseholdAssignment.transferHouseholdToHeir()` | ✅ Integrated |
+| Enterprise Transfer on Merge | `HouseholdAssignment.mergeHouseholds()` | ✅ Integrated |
+| Enterprise Transfer on Split | `HouseholdAssignment.splitHousehold()` | ✅ Integrated |
+| Enterprise Transfer to Cadet | `HouseholdAssignment.createCadetBranch()` | ✅ Integrated |
+| Enterprise Cleanup on Delete | `HouseholdCommands.deleteHousehold()` | ✅ Integrated |
+| Enterprise Display in UI | `openHouseholdDetailsModal()` | ✅ Integrated |
 
 ---
 
-# 9. HOUSEHOLD DATA SCHEMA
+## 12. COMPLETE FUNCTION LIST
 
-## Complete Household Object Schema
+### household-state.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `getState(options)` | Query | Gets a snapshot of the current state |
+| `getHousehold(id)` | Query | Gets a single household by ID |
+| `getAllHouseholds(options)` | Query | Gets all households |
+| `getCharacterHousehold(id)` | Query | Gets the household a character belongs to |
+| `getHouseholdsByLocation(locationId, options)` | Query | Gets households by location |
+| `getHouseholdsByStatus(status, options)` | Query | Gets households by status |
+| `getHouseholdMembersWithCharacters(id)` | Query | Gets members with full character data |
+| `getHouseholdHead(id)` | Query | Gets the head of a household |
+| `getHouseholdStatus(id)` | Query | Gets the status of a household |
+| `getHouseholdNamePeriods(id)` | Query | Gets all name periods |
+| `getHouseholdNamePeriodForYear(id, year)` | Query | Gets name period for a year |
+| `editHouseholdNamePeriod(id, index, updates)` | Command | Edits a name period |
+| `deleteHouseholdNamePeriod(id, index)` | Command | Deletes a name period |
+| `associateHouseholdWithResidence(id, residenceId, options)` | Command | Associates with residence |
+| `disassociateHouseholdFromResidence(id, residenceId, reason, year)` | Command | Disassociates from residence |
+| `getHouseholdResidence(id)` | Query | Gets the residence of a household |
+| `getHouseholdsByResidence(residenceId)` | Query | Gets all households in a residence |
+| `getHouseholdEnterprises(id)` | Query | Gets enterprise IDs owned |
+| `getHouseholdEnterpriseHistory(id)` | Query | Gets enterprise history |
+| `getHouseholdEnterpriseProfitHistory(id, limit)` | Query | Gets enterprise profit history |
+| `getHouseholdEnterpriseValue(id)` | Query | Gets total enterprise value |
+| `trackEnterpriseProfit(id, enterpriseId, profit, year)` | Command | Tracks enterprise profit |
+| `getHouseholdEnterprisesWithData(id)` | Query | Gets enterprises with full data |
+| `addEnterpriseToHousehold(id, enterpriseId, year)` | Command | Adds enterprise to household |
+| `removeEnterpriseFromHousehold(id, enterpriseId, year)` | Command | Removes enterprise from household |
+| `transferEnterprisesToHousehold(fromId, toId, year)` | Command | Transfers enterprises |
+| `createHouseholdPosition(data)` | Command | Creates a household position |
+| `updateHouseholdPosition(positionId, updates)` | Command | Updates a household position |
+| `deleteHouseholdPosition(positionId, options)` | Command | Deletes a household position |
+| `getHouseholdPosition(positionId)` | Query | Gets a household position |
+| `getHouseholdPositions(options)` | Query | Gets household positions |
+| `assignCharacterToHouseholdPosition(positionId, characterId, options)` | Command | Assigns character to position |
+| `endHouseholdAssignment(assignmentId, endYear, reason)` | Command | Ends a household assignment |
+| `deleteHouseholdAssignment(assignmentId)` | Command | Deletes a household assignment |
+| `getAssignmentsForPosition(positionId, activeOnly)` | Query | Gets assignments for a position |
+| `getAssignmentsForCharacter(characterId, activeOnly)` | Query | Gets assignments for a character |
+| `getAssignmentsForHousehold(householdId, activeOnly)` | Query | Gets assignments for a household |
+| `updateHousehold(id, updates, options)` | Command | Updates a household (NEW) |
+| `getHouseholdWealth(id)` | Query | Gets household wealth (NEW) |
+| `updateHouseholdWealth(id, delta, reason)` | Command | Updates household wealth (NEW) |
+| `getUIState()` | Query | Gets the current UI state |
+| `setUIState(key, value, options)` | Command | Sets a UI state value |
+| `updateUIState(updates, options)` | Command | Updates multiple UI state values |
+| `refresh()` | Command | Refreshes state from masterData |
+| `invalidateCache()` | Command | Invalidates all caches |
+| `subscribe(callback)` | Command | Subscribes to state changes |
+
+### residence-system.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `createResidence(name, locationId, typeId, options)` | Command | Creates a new residence |
+| `getResidenceById(residenceId)` | Query | Gets a residence by ID |
+| `getResidences()` | Query | Gets all residences |
+| `getResidencesByLocation(locationId)` | Query | Gets residences by location |
+| `getResidencesByType(typeId)` | Query | Gets residences by type |
+| `getResidencesByStatus(status)` | Query | Gets residences by status |
+| `getResidencesByHousehold(householdId)` | Query | Gets residences by household |
+| `updateResidence(residenceId, updates)` | Command | Updates a residence |
+| `deleteResidence(residenceId, options)` | Command | Deletes a residence |
+| `addResidenceHistory(residenceId, action, details, actorId)` | Command | Adds history entry |
+| `getResidenceHistory(residenceId, limit)` | Query | Gets history entries |
+| `addResidenceTimelineEvent(residenceId, event)` | Command | Adds timeline event |
+| `getResidenceTimeline(residenceId, limit)` | Query | Gets timeline events |
+| `getResidenceAssociationHistory(residenceId)` | Query | Gets association history |
+| `endResidenceAssociation(residenceId, householdId, endedYear, reason)` | Command | Ends association |
+| `getResidenceNameHistory(residenceId)` | Query | Gets name history |
+| `getResidenceCurrentNameInfo(residenceId)` | Query | Gets current name info |
+| `getResidenceOriginalName(residenceId)` | Query | Gets original name |
+| `getResidenceNameChangeCount(residenceId)` | Query | Gets name change count |
+| `updateResidenceNameWithHistory(residenceId, newName, options)` | Command | Updates name with history |
+| `getFormattedResidenceNameHistory(residenceId, limit)` | Query | Gets formatted name history |
+| `addResidenceUnit(residenceId, options)` | Command | Adds a unit |
+| `removeResidenceUnit(residenceId, unitNumber, options)` | Command | Removes a unit |
+| `getResidenceUnits(residenceId)` | Query | Gets all units |
+| `getResidenceUnit(residenceId, unitNumber)` | Query | Gets a specific unit |
+| `getVacantUnits(residenceId)` | Query | Gets vacant units |
+| `getOccupiedUnits(residenceId)` | Query | Gets occupied units |
+| `assignHouseholdToUnit(residenceId, unitNumber, householdId, householdName, year, options)` | Command | Assigns household to unit |
+| `markUnitVacant(residenceId, unitNumber, reason, year)` | Command | Marks unit vacant |
+| `demolishUnit(residenceId, unitNumber, reason, year)` | Command | Demolishes a unit |
+| `getVacantResidences(locationId)` | Query | Gets vacant residences |
+| `markResidenceVacant(residenceId, reason, year)` | Command | Marks residence vacant |
+| `getResidenceVacancyDetails(residenceId)` | Query | Gets vacancy details |
+| `assignHouseholdToVacantResidence(residenceId, householdId, householdName, year, options)` | Command | Assigns household to vacant residence |
+| `calculateRepairCost(residence, targetCondition)` | Query | Calculates repair cost |
+| `rehabilitateResidence(residenceId, targetCondition, year)` | Command | Rehabilitates a residence |
+| `getResidenceRecommendations(residenceId)` | Query | Gets recommendations |
+| `getHouseholdUnits(householdId)` | Query | Gets units occupied by a household |
+| `getHouseholdPrimaryResidence(householdId)` | Query | Gets primary residence |
+| `getHouseholdUnitCount(householdId)` | Query | Gets unit count |
+| `getResidenceHouseholds(residenceId)` | Query | Gets households in residence |
+| `getResidenceCapacity(residenceId)` | Query | Gets capacity |
+| `getAvailableCapacity(residenceId)` | Query | Gets available capacity |
+| `hasAvailableUnits(residenceId)` | Query | Checks if units available |
+| `getRandomAvailableUnit(residenceId)` | Query | Gets random available unit |
+| `getResidenceStatistics(locationId)` | Query | Gets residence statistics |
+| `getUnitStats(residenceId)` | Query | Gets unit statistics |
+| `getLocationUnitStats(locationId)` | Query | Gets location unit statistics |
+| `addResidenceStaffPosition(residenceId, data)` | Command | Adds staff position |
+| `removeResidenceStaffPosition(residenceId, positionId, options)` | Command | Removes staff position |
+| `getResidenceStaffPositions(residenceId, options)` | Query | Gets staff positions |
+| `assignCharacterToResidenceStaffPosition(residenceId, positionId, characterId, options)` | Command | Assigns character to staff position |
+| `endResidenceStaffAssignment(residenceId, assignmentId, endYear, reason)` | Command | Ends staff assignment |
+| `getResidenceStaffAssignments(residenceId, options)` | Query | Gets staff assignments |
+| `demolishResidence(residenceId, reason, year, options)` | Command | Demolishes a residence |
+| `getDemolishedResidences(options)` | Query | Gets demolished residences |
+| `getResidenceDamageHistory(residenceId, limit)` | Query | Gets damage history |
+| `getResidenceDemolitionStats(locationId)` | Query | Gets demolition stats |
+| **RENTAL FUNCTIONS** | | |
+| `setResidenceOwner(residenceId, ownerType, ownerId, options)` | Command | Sets the owner of a residence |
+| `getResidenceOwner(residenceId)` | Query | Gets the owner of a residence |
+| `setResidenceRenter(residenceId, renterType, renterId, rentAmount, options)` | Command | Sets the renter with annual rent |
+| `getResidenceRenter(residenceId)` | Query | Gets the renter of a residence |
+| `endResidenceRental(residenceId, endYear, reason)` | Command | Ends a rental agreement |
+| `updateResidenceRent(residenceId, newRentAmount, effectiveYear, reason)` | Command | Updates annual rent amount |
+| `getResidenceRentalHistory(residenceId, limit)` | Query | Gets rental history |
+| `getResidencesByOwner(ownerId, ownerType)` | Query | Gets residences owned by an owner |
+| `getResidencesByRenter(renterId, renterType)` | Query | Gets residences rented by a renter |
+| `getTotalRentIncome(ownerId, ownerType)` | Query | Gets total annual rent income for an owner |
+| `getTotalRentExpenses(renterId, renterType)` | Query | Gets total annual rent expenses for a renter |
+| `recordRentPayment(residenceId, renterId, amount, year)` | Command | Records a rent payment |
+| `getRentPayments(residenceId, limit)` | Query | Gets rent payment history |
+
+---
+
+## 13. HOUSEHOLD DATA SCHEMA
+
+### Household Object
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -2217,7 +1112,7 @@ js/core/modals/
 | `debt` | number | Current debt |
 | `powerScore` | number | Power/influence score |
 | `foundedYear` | number | Year founded |
-| `status` | string | 'active', 'vacant', 'abandoned', 'declining', 'deprecated', 'bankrupt' |
+| `status` | string | 'active', 'vacant', 'abandoned', 'declining', 'deprecated', 'bankrupt', 'destroyed' |
 | `nameHistory` | array | Array of name change entries |
 | `currentNameSince` | number | Year current name adopted |
 | `eventLog` | array | Array of event entries |
@@ -2231,119 +1126,12 @@ js/core/modals/
 | `residenceUnitNumber` | number | Unit number |
 | `residenceNotes` | string | Residence association notes |
 | `residenceHistory` | array | Residence association history |
-| **`enterprises`** | **array** | **Array of enterprise IDs** |
-| **`enterpriseHistory`** | **array** | **Array of { enterpriseId, year, action }** |
+| `enterprises` | array | Array of enterprise IDs |
+| `enterpriseHistory` | array | Array of { enterpriseId, year, action } |
 | `economy` | object | Economy data |
-| `criminalCount` | number | Number of criminal members |
-| `victimCount` | number | Number of victims |
-| `executedCount` | number | Number of executions |
-| `criminalMembers` | array | Criminal member IDs |
-| `victimMembers` | array | Victim member IDs |
-| `crimeHistory` | array | Crime history entries |
-| `vendettaCount` | number | Total vendettas |
-| `activeVendettaCount` | number | Active vendettas |
-| `vendettas` | array | Vendetta entries |
-| `alliances` | array | Alliance entries |
-| `vacancyHistory` | array | Vacancy history entries |
-| `isVacant` | boolean | Vacant flag |
-| `isDemolished` | boolean | Demolished flag |
-| `vacantYear` | number | Year became vacant |
-| `vacantReason` | string | Reason for vacancy |
-
----
-
-## Economy Object Schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `wealth` | number | Current wealth |
-| `debt` | number | Current debt |
 | `resources` | object | { food, livestock, goods } |
-| `incomeSources` | array | Income source entries |
-| `expenses` | array | Expense entries |
-| `economicTierId` | string | Tier ID |
-| `lastProcessedYear` | number | Last processed year |
-| `salaryIncome` | number | Current year salary income |
-| `salaryIncomeHistory` | array | Historical salary income |
-| `totalSalaries` | number | Total salaries received |
-| `salaryIncomeThisYear` | number | This year's salary income |
-| `tuitionExpenses` | number | Current year tuition expenses |
-| `tuitionExpensesHistory` | array | Historical tuition expenses |
-| `tuitionExpensesThisYear` | number | This year's tuition expenses |
-| `schoolProfits` | number | Current year school profits |
-| `schoolProfitHistory` | array | Historical school profits |
-| `schoolProfitsThisYear` | number | This year's school profits |
-| `transactions` | array | Transaction history |
-| `resourceHistory` | array | Resource change history |
-| `trades` | array | Trade history |
 
----
-
-## Member Object Schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `characterId` | string | Character ID |
-| `characterName` | string | Character full name |
-| `type` | string | 'family' or 'staff' |
-| `departmentId` | string | Department ID |
-| `role` | string | Role/title |
-| `isHead` | boolean | Head flag |
-| `joinedYear` | number | Year joined |
-| `headSince` | number | Year became head |
-| `notes` | string | Notes |
-
----
-
-## Department Object Schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Unique identifier |
-| `name` | string | Department name |
-| `headId` | string | Head character ID |
-| `headName` | string | Head character name |
-| `createdAt` | number | Creation timestamp |
-
----
-
-## Household Position Schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Unique identifier |
-| `name` | string | Position name |
-| `householdId` | string | Household ID |
-| `departmentId` | string | Department ID |
-| `requiredRoleId` | string | Required role ID |
-| `minSkillLevel` | number | Minimum skill level |
-| `description` | string | Description |
-| `priority` | number | Priority (lower = higher) |
-| `createdAt` | number | Creation year |
-| `updatedAt` | number | Update year |
-
----
-
-## Household Assignment Schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Unique identifier |
-| `positionId` | string | Position ID |
-| `characterId` | string | Character ID |
-| `householdId` | string | Household ID |
-| `startYear` | number | Start year |
-| `endYear` | number | End year |
-| `title` | string | Custom title |
-| `notes` | string | Notes |
-| `roleIdAtAssignment` | string | Role ID at assignment time |
-| `skillLevelAtAssignment` | number | Skill level at assignment |
-| `createdAt` | number | Creation timestamp |
-| `updatedAt` | number | Update timestamp |
-
----
-
-## Residence Object Schema
+### Residence Object
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -2384,235 +1172,26 @@ js/core/modals/
 | `staffAssignments` | array | Staff assignment objects |
 | `createdAt` | number | Creation timestamp |
 | `lastUpdated` | number | Last update timestamp |
-
----
-
-## Unit Object Schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Unique identifier |
-| `unitNumber` | number | Unit number |
-| `householdId` | string | Household ID |
-| `householdName` | string | Household name |
-| `isVacant` | boolean | Vacant flag |
-| `isDemolished` | boolean | Demolished flag |
-| `assignedYear` | number | Assignment year |
-| `vacantYear` | number | Year became vacant |
-| `notes` | string | Notes |
-| `associationHistory` | array | Association history |
-| `staffAssignments` | array | Staff assignments |
-
----
-
-# 10. DEPENDENCY MAP
-
-## Core Dependencies
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    CORE DEPENDENCIES                                       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  modals-core.js ─────────────────────────────────────────────────────────┐ │
-│  ├── openModal()                                                         │ │
-│  ├── closeTopModal()                                                     │ │
-│  ├── _escapeHtml()                                                       │ │
-│  ├── _showToast()                                                        │ │
-│  ├── _getIcon()                                                          │ │
-│  └── _getCurrentYear()                                                   │ │
-│                                                                             │
-│  accessors.js ──────────────────────────────────────────────────────────┐ │
-│  ├── getCharacterById()                                                  │ │
-│  ├── getCharacters()                                                     │ │
-│  ├── getPlaceById()                                                      │ │
-│  ├── getPlaces()                                                         │ │
-│  ├── getCurrentYear()                                                    │ │
-│  └── getLocationTypeById()                                               │ │
-│                                                                             │
-│  storage.js ────────────────────────────────────────────────────────────┐ │
-│  └── saveMasterData()                                                    │ │
-│                                                                             │
-│  ids.js ────────────────────────────────────────────────────────────────┐ │
-│  └── generateId()                                                        │ │
-│                                                                             │
-│  role-system.js ────────────────────────────────────────────────────────┐ │
-│  └── getRoleById()                                                       │ │
-│                                                                             │
-│  industry-system.js ────────────────────────────────────────────────────┐ │
-│  ├── IndustryState.getEnterprise()                                       │ │
-│  ├── IndustryCommands.updateEnterprise()                                 │ │
-│  └── IndustryQueries.getEnterpriseSummary()                              │ │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-## Household System Dependencies
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    HOUSEHOLD SYSTEM DEPENDENCIES                           │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  household-state.js ─────────────────────────────────────────────────────┐ │
-│  ├── accessors.js                                                        │ │
-│  └── storage.js                                                          │ │
-│                                                                             │
-│  household-commands.js ─────────────────────────────────────────────────┐ │
-│  ├── household-state.js                                                  │ │
-│  ├── household-queries.js                                                │ │
-│  ├── accessors.js                                                        │ │
-│  └── storage.js                                                          │ │
-│                                                                             │
-│  household-queries.js ──────────────────────────────────────────────────┐ │
-│  ├── household-state.js                                                  │ │
-│  ├── accessors.js                                                        │ │
-│  └── industry-queries.js (optional)                                      │ │
-│                                                                             │
-│  household-economy.js ──────────────────────────────────────────────────┐ │
-│  ├── household-state.js                                                  │ │
-│  ├── household-commands.js                                               │ │
-│  ├── household-queries.js                                                │ │
-│  └── accessors.js                                                        │ │
-│                                                                             │
-│  household-assignment.js ───────────────────────────────────────────────┐ │
-│  ├── household-state.js                                                  │ │
-│  ├── household-commands.js                                               │ │
-│  ├── household-queries.js                                                │ │
-│  ├── household-economy.js                                                │ │
-│  └── accessors.js                                                        │ │
-│                                                                             │
-│  household-servant.js ──────────────────────────────────────────────────┐ │
-│  ├── household-state.js                                                  │ │
-│  ├── household-commands.js                                               │ │
-│  ├── household-queries.js                                                │ │
-│  ├── household-economy.js                                                │ │
-│  └── accessors.js                                                        │ │
-│                                                                             │
-│  residence-system.js ───────────────────────────────────────────────────┐ │
-│  ├── household-state.js                                                  │ │
-│  ├── household-commands.js                                               │ │
-│  ├── household-queries.js                                                │ │
-│  └── accessors.js                                                        │ │
-│                                                                             │
-│  modals-household.js ───────────────────────────────────────────────────┐ │
-│  ├── modals-core.js                                                      │ │
-│  ├── modals-household-selector.js                                        │ │
-│  ├── household-state.js                                                  │ │
-│  ├── household-commands.js                                               │ │
-│  ├── household-queries.js                                                │ │
-│  └── accessors.js                                                        │ │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-# 11. RECURSION GUARDS
-
-| Guard Name | Location | Purpose |
-|------------|----------|---------|
-| `_processingCommand` | household-commands.js | Prevent command re-entry |
-| `_processingQuery` | household-queries.js | Prevent query re-entry |
-| `_processingEconomy` | household-economy.js | Prevent economy re-entry |
-| `_processingTrade` | household-economy.js | Prevent trade re-entry |
-| `_processingAssignment` | household-assignment.js | Prevent assignment re-entry |
-| `_recordingHistory` | household-assignment.js | Prevent history re-entry |
-| `_processingService` | household-servant.js | Prevent service re-entry |
-| `_recordingServiceHistory` | household-servant.js | Prevent service history re-entry |
-| `_processingResidence` | residence-system.js | Prevent residence re-entry |
-| `_processingAssignment` | residence-system.js | Prevent assignment re-entry |
-| `_processingModal` | modals-household.js | Prevent modal re-entry |
-
----
-
-# 12. ICON POLICY
-
-All icons must come from `icons.js` via the `_getIcon()` function.
-
-## Available Icons for Household/Residence System
-
-| Usage | Icon |
-|-------|------|
-| Household | HOUSEHOLD |
-| Member | PERSON |
-| Head | CROWN |
-| Department | CIRCLE_DOT |
-| Position | PERSON |
-| Staff | PERSON |
-| Residence | HOME |
-| Unit | SQUARE |
-| Vacant | CIRCLE_OUTLINE |
-| Occupied | CIRCLE_DOT |
-| Edit | EDIT |
-| Delete | TRASH |
-| Warning | WARNING |
-| Success | CHECK_SIMPLE |
-| Location | LOCATION |
-| Wealth | COIN |
-| Food | CIRCLE_DOT |
-| Trade | ARROW_DOUBLE_H |
-| Enterprise | INDUSTRY |
-
----
-
-# 13. INTEGRATION WITH OTHER SYSTEMS
-
-## Household ↔ Character Integration
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Character → Household | `character.household` / `character.householdId` fields | ✅ Direct |
-| Character → Household | `character.householdHistory` array | ✅ Full history |
-| Household → Character | `household.members[]` array | ✅ Direct |
-| Deceased Characters | Remain in `household.members[]` | ✅ Preserved |
-| Previous Households | Always stay in `character.householdHistory` | ✅ Preserved |
-
-## Household ↔ Government Integration
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Government Salary → Household Wealth | Via `HouseholdEconomy.updateHouseholdWealth()` | ✅ Working |
-| Household Wealth → Government Tax | Via `HouseholdEconomy.updateHouseholdWealth()` | ✅ Working |
-
-## Household ↔ Residence Integration
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Household → Residence | `household.residenceId` field | ✅ Direct |
-| Household → Unit | `household.residenceUnitNumber` field | ✅ Direct |
-| Residence → Household | `residence.householdId` field | ✅ Direct |
-| Residence → Unit | `residence.units[]` array | ✅ Direct |
-
-## Household ↔ Enterprise Integration
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Household → Enterprise | `household.enterprises[]` array | ✅ Direct |
-| Enterprise → Household | `enterprise.ownerId` field | ✅ Direct |
-| Enterprise Profit → Household Wealth | `HouseholdEconomy.calculateAnnualIncome()` | ✅ Integrated |
-| Enterprise Loss → Household Expenses | `HouseholdEconomy.calculateAnnualExpenses()` | ✅ Integrated |
-| Enterprise Transfer on Inheritance | `HouseholdAssignment.transferHouseholdToHeir()` | ✅ Integrated |
-| Enterprise Transfer on Merge | `HouseholdAssignment.mergeHouseholds()` | ✅ Integrated |
-| Enterprise Transfer on Split | `HouseholdAssignment.splitHousehold()` | ✅ Integrated |
-| Enterprise Transfer to Cadet | `HouseholdAssignment.createCadetBranch()` | ✅ Integrated |
-| Enterprise Cleanup on Delete | `HouseholdCommands.deleteHousehold()` | ✅ Integrated |
-| Enterprise Display in UI | `openHouseholdDetailsModal()` | ✅ Integrated |
+| **RENTAL FIELDS** | | |
+| `ownerType` | string | 'household' or 'character' |
+| `ownerId` | string | Owner ID |
+| `ownerName` | string | Owner display name |
+| `ownerSince` | number | Year owner acquired |
+| `renterType` | string | 'household' or 'character' |
+| `renterId` | string | Renter ID |
+| `renterName` | string | Renter display name |
+| `rentAmount` | number | Annual rent in gold |
+| `rentStartYear` | number | Year rental started |
+| `rentEffectiveYear` | number | Year current rent took effect |
+| `rentalStatus` | string | 'owner_occupied', 'rented', 'vacant' |
+| `ownershipHistory` | array | Array of ownership history entries |
+| `rentalHistory` | array | Array of rental history entries |
+| `rentPayments` | array | Array of rent payment entries |
 
 ---
 
 # END OF DOCUMENTATION
 
-**Generated:** 2026-07-12
-**Version:** 3.0
-**File Count:** 8 core modules + 11 modal files
-**Key Updates:** 
-- Enterprise Integration (v3.0)
-- Household enterprise ownership tracking
-- Enterprise profit/loss in household economy
-- Enterprise transfer on inheritance, merge, split, cadet branch
-- Enterprise cleanup on household deletion
-- Enterprise section in household detail modal
-- Ownership type indicators (Public/Private)
-- Enterprise profit history tracking
-- Enterprise value calculation
+**Generated:** 2026-07-17
+**Version:** 4.0
+**File Count:** 8 core modules + 13 modal files

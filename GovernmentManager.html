@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
+    <title>Government Manager</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,300;1,400&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/common.css">
+    <link rel="stylesheet" href="css/worldManager.css">
+	    <link rel="stylesheet" href="css/selectors.css">
+			    <link rel="stylesheet" href="css/location-sidebar.css">
+							    <link rel="stylesheet" href="css/gov-manager.css">
+</head>
+<body>
+
+<div class="topbar">
+    <button id="menuToggle" class="burger-menu" aria-label="Toggle menu">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 6h18M3 12h18M3 18h18"/>
+        </svg>
+    </button>
+    <div class="title" id="govManagerTitle"></div>
+    <div class="spacer"></div>
+    <button id="addGovTypeBtn" class="tb-btn primary"></button>
+    <button id="addDeptBtn" class="tb-btn primary"></button>
+    <button id="importBtn" class="tb-btn"></button>
+    <button id="exportBtn" class="tb-btn primary"></button>
+    <button id="refreshBtn" class="tb-btn"></button>
+</div>
+
+<div class="world-app">
+    <!-- Location Sidebar -->
+    <div class="locations-sidebar" id="locationsSidebar">
+        <div class="sidebar-header">
+            <h3 id="sidebarTitle"></h3>
+        </div>
+        <div class="place-list" id="placeList">
+            <div class="loading" id="loadingText">Loading locations...</div>
+        </div>
+    </div>
+    <div id="sidebarOverlay" class="sidebar-overlay"></div>
+    
+    <!-- Main Panel -->
+    <div class="main-panel">
+        <!-- Tabs - Unified -->
+        <div class="panel-tabs" id="tabContainer">
+            <button class="tab-btn active" data-tab="government" id="tabGovernment"></button>
+            <button class="tab-btn" data-tab="governmentOverview" id="tabOverview"></button>
+            <button class="tab-btn" data-tab="governmentTypes" id="tabTypes"></button>
+            <button class="tab-btn" data-tab="governmentStructure" id="tabStructure"></button>
+        </div>
+        <div class="panel-content" id="panelContent">
+            <div class="empty-state" id="emptyStateText">Select a location from the sidebar</div>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- CORE - NO SYSTEM DEPENDENCIES                                 -->
+<!-- ============================================================ -->
+
+<!-- 1. Constants (MUST BE FIRST) -->
+<script src="js/core/constants.js"></script>
+
+<!-- 2. Pure utilities (no dependencies) -->
+<script src="js/core/randomness.js"></script>
+<script src="js/core/collections.js"></script>
+<script src="js/core/validation.js"></script>
+<script src="js/core/formatting.js"></script>
+<script src="js/core/time.js"></script>
+
+<!-- 3. ID generation (depends on randomness) -->
+<script src="js/core/ids.js"></script>
+
+<!-- 4. Data layer -->
+<script src="js/core/storage.js"></script>
+<script src="js/core/accessors.js"></script>
+<script src="js/core/world.js"></script>
+<script src="js/core/names.js"></script>
+
+<!-- 5. State & integrity -->
+<script src="js/core/state.js"></script>
+<script src="js/core/integrity.js"></script>
+
+<!-- 6. Icons & UI -->
+<script src="js/core/icons.js"></script>
+<script src="js/core/ui.js"></script>
+<script src="js/core/collapsible.js"></script>
+<script src="js/core/responsive.js"></script>
+
+<!-- 7. Core modals (PURE - no system deps) -->
+<script src="js/core/modals-core.js"></script>
+
+<!-- 8. Utilities -->
+<script src="js/core/exportUtils.js"></script>
+
+<!-- 9. QUERY HELPERS - Core query utilities (NO system deps) -->
+<script src="js/core/query-helpers.js"></script>
+
+<!-- ============================================================ -->
+<!-- SELECTORS - Depend on core only                              -->
+<!-- ============================================================ -->
+
+<!-- 10. SELECTOR BASE - Shared selector utilities -->
+<script src="js/selectors/selector-base.js"></script>
+
+<!-- 11. SELECTOR COMPONENTS -->
+<script src="js/selectors/locationDropdown.js"></script>
+<script src="js/selectors/modals-char-selector.js"></script>
+<script src="js/selectors/modals-household-selector.js"></script>
+
+<!-- ============================================================ -->
+<!-- CHARACTER SYSTEM                                             -->
+<!-- ============================================================ -->
+
+<script src="js/character/character-state.js"></script>
+<script src="js/character/character-commands.js"></script>
+<script src="js/character/character-queries.js"></script>
+<script src="js/character/character-lifecycle.js"></script>
+<script src="js/character/character-ui-list.js"></script>
+<script src="js/character/modals-character.js"></script>
+
+<!-- ============================================================ -->
+<!-- LOCATION SYSTEM                                              -->
+<!-- ============================================================ -->
+
+<script src="js/location/location-state.js"></script>
+<script src="js/location/location-commands.js"></script>
+<script src="js/location/location-queries.js"></script>
+<script src="js/location/location-hierarchy.js"></script>
+<script src="js/location/location-movement.js"></script>
+<script src="js/location/location-ui-list.js"></script>
+<script src="js/location/modals-location.js"></script>
+<script src="js/location/modals-moves.js"></script>
+
+<!-- ============================================================ -->
+<!-- RANK SYSTEM                                                  -->
+<!-- ============================================================ -->
+
+<script src="js/ranks/rank-state.js"></script>
+<script src="js/ranks/rank-commands.js"></script>
+<script src="js/ranks/rank-queries.js"></script>
+<script src="js/ranks/rank-assignments.js"></script>
+<script src="js/ranks/modals-rank.js"></script>
+
+<!-- ============================================================ -->
+<!-- ROLE SYSTEM                                                  -->
+<!-- ============================================================ -->
+
+<script src="js/roles/role-state.js"></script>
+<script src="js/roles/role-commands.js"></script>
+<script src="js/roles/role-queries.js"></script>
+<script src="js/roles/modals-roles.js"></script>
+
+<!-- ============================================================ -->
+<!-- HOUSEHOLD SYSTEM                                             -->
+<!-- ============================================================ -->
+
+<script src="js/households/household-state.js"></script>
+<script src="js/households/household-queries.js"></script>
+<script src="js/households/household-assignment.js"></script>
+<script src="js/households/household-economy.js"></script>
+<script src="js/households/modals-household.js"></script>
+<script src="js/households/modals-residence.js"></script>
+
+<!-- ============================================================ -->
+<!-- SETTLEMENT SYSTEM                                            -->
+<!-- ============================================================ -->
+
+<script src="js/settlement/settlement-state.js"></script>
+<script src="js/settlement/settlement-queries.js"></script>
+<script src="js/settlement/settlement-commands-core.js"></script>
+<script src="js/settlement/settlement-prosperity.js"></script>
+<script src="js/settlement/settlement-economy-core.js"></script>
+<script src="js/settlement/settlement-government.js"></script>
+<script src="js/settlement/modals-settlement-core.js"></script>
+<script src="js/settlement/modals-settlement-economy.js"></script>
+
+<!-- ============================================================ -->
+<!-- GOVERNMENT SYSTEM                                            -->
+<!-- ============================================================ -->
+
+<script src="js/government/government-state.js"></script>
+<script src="js/government/government-commands.js"></script>
+<script src="js/government/government-queries.js"></script>
+<script src="js/government/government-economy.js"></script>
+<script src="js/government/government-assignment.js"></script>
+<script src="js/government/government-system.js"></script>
+<script src="js/government/government-ui-list.js"></script>
+
+<!-- ============================================================ -->
+<!-- GOVERNMENT MODALS                                            -->
+<!-- ============================================================ -->
+
+<script src="js/government/modals-government.js"></script>
+<script src="js/government/modals-government-assign.js"></script>
+<script src="js/government/modals-government-departments.js"></script>
+<script src="js/government/modals-government-positions.js"></script>
+<script src="js/government/modals-government-economy.js"></script>
+
+<!-- ============================================================ -->
+<!-- GOVERNMENT UI (UI Tabs)                                      -->
+<!-- ============================================================ -->
+
+<script src="js/ui/gm-government-tab-ui.js"></script>
+<script src="js/ui/gm-government-overview-tab-ui.js"></script>
+<script src="js/ui/gm-government-type-tab-ui.js"></script>
+<script src="js/ui/gm-government-structure-tab-ui.js"></script>
+
+<!-- ============================================================ -->
+<!-- TREE UI (Location Tree)                                      -->
+<!-- ============================================================ -->
+
+<script src="js/core/tree/locationsListUI.js"></script>
+
+<!-- ============================================================ -->
+<!-- ORCHESTRATORS - Depend on everything                         -->
+<!-- ============================================================ -->
+
+<script src="js/events/annualProcessing.js"></script>
+
+<!-- ============================================================ -->
+<!-- GOVERNMENT MANAGER - MAIN CONTROLLER                         -->
+<!-- ============================================================ -->
+
+<script>
+(function() {
+    'use strict';
+
+    // =============================================================================
+    // ICON HELPERS - Uses icons.js
+    // =============================================================================
+    
+    function getIcon(name) {
+        if (window.Icons && window.Icons[name]) {
+            return window.Icons[name];
+        }
+        return '<svg viewBox="0 0 20 20" width="1em" height="1em" style="display:inline-block;fill:currentColor;stroke:currentColor;vertical-align:middle;"><circle cx="10" cy="10" r="5.71" fill="currentColor"/></svg>';
+    }
+    
+    function iconWithText(icon, text) {
+        if (!icon) return text || '';
+        return '<span style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle;">' + icon + '<span>' + (text || '') + '</span></span>';
+    }
+    
+    var ICONS = {
+        CROWN: getIcon('CROWN'),
+        LOCATION: getIcon('LOCATION'),
+        IMPORT: getIcon('ARROW_RIGHT'),
+        EXPORT: getIcon('ARROW_RIGHT'),
+        REFRESH: getIcon('REFRESH'),
+        PLUS: getIcon('PLUS'),
+        GEAR: getIcon('GEAR'),
+        CHECK: getIcon('CHECK_SIMPLE'),
+        WARNING: getIcon('WARNING'),
+        MENU: getIcon('CIRCLE_DOT'),
+        OVERVIEW: getIcon('CENSUS'),
+        STRUCTURE: getIcon('FAMILY_TREE')
+    };
+
+    // =============================================================================
+    // STATE
+    // =============================================================================
+
+    var currentPlaceId = null;
+    var currentTab = 'government';
+    var isInitialized = false;
+    var currentAbortController = null;
+    var isSidebarOpen = false;
+
+    // =============================================================================
+    // HELPER FUNCTIONS
+    // =============================================================================
+
+    function showToast(msg, type) {
+        if (typeof window.showToast === 'function') {
+            window.showToast(msg, type);
+        } else if (typeof window.showToastMessage === 'function') {
+            window.showToastMessage(msg, type);
+        } else if (typeof window._showToast === 'function') {
+            window._showToast(msg, type);
+        }
+    }
+
+    function getPlaceById(placeId) {
+        return typeof window.getPlaceById === 'function' ? window.getPlaceById(placeId) : null;
+    }
+
+    function getPlaces() {
+        return typeof window.getPlaces === 'function' ? window.getPlaces() : [];
+    }
+
+    function cleanupEventListeners() {
+        if (currentAbortController) {
+            currentAbortController.abort();
+            currentAbortController = null;
+        }
+    }
+
+    // =============================================================================
+    // SETUP UI TEXT WITH ICONS
+    // =============================================================================
+
+    function setupUIText() {
+        var title = document.getElementById('govManagerTitle');
+        if (title) title.innerHTML = iconWithText(ICONS.CROWN, ' GOVERNMENT MANAGER');
+        
+        var sidebarTitle = document.getElementById('sidebarTitle');
+        if (sidebarTitle) sidebarTitle.innerHTML = iconWithText(ICONS.LOCATION, ' LOCATION HIERARCHY');
+        
+        var addGovTypeBtn = document.getElementById('addGovTypeBtn');
+        if (addGovTypeBtn) addGovTypeBtn.innerHTML = iconWithText(ICONS.PLUS, ' Gov Type');
+        
+        var addDeptBtn = document.getElementById('addDeptBtn');
+        if (addDeptBtn) addDeptBtn.innerHTML = iconWithText(ICONS.PLUS, ' Department');
+        
+        var importBtn = document.getElementById('importBtn');
+        if (importBtn) importBtn.innerHTML = iconWithText(ICONS.IMPORT, ' Import');
+        
+        var exportBtn = document.getElementById('exportBtn');
+        if (exportBtn) exportBtn.innerHTML = iconWithText(ICONS.EXPORT, ' Export');
+        
+        var refreshBtn = document.getElementById('refreshBtn');
+        if (refreshBtn) refreshBtn.innerHTML = iconWithText(ICONS.REFRESH, ' Refresh');
+        
+        var loadingText = document.getElementById('loadingText');
+        if (loadingText) loadingText.textContent = 'Loading locations...';
+        
+        var emptyState = document.getElementById('emptyStateText');
+        if (emptyState) emptyState.textContent = 'Select a location from the sidebar';
+        
+        var tabGovernment = document.getElementById('tabGovernment');
+        if (tabGovernment) tabGovernment.innerHTML = iconWithText(ICONS.CROWN, ' Government');
+        
+        var tabOverview = document.getElementById('tabOverview');
+        if (tabOverview) tabOverview.innerHTML = iconWithText(ICONS.OVERVIEW, ' Overview');
+        
+        var tabTypes = document.getElementById('tabTypes');
+        if (tabTypes) tabTypes.innerHTML = iconWithText(ICONS.GEAR, ' Gov Types');
+        
+        var tabStructure = document.getElementById('tabStructure');
+        if (tabStructure) tabStructure.innerHTML = iconWithText(ICONS.STRUCTURE, ' Structure');
+    }
+
+    // =============================================================================
+    // LOCATION TREE
+    // =============================================================================
+
+    function setupLocationTree() {
+        var container = document.getElementById('placeList');
+        if (!container) return;
+        
+        if (typeof window.renderLocationTree === 'function') {
+            window.renderLocationTree('placeList', function(placeId) {
+                if (placeId) {
+                    currentPlaceId = placeId;
+                    renderCurrentTab();
+                    if (typeof window.selectPlaceInTree === 'function') {
+                        window.selectPlaceInTree(placeId);
+                    }
+                    if (window.innerWidth <= 768) {
+                        closeSidebar();
+                    }
+                }
+            });
+        } else if (typeof window.LocationUI !== 'undefined' && 
+                   typeof window.LocationUI.renderLocationTree === 'function') {
+            window.LocationUI.renderLocationTree('placeList', function(placeId) {
+                if (placeId) {
+                    currentPlaceId = placeId;
+                    renderCurrentTab();
+                    if (window.innerWidth <= 768) {
+                        closeSidebar();
+                    }
+                }
+            });
+        } else {
+            // Fallback: simple list of locations
+            var places = getPlaces();
+            if (places && places.length > 0) {
+                var html = '<div class="place-tree">';
+                for (var i = 0; i < places.length; i++) {
+                    var p = places[i];
+                    var isSelected = (p.id === currentPlaceId);
+                    html += '<div class="place-item' + (isSelected ? ' selected' : '') + '" data-place-id="' + p.id + '" style="padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--border);' + (isSelected ? 'background:rgba(var(--accent-rgb),0.15);' : '') + '">' +
+                        '<span>' + (p.displayName || p.name || 'Unknown') + '</span>' +
+                        '</div>';
+                }
+                html += '</div>';
+                container.innerHTML = html;
+                
+                var items = container.querySelectorAll('.place-item');
+                for (var i = 0; i < items.length; i++) {
+                    (function(item) {
+                        item.addEventListener('click', function() {
+                            var placeId = this.dataset.placeId;
+                            if (placeId) {
+                                currentPlaceId = placeId;
+                                renderCurrentTab();
+                                if (window.innerWidth <= 768) {
+                                    closeSidebar();
+                                }
+                            }
+                        });
+                    })(items[i]);
+                }
+            } else {
+                container.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' No locations found') + '</div>';
+            }
+        }
+    }
+
+    function refreshLocationTree() {
+        if (typeof window.refreshLocationTree === 'function') {
+            window.refreshLocationTree('placeList', function(placeId) {
+                if (placeId && placeId !== currentPlaceId) {
+                    currentPlaceId = placeId;
+                    renderCurrentTab();
+                }
+            });
+        } else if (typeof window.LocationUI !== 'undefined' && 
+                   typeof window.LocationUI.refreshLocationTree === 'function') {
+            window.LocationUI.refreshLocationTree('placeList', function(placeId) {
+                if (placeId && placeId !== currentPlaceId) {
+                    currentPlaceId = placeId;
+                    renderCurrentTab();
+                }
+            });
+        } else {
+            setupLocationTree();
+        }
+    }
+
+    // =============================================================================
+    // SIDEBAR TOGGLE (Mobile)
+    // =============================================================================
+
+    function closeSidebar() {
+        var sidebar = document.getElementById('locationsSidebar');
+        var overlay = document.getElementById('sidebarOverlay');
+        if (sidebar) sidebar.classList.remove('visible');
+        if (overlay) overlay.classList.remove('active');
+        document.body.style.overflow = '';
+        isSidebarOpen = false;
+    }
+
+    function openSidebar() {
+        var sidebar = document.getElementById('locationsSidebar');
+        var overlay = document.getElementById('sidebarOverlay');
+        if (sidebar) sidebar.classList.add('visible');
+        if (overlay) overlay.classList.add('active');
+        document.body.style.overflow = 'hidden';
+        isSidebarOpen = true;
+    }
+
+    function toggleSidebar() {
+        if (isSidebarOpen) {
+            closeSidebar();
+        } else {
+            openSidebar();
+        }
+    }
+
+    function initMobileSidebar() {
+        var menuToggle = document.getElementById('menuToggle');
+        var sidebar = document.getElementById('locationsSidebar');
+        var overlay = document.getElementById('sidebarOverlay');
+        
+        if (!menuToggle || !sidebar || !overlay) return;
+        
+        menuToggle.addEventListener('click', function(e) {
+            e.stopPropagation();
+            toggleSidebar();
+        });
+        
+        overlay.addEventListener('click', function() {
+            closeSidebar();
+        });
+        
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeSidebar();
+            }
+        });
+        
+        window.addEventListener('resize', function() {
+            if (window.innerWidth > 768) {
+                closeSidebar();
+                sidebar.style.transform = '';
+                overlay.style.display = 'none';
+            }
+        });
+    }
+
+    // =============================================================================
+    // TAB RENDERERS
+    // =============================================================================
+
+    function renderGovernmentTab(placeId) {
+        cleanupEventListeners();
+        currentAbortController = new AbortController();
+        
+        var panel = document.getElementById('panelContent');
+        if (!panel) return;
+        
+        if (!placeId) placeId = currentPlaceId;
+        if (!placeId) {
+            var places = getPlaces();
+            if (places && places.length > 0) {
+                for (var i = 0; i < places.length; i++) {
+                    if (places[i].variableKey && places[i].variableKey !== 'world_root') {
+                        placeId = places[i].id;
+                        currentPlaceId = placeId;
+                        break;
+                    }
+                }
+                if (!placeId && places.length > 0) {
+                    placeId = places[0].id;
+                    currentPlaceId = placeId;
+                }
+            }
+        }
+        
+        if (!placeId) {
+            panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Select a location from the sidebar') + '</div>';
+            return;
+        }
+        
+        if (typeof window.renderGovernmentTab === 'function') {
+            window.renderGovernmentTab('panelContent', placeId, function() {
+                if (currentTab === 'government') renderCurrentTab();
+            });
+        } else {
+            panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Government tab module not loaded') + '</div>';
+        }
+    }
+
+    function renderGovernmentOverviewTab(placeId) {
+        cleanupEventListeners();
+        currentAbortController = new AbortController();
+        
+        var panel = document.getElementById('panelContent');
+        if (!panel) return;
+        
+        if (!placeId) placeId = currentPlaceId;
+        if (!placeId) {
+            var places = getPlaces();
+            if (places && places.length > 0) {
+                for (var i = 0; i < places.length; i++) {
+                    if (places[i].variableKey && places[i].variableKey !== 'world_root') {
+                        placeId = places[i].id;
+                        currentPlaceId = placeId;
+                        break;
+                    }
+                }
+                if (!placeId && places.length > 0) {
+                    placeId = places[0].id;
+                    currentPlaceId = placeId;
+                }
+            }
+        }
+        
+        if (!placeId) {
+            panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Select a location from the sidebar') + '</div>';
+            return;
+        }
+        
+        if (typeof window.renderGovernmentOverviewTab === 'function') {
+            window.renderGovernmentOverviewTab('panelContent', placeId);
+        } else {
+            panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Government Overview tab module not loaded') + '</div>';
+        }
+    }
+
+    function renderGovernmentTypesTab() {
+        cleanupEventListeners();
+        currentAbortController = new AbortController();
+        
+        var panel = document.getElementById('panelContent');
+        if (typeof window.renderGovernmentTypesTab === 'function') {
+            window.renderGovernmentTypesTab('panelContent', function() {
+                if (currentTab === 'governmentTypes') renderCurrentTab();
+            });
+        } else {
+            panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Government Types UI module not loaded.') + '</div>';
+        }
+    }
+
+    function renderGovernmentStructureTab(placeId) {
+        cleanupEventListeners();
+        currentAbortController = new AbortController();
+        
+        var panel = document.getElementById('panelContent');
+        if (!panel) return;
+        
+        if (!placeId) placeId = currentPlaceId;
+        if (!placeId) {
+            var places = getPlaces();
+            if (places && places.length > 0) {
+                for (var i = 0; i < places.length; i++) {
+                    if (places[i].variableKey && places[i].variableKey !== 'world_root') {
+                        placeId = places[i].id;
+                        currentPlaceId = placeId;
+                        break;
+                    }
+                }
+                if (!placeId && places.length > 0) {
+                    placeId = places[0].id;
+                    currentPlaceId = placeId;
+                }
+            }
+        }
+        
+        if (!placeId) {
+            panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Select a location from the sidebar') + '</div>';
+            return;
+        }
+        
+        if (typeof window.renderGovernmentStructureTab === 'function') {
+            window.renderGovernmentStructureTab('panelContent', placeId, function() {
+                if (currentTab === 'governmentStructure') renderCurrentTab();
+            });
+        } else {
+            panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Government Structure tab module not loaded') + '</div>';
+        }
+    }
+
+    // =============================================================================
+    // MAIN RENDER FUNCTION
+    // =============================================================================
+
+    function renderCurrentTab() {
+        var panel = document.getElementById('panelContent');
+        if (!panel) return;
+        
+        cleanupEventListeners();
+        
+        if (!currentPlaceId) {
+            var places = getPlaces();
+            if (places && places.length > 0) {
+                for (var i = 0; i < places.length; i++) {
+                    if (places[i].variableKey && places[i].variableKey !== 'world_root') {
+                        currentPlaceId = places[i].id;
+                        break;
+                    }
+                }
+                if (!currentPlaceId && places.length > 0) {
+                    currentPlaceId = places[0].id;
+                }
+            }
+        }
+        
+        var needsPlace = ['government', 'governmentOverview', 'governmentStructure'];
+        var isLocationTab = needsPlace.indexOf(currentTab) !== -1;
+        
+        if (isLocationTab && !currentPlaceId) {
+            panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Select a location from the sidebar') + '</div>';
+            return;
+        }
+        
+        switch (currentTab) {
+            case 'government':
+                renderGovernmentTab(currentPlaceId);
+                break;
+            case 'governmentOverview':
+                renderGovernmentOverviewTab(currentPlaceId);
+                break;
+            case 'governmentTypes':
+                renderGovernmentTypesTab();
+                break;
+            case 'governmentStructure':
+                renderGovernmentStructureTab(currentPlaceId);
+                break;
+            default:
+                panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Select a tab') + '</div>';
+        }
+    }
+
+    function switchTab(tabName) {
+        var needsPlace = ['government', 'governmentOverview', 'governmentStructure'];
+        
+        currentTab = tabName;
+        
+        if (needsPlace.indexOf(tabName) !== -1 && !currentPlaceId) {
+            var places = getPlaces();
+            if (places && places.length > 0) {
+                for (var i = 0; i < places.length; i++) {
+                    if (places[i].variableKey && places[i].variableKey !== 'world_root') {
+                        currentPlaceId = places[i].id;
+                        break;
+                    }
+                }
+                if (!currentPlaceId && places.length > 0) {
+                    currentPlaceId = places[0].id;
+                }
+            }
+        }
+        
+        document.querySelectorAll('.tab-btn').forEach(function(btn) {
+            if (btn.dataset.tab === tabName) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+        });
+        
+        renderCurrentTab();
+    }
+
+    // =============================================================================
+    // SETUP TABS
+    // =============================================================================
+
+    function setupTabs() {
+        var tabButtons = document.querySelectorAll('.tab-btn');
+        for (var i = 0; i < tabButtons.length; i++) {
+            var btn = tabButtons[i];
+            btn.onclick = null;
+            btn.addEventListener('click', function(e) {
+                var tabId = this.dataset.tab;
+                if (tabId) {
+                    switchTab(tabId);
+                }
+            });
+        }
+    }
+
+    // =============================================================================
+    // TOP BAR ACTIONS
+    // =============================================================================
+
+    function setupTopBarActions() {
+        var addGovTypeBtn = document.getElementById('addGovTypeBtn');
+        var addDeptBtn = document.getElementById('addDeptBtn');
+        var importBtn = document.getElementById('importBtn');
+        var exportBtn = document.getElementById('exportBtn');
+        var refreshBtn = document.getElementById('refreshBtn');
+        
+        if (addGovTypeBtn) {
+            addGovTypeBtn.onclick = function() {
+                if (typeof window.openAddGovernmentTypeModal === 'function') {
+                    window.openAddGovernmentTypeModal(function() {
+                        if (currentTab === 'governmentTypes') renderCurrentTab();
+                    });
+                } else {
+                    showToast(iconWithText(ICONS.WARNING, ' Add government type not available'), 'error');
+                }
+            };
+        }
+        
+        if (addDeptBtn) {
+            addDeptBtn.onclick = function() {
+                var locationId = currentPlaceId;
+                
+                if (!locationId) {
+                    var places = getPlaces();
+                    var validPlaces = places.filter(function(p) { 
+                        return p.variableKey && p.variableKey !== 'world_root'; 
+                    });
+                    if (validPlaces.length > 0) {
+                        locationId = validPlaces[0].id;
+                    } else if (places.length > 0) {
+                        locationId = places[0].id;
+                    }
+                }
+                
+                if (!locationId) {
+                    showToast(iconWithText(ICONS.WARNING, ' No location selected'), 'warning');
+                    return;
+                }
+                
+                if (typeof window.openCreateGovernmentDepartmentModal === 'function') {
+                    window.openCreateGovernmentDepartmentModal(locationId, function(newDeptId) {
+                        if (currentTab === 'governmentStructure') renderCurrentTab();
+                        if (newDeptId) showToast(iconWithText(ICONS.CHECK, ' Department created!'), 'success');
+                    });
+                } else if (typeof window._openCreateGovernmentDepartmentModal === 'function') {
+                    window._openCreateGovernmentDepartmentModal(locationId, function(newDeptId) {
+                        if (currentTab === 'governmentStructure') renderCurrentTab();
+                        if (newDeptId) showToast(iconWithText(ICONS.CHECK, ' Department created!'), 'success');
+                    });
+                } else {
+                    showToast(iconWithText(ICONS.WARNING, ' Department creation not available'), 'error');
+                }
+            };
+        }
+        
+        if (importBtn) {
+            importBtn.onclick = async function() {
+                if (typeof window.importData === 'function') {
+                    try {
+                        await window.importData();
+                        setTimeout(function() { 
+                            refreshLocationTree(); 
+                            renderCurrentTab(); 
+                        }, 200);
+                        showToast(iconWithText(ICONS.CHECK, ' Import successful'), 'success');
+                    } catch (error) {
+                        showToast(iconWithText(ICONS.WARNING, ' Import failed'), 'error');
+                    }
+                } else {
+                    showToast(iconWithText(ICONS.WARNING, ' Import function not available'), 'error');
+                }
+            };
+        }
+        
+        if (exportBtn) {
+            exportBtn.onclick = function() {
+                if (typeof window.exportData === 'function') {
+                    window.exportData();
+                } else {
+                    showToast(iconWithText(ICONS.WARNING, ' Export function not available'), 'error');
+                }
+            };
+        }
+        
+        if (refreshBtn) {
+            refreshBtn.onclick = function() {
+                if (typeof window.loadMasterData === 'function') {
+                    window.loadMasterData();
+                }
+                setTimeout(function() {
+                    refreshLocationTree();
+                    renderCurrentTab();
+                    showToast(iconWithText(ICONS.REFRESH, ' Refreshed'), 'success');
+                }, 100);
+            };
+        }
+    }
+
+    // =============================================================================
+    // INITIALIZATION
+    // =============================================================================
+
+    function init() {
+        if (isInitialized) return;
+        isInitialized = true;
+        
+        setupUIText();
+        
+        if (typeof window.loadMasterData === 'function') {
+            window.loadMasterData();
+        }
+        
+        setTimeout(function() {
+            setupLocationTree();
+        }, 150);
+        
+        setupTabs();
+        setupTopBarActions();
+        initMobileSidebar();
+        
+        currentTab = 'government';
+        document.querySelectorAll('.tab-btn').forEach(function(btn) {
+            if (btn.dataset.tab === 'government') {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+        });
+        
+        var panel = document.getElementById('panelContent');
+        if (panel) {
+            if (currentPlaceId) {
+                renderCurrentTab();
+            } else {
+                panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Select a location from the sidebar') + '</div>';
+            }
+        }
+        
+        window.addEventListener('masterDataUpdated', function() {
+            refreshLocationTree();
+            renderCurrentTab();
+        });
+        
+        console.log('✅ Government Manager initialized');
+    }
+    
+    // =============================================================================
+    // EXPORTS
+    // =============================================================================
+    
+    window.switchGovTab = switchTab;
+    window.renderCurrentGovTab = renderCurrentTab;
+    window.refreshGovTree = refreshLocationTree;
+    window.selectPlaceInGovTree = function(placeId) {
+        currentPlaceId = placeId;
+        if (typeof window.selectPlaceInTree === 'function') {
+            window.selectPlaceInTree(placeId);
+        }
+        refreshLocationTree();
+    };
+    window.closeMobileSidebar = closeSidebar;
+    window.toggleMobileSidebar = toggleSidebar;
+    window.getCurrentGovLocationId = function() { return currentPlaceId; };
+    
+    window.addEventListener('beforeunload', function() {
+        cleanupEventListeners();
+    });
+    
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
+</script>
+
+</body>
+</html>

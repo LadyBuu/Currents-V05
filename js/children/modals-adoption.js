@@ -13,6 +13,7 @@
  * - UPDATED: Uses unified character selector from modals-core.js
  * - UPDATED: Uses unified location dropdown from modals-core.js
  * - UPDATED: Uses ChildrenCommands, ChildrenQueries, AdoptionService
+ * - UPDATED: Uses FamilyAccessors for family relationship queries
  * 
  * =============================================================================
  */
@@ -188,7 +189,88 @@ function _createHousehold(name, location, options) {
 }
 
 // =============================================================================
-// 4. CHILDREN SYSTEM WRAPPERS
+// 4. FAMILY ACCESSORS WRAPPER (NEW)
+// =============================================================================
+
+function _getFamilyAccessors() {
+    return typeof window.FamilyAccessors !== 'undefined' ? window.FamilyAccessors : null;
+}
+
+function _getParentsViaFamilyAccessors(childId) {
+    var fa = _getFamilyAccessors();
+    if (fa && typeof fa.getParents === 'function') {
+        return fa.getParents(childId);
+    }
+    return null;
+}
+
+function _getChildrenViaFamilyAccessors(parentId, includeDeceased) {
+    var fa = _getFamilyAccessors();
+    if (fa && typeof fa.getAllChildren === 'function') {
+        var result = fa.getAllChildren(parentId, includeDeceased || false);
+        if (result) {
+            return result.map(function(item) { return item.character; });
+        }
+    }
+    return null;
+}
+
+function _getSiblingsViaFamilyAccessors(childId, includeHalfSiblings, includeDeceased) {
+    var fa = _getFamilyAccessors();
+    if (fa && typeof fa.getSiblings === 'function') {
+        var result = fa.getSiblings(childId, includeHalfSiblings !== false, includeDeceased || false);
+        if (result) {
+            return result.map(function(item) { return item.character; });
+        }
+    }
+    return null;
+}
+
+function _getSpousesViaFamilyAccessors(characterId, activeOnly) {
+    var fa = _getFamilyAccessors();
+    if (fa && typeof fa.getSpouses === 'function') {
+        var result = fa.getSpouses(characterId, activeOnly !== false);
+        if (result) {
+            return result.map(function(item) { return item.character; });
+        }
+    }
+    return null;
+}
+
+function _getRelationshipDescriptionViaFamilyAccessors(id1, id2) {
+    var fa = _getFamilyAccessors();
+    if (fa && typeof fa.getRelationshipDescription === 'function') {
+        return fa.getRelationshipDescription(id1, id2);
+    }
+    return null;
+}
+
+function _getConsanguinityDegreeViaFamilyAccessors(id1, id2) {
+    var fa = _getFamilyAccessors();
+    if (fa && typeof fa.getConsanguinityDegree === 'function') {
+        return fa.getConsanguinityDegree(id1, id2);
+    }
+    return null;
+}
+
+function _hasChildrenViaFamilyAccessors(parentId, includeAdopted, includeDeceased) {
+    var fa = _getFamilyAccessors();
+    if (fa && typeof fa.hasChildren === 'function') {
+        return fa.hasChildren(parentId, includeAdopted !== false, includeDeceased || false);
+    }
+    return false;
+}
+
+function _getCharacterHouseholdViaFamilyAccessors(characterId) {
+    var fa = _getFamilyAccessors();
+    if (fa && typeof fa.getCharacterHousehold === 'function') {
+        return fa.getCharacterHousehold(characterId);
+    }
+    return null;
+}
+
+// =============================================================================
+// 5. CHILDREN SYSTEM WRAPPERS
 // =============================================================================
 
 function _recordAdoption(parent, child, options) {
@@ -232,6 +314,11 @@ function _getAdoptionRecord(parentId, childId) {
 }
 
 function _getFullRelationshipDescription(id1, id2) {
+    // Prefer FamilyAccessors
+    var faResult = _getRelationshipDescriptionViaFamilyAccessors(id1, id2);
+    if (faResult !== null) {
+        return faResult;
+    }
     if (typeof window.getFullRelationshipDescription === 'function') {
         return window.getFullRelationshipDescription(id1, id2);
     }
@@ -246,7 +333,7 @@ function _getRelationshipBetween(id1, id2) {
 }
 
 // =============================================================================
-// 5. CHARACTER SELECTOR - Uses unified selector
+// 6. CHARACTER SELECTOR - Uses unified selector
 // =============================================================================
 
 function _openCharacterSelectorForAdoption(title, onSelect, options) {
@@ -301,7 +388,7 @@ function _openCharacterSelectorForAdoption(title, onSelect, options) {
 }
 
 // =============================================================================
-// 6. SET BIRTH PARENTS MODAL
+// 7. SET BIRTH PARENTS MODAL (UPDATED with FamilyAccessors)
 // =============================================================================
 
 function openSetBirthParentsModal(child, father, mother, onSuccess) {
@@ -315,8 +402,21 @@ function openSetBirthParentsModal(child, father, mother, onSuccess) {
     var childLocation = _getCurrentLocation(child);
     var currentYear = _getCurrentYear();
     
-    var existingFather = child.fatherId ? _getCharacterById(child.fatherId) : null;
-    var existingMother = child.motherId ? _getCharacterById(child.motherId) : null;
+    // ================================================================
+    // UPDATED: Get existing parents using FamilyAccessors
+    // ================================================================
+    var existingParents = _getParentsViaFamilyAccessors(child.id);
+    var existingFather = existingParents ? existingParents.father : null;
+    var existingMother = existingParents ? existingParents.mother : null;
+    
+    // Fallback: direct data access
+    if (!existingFather && child.fatherId) {
+        existingFather = _getCharacterById(child.fatherId);
+    }
+    if (!existingMother && child.motherId) {
+        existingMother = _getCharacterById(child.motherId);
+    }
+    
     var warningIcon = _getIcon('WARNING');
     var infoIcon = _getIcon('CIRCLE_DOT');
     var personIcon = _getIcon('PERSON');
@@ -373,8 +473,28 @@ function openSetBirthParentsModal(child, father, mother, onSuccess) {
             var notes = document.getElementById('birthNotes') ? document.getElementById('birthNotes').value : '';
             var birthYear = parseInt(document.getElementById('birthYear') ? document.getElementById('birthYear').value : 0);
             
-            if (father) child.fatherId = father.id;
-            if (mother) child.motherId = mother.id;
+            // Use FamilyAccessors to set parents if available
+            var fa = _getFamilyAccessors();
+            if (fa && typeof fa.setParent === 'function') {
+                if (father) {
+                    fa.setParent(child.id, father.id, 'father', {
+                        biological: true,
+                        startYear: child.birthYear || birthYear || currentYear,
+                        notes: notes || 'Set as birth father'
+                    });
+                }
+                if (mother) {
+                    fa.setParent(child.id, mother.id, 'mother', {
+                        biological: true,
+                        startYear: child.birthYear || birthYear || currentYear,
+                        notes: notes || 'Set as birth mother'
+                    });
+                }
+            } else {
+                // Fallback: direct data access
+                if (father) child.fatherId = father.id;
+                if (mother) child.motherId = mother.id;
+            }
             
             if (!child.birthYear && !isNaN(birthYear) && birthYear > 0 && birthYear <= currentYear) {
                 child.birthYear = birthYear;
@@ -407,7 +527,7 @@ function openSetBirthParentsModal(child, father, mother, onSuccess) {
 }
 
 // =============================================================================
-// 7. CREATE ADOPTION/GUARDIANSHIP MODAL
+// 8. CREATE ADOPTION/GUARDIANSHIP MODAL (UPDATED with FamilyAccessors)
 // =============================================================================
 
 function openCreateAdoptionModal(child, guardian, partner, onSuccess) {
@@ -416,13 +536,53 @@ function openCreateAdoptionModal(child, guardian, partner, onSuccess) {
         return;
     }
     
-    if (_isAdoptiveParent(guardian.id, child.id)) {
+    // ================================================================
+    // UPDATED: Check if already adoptive parent using FamilyAccessors
+    // ================================================================
+    var fa = _getFamilyAccessors();
+    var isAdoptive = false;
+    
+    if (fa && typeof fa.getAllParents === 'function') {
+        var allParents = fa.getAllParents(child.id, true);
+        if (allParents) {
+            for (var i = 0; i < allParents.length; i++) {
+                if (!allParents[i].biological && allParents[i].character.id === guardian.id) {
+                    isAdoptive = true;
+                    break;
+                }
+            }
+        }
+    }
+    
+    if (!isAdoptive) {
+        isAdoptive = _isAdoptiveParent(guardian.id, child.id);
+    }
+    
+    if (isAdoptive) {
         _showToast(child.name + ' is already adopted by ' + guardian.name, 'error');
         return;
     }
-    if (partner && _isAdoptiveParent(partner.id, child.id)) {
-        _showToast(child.name + ' is already adopted by ' + partner.name, 'error');
-        return;
+    
+    if (partner) {
+        var isPartnerAdoptive = false;
+        if (fa && typeof fa.getAllParents === 'function') {
+            var allParents = fa.getAllParents(child.id, true);
+            if (allParents) {
+                for (var i = 0; i < allParents.length; i++) {
+                    if (!allParents[i].biological && allParents[i].character.id === partner.id) {
+                        isPartnerAdoptive = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!isPartnerAdoptive) {
+            isPartnerAdoptive = _isAdoptiveParent(partner.id, child.id);
+        }
+        if (isPartnerAdoptive) {
+            _showToast(child.name + ' is already adopted by ' + partner.name, 'error');
+            return;
+        }
     }
     
     var childAge = _getAge(child);
@@ -432,8 +592,24 @@ function openCreateAdoptionModal(child, guardian, partner, onSuccess) {
     var childLocation = _getCurrentLocation(child);
     var guardianLocation = _getCurrentLocation(guardian);
     var isCouple = !!partner;
-    var isRelative = !!_getFullRelationshipDescription(child.id, guardian.id);
-    var relation = _getFullRelationshipDescription(child.id, guardian.id);
+    
+    // ================================================================
+    // UPDATED: Check if related using FamilyAccessors
+    // ================================================================
+    var isRelative = false;
+    var relation = null;
+    
+    if (fa && typeof fa.getRelationshipDescription === 'function') {
+        relation = fa.getRelationshipDescription(child.id, guardian.id);
+        if (relation && relation !== 'Unrelated' && relation !== 'Unknown') {
+            isRelative = true;
+        }
+    }
+    
+    if (!isRelative) {
+        relation = _getFullRelationshipDescription(child.id, guardian.id);
+        if (relation) isRelative = true;
+    }
     
     var suggestedYear = currentYear;
     
@@ -544,10 +720,19 @@ function openCreateAdoptionModal(child, guardian, partner, onSuccess) {
                 var typeName = adoptionTypeChoice === 'legal' ? 'adopted by' : (adoptionTypeChoice === 'guardianship' ? 'under guardianship of' : 'in foster care with');
                 _showToast(child.name + ' is now ' + typeName + ' ' + guardian.name + (isCouple ? ' and ' + partner.name : ''), 'success');
                 
+                // ================================================================
+                // UPDATED: Household assignment using FamilyAccessors
+                // ================================================================
                 if (householdChoice === 'guardian') {
-                    var guardianHousehold = _getCharacterHousehold(guardian.id);
+                    var guardianHousehold = _getCharacterHouseholdViaFamilyAccessors(guardian.id);
+                    if (!guardianHousehold) {
+                        guardianHousehold = _getCharacterHousehold(guardian.id);
+                    }
                     if (guardianHousehold) {
-                        var previousHousehold = _getCharacterHousehold(child.id);
+                        var previousHousehold = _getCharacterHouseholdViaFamilyAccessors(child.id);
+                        if (!previousHousehold) {
+                            previousHousehold = _getCharacterHousehold(child.id);
+                        }
                         if (previousHousehold && previousHousehold.id !== guardianHousehold.id) {
                             _recordHouseholdChange(child.id, null, adoptionYear, 'left',
                                 'Left previous household due to ' + adoptionTypeChoice,
@@ -566,7 +751,10 @@ function openCreateAdoptionModal(child, guardian, partner, onSuccess) {
                     }
                     
                     if (isCouple && partner) {
-                        var partnerHousehold = _getCharacterHousehold(partner.id);
+                        var partnerHousehold = _getCharacterHouseholdViaFamilyAccessors(partner.id);
+                        if (!partnerHousehold) {
+                            partnerHousehold = _getCharacterHousehold(partner.id);
+                        }
                         if (partnerHousehold && (!guardianHousehold || partnerHousehold.id !== guardianHousehold.id)) {
                             _addHouseholdMember(partnerHousehold.id, child.id, 'family', {
                                 role: 'Child',
@@ -645,7 +833,7 @@ function openCreateAdoptionModal(child, guardian, partner, onSuccess) {
 }
 
 // =============================================================================
-// 8. EDIT ADOPTION MODAL
+// 9. EDIT ADOPTION MODAL (UPDATED with FamilyAccessors)
 // =============================================================================
 
 function openEditAdoptionModal(child, parent, adoptionRecord, onSuccess) {
@@ -746,7 +934,6 @@ function openEditAdoptionModal(child, parent, adoptionRecord, onSuccess) {
             
             // Update using the adoption service if available
             if (typeof window.ChildrenCommands !== 'undefined') {
-                // Need to update the adoption record directly
                 var record = _getAdoptionRecord(parent.id, child.id);
                 if (record) {
                     if (updates.year !== undefined) record.year = updates.year;
@@ -786,7 +973,7 @@ function openEditAdoptionModal(child, parent, adoptionRecord, onSuccess) {
 }
 
 // =============================================================================
-// 9. REMOVE ADOPTION MODAL
+// 10. REMOVE ADOPTION MODAL (UPDATED with FamilyAccessors)
 // =============================================================================
 
 function openRemoveAdoptionModal(child, guardian, partner, onSuccess) {
@@ -803,10 +990,33 @@ function openRemoveAdoptionModal(child, guardian, partner, onSuccess) {
     var record = _getAdoptionRecord(guardian.id, child.id);
     var typeName = record && record.type === 'legal' ? 'Adoption' : (record && record.type === 'guardianship' ? 'Guardianship' : 'Foster Care');
     
+    // ================================================================
+    // NEW: Check if there are children in the household affected
+    // ================================================================
+    var affectedChildren = [];
+    var fa = _getFamilyAccessors();
+    if (fa && typeof fa.getChildren === 'function') {
+        var children = fa.getChildren(guardian.id);
+        if (children && children.length > 0) {
+            for (var i = 0; i < children.length; i++) {
+                if (children[i].id !== child.id) {
+                    affectedChildren.push(children[i]);
+                }
+            }
+        }
+    }
+    
     var warningIcon = _getIcon('WARNING');
     var infoIcon = _getIcon('CIRCLE_DOT');
     var xIcon = _getIcon('X_HEAVY');
     var checkIcon = _getIcon('CHECK_SIMPLE');
+    
+    var warningHtml = '';
+    if (affectedChildren.length > 0) {
+        warningHtml = '<div style="margin-top: 8px; padding: 6px; background: rgba(200, 112, 64, 0.15); border-radius: 6px; font-size: 0.6rem;">' +
+            warningIcon + ' ' + guardian.name + ' has ' + affectedChildren.length + ' other child' + (affectedChildren.length > 1 ? 'ren' : '') + 
+            ' in their care. This removal may affect them as well.</div>';
+    }
     
     var modalContent = '<div class="info-box" style="background: rgba(200, 68, 68, 0.15); border: 1px solid var(--warn); padding: 12px; border-radius: 8px; margin-bottom: 16px;">' +
         '<strong>' + warningIcon + ' Warning: This will remove the ' + typeName + ' relationship</strong>' +
@@ -816,6 +1026,7 @@ function openRemoveAdoptionModal(child, guardian, partner, onSuccess) {
         '<div style="margin-top: 8px; font-size: 0.65rem; color: var(--dim);">' +
             'Historical records will still show that this relationship existed.' +
         '</div>' +
+        warningHtml +
     '</div>' +
     
     '<div class="form-group" style="margin-bottom: 12px;">' +
@@ -846,7 +1057,10 @@ function openRemoveAdoptionModal(child, guardian, partner, onSuccess) {
             var endYear = parseInt(document.getElementById('removalYear') ? document.getElementById('removalYear').value : 0) || currentYear;
             var keepHistory = document.getElementById('keepHistory') ? document.getElementById('keepHistory').checked !== false : true;
             
-            var guardianHousehold = _getCharacterHousehold(guardian.id);
+            var guardianHousehold = _getCharacterHouseholdViaFamilyAccessors(guardian.id);
+            if (!guardianHousehold) {
+                guardianHousehold = _getCharacterHousehold(guardian.id);
+            }
             if (guardianHousehold) {
                 _recordHouseholdChange(child.id, null, endYear, 'left',
                     typeName + ' relationship terminated: ' + reason,
@@ -861,7 +1075,10 @@ function openRemoveAdoptionModal(child, guardian, partner, onSuccess) {
             
             var result2 = true;
             if (partner) {
-                var partnerHousehold = _getCharacterHousehold(partner.id);
+                var partnerHousehold = _getCharacterHouseholdViaFamilyAccessors(partner.id);
+                if (!partnerHousehold) {
+                    partnerHousehold = _getCharacterHousehold(partner.id);
+                }
                 if (partnerHousehold) {
                     _recordHouseholdChange(child.id, null, endYear, 'left',
                         typeName + ' relationship terminated: ' + reason,
@@ -889,7 +1106,7 @@ function openRemoveAdoptionModal(child, guardian, partner, onSuccess) {
 }
 
 // =============================================================================
-// 10. ADOPTION SEARCH MODAL - FIXED
+// 11. ADOPTION SEARCH MODAL (UPDATED with FamilyAccessors)
 // =============================================================================
 
 function openAdoptionSearchModal(onSelect, options) {
@@ -929,12 +1146,27 @@ function openAdoptionSearchModal(onSelect, options) {
         var age = _getAge(child);
         if (age < minAge || age > maxAge) return false;
         
+        // ================================================================
+        // UPDATED: Check if orphan using FamilyAccessors
+        // ================================================================
+        var fa = _getFamilyAccessors();
+        var isOrphan = false;
+        var hasLivingParent = true;
+        
+        if (fa && typeof fa.getParents === 'function') {
+            var parents = fa.getParents(child.id);
+            hasLivingParent = (parents.father && !parents.father.isDeceased) || 
+                             (parents.mother && !parents.mother.isDeceased);
+            isOrphan = !hasLivingParent;
+        } else {
+            var father = child.fatherId ? _getCharacterById(child.fatherId) : null;
+            var mother = child.motherId ? _getCharacterById(child.motherId) : null;
+            hasLivingParent = (father && !father.isDeceased) || (mother && !mother.isDeceased);
+            isOrphan = !hasLivingParent;
+        }
+        
         if (statusFilter === 'orphan') {
-            var hasLivingParent = (child.fatherId && !_getCharacterById(child.fatherId) ? 
-                _getCharacterById(child.fatherId).isDeceased : true) ||
-                (child.motherId && !_getCharacterById(child.motherId) ? 
-                _getCharacterById(child.motherId).isDeceased : true);
-            if (hasLivingParent) return false;
+            if (!isOrphan) return false;
         } else if (statusFilter === 'abandoned') {
             if (!child.abandoned && (child.fatherId || child.motherId)) return false;
         } else if (statusFilter === 'in_foster') {
@@ -992,22 +1224,54 @@ function openAdoptionSearchModal(onSelect, options) {
             var genderIcon = child.gender === 'male' ? '♂' : (child.gender === 'female' ? '♀' : '?');
             var isSelected = selectedChildId === child.id;
             
+            // ================================================================
+            // UPDATED: Get parent info using FamilyAccessors
+            // ================================================================
+            var fa = _getFamilyAccessors();
+            var hasLivingParent = true;
+            var parentNames = [];
+            
+            if (fa && typeof fa.getParents === 'function') {
+                var parents = fa.getParents(child.id);
+                if (parents.father) {
+                    parentNames.push(parents.father.name);
+                    if (!parents.father.isDeceased) hasLivingParent = false;
+                }
+                if (parents.mother) {
+                    parentNames.push(parents.mother.name);
+                    if (!parents.mother.isDeceased) hasLivingParent = false;
+                }
+            } else {
+                if (child.fatherId) {
+                    var father = _getCharacterById(child.fatherId);
+                    if (father) {
+                        parentNames.push(father.name);
+                        if (!father.isDeceased) hasLivingParent = false;
+                    }
+                }
+                if (child.motherId) {
+                    var mother = _getCharacterById(child.motherId);
+                    if (mother) {
+                        parentNames.push(mother.name);
+                        if (!mother.isDeceased) hasLivingParent = false;
+                    }
+                }
+            }
+            
+            var isOrphan = parentNames.length === 0 || !hasLivingParent;
+            
             var statusLabel = '';
             var statusColor = '';
-            var hasLivingParent = (child.fatherId && !_getCharacterById(child.fatherId) ? 
-                _getCharacterById(child.fatherId).isDeceased : true) ||
-                (child.motherId && !_getCharacterById(child.motherId) ? 
-                _getCharacterById(child.motherId).isDeceased : true);
             
-            if (!child.fatherId && !child.motherId) {
-                statusLabel = infoIcon + ' No known parents';
-                statusColor = '#c8a844';
-            } else if (!hasLivingParent) {
+            if (isOrphan) {
                 statusLabel = infoIcon + ' Orphan';
                 statusColor = '#c87040';
             } else if (child.abandoned) {
                 statusLabel = householdIcon + ' Abandoned';
                 statusColor = '#c84444';
+            } else if (parentNames.length === 0) {
+                statusLabel = infoIcon + ' No known parents';
+                statusColor = '#c8a844';
             } else {
                 statusLabel = checkIcon + ' Available';
                 statusColor = '#4a9060';
@@ -1023,6 +1287,8 @@ function openAdoptionSearchModal(onSelect, options) {
                 }
             }
             var fosterBadge = inFoster ? '<span style="background: var(--accent-dim); padding: 2px 6px; border-radius: 10px; font-size: 0.5rem;">' + householdIcon + ' In Foster</span>' : '';
+            
+            var parentDisplay = parentNames.length > 0 ? ' · Parents: ' + parentNames.join(' & ') : ' · No known parents';
             
             html += '<div class="adoptable-child-card" data-child-id="' + child.id + '" style="' +
                 'background: ' + (isSelected ? 'rgba(var(--accent-rgb), 0.2)' : 'var(--bg3)') + ';' +
@@ -1042,7 +1308,7 @@ function openAdoptionSearchModal(onSelect, options) {
                     '<div style="font-size: 0.55rem; color: ' + statusColor + ';">' + statusLabel + '</div>' +
                 '</div>' +
                 '<div style="display: flex; justify-content: space-between; font-size: 0.55rem; color: var(--dim);">' +
-                    '<span>' + locationIcon + ' ' + _escapeHtml(location) + '</span>' +
+                    '<span>' + locationIcon + ' ' + _escapeHtml(location) + parentDisplay + '</span>' +
                     (child.notes ? '<span>' + infoIcon + ' ' + _escapeHtml(child.notes.substring(0, 50)) + (child.notes.length > 50 ? '...' : '') + '</span>' : '') +
                 '</div>' +
                 (isSelected ? '<div style="margin-top: 8px; color: var(--success); font-size: 0.55rem;">' + checkIcon + ' Selected</div>' : '') +
@@ -1207,7 +1473,7 @@ function openAdoptionSearchModal(onSelect, options) {
 }
 
 // =============================================================================
-// 11. LEGITIMIZE CHILD MODAL
+// 12. LEGITIMIZE CHILD MODAL (UPDATED with FamilyAccessors)
 // =============================================================================
 
 function openLegitimizationModal(child, father, mother, onSuccess) {
@@ -1229,12 +1495,35 @@ function openLegitimizationModal(child, father, mother, onSuccess) {
     var marriageYear = null;
     
     if (father && mother) {
-        var relationship = _getFullRelationshipDescription(father.id, mother.id);
-        if (relationship && relationship.indexOf('married') !== -1) {
-            parentsMarried = true;
-            var marriageRel = _getRelationshipBetween(father.id, mother.id);
-            if (marriageRel && marriageRel.startYear) {
-                marriageYear = marriageRel.startYear;
+        // ================================================================
+        // UPDATED: Check if parents are married using FamilyAccessors
+        // ================================================================
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.getSpouses === 'function') {
+            var spouses = fa.getSpouses(father.id, true);
+            if (spouses) {
+                for (var i = 0; i < spouses.length; i++) {
+                    if (spouses[i].id === mother.id) {
+                        parentsMarried = true;
+                        // Try to get marriage year from relationship
+                        var rel = _getRelationshipBetween(father.id, mother.id);
+                        if (rel && rel.startYear) {
+                            marriageYear = rel.startYear;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        
+        if (!parentsMarried) {
+            var relationship = _getFullRelationshipDescription(father.id, mother.id);
+            if (relationship && relationship.indexOf('married') !== -1) {
+                parentsMarried = true;
+                var marriageRel = _getRelationshipBetween(father.id, mother.id);
+                if (marriageRel && marriageRel.startYear) {
+                    marriageYear = marriageRel.startYear;
+                }
             }
         }
     }
@@ -1363,24 +1652,55 @@ function openLegitimizationModal(child, father, mother, onSuccess) {
             child.legitimizedYear = legitimizationYear;
             child.inheritanceRights = inheritanceRights;
             
-            if (father && !child.fatherId) {
-                child.fatherId = father.id;
-                if (!father.children) father.children = [];
-                if (father.children.indexOf(child.id) === -1) father.children.push(child.id);
-            }
-            if (mother && !child.motherId) {
-                child.motherId = mother.id;
-                if (!mother.children) mother.children = [];
-                if (mother.children.indexOf(child.id) === -1) mother.children.push(child.id);
+            // ================================================================
+            // UPDATED: Set parents using FamilyAccessors if available
+            // ================================================================
+            var fa = _getFamilyAccessors();
+            if (fa && typeof fa.setParent === 'function') {
+                if (father && !child.fatherId) {
+                    fa.setParent(child.id, father.id, 'father', {
+                        biological: true,
+                        startYear: legitimizationYear,
+                        notes: 'Legitimized in ' + legitimizationYear
+                    });
+                }
+                if (mother && !child.motherId) {
+                    fa.setParent(child.id, mother.id, 'mother', {
+                        biological: true,
+                        startYear: legitimizationYear,
+                        notes: 'Legitimized in ' + legitimizationYear
+                    });
+                }
+            } else {
+                // Fallback: direct data access
+                if (father && !child.fatherId) {
+                    child.fatherId = father.id;
+                    if (!father.children) father.children = [];
+                    if (father.children.indexOf(child.id) === -1) father.children.push(child.id);
+                }
+                if (mother && !child.motherId) {
+                    child.motherId = mother.id;
+                    if (!mother.children) mother.children = [];
+                    if (mother.children.indexOf(child.id) === -1) mother.children.push(child.id);
+                }
             }
             
+            // ================================================================
+            // UPDATED: Household assignment using FamilyAccessors
+            // ================================================================
             if (householdChoice === 'parents') {
                 var addedHouseholds = new Set();
                 
                 if (father) {
-                    var fatherHousehold = _getCharacterHousehold(father.id);
+                    var fatherHousehold = _getCharacterHouseholdViaFamilyAccessors(father.id);
+                    if (!fatherHousehold) {
+                        fatherHousehold = _getCharacterHousehold(father.id);
+                    }
                     if (fatherHousehold && !addedHouseholds.has(fatherHousehold.id)) {
-                        var previousHousehold = _getCharacterHousehold(child.id);
+                        var previousHousehold = _getCharacterHouseholdViaFamilyAccessors(child.id);
+                        if (!previousHousehold) {
+                            previousHousehold = _getCharacterHousehold(child.id);
+                        }
                         if (previousHousehold && previousHousehold.id !== fatherHousehold.id) {
                             _recordHouseholdChange(child.id, null, legitimizationYear, 'left',
                                 'Left previous household before legitimization',
@@ -1402,9 +1722,15 @@ function openLegitimizationModal(child, father, mother, onSuccess) {
                 }
                 
                 if (mother && (!father || mother.id !== father.id)) {
-                    var motherHousehold = _getCharacterHousehold(mother.id);
+                    var motherHousehold = _getCharacterHouseholdViaFamilyAccessors(mother.id);
+                    if (!motherHousehold) {
+                        motherHousehold = _getCharacterHousehold(mother.id);
+                    }
                     if (motherHousehold && !addedHouseholds.has(motherHousehold.id)) {
-                        var previousHousehold = _getCharacterHousehold(child.id);
+                        var previousHousehold = _getCharacterHouseholdViaFamilyAccessors(child.id);
+                        if (!previousHousehold) {
+                            previousHousehold = _getCharacterHousehold(child.id);
+                        }
                         if (previousHousehold && previousHousehold.id !== motherHousehold.id && !addedHouseholds.has(previousHousehold.id)) {
                             _recordHouseholdChange(child.id, null, legitimizationYear, 'left',
                                 'Left previous household before legitimization',
@@ -1432,7 +1758,10 @@ function openLegitimizationModal(child, father, mother, onSuccess) {
                         notes: 'Created via legitimization'
                     });
                     if (childHousehold) {
-                        var previousHousehold = _getCharacterHousehold(child.id);
+                        var previousHousehold = _getCharacterHouseholdViaFamilyAccessors(child.id);
+                        if (!previousHousehold) {
+                            previousHousehold = _getCharacterHousehold(child.id);
+                        }
                         if (previousHousehold) {
                             _recordHouseholdChange(child.id, null, legitimizationYear, 'left',
                                 'Left previous household before legitimization',
@@ -1475,7 +1804,7 @@ function openLegitimizationModal(child, father, mother, onSuccess) {
 }
 
 // =============================================================================
-// 12. EXPORTS
+// 13. EXPORTS
 // =============================================================================
 
 window.openSetBirthParentsModal = openSetBirthParentsModal;

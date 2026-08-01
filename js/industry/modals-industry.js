@@ -16,7 +16,7 @@
  */
 
 // =============================================================================
-// 1. DEPENDENCY WRAPPERS
+// 1. DEPENDENCY WRAPPERS (FIXED - NO RECURSION)
 // =============================================================================
 
 function _getQueries() {
@@ -66,14 +66,26 @@ function _escapeHtml(str) {
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// =============================================================================
+// FIXED: _showToast - No recursion! Uses direct function references
+// =============================================================================
+
 function _showToast(msg, type) {
-    if (typeof window._showToast === 'function') {
+    // Try each toast function directly
+    if (typeof window._showToast === 'function' && window._showToast !== _showToast) {
         window._showToast(msg, type);
-    } else if (typeof window.showToast === 'function') {
-        window.showToast(msg, type);
-    } else if (typeof window.showToastMessage === 'function') {
-        window.showToastMessage(msg, type);
+        return;
     }
+    if (typeof window.showToast === 'function') {
+        window.showToast(msg, type);
+        return;
+    }
+    if (typeof window.showToastMessage === 'function') {
+        window.showToastMessage(msg, type);
+        return;
+    }
+    // Last resort - console log
+    console.log('[Toast] ' + msg + ' (' + (type || 'info') + ')');
 }
 
 function _openModal(options) {

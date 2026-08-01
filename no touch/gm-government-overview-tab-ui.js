@@ -1,6 +1,7 @@
 /**
  * =============================================================================
  * STILL WATERS - GOVERNMENT OVERVIEW TAB UI
+ * File: js/ui/gm-government-overview-tab-ui.js
  * =============================================================================
  * 
  * UPDATED: Full integration with GovernmentState, GovernmentQueries,
@@ -9,6 +10,17 @@
  * Displays a comprehensive read-only overview of all government structures
  * for a location and its children. Shows departments, positions, assignments,
  * salary requirements, and succession planning.
+ * 
+ * DEPENDENCIES:
+ *   - government-state.js (GovernmentState)
+ *   - government-queries.js (GovernmentQueries)
+ *   - government-economy.js (GovernmentEconomy)
+ *   - government-assignment.js (GovernmentAssignment)
+ *   - accessors.js (getPlaceById, getCharacterById, getCurrentYear)
+ * 
+ * ICON POLICY:
+ *   - All icons from icons.js via _getIcon()
+ *   - NO emojis
  * 
  * =============================================================================
  */
@@ -46,7 +58,6 @@
     function _getPersonIcon() { return _getIcon('PERSON', '👤'); }
     function _getFlagIcon() { return _getIcon('FLAG', '🏴'); }
     function _getCrownIcon() { return _getIcon('CROWN', '👑'); }
-    function _getSwordIcon() { return _getIcon('SWORD', '⚔'); }
     function _getBookIcon() { return _getIcon('BOOK', '📚'); }
     function _getCoinIcon() { return _getIcon('COIN', '♢'); }
 
@@ -56,6 +67,7 @@
 
     function _escapeHtml(str) {
         if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
+        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
         if (!str) return '';
         return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
@@ -418,6 +430,5 @@
     // =========================================================================
 
     window.renderGovernmentOverviewTab = renderGovernmentOverviewTab;
-
 
 })();

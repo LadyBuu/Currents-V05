@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * SETTLEMENT ENTERPRISES - State and public enterprise management
+ * SETTLEMENT ENTERPRISES - State and public enterprise management js/settlement/settlement-enterprises.js
  * =============================================================================
  * 
  * DEPENDENCIES:

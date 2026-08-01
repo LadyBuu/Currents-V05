@@ -1,91 +1,62 @@
-# COMPLETE SETTLEMENT SYSTEM DOCUMENTATION
+# SETTLEMENT SYSTEM - COMPLETE DOCUMENTATION
 
-## SYSTEM OVERVIEW
-
-The Settlement System manages urban and rural settlements, tracking their economic, social, and infrastructural development. It handles rank progression, feature construction, budget management, employment, literacy, and **ROLE INTEGRATION**.
-
-**KEY FEATURES:**
-- Settlement rank progression (Hamlet → Village → Town → City → Metropolis)
-- Public feature construction (walls, schools, markets, etc.)
-- Economic management (income, expenses, surplus, debt)
-- Employment tracking
-- Literacy statistics
-- **ROLE DISTRIBUTION** - Track professions at settlements
-- **MASTER CONCENTRATION** - Track masters by role
-- **PROSPERITY IMPACT** - Role diversity affects prosperity
-- State enterprise management
-- Justice system (crime rate, watch)
-- Tax rate management
-- Annual processing
-- **PUBLIC ENTERPRISE MANAGEMENT** (NEW)
-- **BUDGET ALLOCATION SYSTEM** (NEW)
-- **EDUCATION SYSTEM INTEGRATION** (NEW)
-- **GOVERNMENT SALARY ALLOCATION** (NEW)
+## Version 4.0 | Generated: 2026-07-14
 
 ---
 
-## DIRECTORY STRUCTURE
+# TABLE OF CONTENTS
 
-```
-js/settlement/
-├── settlement-state.js           # Single source of truth + cache + notifications
-├── settlement-commands.js        # All write operations (CRUD, features, roles, annual)
-├── settlement-queries.js         # All read operations (summary, stats, role queries)
-├── settlement-economy.js         # Economic calculations (income, expenses, prosperity)
-├── settlement-features.js        # Feature definitions and validation
-├── settlement-ranks.js           # Rank definitions and upgrade logic
-├── settlement-ui-list.js         # UI list rendering
-├── modals-settlement.js          # UI modals (features, upgrade, roles, budget)
-├── modals-settlement-economy.js  # Economy-specific modals
-└── settlement-doc.txt            # This documentation
-```
-
----
-
-## RELATED FILES (Cross-System Dependencies)
-
-```
-js/core/
-├── accessors.js                # getPlaceById, getPlaces, getCharacters, getCurrentYear
-├── ids.js                      # generateId()
-├── storage.js                  # saveMasterData()
-├── constants.js                # AGE_GROUPS, AGE_GROUPS_MAP
-├── formatting.js               # escapeHtml()
-├── icons.js                    # SVG icons (NO EMOJIS)
-├── modals-core.js              # openModal, closeTopModal, _showToast, _getIcon
-├── time.js                     # getCurrentYearSafe, calculateAge
-├── world.js                    # getLocationPopulationCount, getChildPlaces
-└── randomness.js               # chance(), pickRandom()
-
-js/location/
-├── location-state.js           # Location data (place hierarchy)
-└── location-queries.js         # Location queries (ROLE integration)
-
-js/roles/
-├── role-state.js               # Role definitions
-├── role-commands.js            # Role assignment
-└── role-queries.js             # Role queries
-
-js/industry/
-├── industry-state.js           # Enterprise data
-├── industry-commands.js        # Enterprise commands
-├── industry-queries.js         # Enterprise queries
-└── industry-processor.js       # Annual enterprise processing
-
-js/government/
-├── government-state.js         # Government data
-└── government-queries.js       # Government queries (leader traits)
-
-js/education/
-├── education-state.js          # Education institution data
-├── education-commands.js       # Education commands
-├── education-queries.js        # Education queries
-└── education-system.js         # Education system logic
-```
+1. [SYSTEM OVERVIEW](#1-system-overview)
+2. [FILE STRUCTURE](#2-file-structure)
+3. [SETTLEMENT-STATE.JS](#3-settlement-statejs)
+4. [SETTLEMENT-COMMANDS-CORE.JS](#4-settlement-commands-corejs)
+5. [SETTLEMENT-COMMANDS-WRITES.JS](#5-settlement-commands-writesjs)
+6. [SETTLEMENT-COMMANDS-ANNUAL.JS](#6-settlement-commands-annualjs)
+7. [SETTLEMENT-QUERIES.JS](#7-settlement-queriesjs)
+8. [SETTLEMENT-ECONOMY-CORE.JS](#8-settlement-economy-corejs)
+9. [SETTLEMENT-PROSPERITY.JS](#9-settlement-prosperityjs)
+10. [SETTLEMENT-RANKS.JS](#10-settlement-ranksjs)
+11. [SETTLEMENT-FEATURES.JS](#11-settlement-featuresjs)
+12. [SETTLEMENT-ENTERPRISES.JS](#12-settlement-enterprisesjs)
+13. [SETTLEMENT-GOVERNMENT.JS](#13-settlement-governmentjs)
+14. [SETTLEMENT-BUDGET.JS](#14-settlement-budgetjs)
+15. [SETTLEMENT-CRUD.JS](#15-settlement-crudjs)
+16. [SETTLEMENT-UI-LIST.JS](#16-settlement-ui-listjs)
+17. [MODALS-SETTLEMENT-CORE.JS](#17-modals-settlement-corejs)
+18. [MODALS-SETTLEMENT-ECONOMY.JS](#18-modals-settlement-economyjs)
+19. [MODALS-SETTLEMENT-ROLES.JS](#19-modals-settlement-rolesjs)
+20. [DATA SCHEMAS](#20-data-schemas)
+21. [CROSS-SYSTEM INTEGRATION](#21-cross-system-integration)
+22. [DEPENDENCY MAP](#22-dependency-map)
+23. [RECURSION GUARDS](#23-recursion-guards)
+24. [ICON POLICY](#24-icon-policy)
+25. [COMPLETE FUNCTION LIST](#25-complete-function-list)
+26. [USAGE EXAMPLES](#26-usage-examples)
 
 ---
 
-## KEY PRINCIPLES
+# 1. SYSTEM OVERVIEW
+
+## Purpose
+
+The Settlement System manages all settlement-level data, economics, and government functions within the game world. It provides:
+
+- **Settlement Data Management** - Create, read, update settlement data
+- **Economic Simulation** - Income, expenses, surplus, wealth, debt
+- **Feature Management** - Build, remove, demolish public features
+- **Rank System** - Settlement ranks with population requirements
+- **Specialization** - Settlements can specialize in specific roles
+- **Employment Tracking** - Workers, unemployment, wages
+- **Government Integration** - Government type, justice severity, watch
+- **Budget Allocation** - Education, government salaries, infrastructure, military
+- **State & Public Enterprises** - State-owned and public enterprises
+- **Tax & Rate Management** - Tax rates, trade tariffs, industry taxes
+- **Religious Integration** - Places of worship, dominant religion, religious unity
+- **Civil Laws** - Settlement-defined civil laws (NEW)
+- **Literacy Tracking** - Education levels, literacy rates
+- **Annual Processing** - Yearly settlement updates
+
+## Key Design Principles
 
 | Principle | Description |
 |-----------|-------------|
@@ -95,2018 +66,1256 @@ js/education/
 | **Recursion Guards** | All public functions protected from infinite loops |
 | **Change Notifications** | Subscriptions for reactive updates |
 | **No Emojis** | All icons from `icons.js` via `_getIcon()` |
-| **Role Integration** | Roles affect prosperity, tracked by settlement |
-| **Budget Allocation** | Separate tracking for education, government salaries, infrastructure, military |
-| **Public Enterprises** | Settlement-owned enterprises with profit collection |
+| **Civil Laws** | Settlements define their own civil laws |
+
+## Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         SETTLEMENT SYSTEM                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────────────┐    ┌─────────────────────────┐                │
+│  │  SETTLEMENT-STATE.JS    │    │  SETTLEMENT-QUERIES.JS │                │
+│  │  (Data Layer + Cache)   │◄───│  (Read Layer)          │                │
+│  └─────────────────────────┘    └─────────────────────────┘                │
+│           │                              │                                  │
+│           ▼                              ▼                                  │
+│  ┌─────────────────────────┐    ┌─────────────────────────┐                │
+│  │  SETTLEMENT-COMMANDS-   │    │  SETTLEMENT-UI-LIST.JS │                │
+│  │  WRITES.JS              │    │  (UI Rendering)         │                │
+│  │  (Write Layer)          │    └─────────────────────────┘                │
+│  └─────────────────────────┘                                               │
+│           │                                                                │
+│           ├──────────────┬───────────────┬──────────────┬──────────────────┤
+│           ▼              ▼               ▼              ▼                  │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────────┐      │
+│  │ SETTLEMENT- │ │ SETTLEMENT- │ │ SETTLEMENT- │ │ MODALS-         │      │
+│  │ ECONOMY-    │ │ PROSPERITY  │ │ RANKS.JS    │ │ SETTLEMENT-*.JS │      │
+│  │ CORE.JS     │ │ .JS         │ │             │ │ (UI Modals)     │      │
+│  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────────┘      │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    masterData.data.settlementData                          │
+│                    masterData.data.settlementFeatures                      │
+│                    masterData.data.settlementRanks                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-# 1. SETTLEMENT-STATE.JS
+# 2. FILE STRUCTURE
 
-**PURPOSE:** Single source of truth for all settlement data. Manages caching, subscriptions, and data persistence.
-
-**DEPENDENCIES:**
-- `accessors.js` - `getPlaceById`, `getPlaces`, `getCharacters`
-- `storage.js` - `saveMasterData`
-
----
-
-## Data Access Functions
-
-### `SettlementState.getSettlementData(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets settlement data for a location |
-| **Parameters** | `locationId` (string) - Location ID |
-| **Returns** | `Object|null` - Settlement data or null |
-
-### `SettlementState.getAllSettlements(options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all settlements with optional sorting |
-| **Parameters** | `options` (Object) - { sortBy, sortOrder, limit } |
-| **Returns** | `Array` - Array of settlement objects |
-
-### `SettlementState.getSettlementFeatures(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets features built at a settlement |
-| **Parameters** | `locationId` (string) - Location ID |
-| **Returns** | `Array` - Array of feature objects |
-
-### `SettlementState.getSettlementBudget(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets budget data for a settlement |
-| **Parameters** | `locationId` (string) - Location ID |
-| **Returns** | `Object|null` - Budget object |
-
-### `SettlementState.getSettlementEmployment(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets employment data for a settlement |
-| **Parameters** | `locationId` (string) - Location ID |
-| **Returns** | `Object|null` - Employment object |
-
-### `SettlementState.getStateEnterpriseIds(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets state enterprise IDs for a settlement |
-| **Parameters** | `locationId` (string) - Location ID |
-| **Returns** | `Array` - Array of enterprise IDs |
-
-### `SettlementState.getSettlementHistory(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets history entries for a settlement |
-| **Parameters** | `locationId` (string) - Location ID |
-| **Returns** | `Array` - Array of history entries |
+```
+js/systems/settlement/
+├── settlement-state.js              # Single source of truth + cache + subscriptions
+├── settlement-commands-core.js      # Core infrastructure (dependencies, guards)
+├── settlement-commands-writes.js    # All write operations (features, upgrades, etc.)
+├── settlement-commands-annual.js    # Annual processing logic
+├── settlement-queries.js            # All read operations (queries, stats)
+├── settlement-economy-core.js       # Income, expenses, surplus, employment, crime
+├── settlement-prosperity.js         # Prosperity calculation with multi-factor weighting
+├── settlement-ranks.js              # Rank definitions and calculation
+├── settlement-features.js           # Feature definitions and management
+├── settlement-enterprises.js        # State and public enterprise management
+├── settlement-government.js         # Government type, justice, watch management
+├── settlement-budget.js             # Budget allocation and tax management
+├── settlement-crud.js               # Create, read, update settlement data
+├── settlement-ui-list.js            # UI list rendering
+├── modals-settlement-core.js        # Core settlement UI modals
+├── modals-settlement-economy.js     # Economy-specific UI modals
+├── modals-settlement-roles.js       # Role-related UI modals
+└── settlement-docs.txt              # This documentation
+```
 
 ---
 
-## UI State
+# 3. SETTLEMENT-STATE.JS
 
-### `SettlementState.getUIState()`
+## Purpose
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the current UI state |
-| **Returns** | `Object` - UI state |
+Single source of truth for all settlement data. Manages caching, subscriptions, and data persistence.
 
-### `SettlementState.updateUIState(updates)`
+## Dependencies
 
-| Property | Value |
-|----------|-------|
-| **Description** | Updates UI state |
-| **Parameters** | `updates` (Object) - UI state updates |
+| Module | Functions Used |
+|--------|----------------|
+| `accessors.js` | `getPlaceById`, `getPlaces`, `getCharacters` |
+| `storage.js` | `saveMasterData` |
 
----
+## Data Structure
 
-## Subscriptions
-
-### `SettlementState.subscribe(callback)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Subscribes to state changes |
-| **Parameters** | `callback` (function) - Receives event object |
-| **Returns** | `function` - Unsubscribe function |
-
----
-
-# 2. SETTLEMENT-COMMANDS.JS
-
-**PURPOSE:** All write operations for settlement management.
-
-**DEPENDENCIES:**
-- `settlement-state.js` - `SettlementState`
-- `settlement-economy.js` - `SettlementEconomy`
-- `accessors.js` - `getPlaceById`, `getCharacterById`, `getCurrentYear`
-- `eventLogger.js` - `logEvent`
-- `storage.js` - `saveMasterData`
-
----
-
-## Feature Commands
-
-### `SettlementCommands.buildFeature(locationId, featureId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Builds a public feature at a settlement |
-| **Parameters** | `locationId` (string), `featureId` (string) |
-| **Returns** | `{ success: boolean, data: Object, reason: string }` |
-
-### `SettlementCommands.removeFeature(locationId, featureId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Removes a feature with full refund |
-| **Parameters** | `locationId` (string), `featureId` (string) |
-| **Returns** | `{ success: boolean, data: Object, reason: string }` |
-
-### `SettlementCommands.demolishFeature(locationId, featureId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Demolishes a feature with no refund |
-| **Parameters** | `locationId` (string), `featureId` (string) |
-| **Returns** | `{ success: boolean, data: Object, reason: string }` |
-
----
-
-## Settlement Management Commands
-
-### `SettlementCommands.upgradeSettlement(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Upgrades a settlement to the next rank |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `{ success: boolean, data: Object, reason: string }` |
-
-### `SettlementCommands.setSpecialization(locationId, roleId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Sets a settlement's specialization role |
-| **Parameters** | `locationId` (string), `roleId` (string\|null) |
-| **Returns** | `{ success: boolean, data: Object, reason: string }` |
-
-### `SettlementCommands.updateWealth(locationId, delta, reason)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates settlement wealth |
-| **Parameters** | `locationId` (string), `delta` (number), `reason` (string) |
-| **Returns** | `{ success: boolean, data: Object }` |
-
-### `SettlementCommands.updateDebt(locationId, delta, reason)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates settlement debt |
-| **Parameters** | `locationId` (string), `delta` (number), `reason` (string) |
-| **Returns** | `{ success: boolean, data: Object }` |
-
----
-
-## Tax & Rate Commands
-
-### `SettlementCommands.updateTaxRate(locationId, rate)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates tax rate (0-50%) |
-| **Parameters** | `locationId` (string), `rate` (number) |
-| **Returns** | `{ success: boolean, data: Object }` |
-
-### `SettlementCommands.updateTradeTariff(locationId, tariff)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates trade tariff (0-30%) |
-| **Parameters** | `locationId` (string), `tariff` (number) |
-| **Returns** | `{ success: boolean, data: Object }` |
-
-### `SettlementCommands.updateIndustryTaxRate(locationId, rate)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates industry tax rate (0-30%) |
-| **Parameters** | `locationId` (string), `rate` (number) |
-| **Returns** | `{ success: boolean, data: Object }` |
-
----
-
-## Spending Commands
-
-### `SettlementCommands.updateMilitarySpending(locationId, amount)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates military spending |
-| **Parameters** | `locationId` (string), `amount` (number) |
-| **Returns** | `{ success: boolean, data: Object }` |
-
-### `SettlementCommands.updateInfrastructureSpending(locationId, amount)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates infrastructure spending |
-| **Parameters** | `locationId` (string), `amount` (number) |
-| **Returns** | `{ success: boolean, data: Object }` |
-
-### `SettlementCommands.updateEducationSpending(locationId, amount)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates education spending |
-| **Parameters** | `locationId` (string), `amount` (number) |
-| **Returns** | `{ success: boolean, data: Object }` |
-
----
-
-## Justice & Watch Commands
-
-### `SettlementCommands.updateJusticeSeverity(locationId, severity)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates justice severity |
-| **Parameters** | `locationId` (string), `severity` (string) |
-| **Returns** | `{ success: boolean, data: Object }` |
-
-**Valid Severities:** `'lenient'`, `'medium'`, `'harsh'`, `'extreme'`
-
-### `SettlementCommands.updateWatch(locationId, hasWatch, size)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates watch/guard force |
-| **Parameters** | `locationId` (string), `hasWatch` (boolean), `size` (number) |
-| **Returns** | `{ success: boolean, data: Object }` |
-
----
-
-## State Enterprise Commands
-
-### `SettlementCommands.createStateEnterprise(locationId, data)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Creates a state-owned enterprise |
-| **Parameters** | `locationId` (string), `data` (Object) |
-| **Returns** | `{ success: boolean, data: Object }` |
-
-### `SettlementCommands.removeStateEnterprise(locationId, enterpriseId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Removes a state-owned enterprise |
-| **Parameters** | `locationId` (string), `enterpriseId` (string) |
-| **Returns** | `{ success: boolean, reason: string }` |
-
----
-
-## Budget Allocation Commands (NEW)
-
-### `SettlementCommands.allocateGovernmentSalaryBudget(locationId, amount, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Allocates government salary budget from settlement to government |
-| **Parameters** | `locationId` (string), `amount` (number), `year` (number) |
-| **Returns** | `{ success: boolean, data: Object, reason: string }` |
-
-### `SettlementCommands.allocateEducationBudget(locationId, amount, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Allocates education budget from settlement to education system |
-| **Parameters** | `locationId` (string), `amount` (number), `year` (number) |
-| **Returns** | `{ success: boolean, data: Object, reason: string }` |
-
-### `SettlementCommands.getGovernmentSalaryRequirements(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the salary requirements for government in a location |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `{ total: number, details: Array }` |
-
----
-
-## Public Enterprise Commands (NEW)
-
-### `SettlementCommands.collectPublicEnterpriseProfits(locationId, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Collects profits from public enterprises and adds to settlement wealth |
-| **Parameters** | `locationId` (string), `year` (number) |
-| **Returns** | `{ success: boolean, totalProfit: number, enterprises: Array, newWealth: number }` |
-
-### `SettlementCommands.getPublicEnterpriseSummary(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets public enterprise summary for a settlement |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `{ total: number, totalProfit: number, totalWealth: number, enterprises: Array }` |
-
----
-
-## Settlement Role Commands
-
-### `SettlementCommands.assignSettlementRole(locationId, characterId, roleId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Assigns a role to a character at a settlement |
-| **Parameters** | `locationId` (string), `characterId` (string), `roleId` (string), `options` (Object) |
-| **Returns** | `{ success: boolean, reason: string, character: Object, role: Object }` |
-
-**Options:**
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `skillLevel` | number | 10 | Initial skill level (0-100) |
-| `startYear` | number | current | Year started |
-| `primary` | boolean | false | Is primary profession |
-| `notes` | string | - | Notes |
-
-### `SettlementCommands.removeSettlementRole(locationId, characterId, roleId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Removes a role from a character at a settlement |
-| **Parameters** | `locationId` (string), `characterId` (string), `roleId` (string) |
-| **Returns** | `{ success: boolean, reason: string }` |
-
-### `SettlementCommands.updateSettlementCharacterSkill(locationId, characterId, roleId, skillLevel)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates a character's skill level at a settlement |
-| **Parameters** | `locationId` (string), `characterId` (string), `roleId` (string), `skillLevel` (number) |
-| **Returns** | `{ success: boolean, reason: string, newLevel: number }` |
-
----
-
-## Annual Processing
-
-### `SettlementCommands.processAnnualSettlementUpdate(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Processes annual update for a single settlement |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object` - Results including prosperity, surplus, wealth, debt |
-
-**Processing Steps:**
-1. Process state enterprises
-2. Calculate income (taxes, trade, industry, state enterprises, public enterprises)
-3. Calculate expenses (maintenance, wages, spending, government salaries)
-4. Calculate surplus
-5. Update wealth and debt
-6. Apply debt interest (5% annually)
-7. Update budget
-8. Update prosperity (includes role factors, government leader, public enterprises)
-9. Update employment
-10. Update crime rate
-11. Update rank (auto-upgrade if population threshold met)
-12. Collect public enterprise profits
-13. Save all changes
-
-### `SettlementCommands.processAllSettlements()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Processes annual update for all settlements |
-| **Returns** | `{ success: boolean, processed: number, results: Array }` |
-
----
-
-# 3. SETTLEMENT-QUERIES.JS
-
-**PURPOSE:** All read-only operations for settlement data.
-
-**DEPENDENCIES:**
-- `settlement-state.js` - `SettlementState`
-- `settlement-economy.js` - `SettlementEconomy`
-- `accessors.js` - `getPlaceById`, `getPlaces`, `getCharacters`
-
----
-
-## Core Queries
-
-### `SettlementQueries.getSettlementSummary(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a formatted summary of a settlement |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object` - Settlement summary |
-
-**Return Structure:**
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Location ID |
-| `name` | string | Settlement name |
-| `rank` | object | Current rank |
-| `population` | number | Population |
-| `features` | array | Built features |
-| `prosperity` | object | { value, description } |
-| `wealth` | number | Wealth in gold |
-| `totalDebt` | number | Total debt |
-| `netWorth` | number | Wealth - Debt |
-| `foundedYear` | number | Year founded |
-| `lastUpgraded` | number | Last upgrade year |
-| `specializationRoleId` | string | Specialization role ID |
-| `canUpgrade` | boolean | Can upgrade |
-| `nextRank` | object | Next rank |
-| `taxRate` | number | Tax rate |
-| `crimeRate` | number | Crime rate |
-| `budgetAllocation` | object | Budget allocation data (NEW) |
-| `publicEnterprises` | object | Public enterprise summary (NEW) |
-
-### `SettlementQueries.getSettlementRank(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the current rank of a settlement |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object|null` - Rank object |
-
-### `SettlementQueries.getUpgradeInfo(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets upgrade information for a settlement |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object` - { canUpgrade, nextRank, requiredPopulation, currentPopulation, reason } |
-
----
-
-## Feature Queries
-
-### `SettlementQueries.getSettlementFeatures(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets features built at a settlement |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Array` - Feature objects |
-
-### `SettlementQueries.getAllFeatures()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all available features |
-| **Returns** | `Array` - Feature objects |
-
-### `SettlementQueries.getFeatureById(featureId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a feature by ID |
-| **Parameters** | `featureId` (string) |
-| **Returns** | `Object|null` - Feature object |
-
-### `SettlementQueries.canAffordFeature(locationId, featureId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Checks if settlement can afford a feature |
-| **Parameters** | `locationId` (string), `featureId` (string) |
-| **Returns** | `boolean` |
-
-### `SettlementQueries.wouldCreateDebt(locationId, featureId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Checks if building a feature would create debt |
-| **Parameters** | `locationId` (string), `featureId` (string) |
-| **Returns** | `boolean` |
-
----
-
-## Economic Queries
-
-### `SettlementQueries.getSettlementBudget(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets budget data for a settlement |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object|null` - Budget object |
-
-### `SettlementQueries.getSettlementEmployment(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets employment data for a settlement |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object|null` - Employment object |
-
-### `SettlementQueries.getTradeStatus(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets trade status for a settlement |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object` - { status, tradeFeatures, totalBonus, description } |
-
-### `SettlementQueries.getSettlementIncome(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets total income for a settlement |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` |
-
-### `SettlementQueries.getSettlementExpenses(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets total expenses for a settlement |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` |
-
-### `SettlementQueries.getSettlementSurplus(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets surplus for a settlement |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` |
-
----
-
-## Budget Allocation Queries (NEW)
-
-### `SettlementQueries.getSettlementBudgetSummary(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets comprehensive budget allocation summary |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object` - Budget summary |
-
-### `SettlementQueries.getBudgetAllocationHistory(locationId, limit)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets budget allocation history |
-| **Parameters** | `locationId` (string), `limit` (number) |
-| **Returns** | `Array` - History entries |
-
-### `SettlementQueries.getSettlementBudgetAllocation(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets current budget allocation |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object` - Budget allocation |
-
-### `SettlementQueries.getGovernmentSalaryBudget(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets government salary budget |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` |
-
-### `SettlementQueries.getEducationBudget(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets education budget |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` |
-
----
-
-## Public Enterprise Queries (NEW)
-
-### `SettlementQueries.getPublicEnterprises(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all public enterprises at a settlement |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Array` - Enterprise objects |
-
-### `SettlementQueries.getPublicEnterpriseIds(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets public enterprise IDs |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Array` - Enterprise IDs |
-
-### `SettlementQueries.getPublicEnterpriseHistory(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets public enterprise history |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Array` - History entries |
-
-### `SettlementQueries.getPublicEnterpriseSummary(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets summary of public enterprises |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object` - Enterprise summary |
-
----
-
-## Literacy Queries
-
-### `SettlementQueries.getSettlementLiteracyStats(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets literacy statistics for a settlement |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object` - { totalPopulation, literateCount, literacyRate, educationLevels, hasSchools } |
-
----
-
-## Role-Settlement Queries
-
-### `SettlementQueries.getSettlementRoles(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all roles present in a settlement with counts |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object` - Role distribution { roleId: { id, name, count } } |
-
-### `SettlementQueries.getSettlementCharactersByRole(locationId, roleId, mastersOnly)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets characters in a settlement with a specific role |
-| **Parameters** | `locationId` (string), `roleId` (string), `mastersOnly` (boolean) |
-| **Returns** | `Array` - Character objects |
-
-### `SettlementQueries.getSettlementRoleStats(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets comprehensive role statistics for a settlement |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object` - { settlementId, settlementName, totalProfessions, uniqueRoles, topRoles, byCategory } |
-
-**Return Structure:**
-| Field | Type | Description |
-|-------|------|-------------|
-| `settlementId` | string | Location ID |
-| `settlementName` | string | Settlement name |
-| `totalProfessions` | number | Total profession instances |
-| `uniqueRoles` | number | Unique role count |
-| `topRoles` | array | Top 5 roles { id, name, count, percentage } |
-| `byCategory` | object | Roles grouped by category |
-
-### `SettlementQueries.getSettlementMasterStats(locationId, roleId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets master concentration in a settlement |
-| **Parameters** | `locationId` (string), `roleId` (string\|null) |
-| **Returns** | `Object` - { settlementId, settlementName, totalMasters, uniqueMasterRoles, byRole, masters } |
-
----
-
-## Apprenticeship-Settlement Queries
-
-### `SettlementQueries.getSettlementApprenticeshipDensity(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets apprenticeship density for a settlement |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object` - { totalApprentices, totalMasters, masterToApprenticeRatio, apprenticeDensity, byRole, topRoles, topMasters } |
-
-### `SettlementQueries.getSettlementMastersByRole(locationId, roleId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets masters by role at a settlement |
-| **Parameters** | `locationId` (string), `roleId` (string\|null) |
-| **Returns** | `Array` - Masters with apprentice counts |
-
----
-
-## Education-Settlement Queries (NEW)
-
-### `SettlementQueries.getSettlementEducationStats(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets comprehensive education statistics for a settlement |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object` - Education statistics |
-
-**Return Structure:**
-| Field | Type | Description |
-|-------|------|-------------|
-| `settlementId` | string | Location ID |
-| `settlementName` | string | Settlement name |
-| `totalInstitutions` | number | Total schools |
-| `totalStudents` | number | Total students |
-| `totalTeachers` | number | Total teachers |
-| `totalGraduates` | number | Total graduates |
-| `totalCapacity` | number | Total capacity |
-| `averageReputation` | number | Average school reputation |
-| `publicSchools` | number | Public schools |
-| `privateSchools` | number | Private schools |
-| `specializedSchools` | number | Specialized schools |
-| `byType` | object | Schools by type |
-| `schoolAgePopulation` | number | School-age children |
-| `coverageRatio` | number | Coverage percentage |
-| `capacityGap` | number | Capacity gap |
-| `needsMoreSchools` | boolean | Needs more schools |
-| `studentTeacherRatio` | number | Student:Teacher ratio |
-| `literacyRate` | number | Literacy rate |
-| `educationLevels` | object | Education level distribution |
-| `studentDistribution` | array | Students by school |
-| `educationBudget` | number | Education budget (NEW) |
-| `budgetAllocationYear` | number | Budget allocation year (NEW) |
-
-### `SettlementQueries.getSettlementSchools(locationId, filters)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all schools in a settlement with filters |
-| **Parameters** | `locationId` (string), `filters` (Object) |
-| **Returns** | `Array` - School objects |
-
-**Filters:**
-| Field | Type | Description |
-|-------|------|-------------|
-| `type` | string | School type |
-| `minReputation` | number | Minimum reputation |
-| `maxStudents` | number | Maximum students |
-| `hasStudents` | boolean | Has students |
-| `ownershipType` | string | 'public' or 'private' |
-| `isSpecialized` | boolean | Is specialized |
-
-### `SettlementQueries.getSettlementStudentDistribution(locationId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets student distribution by settlement |
-| **Parameters** | `locationId` (string), `options` (Object) |
-| **Returns** | `Object` - Student distribution statistics |
-
----
-
-## Statistics Queries
-
-### `SettlementQueries.getSettlementStatistics(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets comprehensive settlement statistics |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object` - Statistics object |
-
-### `SettlementQueries.getGlobalSettlementStatistics()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets global settlement statistics |
-| **Returns** | `Object` - { totalSettlements, totalPopulation, totalWealth, totalDebt, averageProsperity, byRank, largest, wealthiest, mostProsperous, totalEducationBudget, totalGovernmentSalaryBudget, totalPublicEnterprises, totalPublicEnterpriseProfit } |
-
----
-
-## Ranking Queries
-
-### `SettlementQueries.getLargestSettlements(limit)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets largest settlements by population |
-| **Parameters** | `limit` (number, default 10) |
-| **Returns** | `Array` - { locationId, locationName, population } |
-
-### `SettlementQueries.getWealthiestSettlements(limit)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets wealthiest settlements |
-| **Parameters** | `limit` (number, default 10) |
-| **Returns** | `Array` - { locationId, locationName, wealth } |
-
-### `SettlementQueries.getMostProsperousSettlements(limit)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets most prosperous settlements |
-| **Parameters** | `limit` (number, default 10) |
-| **Returns** | `Array` - { locationId, locationName, prosperity } |
-
----
-
-# 4. SETTLEMENT-ECONOMY.JS
-
-**PURPOSE:** Business logic for settlement finances and prosperity calculation.
-
-**DEPENDENCIES:**
-- `settlement-state.js` - `SettlementState`
-- `accessors.js` - `getPlaceById`, `getCurrentYear`
-- `government-queries.js` - `GovernmentQueries`
-
----
-
-## Income Calculations
-
-### `SettlementEconomy.calculateTaxIncome(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates tax income for a settlement |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` |
-
-### `SettlementEconomy.calculateTradeIncome(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates trade income for a settlement |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` |
-
-### `SettlementEconomy.calculateIndustryIncome(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates industry tax income |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` |
-
-### `SettlementEconomy.calculateStateEnterpriseIncome(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates state enterprise income |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` |
-
-### `SettlementEconomy.calculatePublicEnterpriseIncome(locationId)` (NEW)
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates public enterprise income |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` |
-
-### `SettlementEconomy.calculateTotalIncome(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates total income (includes public enterprises) |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` |
-
----
-
-## Expense Calculations
-
-### `SettlementEconomy.calculateMaintenanceCosts(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates feature maintenance costs |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` |
-
-### `SettlementEconomy.calculateWageCosts(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates wage costs for state employees |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` |
-
-### `SettlementEconomy.calculateSpendingCosts(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates spending costs |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` |
-
-### `SettlementEconomy.calculateGovernmentSalaryExpenses(locationId)` (NEW)
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates government salary expenses from budget allocation |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` |
-
-### `SettlementEconomy.calculateTotalExpenses(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates total expenses (includes government salaries) |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` |
-
----
-
-## Surplus & Tax Calculations
-
-### `SettlementEconomy.calculateSurplus(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates annual surplus |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` |
-
-### `SettlementEconomy.calculateTaxRevenue(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates total tax revenue |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` |
-
----
-
-## Employment Calculation
-
-### `SettlementEconomy.calculateEmployment(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates employment statistics |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object` - { totalWorkers, stateEmployed, privateEmployed, unemployed, averageWage, employmentRate } |
-
----
-
-## Prosperity Calculation (CRITICAL)
-
-### `SettlementEconomy.calculateProsperity(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates prosperity (0-100) with multi-factor weighting |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` - Prosperity value (0-100) |
-
-**Prosperity Factors:**
-
-| Factor | Weight | Source |
-|--------|--------|--------|
-| Rank population thresholds | ±2-5% | Settlement ranks |
-| Features | +1-12% each | Settlement features |
-| Specialization | +5-12% | Role system |
-| Tax rate | -1-3% | Tax management |
-| Crime rate | -2-5% | Justice system |
-| Literacy rate | +1-2% | Education system |
-| Employment rate | +3% | Industry system |
-| Debt ratio | -0-15% | Financial management |
-| **Role diversity** | +2-4% | **Role system** |
-| **Master concentration** | +1-3% | **Role system** |
-| **Average skill level** | +1-2% | **Role system** |
-| **Underserved roles** | -1-3% | **Role system** |
-| Government Leader | ±3-5% | Government system |
-| **Public Enterprises** | +1-3% | **Public enterprise profit (NEW)** |
-
----
-
-## Crime Rate Calculation
-
-### `SettlementEconomy.calculateCrimeRate(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates crime rate (0-0.8) |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` - Crime rate |
-
-**Crime Rate Factors:**
-- Prosperity effects
-- Tax rate effects
-- Watch size effects
-- Feature crime reduction
-- Unemployment effects
-- Military spending effects
-- Justice severity effects
-
----
-
-## Specialization Bonuses
-
-### `SettlementEconomy.calculateSpecializationIncomeBonus(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates income bonus from specialization |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` - Multiplier (0.5-3.0) |
-
-### `SettlementEconomy.calculateSpecializationProsperityBonus(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates prosperity bonus from specialization |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` - Bonus value (0-12) |
-
----
-
-## Literacy Statistics
-
-### `SettlementEconomy.getSettlementLiteracyStats(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets literacy statistics for a settlement |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object` - Literacy stats |
-
----
-
-## Financial Reporting
-
-### `SettlementEconomy.getFinancialReport(locationId, years)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets financial report for past N years |
-| **Parameters** | `locationId` (string), `years` (number, default 5) |
-| **Returns** | `Object` - { reports, summary } |
-
-### `SettlementEconomy.getEfficiencyScore(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets government efficiency score |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object` - { efficiency, rating, income, expenses, surplus, population, incomePerCapita } |
-
-### `SettlementEconomy.getDebtRatio(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets debt ratio (debt/wealth) |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `number` - Percentage (0-100) |
-
----
-
-# 5. SETTLEMENT-FEATURES.JS
-
-**PURPOSE:** Feature definitions and validation.
-
-**DEPENDENCIES:**
-- `settlement-state.js` - `SettlementState`
-
----
-
-## Feature Definitions
-
-### `SettlementFeatures.getAllFeatures()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all available features |
-| **Returns** | `Array` - Feature objects |
-
-### `SettlementFeatures.getFeatureById(featureId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a feature by ID |
-| **Parameters** | `featureId` (string) |
-| **Returns** | `Object|null` - Feature object |
-
-### `SettlementFeatures.getFeaturesByCategory(category)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets features by category |
-| **Parameters** | `category` (string) |
-| **Returns** | `Array` - Feature objects |
-
-### `SettlementFeatures.getPublicFeatures()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all public features |
-| **Returns** | `Array` - Feature objects |
-
-### `SettlementFeatures.getFeatureCategories()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets features grouped by category |
-| **Returns** | `Object` - { category: [features] } |
-
----
-
-## Feature Validation
-
-### `SettlementFeatures.canAffordFeature(locationId, featureId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Checks if settlement can afford a feature |
-| **Parameters** | `locationId` (string), `featureId` (string) |
-| **Returns** | `boolean` |
-
-### `SettlementFeatures.wouldCreateDebt(locationId, featureId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Checks if building a feature would create debt |
-| **Parameters** | `locationId` (string), `featureId` (string) |
-| **Returns** | `boolean` |
-
-### `SettlementFeatures.hasPrerequisites(locationId, featureId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Checks if feature prerequisites are met |
-| **Parameters** | `locationId` (string), `featureId` (string) |
-| **Returns** | `boolean` |
-
----
-
-## Feature Effects
-
-### `SettlementFeatures.getFeatureCost(featureId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets feature construction cost |
-| **Parameters** | `featureId` (string) |
-| **Returns** | `number` |
-
-### `SettlementFeatures.getFeatureMaintenance(featureId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets feature annual maintenance cost |
-| **Parameters** | `featureId` (string) |
-| **Returns** | `number` |
-
-### `SettlementFeatures.getFeatureProsperityBonus(featureId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets feature prosperity bonus |
-| **Parameters** | `featureId` (string) |
-| **Returns** | `number` |
-
-### `SettlementFeatures.getFeatureCrimeReduction(featureId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets feature crime reduction |
-| **Parameters** | `featureId` (string) |
-| **Returns** | `number` |
-
-### `SettlementFeatures.getFeatureEffects(featureId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all effects of a feature |
-| **Parameters** | `featureId` (string) |
-| **Returns** | `Object` - { prosperityBonus, crimeReduction, defenseBonus, tradeBonus, educationBonus, literacyBonus, maintenance, cost } |
-
----
-
-# 6. SETTLEMENT-RANKS.JS
-
-**PURPOSE:** Rank definitions and upgrade logic.
-
-**DEPENDENCIES:**
-- `settlement-state.js` - `SettlementState`
-- `accessors.js` - `getPlaceById`, `getCurrentYear`
-
----
-
-## Rank Definitions
-
-| Rank | ID | Min Population | Max Population | Base Tax | Order |
-|------|-----|----------------|----------------|----------|-------|
-| Hamlet | `hamlet` | 0 | 99 | 5 | 1 |
-| Village | `village` | 100 | 999 | 15 | 2 |
-| Town | `town` | 1000 | 4999 | 50 | 3 |
-| City | `city` | 5000 | 19999 | 150 | 4 |
-| Metropolis | `metropolis` | 20000 | 999999 | 400 | 5 |
-
----
-
-## Rank Functions
-
-### `SettlementRanks.getAllRanks()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all rank definitions |
-| **Returns** | `Array` - Rank objects |
-
-### `SettlementRanks.getRankById(rankId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a rank by ID |
-| **Parameters** | `rankId` (string) |
-| **Returns** | `Object|null` - Rank object |
-
-### `SettlementRanks.getRankFromPopulation(population)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the rank for a population size |
-| **Parameters** | `population` (number) |
-| **Returns** | `Object|null` - Rank object |
-
-### `SettlementRanks.getSettlementRank(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the rank of a settlement |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object|null` - Rank object |
-
-### `SettlementRanks.getNextRank(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the next rank for a settlement |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object|null` - Rank object |
-
-### `SettlementRanks.canUpgrade(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Checks if a settlement can upgrade |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `boolean` |
-
-### `SettlementRanks.getUpgradeRequirements(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets upgrade requirements for a settlement |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Object` - { currentRank, nextRank, currentPopulation, canUpgrade, requirements } |
-
----
-
-## Rank Effects
-
-### `SettlementRanks.getRankTaxBonus(rankId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets tax bonus for a rank |
-| **Parameters** | `rankId` (string) |
-| **Returns** | `number` |
-
-### `SettlementRanks.getRankProsperityModifier(rankId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets prosperity modifier for a rank |
-| **Parameters** | `rankId` (string) |
-| **Returns** | `number` |
-
-### `SettlementRanks.getRankPopulationModifier(rankId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets population growth modifier for a rank |
-| **Parameters** | `rankId` (string) |
-| **Returns** | `number` |
-
----
-
-# 7. SETTLEMENT-UI-LIST.JS
-
-**PURPOSE:** UI rendering for settlement lists, cards, tables, features, and roles.
-
-**DEPENDENCIES:**
-- `settlement-state.js` - `SettlementState`
-- `settlement-queries.js` - `SettlementQueries`
-- `modals-core.js` - `_escapeHtml`, `_getIcon`, `_showToast`
-
----
-
-### `SettlementUI.renderSettlementList(containerId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Renders a list of settlements with filters |
-| **Parameters** | `containerId` (string), `options` (Object) |
-| **Returns** | `boolean` - True if rendered |
-
-**Options:**
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `searchTerm` | string | '' | Search term |
-| `onSelect` | function | null | Callback when selected |
-| `selectedId` | string | null | Selected settlement ID |
-| `rankFilter` | string | 'all' | Filter by rank |
-| `prosperityFilter` | string | 'all' | 'thriving', 'stable', 'struggling' |
-| `sortBy` | string | 'name' | 'name', 'population', 'wealth', 'prosperity' |
-| `sortOrder` | string | 'asc' | 'asc' or 'desc' |
-| `limit` | number | 0 | Max results |
-
-### `SettlementUI.renderSettlementCard(locationId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Renders a settlement as a card |
-| **Parameters** | `locationId` (string), `options` (Object) |
-| **Returns** | `string` - HTML for the card |
-
-### `SettlementUI.renderSettlementTable(settlements, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Renders settlements as a table |
-| **Parameters** | `settlements` (Array), `options` (Object) |
-| **Returns** | `string` - HTML for the table |
-
-### `SettlementUI.renderFeatureList(containerId, locationId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Renders features built at a settlement |
-| **Parameters** | `containerId` (string), `locationId` (string), `options` (Object) |
-| **Returns** | `boolean` - True if rendered |
-
-### `SettlementUI.renderSettlementRoles(containerId, locationId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Renders role distribution at a settlement |
-| **Parameters** | `containerId` (string), `locationId` (string), `options` (Object) |
-| **Returns** | `boolean` - True if rendered |
-
-**Options:**
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `limit` | number | 10 | Max roles to show |
-| `showMasters` | boolean | true | Show master count |
-| `onRoleClick` | function | null | Callback when role clicked |
-
-### `SettlementUI.renderSettlementMasters(containerId, locationId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Renders masters at a settlement |
-| **Parameters** | `containerId` (string), `locationId` (string), `options` (Object) |
-| **Returns** | `boolean` - True if rendered |
-
-**Options:**
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `roleId` | string | null | Filter by role ID |
-| `limit` | number | 20 | Max masters to show |
-| `onSelect` | function | null | Callback when master selected |
-
-### `SettlementUI.renderSettlementApprenticeships(containerId, locationId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Renders apprenticeship density at a settlement |
-| **Parameters** | `containerId` (string), `locationId` (string), `options` (Object) |
-| **Returns** | `boolean` - True if rendered |
-
-**Options:**
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `limit` | number | 5 | Max roles to show |
-| `onMasterClick` | function | null | Callback when master clicked |
-
-### `SettlementUI.renderSettlementEducation(containerId, locationId, options)` (NEW)
-
-| Property | Value |
-|----------|-------|
-| **Description** | Renders education statistics at a settlement |
-| **Parameters** | `containerId` (string), `locationId` (string), `options` (Object) |
-| **Returns** | `boolean` - True if rendered |
-
-**Options:**
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `maxSchools` | number | 3 | Max schools to show |
-| `onSchoolClick` | function | null | Callback when school clicked |
-
----
-
-# 8. MODALS-SETTLEMENT.JS
-
-**PURPOSE:** UI modals for settlement management.
-
-**DEPENDENCIES:**
-- `modals-core.js` - `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon`
-- `settlement-state.js` - `SettlementState`
-- `settlement-commands.js` - `SettlementCommands`
-- `settlement-queries.js` - `SettlementQueries`
-- `settlement-economy.js` - `SettlementEconomy`
-
----
-
-### `openManageFeaturesModal(locationId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to manage public features (add/remove/demolish) |
-| **Parameters** | `locationId` (string), `onSuccess` (function) |
-
-### `openUpgradeSettlementModal(locationId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to upgrade a settlement |
-| **Parameters** | `locationId` (string), `onSuccess` (function) |
-
-### `openSettlementSpecializationModal(locationId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to set settlement specialization |
-| **Parameters** | `locationId` (string), `onSuccess` (function) |
-
-### `openSettlementBudgetModal(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal showing settlement budget |
-| **Parameters** | `locationId` (string) |
-
-### `openEmploymentManagementModal(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal showing employment data |
-| **Parameters** | `locationId` (string) |
-
-### `openStateEnterpriseManagementModal(locationId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to manage state enterprises |
-| **Parameters** | `locationId` (string), `onSuccess` (function) |
-
-### `openCreateStateEnterpriseModal(locationId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to create a state enterprise |
-| **Parameters** | `locationId` (string), `onSuccess` (function) |
-
-### `openSettlementDetailsModal(locationId, onRefresh)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal with full settlement details and actions |
-| **Parameters** | `locationId` (string), `onRefresh` (function) |
-
-### `openSettlementRolesModal(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal showing settlement role distribution |
-| **Parameters** | `locationId` (string) |
-
-### `openSettlementApprenticeshipsModal(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal showing apprenticeship data |
-| **Parameters** | `locationId` (string) |
-
-### `openSettlementEducationModal(locationId)` (NEW)
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal showing education statistics |
-| **Parameters** | `locationId` (string) |
-
----
-
-# 9. MODALS-SETTLEMENT-ECONOMY.JS
-
-**PURPOSE:** Economy-specific UI modals.
-
-**DEPENDENCIES:**
-- `modals-core.js` - `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon`
-- `settlement-state.js` - `SettlementState`
-- `settlement-commands.js` - `SettlementCommands`
-- `settlement-queries.js` - `SettlementQueries`
-- `settlement-economy.js` - `SettlementEconomy`
-
----
-
-### `openTaxRateManagementModal(locationId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to manage tax rates |
-| **Parameters** | `locationId` (string), `onSuccess` (function) |
-
-### `openSpendingManagementModal(locationId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to manage spending |
-| **Parameters** | `locationId` (string), `onSuccess` (function) |
-
-### `openJusticeManagementModal(locationId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to manage justice and watch |
-| **Parameters** | `locationId` (string), `onSuccess` (function) |
-
-### `openFinancialReportModal(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal showing financial report |
-| **Parameters** | `locationId` (string) |
-
-### `openEfficiencyScoreModal(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal showing efficiency score |
-| **Parameters** | `locationId` (string) |
-
-### `openDebtManagementModal(locationId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to manage debt |
-| **Parameters** | `locationId` (string), `onSuccess` (function) |
-
----
-
-# 10. SETTLEMENT DATA SCHEMA
-
-## Complete Settlement Data Object
+### Settlement Data Schema
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `rankId` | string | Current rank ID |
 | `specializationRoleId` | string | Specialization role ID |
-| `featureIds` | array | Built feature IDs |
-| `prosperity` | number | Prosperity (0-100) |
-| `wealth` | number | Wealth in gold |
+| `featureIds` | array | Built features |
+| `prosperity` | number | 0-100 prosperity |
+| `wealth` | number | Settlement wealth |
 | `totalDebt` | number | Total debt |
 | `foundedYear` | number | Year founded |
 | `lastUpgraded` | number | Last upgrade year |
-| `budget` | object | Budget data |
-| `employment` | object | Employment data |
+| `budgetAllocationYear` | number | Last allocation year |
+| `educationBudget` | number | Education budget allocated |
+| `educationSpending` | number | Education spending |
+| `governmentSalaryBudget` | number | Government salary budget |
+| `infrastructureBudget` | number | Infrastructure budget |
+| `militaryBudget` | number | Military budget |
+| `publicEnterpriseIds` | array | Public enterprise IDs |
+| `publicEnterpriseHistory` | array | Public enterprise history |
+| `placesOfWorship` | array | Place of worship IDs |
+| `dominantReligionId` | string | Dominant religion ID |
+| `religiousUnity` | number | 0-100 religious unity |
+| `civilLaws` | array | Civil laws (NEW) |
+| `budget` | object | Budget breakdown |
+| `employment` | object | Employment stats |
 | `stateEnterpriseIds` | array | State enterprise IDs |
-| `taxRate` | number | Tax rate (0-50) |
-| `tradeTariff` | number | Trade tariff (0-30) |
-| `industryTaxRate` | number | Industry tax rate (0-30) |
+| `taxRate` | number | Tax rate (%) |
+| `tradeTariff` | number | Trade tariff (%) |
+| `industryTaxRate` | number | Industry tax rate (%) |
 | `militarySpending` | number | Military spending |
 | `infrastructureSpending` | number | Infrastructure spending |
 | `educationSpending` | number | Education spending |
 | `justiceSeverity` | string | 'lenient', 'medium', 'harsh', 'extreme' |
-| `crimeRate` | number | Crime rate (0-0.8) |
+| `crimeRate` | number | Crime rate (0-1) |
 | `hasWatch` | boolean | Has watch/guard |
 | `watchSize` | number | Watch size |
-| **`budgetAllocationYear`** | number | **Budget allocation year (NEW)** |
-| **`educationBudget`** | number | **Education budget (NEW)** |
-| **`governmentSalaryBudget`** | number | **Government salary budget (NEW)** |
-| **`infrastructureBudget`** | number | **Infrastructure budget (NEW)** |
-| **`militaryBudget`** | number | **Military budget (NEW)** |
-| **`publicEnterpriseIds`** | array | **Public enterprise IDs (NEW)** |
-| **`publicEnterpriseHistory`** | array | **Public enterprise history (NEW)** |
-| `history` | array | History entries |
+| `history` | array | Historical events |
 | `notes` | string | Notes |
 
----
-
-## Feature Object Schema
+### Budget Object
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | string | Unique identifier |
-| `name` | string | Feature name |
-| `icon` | string | Monochrome icon |
-| `cost` | number | Construction cost |
-| `maintenance` | number | Annual maintenance |
-| `prosperityBonus` | number | Prosperity bonus |
-| `crimeReduction` | number | Crime reduction |
-| `defense` | number | Defense bonus |
-| `tradeBonus` | number | Trade bonus |
-| `educationBonus` | number | Education bonus |
-| `literacyBonus` | number | Literacy bonus |
-| `category` | string | 'defensive', 'civic', 'military', 'aesthetic', 'infrastructure' |
-| `order` | number | Display order |
-| `isPublic` | boolean | Is publicly available |
-| `description` | string | Description |
+| `income.taxes` | number | Tax income |
+| `income.trade` | number | Trade income |
+| `income.industry` | number | Industry tax income |
+| `income.stateEnterprises` | number | State enterprise income |
+| `income.other` | number | Other income |
+| `expenses.maintenance` | number | Maintenance costs |
+| `expenses.wages` | number | Wage costs |
+| `expenses.construction` | number | Construction costs |
+| `expenses.military` | number | Military costs |
+| `expenses.education` | number | Education costs |
+| `expenses.infrastructure` | number | Infrastructure costs |
+| `expenses.governmentSalaries` | number | Government salaries |
+| `expenses.other` | number | Other expenses |
+| `annualSurplus` | number | Annual surplus |
+| `totalIncome` | number | Total income |
+| `totalExpenses` | number | Total expenses |
 
----
-
-## Rank Object Schema
+### Employment Object
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | string | Unique identifier |
-| `name` | string | Rank name |
-| `icon` | string | Monochrome icon |
-| `minPopulation` | number | Minimum population |
-| `maxPopulation` | number | Maximum population |
-| `baseTax` | number | Base tax revenue |
-| `order` | number | Order (1-5) |
-| `description` | string | Description |
+| `totalWorkers` | number | Total workers |
+| `stateEmployed` | number | State-employed |
+| `privateEmployed` | number | Private-employed |
+| `unemployed` | number | Unemployed |
+| `averageWage` | number | Average wage |
+| `employmentRate` | number | Employment rate (%) |
+
+## Key Functions
+
+### Data Access
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getSettlementData(locationId)` | string | Object | Gets settlement data |
+| `getAllSettlements(options)` | Object | Array | Gets all settlements |
+| `getSettlementFeatures(locationId)` | string | Array | Gets features |
+| `getSettlementBudget(locationId)` | string | Object | Gets budget |
+| `getSettlementEmployment(locationId)` | string | Object | Gets employment |
+| `getStateEnterpriseIds(locationId)` | string | Array | Gets state enterprise IDs |
+| `getSettlementHistory(locationId)` | string | Array | Gets history |
+
+### Budget Allocation Accessors
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getSettlementBudgetAllocation(locationId)` | string | Object | Gets budget allocation |
+| `getGovernmentSalaryBudget(locationId)` | string | number | Gets government salary budget |
+| `getEducationBudget(locationId)` | string | number | Gets education budget |
+
+### Public Enterprise Accessors
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getPublicEnterpriseIds(locationId)` | string | Array | Gets public enterprise IDs |
+| `getPublicEnterprises(locationId)` | string | Array | Gets public enterprises |
+| `getPublicEnterpriseHistory(locationId)` | string | Array | Gets public enterprise history |
+
+### Places of Worship Accessors
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getPlacesOfWorship(locationId)` | string | Array | Gets places of worship |
+| `getPlaceOfWorshipIds(locationId)` | string | Array | Gets place of worship IDs |
+| `getDominantReligion(locationId)` | string | Object | Gets dominant religion |
+| `getReligiousUnity(locationId)` | string | number | Gets religious unity |
+| `getReligiousDemographics(locationId)` | string | Object | Gets religious demographics |
+
+### Civil Laws Accessors (NEW)
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCivilLaws(locationId)` | string | Array | Gets civil laws |
+| `getCivilLawCount(locationId)` | string | number | Gets civil law count |
+| `getCivilLaw(locationId, lawId)` | string, string | Object | Gets a civil law |
+| `getCivilLawsByDomain(locationId, domain)` | string, string | Array | Gets civil laws by domain |
+| `getCivilLawsByType(locationId, type)` | string, string | Array | Gets civil laws by type |
+| `getCivilLawsBySeverity(locationId, severity)` | string, string | Array | Gets civil laws by severity |
+| `getEnforcedCivilLaws(locationId)` | string | Array | Gets enforced civil laws |
+
+### UI State Management
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getUIState()` | None | Object | Gets UI state |
+| `setUIState(key, value, options)` | string, any, Object | void | Sets UI state |
+| `updateUIState(updates, options)` | Object, Object | void | Updates UI state |
+
+### Internal Mutators (For Commands)
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `_setSettlementData(locationId, data)` | string, Object | Object | Sets settlement data |
+| `_updateSettlementData(locationId, updates)` | string, Object | Object | Updates settlement data |
+| `_addFeature(locationId, featureId)` | string, string | boolean | Adds a feature |
+| `_removeFeature(locationId, featureId)` | string, string | boolean | Removes a feature |
+| `_addStateEnterprise(locationId, enterpriseId)` | string, string | boolean | Adds state enterprise |
+| `_removeStateEnterprise(locationId, enterpriseId)` | string, string | boolean | Removes state enterprise |
+| `_addPublicEnterprise(locationId, enterpriseId)` | string, string | boolean | Adds public enterprise |
+| `_removePublicEnterprise(locationId, enterpriseId)` | string, string | boolean | Removes public enterprise |
+| `_addPlaceOfWorship(locationId, placeId)` | string, string | boolean | Adds place of worship |
+| `_removePlaceOfWorship(locationId, placeId)` | string, string | boolean | Removes place of worship |
+| `_setDominantReligion(locationId, religionId)` | string, string | boolean | Sets dominant religion |
+| `_setReligiousUnity(locationId, unity)` | string, number | boolean | Sets religious unity |
+| `_addCivilLaw(locationId, law)` | string, Object | boolean | Adds civil law (NEW) |
+| `_updateCivilLaw(locationId, lawId, updates)` | string, string, Object | boolean | Updates civil law (NEW) |
+| `_removeCivilLaw(locationId, lawId)` | string, string | boolean | Removes civil law (NEW) |
+| `_addHistoryEntry(locationId, entry)` | string, Object | boolean | Adds history entry |
+
+### Subscription & Cache
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `subscribe(callback)` | Function | Function | Subscribes to changes |
+| `invalidateCache()` | None | void | Invalidates caches |
+| `refreshFromMasterData()` | None | void | Refreshes from master data |
 
 ---
 
-# 11. COMPLETE FUNCTION LIST
+# 4. SETTLEMENT-COMMANDS-CORE.JS
 
-## settlement-state.js
+## Purpose
 
-| Function | Type | Description |
-|----------|------|-------------|
-| `subscribe(callback)` | Command | Subscribe to changes |
-| `getSettlementData(locationId)` | Query | Get settlement data |
-| `getAllSettlements(options)` | Query | Get all settlements |
-| `getSettlementFeatures(locationId)` | Query | Get features |
-| `getSettlementBudget(locationId)` | Query | Get budget |
-| `getSettlementEmployment(locationId)` | Query | Get employment |
-| `getStateEnterpriseIds(locationId)` | Query | Get state enterprises |
-| `getSettlementHistory(locationId)` | Query | Get history |
-| `getUIState()` | Query | Get UI state |
-| `updateUIState(updates)` | Command | Update UI state |
-| `getSettlementBudgetAllocation(locationId)` | Query | **Get budget allocation (NEW)** |
-| `getGovernmentSalaryBudget(locationId)` | Query | **Get government salary budget (NEW)** |
-| `getEducationBudget(locationId)` | Query | **Get education budget (NEW)** |
-| `getPublicEnterpriseIds(locationId)` | Query | **Get public enterprise IDs (NEW)** |
-| `getPublicEnterprises(locationId)` | Query | **Get public enterprises (NEW)** |
-| `getPublicEnterpriseHistory(locationId)` | Query | **Get public enterprise history (NEW)** |
+Core infrastructure for settlement commands: recursion guards, dependency wrappers, validation helpers, shared utilities.
 
----
+## Dependencies
 
-## settlement-commands.js
+| Module | Functions Used |
+|--------|----------------|
+| `settlement-state.js` | `SettlementState` |
+| `settlement-economy.js` | `SettlementEconomy` |
+| `accessors.js` | `getPlaceById`, `getCharacterById`, `getCurrentYear` |
+| `eventLogger.js` | `logEvent` |
+| `storage.js` | `saveMasterData` |
 
-| Function | Type | Description |
-|----------|------|-------------|
-| `buildFeature(locationId, featureId)` | Command | Build feature |
-| `removeFeature(locationId, featureId)` | Command | Remove feature |
-| `demolishFeature(locationId, featureId)` | Command | Demolish feature |
-| `upgradeSettlement(locationId)` | Command | Upgrade settlement |
-| `setSpecialization(locationId, roleId)` | Command | Set specialization |
-| `updateWealth(locationId, delta, reason)` | Command | Update wealth |
-| `updateDebt(locationId, delta, reason)` | Command | Update debt |
-| `updateTaxRate(locationId, rate)` | Command | Update tax rate |
-| `updateTradeTariff(locationId, tariff)` | Command | Update trade tariff |
-| `updateIndustryTaxRate(locationId, rate)` | Command | Update industry tax |
-| `updateMilitarySpending(locationId, amount)` | Command | Update military spending |
-| `updateInfrastructureSpending(locationId, amount)` | Command | Update infrastructure spending |
-| `updateEducationSpending(locationId, amount)` | Command | Update education spending |
-| `updateJusticeSeverity(locationId, severity)` | Command | Update justice severity |
-| `updateWatch(locationId, hasWatch, size)` | Command | Update watch |
-| `createStateEnterprise(locationId, data)` | Command | Create state enterprise |
-| `removeStateEnterprise(locationId, enterpriseId)` | Command | Remove state enterprise |
-| `assignSettlementRole(locationId, characterId, roleId, options)` | Command | Assign role at settlement |
-| `removeSettlementRole(locationId, characterId, roleId)` | Command | Remove role from settlement |
-| `updateSettlementCharacterSkill(locationId, characterId, roleId, skillLevel)` | Command | Update skill at settlement |
-| `allocateGovernmentSalaryBudget(locationId, amount, year)` | Command | **Allocate government salary budget (NEW)** |
-| `allocateEducationBudget(locationId, amount, year)` | Command | **Allocate education budget (NEW)** |
-| `getGovernmentSalaryRequirements(locationId)` | Command | **Get government salary requirements (NEW)** |
-| `collectPublicEnterpriseProfits(locationId, year)` | Command | **Collect public enterprise profits (NEW)** |
-| `getPublicEnterpriseSummary(locationId)` | Command | **Get public enterprise summary (NEW)** |
-| `processAnnualSettlementUpdate(locationId)` | Command | Process annual update |
-| `processAllSettlements()` | Command | Process all settlements |
+## Key Functions
 
----
+### Dependency Wrappers
 
-## settlement-queries.js
+| Function | Description |
+|----------|-------------|
+| `_getPlaceById(id)` | Gets place by ID |
+| `_getPlaces()` | Gets all places |
+| `_getCharacterById(id)` | Gets character by ID |
+| `_getCharacters()` | Gets all characters |
+| `_getCurrentYear()` | Gets current year |
+| `_getLocationPopulationCount(locationId)` | Gets population count |
+| `_saveMasterData()` | Saves master data |
+| `_logEvent(category, type, message, subjects)` | Logs event |
+| `_showToast(message, type)` | Shows toast |
+| `_getIcon(name)` | Gets icon |
+| `_getRoleById(id)` | Gets role by ID |
+| `_getSettlementRanks()` | Gets settlement ranks |
+| `_getSettlementData(locationId)` | Gets settlement data |
+| `_getSettlementFeatures(locationId)` | Gets settlement features |
+| `_getStateEnterpriseIds(locationId)` | Gets state enterprise IDs |
+| `_getAllSubLocationIds(locationId)` | Gets all sub-location IDs |
+| `_getCurrentLocationId(character)` | Gets character's current location |
+| `_getSettlementEducationStats(locationId)` | Gets education stats |
+| `_getPlaceOfWorship(placeId)` | Gets place of worship |
+| `_getReligion(religionId)` | Gets religion |
+| `_getReligionQueries()` | Gets religion queries |
 
-| Function | Type | Description |
-|----------|------|-------------|
-| `getSettlementSummary(locationId)` | Query | Get summary |
-| `getSettlementRank(locationId)` | Query | Get rank |
-| `getUpgradeInfo(locationId)` | Query | Get upgrade info |
-| `getSettlementFeatures(locationId)` | Query | Get features |
-| `getAllFeatures()` | Query | Get all features |
-| `getFeatureById(featureId)` | Query | Get feature by ID |
-| `canAffordFeature(locationId, featureId)` | Query | Check affordability |
-| `wouldCreateDebt(locationId, featureId)` | Query | Check debt creation |
-| `getSettlementBudget(locationId)` | Query | Get budget |
-| `getSettlementEmployment(locationId)` | Query | Get employment |
-| `getTradeStatus(locationId)` | Query | Get trade status |
-| `getSettlementIncome(locationId)` | Query | Get income |
-| `getSettlementExpenses(locationId)` | Query | Get expenses |
-| `getSettlementSurplus(locationId)` | Query | Get surplus |
-| `getSettlementLiteracyStats(locationId)` | Query | Get literacy stats |
-| `getSettlementRoles(locationId)` | Query | Get role distribution |
-| `getSettlementCharactersByRole(locationId, roleId, mastersOnly)` | Query | Get characters by role |
-| `getSettlementRoleStats(locationId)` | Query | Get role statistics |
-| `getSettlementMasterStats(locationId, roleId)` | Query | Get master stats |
-| `getSettlementApprenticeshipDensity(locationId)` | Query | **Get apprenticeship density (NEW)** |
-| `getSettlementMastersByRole(locationId, roleId)` | Query | **Get masters by role (NEW)** |
-| `getSettlementEducationStats(locationId)` | Query | **Get education stats (NEW)** |
-| `getSettlementSchools(locationId, filters)` | Query | **Get schools (NEW)** |
-| `getSettlementStudentDistribution(locationId, options)` | Query | **Get student distribution (NEW)** |
-| `getSettlementBudgetSummary(locationId)` | Query | **Get budget summary (NEW)** |
-| `getBudgetAllocationHistory(locationId, limit)` | Query | **Get budget allocation history (NEW)** |
-| `getSettlementBudgetAllocation(locationId)` | Query | **Get budget allocation (NEW)** |
-| `getGovernmentSalaryBudget(locationId)` | Query | **Get government salary budget (NEW)** |
-| `getEducationBudget(locationId)` | Query | **Get education budget (NEW)** |
-| `getPublicEnterprises(locationId)` | Query | **Get public enterprises (NEW)** |
-| `getPublicEnterpriseIds(locationId)` | Query | **Get public enterprise IDs (NEW)** |
-| `getPublicEnterpriseHistory(locationId)` | Query | **Get public enterprise history (NEW)** |
-| `getPublicEnterpriseSummary(locationId)` | Query | **Get public enterprise summary (NEW)** |
-| `getSettlementStatistics(locationId)` | Query | Get statistics |
-| `getGlobalSettlementStatistics()` | Query | Get global stats |
-| `getLargestSettlements(limit)` | Query | Get largest |
-| `getWealthiestSettlements(limit)` | Query | Get wealthiest |
-| `getMostProsperousSettlements(limit)` | Query | Get most prosperous |
+### Validation Helpers
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `_validateFeature(locationId, featureId)` | string, string | Object | Validates feature build |
+
+### Shared Utilities
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `_recordFeatureDemolition(locationId, featureId, record)` | string, string, Object | boolean | Records feature demolition |
+| `_getDemolishedFeatures(locationId)` | string | Array | Gets demolished features |
+| `_getSettlementDemolitionStats(locationId)` | string | Object | Gets demolition stats |
 
 ---
 
-## settlement-economy.js
+# 5. SETTLEMENT-COMMANDS-WRITES.JS
 
-| Function | Type | Description |
-|----------|------|-------------|
-| `calculateTaxIncome(locationId)` | Query | Calculate tax income |
-| `calculateTradeIncome(locationId)` | Query | Calculate trade income |
-| `calculateIndustryIncome(locationId)` | Query | Calculate industry income |
-| `calculateStateEnterpriseIncome(locationId)` | Query | Calculate state income |
-| `calculatePublicEnterpriseIncome(locationId)` | Query | **Calculate public enterprise income (NEW)** |
-| `calculateTotalIncome(locationId)` | Query | Calculate total income |
-| `calculateMaintenanceCosts(locationId)` | Query | Calculate maintenance |
-| `calculateWageCosts(locationId)` | Query | Calculate wages |
-| `calculateSpendingCosts(locationId)` | Query | Calculate spending |
-| `calculateGovernmentSalaryExpenses(locationId)` | Query | **Calculate government salary expenses (NEW)** |
-| `calculateTotalExpenses(locationId)` | Query | Calculate total expenses |
-| `calculateSurplus(locationId)` | Query | Calculate surplus |
-| `calculateTaxRevenue(locationId)` | Query | Calculate tax revenue |
-| `calculateEmployment(locationId)` | Query | Calculate employment |
-| `calculateProsperity(locationId)` | Query | Calculate prosperity (with role factors) |
-| `calculateCrimeRate(locationId)` | Query | Calculate crime rate |
-| `calculateSpecializationIncomeBonus(locationId)` | Query | Calculate specialization bonus |
-| `calculateSpecializationProsperityBonus(locationId)` | Query | Calculate prosperity bonus |
-| `getSettlementLiteracyStats(locationId)` | Query | Get literacy stats |
-| `getFinancialReport(locationId, years)` | Query | Get financial report |
-| `getEfficiencyScore(locationId)` | Query | Get efficiency score |
-| `getDebtRatio(locationId)` | Query | Get debt ratio |
+## Purpose
 
----
+All write operations for settlement management except annual processing.
 
-## settlement-features.js
+## Dependencies
 
-| Function | Type | Description |
-|----------|------|-------------|
-| `getAllFeatures()` | Query | Get all features |
-| `getFeatureById(featureId)` | Query | Get feature by ID |
-| `getFeaturesByCategory(category)` | Query | Get features by category |
-| `getPublicFeatures()` | Query | Get public features |
-| `getFeatureCategories()` | Query | Get feature categories |
-| `canAffordFeature(locationId, featureId)` | Query | Check affordability |
-| `wouldCreateDebt(locationId, featureId)` | Query | Check debt creation |
-| `hasPrerequisites(locationId, featureId)` | Query | Check prerequisites |
-| `getFeatureCost(featureId)` | Query | Get cost |
-| `getFeatureMaintenance(featureId)` | Query | Get maintenance |
-| `getFeatureProsperityBonus(featureId)` | Query | Get prosperity bonus |
-| `getFeatureCrimeReduction(featureId)` | Query | Get crime reduction |
-| `getFeatureDefenseBonus(featureId)` | Query | Get defense bonus |
-| `getFeatureTradeBonus(featureId)` | Query | Get trade bonus |
-| `getFeatureEducationBonus(featureId)` | Query | Get education bonus |
-| `getFeatureLiteracyBonus(featureId)` | Query | Get literacy bonus |
-| `getFeatureEffects(featureId)` | Query | Get all effects |
+| Module | Functions Used |
+|--------|----------------|
+| `settlement-commands-core.js` | Infrastructure |
+| `settlement-state.js` | `SettlementState` |
+| `settlement-economy.js` | `SettlementEconomy` |
 
----
+## Key Functions
 
-## settlement-ranks.js
+### Feature Commands
 
-| Function | Type | Description |
-|----------|------|-------------|
-| `getAllRanks()` | Query | Get all ranks |
-| `getRankById(rankId)` | Query | Get rank by ID |
-| `getRankFromPopulation(population)` | Query | Get rank from population |
-| `getSettlementRank(locationId)` | Query | Get settlement rank |
-| `getNextRank(locationId)` | Query | Get next rank |
-| `canUpgrade(locationId)` | Query | Check upgrade |
-| `getUpgradeRequirements(locationId)` | Query | Get upgrade requirements |
-| `getRankTaxBonus(rankId)` | Query | Get tax bonus |
-| `getRankProsperityModifier(rankId)` | Query | Get prosperity modifier |
-| `getRankPopulationModifier(rankId)` | Query | Get population modifier |
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `buildFeature(locationId, featureId)` | string, string | Object | Builds a feature |
+| `removeFeature(locationId, featureId)` | string, string | Object | Removes a feature (full refund) |
+| `demolishFeature(locationId, featureId)` | string, string | Object | Demolishes a feature (no refund) |
 
----
+### Settlement Management Commands
 
-## settlement-ui-list.js
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `upgradeSettlement(locationId)` | string | Object | Upgrades settlement rank |
+| `setSpecialization(locationId, roleId)` | string, string | Object | Sets settlement specialization |
 
-| Function | Type | Description |
-|----------|------|-------------|
-| `renderSettlementList(containerId, options)` | UI | Render settlement list |
-| `renderSettlementCard(locationId, options)` | UI | Render settlement card |
-| `renderSettlementTable(settlements, options)` | UI | Render settlement table |
-| `renderFeatureList(containerId, locationId, options)` | UI | Render feature list |
-| `renderSettlementRoles(containerId, locationId, options)` | UI | Render settlement roles |
-| `renderSettlementMasters(containerId, locationId, options)` | UI | Render settlement masters |
-| `renderSettlementApprenticeships(containerId, locationId, options)` | UI | **Render settlement apprenticeships (NEW)** |
-| `renderSettlementEducation(containerId, locationId, options)` | UI | **Render settlement education (NEW)** |
+### Wealth & Debt Commands
 
----
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `updateWealth(locationId, delta, reason)` | string, number, string | Object | Updates settlement wealth |
+| `updateDebt(locationId, delta, reason)` | string, number, string | Object | Updates settlement debt |
 
-## modals-settlement.js
+### Tax & Rate Commands
 
-| Function | Type | Description |
-|----------|------|-------------|
-| `openManageFeaturesModal(locationId, onSuccess)` | UI | Manage features |
-| `openUpgradeSettlementModal(locationId, onSuccess)` | UI | Upgrade settlement |
-| `openSettlementSpecializationModal(locationId, onSuccess)` | UI | Set specialization |
-| `openSettlementBudgetModal(locationId)` | UI | View budget |
-| `openEmploymentManagementModal(locationId)` | UI | View employment |
-| `openStateEnterpriseManagementModal(locationId, onSuccess)` | UI | Manage state enterprises |
-| `openCreateStateEnterpriseModal(locationId, onSuccess)` | UI | Create state enterprise |
-| `openSettlementDetailsModal(locationId, onRefresh)` | UI | Settlement details |
-| `openSettlementRolesModal(locationId)` | UI | View settlement roles |
-| `openSettlementApprenticeshipsModal(locationId)` | UI | **View apprenticeships (NEW)** |
-| `openSettlementEducationModal(locationId)` | UI | **View education (NEW)** |
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `updateTaxRate(locationId, rate)` | string, number | Object | Updates tax rate |
+| `updateTradeTariff(locationId, tariff)` | string, number | Object | Updates trade tariff |
+| `updateIndustryTaxRate(locationId, rate)` | string, number | Object | Updates industry tax rate |
 
----
+### Spending Commands
 
-## modals-settlement-economy.js
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `updateMilitarySpending(locationId, amount)` | string, number | Object | Updates military spending |
+| `updateInfrastructureSpending(locationId, amount)` | string, number | Object | Updates infrastructure spending |
+| `updateEducationSpending(locationId, amount)` | string, number | Object | Updates education spending |
 
-| Function | Type | Description |
-|----------|------|-------------|
-| `openTaxRateManagementModal(locationId, onSuccess)` | UI | Manage tax rates |
-| `openSpendingManagementModal(locationId, onSuccess)` | UI | Manage spending |
-| `openJusticeManagementModal(locationId, onSuccess)` | UI | Manage justice and watch |
-| `openFinancialReportModal(locationId)` | UI | View financial report |
-| `openEfficiencyScoreModal(locationId)` | UI | View efficiency score |
-| `openDebtManagementModal(locationId, onSuccess)` | UI | Manage debt |
+### Justice & Watch Commands
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `updateJusticeSeverity(locationId, severity)` | string, string | Object | Updates justice severity |
+| `updateWatch(locationId, hasWatch, size)` | string, boolean, number | Object | Updates watch |
+
+### State Enterprise Commands
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `createStateEnterprise(locationId, data)` | string, Object | Object | Creates state enterprise |
+| `removeStateEnterprise(locationId, enterpriseId)` | string, string | Object | Removes state enterprise |
+
+### Settlement Role Commands
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `assignSettlementRole(locationId, characterId, roleId, options)` | string, string, string, Object | Object | Assigns role to character |
+| `removeSettlementRole(locationId, characterId, roleId)` | string, string, string | Object | Removes role from character |
+| `updateSettlementCharacterSkill(locationId, characterId, roleId, skillLevel)` | string, string, string, number | Object | Updates character skill |
+
+### Budget Allocation Commands
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `allocateGovernmentSalaryBudget(locationId, amount, year)` | string, number, number | Object | Allocates government salary budget |
+| `allocateEducationBudget(locationId, amount, year)` | string, number, number | Object | Allocates education budget |
+| `getGovernmentSalaryRequirements(locationId)` | string | Object | Gets salary requirements |
+
+### Public Enterprise Commands
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `collectPublicEnterpriseProfits(locationId, year)` | string, number | Object | Collects public enterprise profits |
+| `getPublicEnterpriseSummary(locationId)` | string | Object | Gets public enterprise summary |
+
+### Places of Worship Commands
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `addPlaceOfWorshipToSettlement(locationId, placeId, options)` | string, string, Object | Object | Adds place of worship |
+| `removePlaceOfWorshipFromSettlement(locationId, placeId, options)` | string, string, Object | Object | Removes place of worship |
+| `updateDominantReligion(locationId, options)` | string, Object | Object | Updates dominant religion |
+| `calculateReligiousUnity(locationId)` | string | number | Calculates religious unity |
+
+### Civil Law Commands (NEW)
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `addCivilLaw(locationId, lawData)` | string, Object | Object | Adds a civil law |
+| `updateCivilLaw(locationId, lawId, updates)` | string, string, Object | Object | Updates a civil law |
+| `removeCivilLaw(locationId, lawId)` | string, string | Object | Removes a civil law |
+| `getCivilLaws(locationId)` | string | Array | Gets civil laws |
+| `getCivilLaw(locationId, lawId)` | string, string | Object | Gets a civil law |
 
 ---
 
-# 12. DEPENDENCY MAP
+# 6. SETTLEMENT-COMMANDS-ANNUAL.JS
+
+## Purpose
+
+Annual processing for settlements - updates wealth, budget, prosperity, employment, crime rate, rank, and religion.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `settlement-commands-core.js` | Infrastructure |
+| `settlement-state.js` | `SettlementState` |
+| `settlement-economy.js` | `SettlementEconomy` |
+
+## Key Functions
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `processAnnualSettlementUpdate(locationId)` | string | Object | Processes annual update for a settlement |
+| `processAllSettlements()` | None | Object | Processes all settlements |
+
+**Annual Processing Steps:**
+
+1. Process state enterprises
+2. Calculate income (tax, trade, industry, state enterprises, public enterprises)
+3. Calculate expenses (maintenance, wages, spending, government salaries)
+4. Calculate surplus
+5. Update wealth
+6. Apply debt interest (5% annually)
+7. Update budget
+8. Update prosperity
+9. Update employment
+10. Update crime rate
+11. Update rank (auto-upgrade if population threshold met)
+12. Update dominant religion
+13. Collect public enterprise profits
+14. Save all changes
+
+---
+
+# 7. SETTLEMENT-QUERIES.JS
+
+## Purpose
+
+All read-only queries for settlement data.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `settlement-state.js` | `SettlementState` |
+| `government-laws.js` | `GovernmentLaws` |
+| `accessors.js` | `getPlaceById`, `getPlaces`, `getCurrentYear` |
+
+## Key Functions
+
+### Basic Queries
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getSettlementData(locationId)` | string | Object | Gets settlement data |
+| `getAllSettlementData()` | None | Object | Gets all settlement data |
+| `getSettlements()` | None | Array | Gets all settlements |
+| `getSettlementCount()` | None | number | Gets settlement count |
+
+### Civil Laws (Wrappers for GovernmentLaws)
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCivilLaws(locationId)` | string | Array | Gets civil laws |
+| `getCivilLawsByDomain(locationId, domain)` | string, string | Array | Gets civil laws by domain |
+| `getEnforcedCivilLaws(locationId)` | string | Array | Gets enforced civil laws |
+| `getCivilLaw(locationId, lawId)` | string, string | Object | Gets a civil law |
+| `getCivilLawCount(locationId)` | string | number | Gets civil law count |
+| `getCivilLawsByCrimeType(locationId, crimeType)` | string, string | Array | Gets civil laws by crime type |
+| `getEnforcedCivilLawsByCrimeType(locationId, crimeType)` | string, string | Array | Gets enforced civil laws by crime type |
+| `getCivilLawStatistics(locationId)` | string | Object | Gets civil law statistics |
+
+### Applicable Laws (Aggregates Civil + Religious)
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getApplicableLaws(locationId, characterId, domain)` | string, string, string | Array | Gets applicable laws |
+| `isLawApplicable(locationId, characterId, lawId)` | string, string, string | boolean | Checks if law is applicable |
+
+### Statistics & Comparison
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getGlobalSettlementStatistics()` | None | Object | Gets global settlement stats |
+| `compareSettlements(locationId1, locationId2)` | string, string | Object | Compares two settlements |
+
+---
+
+# 8. SETTLEMENT-ECONOMY-CORE.JS
+
+## Purpose
+
+Business logic for settlement finances: income, expenses, surplus, employment, crime rate, specialization bonuses, financial reporting.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `settlement-state.js` | `SettlementState` |
+| `accessors.js` | `getPlaceById`, `getCurrentYear` |
+
+## Key Functions
+
+### Income Calculations
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `calculateTaxIncome(locationId)` | string | number | Calculates tax income |
+| `calculateTradeIncome(locationId)` | string | number | Calculates trade income |
+| `calculateIndustryIncome(locationId)` | string | number | Calculates industry income |
+| `calculateStateEnterpriseIncome(locationId)` | string | number | Calculates state enterprise income |
+| `calculatePublicEnterpriseIncome(locationId)` | string | number | Calculates public enterprise income |
+| `calculateTotalIncome(locationId)` | string | number | Calculates total income |
+
+### Expense Calculations
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `calculateMaintenanceCosts(locationId)` | string | number | Calculates maintenance costs |
+| `calculateWageCosts(locationId)` | string | number | Calculates wage costs |
+| `calculateSpendingCosts(locationId)` | string | number | Calculates spending costs |
+| `calculateGovernmentSalaryExpenses(locationId)` | string | number | Calculates government salary expenses |
+| `calculateTotalExpenses(locationId)` | string | number | Calculates total expenses |
+
+### Surplus & Tax
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `calculateSurplus(locationId)` | string | number | Calculates surplus |
+| `calculateTaxRevenue(locationId)` | string | number | Calculates tax revenue |
+
+### Employment & Crime
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `calculateEmployment(locationId)` | string | Object | Calculates employment |
+| `calculateCrimeRate(locationId)` | string | number | Calculates crime rate |
+
+### Specialization Bonuses
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `calculateSpecializationIncomeBonus(locationId)` | string | number | Calculates specialization income bonus |
+| `calculateSpecializationProsperityBonus(locationId)` | string | number | Calculates specialization prosperity bonus |
+
+### Reporting
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getFinancialReport(locationId, years)` | string, number | Object | Gets financial report |
+| `getEfficiencyScore(locationId)` | string | Object | Gets efficiency score |
+| `getDebtRatio(locationId)` | string | number | Gets debt ratio |
+| `getSettlementLiteracyStats(locationId)` | string | Object | Gets literacy stats |
+
+---
+
+# 9. SETTLEMENT-PROSPERITY.JS
+
+## Purpose
+
+Prosperity calculation with multi-factor weighting including rank, features, specialization, tax rate, crime rate, literacy, employment, debt, government leader, role-based factors, religious unity, and public enterprises.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `settlement-state.js` | `SettlementState` |
+| `accessors.js` | `getPlaceById`, `getCurrentYear`, `getCharacters` |
+| `government-queries.js` | `GovernmentQueries` |
+
+## Key Functions
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `calculateProsperity(locationId)` | string | number | Calculates prosperity (0-100) |
+
+**Prosperity Factors:**
+
+| Factor | Weight | Description |
+|--------|--------|-------------|
+| Rank-based | ±5 | Population relative to rank |
+| Features | Variable | Feature prosperity bonuses |
+| Specialization | 0-12 | Specialization bonuses |
+| Tax rate | -3 to 0 | High taxes reduce prosperity |
+| Crime rate | -5 to 0 | High crime reduces prosperity |
+| Literacy | 0-2 | High literacy increases prosperity |
+| Employment | -3 to +3 | Employment rate affects prosperity |
+| Debt | -15 to 0 | Debt reduces prosperity |
+| Government Leader | -5 to +5 | Leader traits affect prosperity |
+| Role diversity | -3 to +4 | Diverse roles increase prosperity |
+| Master concentration | 0-3 | Masters increase prosperity |
+| Religious unity | -5 to +3 | Unity affects prosperity |
+| Places of worship | 0-3 | Places increase prosperity |
+| Public enterprises | 0-3 | Profitable public enterprises increase prosperity |
+
+---
+
+# 10. SETTLEMENT-RANKS.JS
+
+## Purpose
+
+Rank definitions, calculation, upgrade validation, and rank effects.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `settlement-state.js` | `SettlementState` |
+| `accessors.js` | `getPlaceById`, `getCurrentYear` |
+
+## Rank Definitions
+
+| Rank ID | Name | Min Population | Max Population | Base Tax | Order |
+|---------|------|----------------|----------------|----------|-------|
+| `hamlet` | Hamlet | 0 | 99 | 5 | 1 |
+| `village` | Village | 100 | 999 | 15 | 2 |
+| `town` | Town | 1000 | 4999 | 50 | 3 |
+| `city` | City | 5000 | 19999 | 150 | 4 |
+| `metropolis` | Metropolis | 20000 | 999999 | 400 | 5 |
+
+## Key Functions
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getAllRanks()` | None | Array | Gets all ranks |
+| `getRankById(rankId)` | string | Object | Gets rank by ID |
+| `getRankFromPopulation(population)` | number | Object | Gets rank from population |
+| `getSettlementRank(locationId)` | string | Object | Gets settlement rank |
+| `getNextRank(locationId)` | string | Object | Gets next rank |
+| `canUpgrade(locationId)` | string | boolean | Checks if can upgrade |
+| `getUpgradeRequirements(locationId)` | string | Object | Gets upgrade requirements |
+| `getRankTaxBonus(rankId)` | string | number | Gets rank tax bonus |
+| `getRankProsperityModifier(rankId)` | string | number | Gets rank prosperity modifier |
+| `getRankPopulationModifier(rankId)` | string | number | Gets rank population modifier |
+
+---
+
+# 11. SETTLEMENT-FEATURES.JS
+
+## Purpose
+
+Feature definitions, validation, and effects.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `settlement-state.js` | `SettlementState` |
+
+## Feature Definitions
+
+| Feature ID | Name | Cost | Maintenance | Prosperity Bonus | Crime Reduction | Category |
+|------------|------|------|-------------|------------------|-----------------|----------|
+| `walls` | Defensive Walls | 500 | 10 | 5 | 0.1 | defensive |
+| `fort` | Fortification | 600 | 15 | 3 | 0.15 | defensive |
+| `watchtower` | Watchtower | 150 | 4 | 0 | 0.1 | defensive |
+| `moat` | Moat | 350 | 8 | 2 | 0.08 | defensive |
+| `town_hall` | Town Hall | 300 | 8 | 6 | 0.05 | civic |
+| `courthouse` | Courthouse | 300 | 8 | 5 | 0.25 | civic |
+| `school` | School | 200 | 5 | 12 | 0 | civic |
+| `library` | Library | 250 | 8 | 10 | 0 | civic |
+| `market_square` | Market Square | 200 | 5 | 10 | 0 | civic |
+| `guildhall` | Guildhall | 250 | 4 | 7 | 0 | civic |
+| `barracks` | Barracks | 350 | 10 | 2 | 0.2 | military |
+| `garrison` | Garrison | 500 | 15 | 3 | 0.25 | military |
+| `park` | Public Park | 100 | 3 | 4 | 0 | aesthetic |
+| `gardens` | Public Gardens | 150 | 4 | 5 | 0 | aesthetic |
+| `paved_roads` | Paved Roads | 250 | 8 | 7 | 0 | infrastructure |
+| `sewer_system` | Sewer System | 300 | 6 | 8 | 0.08 | infrastructure |
+| `water_system` | Water System | 250 | 5 | 6 | 0 | infrastructure |
+| `bridge` | Bridge | 200 | 4 | 5 | 0 | infrastructure |
+
+## Key Functions
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getAllFeatures()` | None | Array | Gets all features |
+| `getFeatureById(featureId)` | string | Object | Gets feature by ID |
+| `getFeaturesByCategory(category)` | string | Array | Gets features by category |
+| `getPublicFeatures()` | None | Array | Gets public features |
+| `getFeatureCategories()` | None | Object | Gets feature categories |
+| `canAffordFeature(locationId, featureId)` | string, string | boolean | Checks if can afford |
+| `wouldCreateDebt(locationId, featureId)` | string, string | boolean | Checks if would create debt |
+| `hasPrerequisites(locationId, featureId)` | string, string | boolean | Checks prerequisites |
+| `getFeatureCost(featureId)` | string | number | Gets feature cost |
+| `getFeatureMaintenance(featureId)` | string | number | Gets feature maintenance |
+| `getFeatureProsperityBonus(featureId)` | string | number | Gets prosperity bonus |
+| `getFeatureCrimeReduction(featureId)` | string | number | Gets crime reduction |
+| `getFeatureDefenseBonus(featureId)` | string | number | Gets defense bonus |
+| `getFeatureTradeBonus(featureId)` | string | number | Gets trade bonus |
+| `getFeatureEducationBonus(featureId)` | string | number | Gets education bonus |
+| `getFeatureLiteracyBonus(featureId)` | string | number | Gets literacy bonus |
+| `getFeatureEffects(featureId)` | string | Object | Gets all feature effects |
+
+---
+
+# 12. SETTLEMENT-ENTERPRISES.JS
+
+## Purpose
+
+State and public enterprise management.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `settlement-state.js` | `SettlementState` |
+| `industry-state.js` | `IndustryState` |
+| `accessors.js` | `getPlaceById` |
+
+## Key Functions
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `addStateEnterprise(locationId, enterpriseId)` | string, string | boolean | Adds state enterprise |
+| `removeStateEnterprise(locationId, enterpriseId)` | string, string | boolean | Removes state enterprise |
+| `addPublicEnterprise(locationId, enterpriseId)` | string, string | boolean | Adds public enterprise |
+| `removePublicEnterprise(locationId, enterpriseId)` | string, string | boolean | Removes public enterprise |
+
+---
+
+# 13. SETTLEMENT-GOVERNMENT.JS
+
+## Purpose
+
+Government type, justice severity, and watch management.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `settlement-state.js` | `SettlementState` |
+| `accessors.js` | `getPlaceById`, `getCurrentYear` |
+
+## Key Functions
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `setGovernmentType(locationId, governmentType, governmentStyle, governmentTypeId)` | string, string, string, string | Object | Sets government type |
+| `setUseReligiousLawsAsCivil(locationId, enabled)` | string, boolean | Object | Sets whether religious laws count as civil |
+| `setJusticeSeverity(locationId, severity)` | string, string | Object | Sets justice severity |
+| `setWatch(locationId, hasWatch, size)` | string, boolean, number | Object | Sets watch |
+
+**Government Types:**
+- `none` - No government
+- `monarchy` - Monarchy
+- `republic` - Republic
+- `theocracy` - Theocracy (religious laws as civil)
+- `tribal` - Tribal government
+- `feudal` - Feudal system
+
+**Justice Severities:**
+- `lenient` - Lenient justice
+- `medium` - Medium justice
+- `harsh` - Harsh justice
+- `extreme` - Extreme justice
+
+---
+
+# 14. SETTLEMENT-BUDGET.JS
+
+## Purpose
+
+Budget allocation and tax management.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `settlement-state.js` | `SettlementState` |
+| `accessors.js` | `getPlaceById`, `getCurrentYear` |
+
+## Key Functions
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `setBudgetAllocation(locationId, allocation)` | string, Object | Object | Sets budget allocation |
+| `setTaxRate(locationId, rate)` | string, number | boolean | Sets tax rate |
+| `setTradeTariff(locationId, tariff)` | string, number | boolean | Sets trade tariff |
+| `setIndustryTaxRate(locationId, rate)` | string, number | boolean | Sets industry tax rate |
+
+---
+
+# 15. SETTLEMENT-CRUD.JS
+
+## Purpose
+
+Create, read, update settlement data.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `settlement-state.js` | `SettlementState` |
+| `accessors.js` | `getPlaceById`, `getCurrentYear` |
+
+## Key Functions
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `createSettlementData(locationId, initialData)` | string, Object | Object | Creates settlement data |
+| `updateSettlementData(locationId, updates)` | string, Object | Object | Updates settlement data |
+| `initializeAllSettlements()` | None | Object | Initializes all settlements |
+
+---
+
+# 16. SETTLEMENT-UI-LIST.JS
+
+## Purpose
+
+UI rendering for settlement lists, cards, tables, features, roles, apprenticeships, education, places of worship, religious demographics, and civil laws.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `settlement-state.js` | `SettlementState` |
+| `settlement-queries.js` | `SettlementQueries` |
+| `modals-core.js` | `_escapeHtml`, `_getIcon`, `_showToast` |
+
+## Key Functions
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `renderSettlementList(containerId, options)` | string, Object | void | Renders settlement list |
+| `renderSettlementCard(locationId, options)` | string, Object | string | Renders settlement card |
+| `renderSettlementTable(settlements, options)` | Array, Object | string | Renders settlement table |
+| `renderFeatureList(containerId, locationId, options)` | string, string, Object | void | Renders feature list |
+| `renderSettlementRoles(containerId, locationId, options)` | string, string, Object | boolean | Renders settlement roles |
+| `renderSettlementMasters(containerId, locationId, options)` | string, string, Object | boolean | Renders settlement masters |
+| `renderSettlementApprenticeships(containerId, locationId, options)` | string, string, Object | boolean | Renders apprenticeships |
+| `renderSettlementEducation(containerId, locationId, options)` | string, string, Object | boolean | Renders education |
+| `renderPlacesOfWorship(containerId, locationId, options)` | string, string, Object | boolean | Renders places of worship |
+| `renderReligiousDemographics(containerId, locationId, options)` | string, string, Object | boolean | Renders religious demographics |
+| `renderCivilLawList(containerId, locationId, options)` | string, string, Object | boolean | Renders civil law list (NEW) |
+| `renderCivilLawTable(laws, options)` | Array, Object | string | Renders civil law table (NEW) |
+
+---
+
+# 17. MODALS-SETTLEMENT-CORE.JS
+
+## Purpose
+
+Core settlement UI modals: features, upgrade, specialization, state enterprises, employment, budget, and civil laws.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `modals-core.js` | `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon` |
+| `settlement-state.js` | `SettlementState` |
+| `settlement-commands.js` | `SettlementCommands` |
+| `settlement-queries.js` | `SettlementQueries` |
+| `settlement-economy.js` | `SettlementEconomy` |
+
+## Key Functions
+
+| Function | Parameters | Description |
+|----------|------------|-------------|
+| `openManageFeaturesModal(locationId, onSuccess)` | string, Function | Opens manage features modal |
+| `openUpgradeSettlementModal(locationId, onSuccess)` | string, Function | Opens upgrade settlement modal |
+| `openSettlementSpecializationModal(locationId, onSuccess)` | string, Function | Opens specialization modal |
+| `openSettlementBudgetModal(locationId)` | string | Opens budget modal |
+| `openEmploymentManagementModal(locationId)` | string | Opens employment modal |
+| `openStateEnterpriseManagementModal(locationId, onSuccess)` | string, Function | Opens state enterprise modal |
+| `openCreateStateEnterpriseModal(locationId, onSuccess)` | string, Function | Opens create state enterprise modal |
+| `openManageCivilLawsModal(locationId, onSuccess)` | string, Function | Opens manage civil laws modal (NEW) |
+| `openAddCivilLawModal(locationId, onSuccess)` | string, Function | Opens add civil law modal (NEW) |
+| `openEditCivilLawModal(locationId, lawId, onSuccess)` | string, string, Function | Opens edit civil law modal (NEW) |
+| `openDeleteCivilLawModal(locationId, lawId, onSuccess)` | string, string, Function | Opens delete civil law modal (NEW) |
+
+---
+
+# 18. MODALS-SETTLEMENT-ECONOMY.JS
+
+## Purpose
+
+Economy-specific UI modals: tax rates, spending, justice, financial reports, efficiency, debt management.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `modals-core.js` | `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon` |
+| `settlement-state.js` | `SettlementState` |
+| `settlement-commands.js` | `SettlementCommands` |
+| `settlement-queries.js` | `SettlementQueries` |
+| `settlement-economy.js` | `SettlementEconomy` |
+
+## Key Functions
+
+| Function | Parameters | Description |
+|----------|------------|-------------|
+| `openTaxRateManagementModal(locationId, onSuccess)` | string, Function | Opens tax rate modal |
+| `openSpendingManagementModal(locationId, onSuccess)` | string, Function | Opens spending modal |
+| `openJusticeManagementModal(locationId, onSuccess)` | string, Function | Opens justice modal |
+| `openFinancialReportModal(locationId)` | string | Opens financial report modal |
+| `openEfficiencyScoreModal(locationId)` | string | Opens efficiency score modal |
+| `openDebtManagementModal(locationId, onSuccess)` | string, Function | Opens debt management modal |
+
+---
+
+# 19. MODALS-SETTLEMENT-ROLES.JS
+
+## Purpose
+
+Role-related UI modals: settlement roles, apprenticeships, education, settlement details.
+
+## Dependencies
+
+| Module | Functions Used |
+|--------|----------------|
+| `modals-core.js` | `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon` |
+| `settlement-state.js` | `SettlementState` |
+| `settlement-commands.js` | `SettlementCommands` |
+| `settlement-queries.js` | `SettlementQueries` |
+| `settlement-economy.js` | `SettlementEconomy` |
+
+## Key Functions
+
+| Function | Parameters | Description |
+|----------|------------|-------------|
+| `openSettlementRolesModal(locationId)` | string | Opens roles modal |
+| `openSettlementApprenticeshipsModal(locationId)` | string | Opens apprenticeships modal |
+| `openSettlementEducationModal(locationId)` | string | Opens education modal |
+| `openSettlementDetailsModal(locationId, onRefresh)` | string, Function | Opens settlement details modal |
+
+---
+
+# 20. DATA SCHEMAS
+
+## Full Settlement Data Schema
+
+```javascript
+{
+    // Identity
+    locationId: string,
+    locationName: string,
+
+    // Rank
+    rankId: 'hamlet' | 'village' | 'town' | 'city' | 'metropolis',
+    specializationRoleId: string | null,
+
+    // Features
+    featureIds: [string],
+
+    // Economy
+    prosperity: number,          // 0-100
+    wealth: number,
+    totalDebt: number,
+    foundedYear: number,
+    lastUpgraded: number,
+
+    // Budget Allocation
+    budgetAllocationYear: number,
+    educationBudget: number,
+    educationSpending: number,
+    governmentSalaryBudget: number,
+    infrastructureBudget: number,
+    militaryBudget: number,
+
+    // Public Enterprises
+    publicEnterpriseIds: [string],
+    publicEnterpriseHistory: [
+        {
+            enterpriseId: string,
+            year: number,
+            action: 'added' | 'removed'
+        }
+    ],
+
+    // Religion
+    placesOfWorship: [string],
+    dominantReligionId: string | null,
+    religiousUnity: number,      // 0-100
+
+    // Civil Laws (NEW)
+    civilLaws: [
+        {
+            id: string,
+            name: string,
+            type: 'law' | 'taboo' | 'guideline',
+            lawCategory: 'civil',
+            domain: string,
+            description: string,
+            severity: 'minor' | 'major' | 'mortal',
+            crimeMapping: {
+                crimeType: string | null,
+                crimeSeverity: number | null,
+                isEnforced: boolean,
+                punishment: string | null,
+                notes: string
+            },
+            createdAt: number,
+            updatedAt: number,
+            notes: string
+        }
+    ],
+
+    // Budget
+    budget: {
+        income: {
+            taxes: number,
+            trade: number,
+            industry: number,
+            stateEnterprises: number,
+            other: number
+        },
+        expenses: {
+            maintenance: number,
+            wages: number,
+            construction: number,
+            military: number,
+            education: number,
+            infrastructure: number,
+            governmentSalaries: number,
+            other: number
+        },
+        annualSurplus: number,
+        totalIncome: number,
+        totalExpenses: number
+    },
+
+    // Employment
+    employment: {
+        totalWorkers: number,
+        stateEmployed: number,
+        privateEmployed: number,
+        unemployed: number,
+        averageWage: number,
+        employmentRate: number
+    },
+
+    // State Enterprises
+    stateEnterpriseIds: [string],
+
+    // Rates
+    taxRate: number,            // percentage
+    tradeTariff: number,        // percentage
+    industryTaxRate: number,    // percentage
+
+    // Spending
+    militarySpending: number,
+    infrastructureSpending: number,
+    educationSpending: number,
+
+    // Justice
+    justiceSeverity: 'lenient' | 'medium' | 'harsh' | 'extreme',
+    crimeRate: number,          // 0-1
+    hasWatch: boolean,
+    watchSize: number,
+
+    // History
+    history: [
+        {
+            year: number,
+            type: string,
+            // ... event-specific fields
+        }
+    ],
+
+    // Notes
+    notes: string
+}
+```
+
+---
+
+# 21. CROSS-SYSTEM INTEGRATION
+
+## Settlement ↔ Religion System
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Settlement → Dominant Religion | `settlement.dominantReligionId` | ✅ Integrated |
+| Settlement → Places of Worship | `settlement.placesOfWorship` | ✅ Integrated |
+| Settlement → Religious Unity | `settlement.religiousUnity` | ✅ Integrated |
+| Religion → Settlement Demographics | `getReligiousDemographics()` | ✅ Integrated |
+| Religion → Settlement Laws | `useReligiousLawsAsCivil` | ✅ Integrated |
+
+## Settlement ↔ Government System
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Settlement → Government Type | `settlement.governmentType` | ✅ Integrated |
+| Settlement → Justice Severity | `settlement.justiceSeverity` | ✅ Integrated |
+| Settlement → Watch | `settlement.hasWatch`, `watchSize` | ✅ Integrated |
+| Government → Salary Budget | `settlement.governmentSalaryBudget` | ✅ Integrated |
+| Government → Civil Laws | `settlement.civilLaws` | ✅ Integrated |
+
+## Settlement ↔ Crime System
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Settlement → Crime Rate | `settlement.crimeRate` | ✅ Integrated |
+| Crime → Settlement Prosperity | `calculateProsperity()` | ✅ Integrated |
+| Crime → Settlement Wealth | `updateWealth()` | ✅ Integrated |
+| Crime → Civil Laws | `settlement.civilLaws` | ✅ Integrated |
+
+## Settlement ↔ Industry System
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Settlement → State Enterprises | `settlement.stateEnterpriseIds` | ✅ Integrated |
+| Settlement → Public Enterprises | `settlement.publicEnterpriseIds` | ✅ Integrated |
+| Industry → Settlement Income | `calculateStateEnterpriseIncome()` | ✅ Integrated |
+| Industry → Settlement Employment | `calculateEmployment()` | ✅ Integrated |
+
+## Settlement ↔ Education System
+
+| Direction | Mechanism | Status |
+|-----------|-----------|--------|
+| Settlement → Education Budget | `settlement.educationBudget` | ✅ Integrated |
+| Settlement → Education Spending | `settlement.educationSpending` | ✅ Integrated |
+| Education → Settlement Literacy | `getSettlementLiteracyStats()` | ✅ Integrated |
+
+---
+
+# 22. DEPENDENCY MAP
+
+## Core Dependencies
 
 ```
-┌────────────────────────────────────────────────────────────────────────────┐
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    CORE DEPENDENCIES                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  modals-core.js ─────────────────────────────────────────────────────────┐ │
+│  ├── openModal()                                                         │ │
+│  ├── closeTopModal()                                                     │ │
+│  ├── _escapeHtml()                                                       │ │
+│  ├── _showToast()                                                        │ │
+│  ├── _getIcon()                                                          │ │
+│  └── _getCurrentYear()                                                   │ │
+│                                                                             │
+│  accessors.js ──────────────────────────────────────────────────────────┐ │
+│  ├── getCharacterById()                                                  │ │
+│  ├── getCharacters()                                                     │ │
+│  ├── getPlaceById()                                                      │ │
+│  ├── getPlaces()                                                         │ │
+│  ├── getCurrentYear()                                                    │ │
+│  └── getCurrentLocationId()                                              │ │
+│                                                                             │
+│  storage.js ────────────────────────────────────────────────────────────┐ │
+│  └── saveMasterData()                                                    │ │
+│                                                                             │
+│  ids.js ────────────────────────────────────────────────────────────────┐ │
+│  └── generateId()                                                        │ │
+│                                                                             │
+│  eventLogger.js ────────────────────────────────────────────────────────┐ │
+│  └── logEvent()                                                          │ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+## Settlement System Dependencies
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
 │                    SETTLEMENT SYSTEM DEPENDENCIES                          │
-├────────────────────────────────────────────────────────────────────────────┤
+├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  settlement-state.js ────────────────────────────────────────────────────┐ │
-│  ├── accessors.js (getPlaceById, getPlaces, getCharacters)               │ │
-│  └── storage.js (saveMasterData)                                          │ │
+│  ├── accessors.js                                                        │ │
+│  └── storage.js                                                          │ │
 │                                                                             │
-│  settlement-commands.js ────────────────────────────────────────────────┐ │
-│  ├── settlement-state.js                                                  │ │
-│  ├── settlement-economy.js                                                │ │
-│  ├── accessors.js (getPlaceById, getCharacterById, getCurrentYear)       │ │
-│  ├── storage.js (saveMasterData)                                          │ │
-│  └── eventLogger.js (logEvent)                                            │ │
+│  settlement-commands-core.js ────────────────────────────────────────────┐ │
+│  ├── settlement-state.js                                                 │ │
+│  ├── accessors.js                                                        │ │
+│  ├── eventLogger.js                                                      │ │
+│  └── storage.js                                                          │ │
 │                                                                             │
-│  settlement-queries.js ────────────────────────────────────────────────┐ │
-│  ├── settlement-state.js                                                  │ │
-│  ├── settlement-economy.js                                                │ │
-│  ├── accessors.js (getPlaceById, getPlaces, getCharacters)               │ │
-│  ├── location-state.js (getAllSubLocationIds)                            │ │
-│  └── education-state.js (getAllInstitutions)                              │ │
+│  settlement-commands-writes.js ──────────────────────────────────────────┐ │
+│  ├── settlement-commands-core.js                                         │ │
+│  ├── settlement-state.js                                                 │ │
+│  └── settlement-economy.js                                               │ │
 │                                                                             │
-│  settlement-economy.js ────────────────────────────────────────────────┐ │
-│  ├── settlement-state.js                                                  │ │
-│  ├── accessors.js (getPlaceById, getCurrentYear, getCharacters)          │ │
-│  ├── government-queries.js (getCurrentLeader)                            │ │
-│  ├── industry-queries.js (getLocationEnterprisesSummary)                 │ │
-│  └── role-queries.js (getRoleById)                                        │ │
+│  settlement-commands-annual.js ──────────────────────────────────────────┐ │
+│  ├── settlement-commands-core.js                                         │ │
+│  ├── settlement-state.js                                                 │ │
+│  └── settlement-economy.js                                               │ │
 │                                                                             │
-│  settlement-features.js ────────────────────────────────────────────────┐ │
-│  └── settlement-state.js                                                  │ │
+│  settlement-queries.js ──────────────────────────────────────────────────┐ │
+│  ├── settlement-state.js                                                 │ │
+│  ├── government-laws.js                                                  │ │
+│  └── accessors.js                                                        │ │
 │                                                                             │
-│  settlement-ranks.js ──────────────────────────────────────────────────┐ │
-│  └── settlement-state.js                                                  │ │
+│  settlement-economy-core.js ─────────────────────────────────────────────┐ │
+│  ├── settlement-state.js                                                 │ │
+│  └── accessors.js                                                        │ │
 │                                                                             │
-│  settlement-ui-list.js ────────────────────────────────────────────────┐ │
-│  ├── settlement-state.js                                                  │ │
-│  ├── settlement-queries.js                                                │ │
-│  └── modals-core.js (_escapeHtml, _getIcon)                              │ │
+│  settlement-prosperity.js ───────────────────────────────────────────────┐ │
+│  ├── settlement-state.js                                                 │ │
+│  ├── accessors.js                                                        │ │
+│  └── government-queries.js                                               │ │
 │                                                                             │
-│  modals-settlement.js ────────────────────────────────────────────────┐ │
-│  ├── modals-core.js (openModal, _escapeHtml, _getIcon, _showToast)       │ │
-│  ├── settlement-state.js                                                  │ │
-│  ├── settlement-commands.js                                               │ │
-│  └── settlement-queries.js                                                │ │
-│                                                                             │
-│  modals-settlement-economy.js ────────────────────────────────────────┐ │
-│  ├── modals-core.js (openModal, _escapeHtml, _getIcon, _showToast)       │ │
-│  ├── settlement-state.js                                                  │ │
-│  ├── settlement-commands.js                                               │ │
-│  ├── settlement-queries.js                                                │ │
-│  └── settlement-economy.js                                                │ │
-│                                                                             │
-└────────────────────────────────────────────────────────────────────────────┘
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-# 13. RECURSION GUARDS
+# 23. RECURSION GUARDS
 
 | Guard Name | Location | Purpose |
 |------------|----------|---------|
-| `_processingCommand` | settlement-commands.js | Prevent command re-entry |
+| `_processing` | settlement-commands-core.js | Prevent command re-entry |
+| `_processing` | settlement-commands-writes.js | Prevent write re-entry |
+| `_processing` | settlement-commands-annual.js | Prevent annual processing re-entry |
 | `_processingQuery` | settlement-queries.js | Prevent query re-entry |
-| `_processingEconomy` | settlement-economy.js | Prevent economy re-entry |
-| `_processingFeatures` | settlement-features.js | Prevent feature re-entry |
+| `_processingEconomy` | settlement-economy-core.js | Prevent economy re-entry |
+| `_processingProsperity` | settlement-prosperity.js | Prevent prosperity re-entry |
 | `_processingRanks` | settlement-ranks.js | Prevent rank re-entry |
+| `_processingFeatures` | settlement-features.js | Prevent feature re-entry |
+| `_processing` | settlement-enterprises.js | Prevent enterprise re-entry |
+| `_processing` | settlement-government.js | Prevent government re-entry |
+| `_processing` | settlement-budget.js | Prevent budget re-entry |
+| `_processing` | settlement-crud.js | Prevent CRUD re-entry |
 | `_rendering` | settlement-ui-list.js | Prevent render re-entry |
-| `_openingModal` | modals-settlement.js | Prevent modal re-entry |
-| `_initializingState` | settlement-state.js | Prevent initialization re-entry |
-| `_notifyingSubscribers` | settlement-state.js | Prevent notification re-entry |
+| `_openingModal` | modals-settlement-*.js | Prevent modal re-entry |
 
 ---
 
-# 14. INTEGRATION WITH OTHER SYSTEMS
-
-## Settlement ↔ Location Integration
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Settlement → Location | Data stored by `locationId` | ✅ Complete |
-| Location → Settlement | Queries use location hierarchy | ✅ Complete |
-| Settlement → Population | Uses location population | ✅ Complete |
-
-## Settlement ↔ Role Integration
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Settlement → Role | `getSettlementRoles()` | ✅ Complete |
-| Settlement → Role | `getSettlementCharactersByRole()` | ✅ Complete |
-| Settlement → Role | `getSettlementRoleStats()` | ✅ Complete |
-| Settlement → Role | `getSettlementMasterStats()` | ✅ Complete |
-| Role → Settlement | Prosperity calculation includes role diversity | ✅ Complete |
-| Role → Settlement | Master concentration affects prosperity | ✅ Complete |
-| Settlement → Role | `assignSettlementRole()` | ✅ Complete |
-| Settlement → Role | `removeSettlementRole()` | ✅ Complete |
-| Settlement → Role | `updateSettlementCharacterSkill()` | ✅ Complete |
-
-## Settlement ↔ Apprenticeship Integration
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Apprenticeship → Settlement | `getSettlementApprenticeshipDensity()` | ✅ Complete |
-| Apprenticeship → Settlement | `getSettlementMastersByRole()` | ✅ Complete |
-| Settlement → Apprenticeship | UI renders apprenticeship data | ✅ Complete |
-
-## Settlement ↔ Government Integration
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Government → Settlement | Leader traits affect prosperity | ✅ Complete |
-| Government → Settlement | Government type affects taxes | ✅ Complete |
-| Settlement → Government | `assignGovernment()` | ✅ Complete |
-| Settlement → Government | `allocateGovernmentSalaryBudget()` | ✅ Complete |
-| Government → Settlement | `getGovernmentSalaryRequirements()` | ✅ Complete |
-
-## Settlement ↔ Industry Integration
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Industry → Settlement | Employment from enterprises | ✅ Complete |
-| Industry → Settlement | Industry tax revenue | ✅ Complete |
-| Industry → Settlement | State enterprises | ✅ Complete |
-| Settlement → Industry | Creates state enterprises | ✅ Complete |
-| Settlement → Industry | Creates public enterprises | ✅ Complete |
-| Settlement → Industry | Sets tax rates | ✅ Complete |
-| Settlement → Industry | Collects public enterprise profits | ✅ Complete |
-
-## Settlement ↔ Education Integration
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Education → Settlement | Literacy stats | ✅ Complete |
-| Education → Settlement | School as feature | ✅ Complete |
-| Education → Settlement | Education statistics | ✅ Complete |
-| Settlement → Education | Education spending | ✅ Complete |
-| Settlement → Education | `allocateEducationBudget()` | ✅ Complete |
-
----
-
-# 15. ICON POLICY
+# 24. ICON POLICY
 
 All icons must come from `icons.js` via the `_getIcon()` function.
+
+## Rules
 
 | Rule | Description |
 |------|-------------|
@@ -2122,62 +1331,286 @@ All icons must come from `icons.js` via the `_getIcon()` function.
 | Rank | HOME |
 | Feature | GEAR |
 | Wealth | COIN |
-| Prosperity | STAR_4 |
+| Debt | COIN |
 | Population | PERSON |
 | Employment | PERSON |
-| Debt | WARNING |
+| Education | BOOK |
+| Religion | CIRCLE_DOT |
+| Places of Worship | LOCATION |
+| Civil Law | SHIELD |
+| Justice | SHIELD |
+| Watch | SHIELD |
+| Government | STAR_4 |
+| Budget | COIN |
 | Edit | EDIT |
-| Delete | TRASH |
-| Add | PLUS |
-| Check | CHECK_SIMPLE |
-| Role | PERSON |
-| Master | CROWN |
-| Book | BOOK |
-| Circle | CIRCLE_DOT |
+| Delete | X_HEAVY |
 
 ---
 
-# 16. QUICK TEST COMMANDS
+# 25. COMPLETE FUNCTION LIST
+
+## settlement-state.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `getSettlementData(locationId)` | Query | Gets settlement data |
+| `getAllSettlements(options)` | Query | Gets all settlements |
+| `getSettlementFeatures(locationId)` | Query | Gets features |
+| `getSettlementBudget(locationId)` | Query | Gets budget |
+| `getSettlementEmployment(locationId)` | Query | Gets employment |
+| `getStateEnterpriseIds(locationId)` | Query | Gets state enterprise IDs |
+| `getSettlementHistory(locationId)` | Query | Gets history |
+| `getSettlementBudgetAllocation(locationId)` | Query | Gets budget allocation |
+| `getGovernmentSalaryBudget(locationId)` | Query | Gets government salary budget |
+| `getEducationBudget(locationId)` | Query | Gets education budget |
+| `getPublicEnterpriseIds(locationId)` | Query | Gets public enterprise IDs |
+| `getPublicEnterprises(locationId)` | Query | Gets public enterprises |
+| `getPublicEnterpriseHistory(locationId)` | Query | Gets public enterprise history |
+| `getPlacesOfWorship(locationId)` | Query | Gets places of worship |
+| `getPlaceOfWorshipIds(locationId)` | Query | Gets place of worship IDs |
+| `getDominantReligion(locationId)` | Query | Gets dominant religion |
+| `getReligiousUnity(locationId)` | Query | Gets religious unity |
+| `getReligiousDemographics(locationId)` | Query | Gets religious demographics |
+| `getCivilLaws(locationId)` | Query | Gets civil laws (NEW) |
+| `getCivilLawCount(locationId)` | Query | Gets civil law count (NEW) |
+| `getCivilLaw(locationId, lawId)` | Query | Gets a civil law (NEW) |
+| `getCivilLawsByDomain(locationId, domain)` | Query | Gets civil laws by domain (NEW) |
+| `getCivilLawsByType(locationId, type)` | Query | Gets civil laws by type (NEW) |
+| `getCivilLawsBySeverity(locationId, severity)` | Query | Gets civil laws by severity (NEW) |
+| `getEnforcedCivilLaws(locationId)` | Query | Gets enforced civil laws (NEW) |
+| `getUIState()` | Query | Gets UI state |
+| `setUIState(key, value, options)` | Command | Sets UI state |
+| `updateUIState(updates, options)` | Command | Updates UI state |
+| `subscribe(callback)` | Command | Subscribes to changes |
+| `invalidateCache()` | Command | Invalidates caches |
+| `refreshFromMasterData()` | Command | Refreshes from master data |
+
+## settlement-commands-writes.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `buildFeature(locationId, featureId)` | Command | Builds a feature |
+| `removeFeature(locationId, featureId)` | Command | Removes a feature |
+| `demolishFeature(locationId, featureId)` | Command | Demolishes a feature |
+| `upgradeSettlement(locationId)` | Command | Upgrades settlement rank |
+| `setSpecialization(locationId, roleId)` | Command | Sets specialization |
+| `updateWealth(locationId, delta, reason)` | Command | Updates wealth |
+| `updateDebt(locationId, delta, reason)` | Command | Updates debt |
+| `updateTaxRate(locationId, rate)` | Command | Updates tax rate |
+| `updateTradeTariff(locationId, tariff)` | Command | Updates trade tariff |
+| `updateIndustryTaxRate(locationId, rate)` | Command | Updates industry tax rate |
+| `updateMilitarySpending(locationId, amount)` | Command | Updates military spending |
+| `updateInfrastructureSpending(locationId, amount)` | Command | Updates infrastructure spending |
+| `updateEducationSpending(locationId, amount)` | Command | Updates education spending |
+| `updateJusticeSeverity(locationId, severity)` | Command | Updates justice severity |
+| `updateWatch(locationId, hasWatch, size)` | Command | Updates watch |
+| `createStateEnterprise(locationId, data)` | Command | Creates state enterprise |
+| `removeStateEnterprise(locationId, enterpriseId)` | Command | Removes state enterprise |
+| `assignSettlementRole(locationId, characterId, roleId, options)` | Command | Assigns role to character |
+| `removeSettlementRole(locationId, characterId, roleId)` | Command | Removes role from character |
+| `updateSettlementCharacterSkill(locationId, characterId, roleId, skillLevel)` | Command | Updates character skill |
+| `allocateGovernmentSalaryBudget(locationId, amount, year)` | Command | Allocates government salary budget |
+| `allocateEducationBudget(locationId, amount, year)` | Command | Allocates education budget |
+| `getGovernmentSalaryRequirements(locationId)` | Query | Gets salary requirements |
+| `collectPublicEnterpriseProfits(locationId, year)` | Command | Collects public enterprise profits |
+| `getPublicEnterpriseSummary(locationId)` | Query | Gets public enterprise summary |
+| `addPlaceOfWorshipToSettlement(locationId, placeId, options)` | Command | Adds place of worship |
+| `removePlaceOfWorshipFromSettlement(locationId, placeId, options)` | Command | Removes place of worship |
+| `updateDominantReligion(locationId, options)` | Command | Updates dominant religion |
+| `calculateReligiousUnity(locationId)` | Query | Calculates religious unity |
+| `addCivilLaw(locationId, lawData)` | Command | Adds a civil law (NEW) |
+| `updateCivilLaw(locationId, lawId, updates)` | Command | Updates a civil law (NEW) |
+| `removeCivilLaw(locationId, lawId)` | Command | Removes a civil law (NEW) |
+| `getCivilLaws(locationId)` | Query | Gets civil laws (NEW) |
+| `getCivilLaw(locationId, lawId)` | Query | Gets a civil law (NEW) |
+
+## settlement-queries.js
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `getSettlementData(locationId)` | Query | Gets settlement data |
+| `getAllSettlementData()` | Query | Gets all settlement data |
+| `getSettlements()` | Query | Gets all settlements |
+| `getSettlementCount()` | Query | Gets settlement count |
+| `getCivilLaws(locationId)` | Query | Gets civil laws (NEW) |
+| `getCivilLawsByDomain(locationId, domain)` | Query | Gets civil laws by domain (NEW) |
+| `getEnforcedCivilLaws(locationId)` | Query | Gets enforced civil laws (NEW) |
+| `getCivilLaw(locationId, lawId)` | Query | Gets a civil law (NEW) |
+| `getCivilLawCount(locationId)` | Query | Gets civil law count (NEW) |
+| `getCivilLawsByCrimeType(locationId, crimeType)` | Query | Gets civil laws by crime type (NEW) |
+| `getEnforcedCivilLawsByCrimeType(locationId, crimeType)` | Query | Gets enforced civil laws by crime type (NEW) |
+| `getCivilLawStatistics(locationId)` | Query | Gets civil law statistics (NEW) |
+| `getApplicableLaws(locationId, characterId, domain)` | Query | Gets applicable laws (NEW) |
+| `isLawApplicable(locationId, characterId, lawId)` | Query | Checks if law is applicable (NEW) |
+| `getGlobalSettlementStatistics()` | Query | Gets global settlement stats |
+| `compareSettlements(locationId1, locationId2)` | Query | Compares two settlements |
+
+---
+
+# 26. USAGE EXAMPLES
+
+## Example 1: Getting Settlement Data
 
 ```javascript
-// Get settlement summary
-var summary = SettlementQueries.getSettlementSummary('loc_123');
-console.log('Settlement:', summary.name, 'Rank:', summary.rank.name);
+// Get settlement data
+var data = window.SettlementState.getSettlementData('loc_123');
+console.log('Prosperity:', data.prosperity);
+console.log('Wealth:', data.wealth);
+console.log('Rank:', data.rankId);
 
-// Get budget allocation
-var allocation = SettlementQueries.getSettlementBudgetAllocation('loc_123');
-console.log('Education budget:', allocation.educationBudget);
-console.log('Government salary budget:', allocation.governmentSalaryBudget);
+// Get all settlements
+var allSettlements = window.SettlementState.getAllSettlements({
+    sortBy: 'prosperity',
+    sortOrder: 'desc'
+});
+```
 
-// Get public enterprise summary
-var publicSummary = SettlementQueries.getPublicEnterpriseSummary('loc_123');
-console.log('Public enterprises:', publicSummary.total);
-console.log('Total profit:', publicSummary.totalProfit);
+## Example 2: Building a Feature
 
-// Get education stats
-var eduStats = SettlementQueries.getSettlementEducationStats('loc_123');
-console.log('Schools:', eduStats.totalInstitutions);
-console.log('Students:', eduStats.totalStudents);
-console.log('Coverage:', eduStats.coverageRatio + '%');
+```javascript
+// Build a feature
+var result = window.SettlementCommands.buildFeature('loc_123', 'school');
+if (result.success) {
+    console.log('School built!');
+    console.log('New wealth:', result.data.newWealth);
+}
+
+// Remove a feature (full refund)
+var removeResult = window.SettlementCommands.removeFeature('loc_123', 'school');
+if (removeResult.success) {
+    console.log('School removed, refund:', removeResult.data.refund);
+}
+
+// Demolish a feature (no refund)
+var demolishResult = window.SettlementCommands.demolishFeature('loc_123', 'walls');
+if (demolishResult.success) {
+    console.log('Walls demolished');
+}
+```
+
+## Example 3: Upgrading a Settlement
+
+```javascript
+// Check if upgrade is possible
+var upgradeInfo = window.SettlementQueries.getUpgradeInfo('loc_123');
+console.log('Can upgrade:', upgradeInfo.canUpgrade);
+console.log('Next rank:', upgradeInfo.nextRank);
+
+// Perform upgrade
+if (upgradeInfo.canUpgrade) {
+    var result = window.SettlementCommands.upgradeSettlement('loc_123');
+    if (result.success) {
+        console.log('Upgraded from', result.data.oldRank, 'to', result.data.newRank);
+    }
+}
+```
+
+## Example 4: Managing Civil Laws (NEW)
+
+```javascript
+// Add a civil law
+var lawData = {
+    name: 'No Murder',
+    description: 'Murder is illegal in this settlement',
+    type: 'law',
+    domain: 'violence',
+    severity: 'mortal',
+    crimeType: 'murder',
+    punishment: 'Execution',
+    isEnforced: true
+};
+
+var result = window.SettlementCommands.addCivilLaw('loc_123', lawData);
+if (result.success) {
+    console.log('Law added:', result.data.name);
+}
+
+// Get all civil laws
+var laws = window.SettlementCommands.getCivilLaws('loc_123');
+for (var i = 0; i < laws.length; i++) {
+    console.log(laws[i].name, '-', laws[i].severity);
+}
+
+// Update a civil law
+var updateResult = window.SettlementCommands.updateCivilLaw('loc_123', lawId, {
+    punishment: 'Life Imprisonment'
+});
+
+// Remove a civil law
+var removeResult = window.SettlementCommands.removeCivilLaw('loc_123', lawId);
+```
+
+## Example 5: Managing Budget and Taxes
+
+```javascript
+// Set tax rate
+window.SettlementCommands.updateTaxRate('loc_123', 15);
+
+// Set trade tariff
+window.SettlementCommands.updateTradeTariff('loc_123', 10);
 
 // Allocate education budget
-var result = SettlementCommands.allocateEducationBudget('loc_123', 500, 1250);
-console.log('Allocated 500 gold to education');
+window.SettlementCommands.allocateEducationBudget('loc_123', 100);
 
-// Collect public enterprise profits
-var profitResult = SettlementCommands.collectPublicEnterpriseProfits('loc_123', 1250);
-console.log('Collected:', profitResult.totalProfit, 'gold');
+// Get budget allocation
+var allocation = window.SettlementState.getSettlementBudgetAllocation('loc_123');
+console.log('Education budget:', allocation.educationBudget);
+console.log('Government salary budget:', allocation.governmentSalaryBudget);
+```
 
-// Process annual update
-var annualResult = SettlementCommands.processAnnualSettlementUpdate('loc_123');
-console.log('Prosperity:', annualResult.prosperity, 'Surplus:', annualResult.surplus);
-console.log('Public enterprise profit:', annualResult.publicEnterpriseProfit);
+## Example 6: Managing State Enterprises
+
+```javascript
+// Create a state enterprise
+var result = window.SettlementCommands.createStateEnterprise('loc_123', {
+    name: 'Royal Weavers',
+    typeId: 'weaving',
+    wealth: 500,
+    workerCount: 20
+});
+
+if (result.success) {
+    console.log('Enterprise created:', result.data.name);
+}
+
+// Get public enterprise summary
+var summary = window.SettlementCommands.getPublicEnterpriseSummary('loc_123');
+console.log('Total enterprises:', summary.total);
+console.log('Total profit:', summary.totalProfit);
+```
+
+## Example 7: Managing Justice and Watch
+
+```javascript
+// Set justice severity
+window.SettlementCommands.updateJusticeSeverity('loc_123', 'harsh');
+
+// Establish a watch
+window.SettlementCommands.updateWatch('loc_123', true, 50);
+
+// Disband the watch
+window.SettlementCommands.updateWatch('loc_123', false, 0);
+```
+
+## Example 8: Getting Settlement Statistics
+
+```javascript
+// Get global settlement statistics
+var stats = window.SettlementQueries.getGlobalSettlementStatistics();
+console.log('Total settlements:', stats.totalSettlements);
+console.log('Total population:', stats.totalPopulation);
+console.log('Average prosperity:', stats.averageProsperity);
+
+// Compare two settlements
+var comparison = window.SettlementQueries.compareSettlements('loc_123', 'loc_456');
+console.log('Prosperity difference:', comparison.differences.prosperity);
+console.log('Crime rate difference:', comparison.differences.crimeRate);
 ```
 
 ---
 
 # END OF DOCUMENTATION
 
-**Generated:** 2026-07-12
-**Version:** 3.0 (with Budget Allocation, Public Enterprises, and Education Integration)
-**File Count:** 9 core modules
+**Generated:** 2026-07-14
+**Version:** 4.0
+**File Count:** 17 core modules

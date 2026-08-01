@@ -12,6 +12,8 @@
  * - SVG icons from icons.js
  * - No trust/loyalty references
  * - Simple text confirm buttons (no SVG leaks)
+ * - UPDATED: Uses FamilyAccessors for family relationship queries
+ * - UPDATED: Better relationship detection for surrogacy arrangements
  * 
  * CONTAINS:
  * - openDonorSelectionModal - Select sperm donor
@@ -127,7 +129,96 @@ function _confirmDialog(message, title, onConfirm) {
 }
 
 // =============================================================================
-// 4. CHILDREN SYSTEM WRAPPERS
+// 4. FAMILY ACCESSORS WRAPPER (NEW)
+// =============================================================================
+
+function _getFamilyAccessors() {
+    return typeof window.FamilyAccessors !== 'undefined' ? window.FamilyAccessors : null;
+}
+
+function _getSpousesViaFamilyAccessors(characterId, activeOnly) {
+    var fa = _getFamilyAccessors();
+    if (fa && typeof fa.getSpouses === 'function') {
+        var result = fa.getSpouses(characterId, activeOnly !== false);
+        if (result) {
+            return result.map(function(item) { return item.character; });
+        }
+    }
+    return null;
+}
+
+function _getChildrenViaFamilyAccessors(parentId, includeDeceased) {
+    var fa = _getFamilyAccessors();
+    if (fa && typeof fa.getAllChildren === 'function') {
+        var result = fa.getAllChildren(parentId, includeDeceased || false);
+        if (result) {
+            return result.map(function(item) { return item.character; });
+        }
+    }
+    return null;
+}
+
+function _getParentsViaFamilyAccessors(childId) {
+    var fa = _getFamilyAccessors();
+    if (fa && typeof fa.getParents === 'function') {
+        return fa.getParents(childId);
+    }
+    return null;
+}
+
+function _getSiblingsViaFamilyAccessors(childId, includeHalfSiblings, includeDeceased) {
+    var fa = _getFamilyAccessors();
+    if (fa && typeof fa.getSiblings === 'function') {
+        var result = fa.getSiblings(childId, includeHalfSiblings !== false, includeDeceased || false);
+        if (result) {
+            return result.map(function(item) { return item.character; });
+        }
+    }
+    return null;
+}
+
+function _getGrandparentsViaFamilyAccessors(childId, generation) {
+    var fa = _getFamilyAccessors();
+    if (fa && typeof fa.getGrandparents === 'function') {
+        return fa.getGrandparents(childId, generation || 1);
+    }
+    return null;
+}
+
+function _getGrandchildrenViaFamilyAccessors(parentId, includeDeceased) {
+    var fa = _getFamilyAccessors();
+    if (fa && typeof fa.getGrandchildren === 'function') {
+        return fa.getGrandchildren(parentId, includeDeceased || false);
+    }
+    return null;
+}
+
+function _getRelationshipDescriptionViaFamilyAccessors(id1, id2) {
+    var fa = _getFamilyAccessors();
+    if (fa && typeof fa.getRelationshipDescription === 'function') {
+        return fa.getRelationshipDescription(id1, id2);
+    }
+    return null;
+}
+
+function _getConsanguinityDegreeViaFamilyAccessors(id1, id2) {
+    var fa = _getFamilyAccessors();
+    if (fa && typeof fa.getConsanguinityDegree === 'function') {
+        return fa.getConsanguinityDegree(id1, id2);
+    }
+    return null;
+}
+
+function _getFamilyStatisticsViaFamilyAccessors(characterId) {
+    var fa = _getFamilyAccessors();
+    if (fa && typeof fa.getFamilyStatistics === 'function') {
+        return fa.getFamilyStatistics(characterId);
+    }
+    return null;
+}
+
+// =============================================================================
+// 5. CHILDREN SYSTEM WRAPPERS
 // =============================================================================
 
 function _createSurrogacyArrangement(intendedParent, surrogate, options) {
@@ -188,7 +279,7 @@ function _getChildren(characterId) {
 }
 
 // =============================================================================
-// 5. CHARACTER SELECTOR - Uses unified selector
+// 6. CHARACTER SELECTOR - Uses unified selector
 // =============================================================================
 
 function _openCharacterSelectorForSurrogacy(title, onSelect, options) {
@@ -242,10 +333,22 @@ function _openCharacterSelectorForSurrogacy(title, onSelect, options) {
 }
 
 // =============================================================================
-// 6. HELPER FUNCTIONS
+// 7. HELPER FUNCTIONS (UPDATED with FamilyAccessors)
 // =============================================================================
 
 function _areRelated(char1Id, char2Id) {
+    // Prefer FamilyAccessors
+    var faResult = _getRelationshipDescriptionViaFamilyAccessors(char1Id, char2Id);
+    if (faResult !== null && faResult !== 'Unrelated' && faResult !== 'Unknown') {
+        return true;
+    }
+    
+    var consanguinity = _getConsanguinityDegreeViaFamilyAccessors(char1Id, char2Id);
+    if (consanguinity !== null && consanguinity < 99) {
+        return true;
+    }
+    
+    // Fallback: manual check
     var char1 = _getCharacterById(char1Id);
     var char2 = _getCharacterById(char2Id);
     if (!char1 || !char2) return false;
@@ -261,8 +364,15 @@ function _areRelated(char1Id, char2Id) {
     return false;
 }
 
+function _getRelationshipsForCharacter(characterId) {
+    var character = _getCharacterById(characterId);
+    if (!character) return [];
+    return character.relationships || [];
+}
+
 function _getPotentialSpermDonors(coupleLocation, avgAge, filters) {
     var characters = _getCharacters();
+    var fa = _getFamilyAccessors();
     
     var donors = [];
     for (var i = 0; i < characters.length; i++) {
@@ -290,15 +400,28 @@ function _getPotentialSpermDonors(coupleLocation, avgAge, filters) {
         }
         
         if (filters.showOnlySingle) {
-            var relationships = _getRelationshipsForCharacter(d.id);
+            // ================================================================
+            // UPDATED: Use FamilyAccessors for spouse detection
+            // ================================================================
             var hasOngoingRomance = false;
-            for (var j = 0; j < relationships.length; j++) {
-                var r = relationships[j];
-                if (r.status === 'ongoing' && (r.type === 'committed' || r.type === 'romance' || r.type === 'marriage')) {
+            if (fa && typeof fa.getSpouses === 'function') {
+                var spouses = fa.getSpouses(d.id, true);
+                if (spouses && spouses.length > 0) {
                     hasOngoingRomance = true;
-                    break;
                 }
             }
+            
+            if (!hasOngoingRomance) {
+                var relationships = _getRelationshipsForCharacter(d.id);
+                for (var j = 0; j < relationships.length; j++) {
+                    var r = relationships[j];
+                    if (r.status === 'ongoing' && (r.type === 'committed' || r.type === 'romance' || r.type === 'marriage')) {
+                        hasOngoingRomance = true;
+                        break;
+                    }
+                }
+            }
+            
             if (hasOngoingRomance) continue;
         }
         
@@ -328,6 +451,7 @@ function _getPotentialSpermDonors(coupleLocation, avgAge, filters) {
 
 function _getPotentialSurrogates(coupleLocation, avgAge, filters) {
     var characters = _getCharacters();
+    var fa = _getFamilyAccessors();
     
     var surrogates = [];
     for (var i = 0; i < characters.length; i++) {
@@ -355,15 +479,28 @@ function _getPotentialSurrogates(coupleLocation, avgAge, filters) {
         }
         
         if (filters.showOnlySingle) {
-            var relationships = _getRelationshipsForCharacter(s.id);
+            // ================================================================
+            // UPDATED: Use FamilyAccessors for spouse detection
+            // ================================================================
             var hasOngoingRomance = false;
-            for (var j = 0; j < relationships.length; j++) {
-                var r = relationships[j];
-                if (r.status === 'ongoing' && (r.type === 'committed' || r.type === 'romance' || r.type === 'marriage')) {
+            if (fa && typeof fa.getSpouses === 'function') {
+                var spouses = fa.getSpouses(s.id, true);
+                if (spouses && spouses.length > 0) {
                     hasOngoingRomance = true;
-                    break;
                 }
             }
+            
+            if (!hasOngoingRomance) {
+                var relationships = _getRelationshipsForCharacter(s.id);
+                for (var j = 0; j < relationships.length; j++) {
+                    var r = relationships[j];
+                    if (r.status === 'ongoing' && (r.type === 'committed' || r.type === 'romance' || r.type === 'marriage')) {
+                        hasOngoingRomance = true;
+                        break;
+                    }
+                }
+            }
+            
             if (hasOngoingRomance) continue;
         }
         
@@ -373,7 +510,24 @@ function _getPotentialSurrogates(coupleLocation, avgAge, filters) {
             if (!nameMatch) continue;
         }
         
-        filteredSurrogates.push(s);
+        // ================================================================
+        // NEW: Check if surrogate has children (for experience info)
+        // ================================================================
+        var hasChildren = false;
+        var childCount = 0;
+        if (fa && typeof fa.hasChildren === 'function') {
+            hasChildren = fa.hasChildren(s.id, true, false);
+            if (hasChildren) {
+                var children = fa.getAllChildren(s.id, false);
+                if (children) childCount = children.length;
+            }
+        }
+        
+        filteredSurrogates.push({
+            character: s,
+            hasChildren: hasChildren,
+            childCount: childCount
+        });
     }
     
     if (filteredSurrogates.length === 0) {
@@ -383,16 +537,22 @@ function _getPotentialSurrogates(coupleLocation, avgAge, filters) {
             if (!filters.showDeceased && c.isDeceased) continue;
             var age = _calculateAge(c.birthYear, false, null);
             if (age < 14 || age > 55) continue;
-            filteredSurrogates.push(c);
+            filteredSurrogates.push({
+                character: c,
+                hasChildren: false,
+                childCount: 0
+            });
         }
     }
     
-    filteredSurrogates.sort(function(a, b) { return (a.birthYear || 0) - (b.birthYear || 0); });
+    filteredSurrogates.sort(function(a, b) {
+        return (a.character.birthYear || 0) - (b.character.birthYear || 0);
+    });
     return filteredSurrogates;
 }
 
 // =============================================================================
-// 7. DONOR SELECTION MODAL
+// 8. DONOR SELECTION MODAL (UPDATED with FamilyAccessors)
 // =============================================================================
 
 function openDonorSelectionModal(couple, onSuccess) {
@@ -430,11 +590,39 @@ function openDonorSelectionModal(couple, onSuccess) {
             var age = _calculateAge(donor.birthYear, false, null);
             var location = _getCurrentLocation(donor);
             var rank = _getActiveRankDisplay(donor);
-            var isRelated = _areRelated(couple.person1?.id || couple.person?.id, donor.id) || (couple.person2 && _areRelated(couple.person2.id, donor.id));
+            
+            // ================================================================
+            // UPDATED: Check if related using FamilyAccessors
+            // ================================================================
+            var isRelated = false;
+            var relation = null;
+            var fa = _getFamilyAccessors();
+            
+            if (fa && typeof fa.getRelationshipDescription === 'function') {
+                relation = fa.getRelationshipDescription(couple.person1?.id || couple.person?.id, donor.id);
+                if (relation && relation !== 'Unrelated' && relation !== 'Unknown') {
+                    isRelated = true;
+                }
+            }
+            
+            if (!isRelated && couple.person2) {
+                if (fa && typeof fa.getRelationshipDescription === 'function') {
+                    relation = fa.getRelationshipDescription(couple.person2.id, donor.id);
+                    if (relation && relation !== 'Unrelated' && relation !== 'Unknown') {
+                        isRelated = true;
+                    }
+                }
+            }
+            
+            if (!isRelated) {
+                isRelated = _areRelated(couple.person1?.id || couple.person?.id, donor.id) || 
+                           (couple.person2 && _areRelated(couple.person2.id, donor.id));
+            }
+            
             var isSelected = selectedDonorId === donor.id;
             
             var rankText = rank ? '<span style="color: var(--accent); font-size: 0.6rem;">' + _escapeHtml(rank.display) + '</span> ' : '';
-            var relatedBadge = isRelated ? '<span style="background: var(--warn); padding: 2px 5px; border-radius: 10px; font-size: 0.5rem; margin-left: 5px;">Relative</span>' : '';
+            var relatedBadge = isRelated ? '<span style="background: var(--warn); padding: 2px 5px; border-radius: 10px; font-size: 0.5rem; margin-left: 5px;">' + warningIcon + ' ' + _escapeHtml(relation || 'Relative') + '</span>' : '';
             
             html += '<div class="donor-card-item" data-donor-id="' + donor.id + '" style="' +
                 'background: ' + (isSelected ? 'var(--accent-dim)' : 'var(--bg3)') + ';' +
@@ -458,39 +646,38 @@ function openDonorSelectionModal(couple, onSuccess) {
         return html;
     }
     
-    var modalContent = `
-        <div style="margin-bottom: 12px;">
-            <div class="info-box" style="background: var(--bg2); padding: 8px; border-radius: 6px; margin-bottom: 12px;">
-                <div style="font-size: 0.65rem;"><strong>Couple:</strong> ${_escapeHtml(couple.person1?.name || couple.person?.name)}${couple.person2 ? ' & ' + _escapeHtml(couple.person2.name) : ''}</div>
-                <div style="font-size: 0.6rem; color: var(--dim);">${_escapeHtml(coupleLocation)}</div>
-            </div>
+    var modalContent = 
+        '<div style="margin-bottom: 12px;">' +
+            '<div class="info-box" style="background: var(--bg2); padding: 8px; border-radius: 6px; margin-bottom: 12px;">' +
+                '<div style="font-size: 0.65rem;"><strong>Couple:</strong> ' + _escapeHtml(couple.person1?.name || couple.person?.name) + (couple.person2 ? ' & ' + _escapeHtml(couple.person2.name) : '') + '</div>' +
+                '<div style="font-size: 0.6rem; color: var(--dim);">' + _escapeHtml(coupleLocation) + '</div>' +
+            '</div>' +
             
-            <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; padding: 8px; background: var(--bg2); border-radius: 6px;">
-                <label style="font-size: 0.6rem; display: flex; align-items: center; gap: 4px;">
-                    <input type="checkbox" id="donorShowDeceased" ${currentFilters.showDeceased ? 'checked' : ''}> Show Deceased
-                </label>
-                <label style="font-size: 0.6rem; display: flex; align-items: center; gap: 4px;">
-                    <input type="checkbox" id="donorSameLocation" ${currentFilters.sameLocationOnly ? 'checked' : ''}> Same Location
-                </label>
-                <label style="font-size: 0.6rem; display: flex; align-items: center; gap: 4px;">
-                    <input type="checkbox" id="donorPeersOnly" ${currentFilters.peersOnly ? 'checked' : ''}> Peers (plus/minus 20y)
-                </label>
-                <label style="font-size: 0.6rem; display: flex; align-items: center; gap: 4px;">
-                    <input type="checkbox" id="donorShowOnlySingle" ${currentFilters.showOnlySingle ? 'checked' : ''}> Single Only
-                </label>
-                <input type="text" id="donorSearch" placeholder="Search..." value="${_escapeHtml(currentFilters.searchTerm)}" style="flex:1; min-width: 100px; padding: 4px 6px; font-size: 0.6rem; background: var(--bg); border: 1px solid var(--border); border-radius: 4px;">
-            </div>
+            '<div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; padding: 8px; background: var(--bg2); border-radius: 6px;">' +
+                '<label style="font-size: 0.6rem; display: flex; align-items: center; gap: 4px;">' +
+                    '<input type="checkbox" id="donorShowDeceased" ' + (currentFilters.showDeceased ? 'checked' : '') + '> Show Deceased' +
+                '</label>' +
+                '<label style="font-size: 0.6rem; display: flex; align-items: center; gap: 4px;">' +
+                    '<input type="checkbox" id="donorSameLocation" ' + (currentFilters.sameLocationOnly ? 'checked' : '') + '> Same Location' +
+                '</label>' +
+                '<label style="font-size: 0.6rem; display: flex; align-items: center; gap: 4px;">' +
+                    '<input type="checkbox" id="donorPeersOnly" ' + (currentFilters.peersOnly ? 'checked' : '') + '> Peers (plus/minus 20y)' +
+                '</label>' +
+                '<label style="font-size: 0.6rem; display: flex; align-items: center; gap: 4px;">' +
+                    '<input type="checkbox" id="donorShowOnlySingle" ' + (currentFilters.showOnlySingle ? 'checked' : '') + '> Single Only' +
+                '</label>' +
+                '<input type="text" id="donorSearch" placeholder="Search..." value="' + _escapeHtml(currentFilters.searchTerm) + '" style="flex:1; min-width: 100px; padding: 4px 6px; font-size: 0.6rem; background: var(--bg); border: 1px solid var(--border); border-radius: 4px;">' +
+            '</div>' +
             
-            <div id="donorListContainer" style="max-height: 400px; overflow-y: auto; margin-bottom: 12px;">
-                ${renderDonorList()}
-            </div>
+            '<div id="donorListContainer" style="max-height: 400px; overflow-y: auto; margin-bottom: 12px;">' +
+                renderDonorList() +
+            '</div>' +
             
-            <div style="display: flex; gap: 10px;">
-                <button id="confirmDonorBtn" class="btn primary" style="flex:2; padding: 8px; font-size: 0.65rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer;" disabled>Confirm Donor</button>
-                <button id="cancelDonorBtn" class="btn" style="flex:1; padding: 8px; font-size: 0.65rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Cancel</button>
-            </div>
-        </div>
-    `;
+            '<div style="display: flex; gap: 10px;">' +
+                '<button id="confirmDonorBtn" class="btn primary" style="flex:2; padding: 8px; font-size: 0.65rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer;" disabled>Confirm Donor</button>' +
+                '<button id="cancelDonorBtn" class="btn" style="flex:1; padding: 8px; font-size: 0.65rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Cancel</button>' +
+            '</div>' +
+        '</div>';
     
     _openModal({
         title: 'Select Sperm Donor',
@@ -592,7 +779,7 @@ function openDonorSelectionModal(couple, onSuccess) {
 }
 
 // =============================================================================
-// 8. SURROGATE SELECTION MODAL
+// 9. SURROGATE SELECTION MODAL (UPDATED with FamilyAccessors)
 // =============================================================================
 
 function openSurrogateSelectionModal(couple, onSuccess) {
@@ -616,6 +803,7 @@ function openSurrogateSelectionModal(couple, onSuccess) {
     var checkIcon = _getIcon('CHECK_SIMPLE');
     var searchIcon = _getIcon('SEARCH');
     var warningIcon = _getIcon('WARNING');
+    var childIcon = _getIcon('CHILD');
     
     function renderSurrogateList() {
         var surrogates = _getPotentialSurrogates(coupleLocation, avgAge, currentFilters);
@@ -626,15 +814,54 @@ function openSurrogateSelectionModal(couple, onSuccess) {
         
         var html = '';
         for (var i = 0; i < surrogates.length; i++) {
-            var surrogate = surrogates[i];
+            var item = surrogates[i];
+            var surrogate = item.character;
             var age = _calculateAge(surrogate.birthYear, false, null);
             var location = _getCurrentLocation(surrogate);
             var rank = _getActiveRankDisplay(surrogate);
-            var isRelated = _areRelated(couple.person1?.id || couple.person?.id, surrogate.id) || (couple.person2 && _areRelated(couple.person2.id, surrogate.id));
+            
+            // ================================================================
+            // UPDATED: Check if related using FamilyAccessors
+            // ================================================================
+            var isRelated = false;
+            var relation = null;
+            var fa = _getFamilyAccessors();
+            
+            if (fa && typeof fa.getRelationshipDescription === 'function') {
+                relation = fa.getRelationshipDescription(couple.person1?.id || couple.person?.id, surrogate.id);
+                if (relation && relation !== 'Unrelated' && relation !== 'Unknown') {
+                    isRelated = true;
+                }
+            }
+            
+            if (!isRelated && couple.person2) {
+                if (fa && typeof fa.getRelationshipDescription === 'function') {
+                    relation = fa.getRelationshipDescription(couple.person2.id, surrogate.id);
+                    if (relation && relation !== 'Unrelated' && relation !== 'Unknown') {
+                        isRelated = true;
+                    }
+                }
+            }
+            
+            if (!isRelated) {
+                isRelated = _areRelated(couple.person1?.id || couple.person?.id, surrogate.id) || 
+                           (couple.person2 && _areRelated(couple.person2.id, surrogate.id));
+            }
+            
             var isSelected = selectedSurrogateId === surrogate.id;
             
             var rankText = rank ? '<span style="color: var(--accent); font-size: 0.6rem;">' + _escapeHtml(rank.display) + '</span> ' : '';
-            var relatedBadge = isRelated ? '<span style="background: var(--warn); padding: 2px 5px; border-radius: 10px; font-size: 0.5rem; margin-left: 5px;">Relative</span>' : '';
+            var relatedBadge = isRelated ? '<span style="background: var(--warn); padding: 2px 5px; border-radius: 10px; font-size: 0.5rem; margin-left: 5px;">' + warningIcon + ' ' + _escapeHtml(relation || 'Relative') + '</span>' : '';
+            
+            // ================================================================
+            // NEW: Show surrogate's children info
+            // ================================================================
+            var childrenBadge = '';
+            if (item.hasChildren) {
+                childrenBadge = '<span style="background: var(--bg2); padding: 2px 5px; border-radius: 10px; font-size: 0.45rem; margin-left: 5px;">' + 
+                    childIcon + ' ' + item.childCount + ' child' + (item.childCount > 1 ? 'ren' : '') + 
+                    '</span>';
+            }
             
             html += '<div class="surrogate-card-item" data-surrogate-id="' + surrogate.id + '" style="' +
                 'background: ' + (isSelected ? 'var(--accent-dim)' : 'var(--bg3)') + ';' +
@@ -650,6 +877,7 @@ function openSurrogateSelectionModal(couple, onSuccess) {
                         '<strong style="font-size: 0.7rem;">' + _escapeHtml(surrogate.name) + ' ' + _escapeHtml(surrogate.surname || '') + '</strong>' +
                         '<span style="color: var(--dim); font-size: 0.55rem;">(' + age + 'y)</span>' +
                         relatedBadge +
+                        childrenBadge +
                     '</div>' +
                     '<div style="font-size: 0.55rem; color: var(--dim);">' + _escapeHtml(location) + '</div>' +
                 '</div>' +
@@ -658,39 +886,38 @@ function openSurrogateSelectionModal(couple, onSuccess) {
         return html;
     }
     
-    var modalContent = `
-        <div style="margin-bottom: 12px;">
-            <div class="info-box" style="background: var(--bg2); padding: 8px; border-radius: 6px; margin-bottom: 12px;">
-                <div style="font-size: 0.65rem;"><strong>Couple:</strong> ${_escapeHtml(couple.person1?.name || couple.person?.name)}${couple.person2 ? ' & ' + _escapeHtml(couple.person2.name) : ''}</div>
-                <div style="font-size: 0.6rem; color: var(--dim);">${_escapeHtml(coupleLocation)}</div>
-            </div>
+    var modalContent = 
+        '<div style="margin-bottom: 12px;">' +
+            '<div class="info-box" style="background: var(--bg2); padding: 8px; border-radius: 6px; margin-bottom: 12px;">' +
+                '<div style="font-size: 0.65rem;"><strong>Couple:</strong> ' + _escapeHtml(couple.person1?.name || couple.person?.name) + (couple.person2 ? ' & ' + _escapeHtml(couple.person2.name) : '') + '</div>' +
+                '<div style="font-size: 0.6rem; color: var(--dim);">' + _escapeHtml(coupleLocation) + '</div>' +
+            '</div>' +
             
-            <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; padding: 8px; background: var(--bg2); border-radius: 6px;">
-                <label style="font-size: 0.6rem; display: flex; align-items: center; gap: 4px;">
-                    <input type="checkbox" id="surrogateShowDeceased" ${currentFilters.showDeceased ? 'checked' : ''}> Show Deceased
-                </label>
-                <label style="font-size: 0.6rem; display: flex; align-items: center; gap: 4px;">
-                    <input type="checkbox" id="surrogateSameLocation" ${currentFilters.sameLocationOnly ? 'checked' : ''}> Same Location
-                </label>
-                <label style="font-size: 0.6rem; display: flex; align-items: center; gap: 4px;">
-                    <input type="checkbox" id="surrogatePeersOnly" ${currentFilters.peersOnly ? 'checked' : ''}> Peers (plus/minus 20y)
-                </label>
-                <label style="font-size: 0.6rem; display: flex; align-items: center; gap: 4px;">
-                    <input type="checkbox" id="surrogateShowOnlySingle" ${currentFilters.showOnlySingle ? 'checked' : ''}> Single Only
-                </label>
-                <input type="text" id="surrogateSearch" placeholder="Search..." value="${_escapeHtml(currentFilters.searchTerm)}" style="flex:1; min-width: 100px; padding: 4px 6px; font-size: 0.6rem; background: var(--bg); border: 1px solid var(--border); border-radius: 4px;">
-            </div>
+            '<div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; padding: 8px; background: var(--bg2); border-radius: 6px;">' +
+                '<label style="font-size: 0.6rem; display: flex; align-items: center; gap: 4px;">' +
+                    '<input type="checkbox" id="surrogateShowDeceased" ' + (currentFilters.showDeceased ? 'checked' : '') + '> Show Deceased' +
+                '</label>' +
+                '<label style="font-size: 0.6rem; display: flex; align-items: center; gap: 4px;">' +
+                    '<input type="checkbox" id="surrogateSameLocation" ' + (currentFilters.sameLocationOnly ? 'checked' : '') + '> Same Location' +
+                '</label>' +
+                '<label style="font-size: 0.6rem; display: flex; align-items: center; gap: 4px;">' +
+                    '<input type="checkbox" id="surrogatePeersOnly" ' + (currentFilters.peersOnly ? 'checked' : '') + '> Peers (plus/minus 20y)' +
+                '</label>' +
+                '<label style="font-size: 0.6rem; display: flex; align-items: center; gap: 4px;">' +
+                    '<input type="checkbox" id="surrogateShowOnlySingle" ' + (currentFilters.showOnlySingle ? 'checked' : '') + '> Single Only' +
+                '</label>' +
+                '<input type="text" id="surrogateSearch" placeholder="Search..." value="' + _escapeHtml(currentFilters.searchTerm) + '" style="flex:1; min-width: 100px; padding: 4px 6px; font-size: 0.6rem; background: var(--bg); border: 1px solid var(--border); border-radius: 4px;">' +
+            '</div>' +
             
-            <div id="surrogateListContainer" style="max-height: 400px; overflow-y: auto; margin-bottom: 12px;">
-                ${renderSurrogateList()}
-            </div>
+            '<div id="surrogateListContainer" style="max-height: 400px; overflow-y: auto; margin-bottom: 12px;">' +
+                renderSurrogateList() +
+            '</div>' +
             
-            <div style="display: flex; gap: 10px;">
-                <button id="confirmSurrogateBtn" class="btn primary" style="flex:2; padding: 8px; font-size: 0.65rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer;" disabled>Confirm Surrogate</button>
-                <button id="cancelSurrogateBtn" class="btn" style="flex:1; padding: 8px; font-size: 0.65rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Cancel</button>
-            </div>
-        </div>
-    `;
+            '<div style="display: flex; gap: 10px;">' +
+                '<button id="confirmSurrogateBtn" class="btn primary" style="flex:2; padding: 8px; font-size: 0.65rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer;" disabled>Confirm Surrogate</button>' +
+                '<button id="cancelSurrogateBtn" class="btn" style="flex:1; padding: 8px; font-size: 0.65rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Cancel</button>' +
+            '</div>' +
+        '</div>';
     
     _openModal({
         title: 'Select Surrogate',
@@ -792,7 +1019,7 @@ function openSurrogateSelectionModal(couple, onSuccess) {
 }
 
 // =============================================================================
-// 9. INTENDED PARENT SELECTION MODAL
+// 10. INTENDED PARENT SELECT MODAL
 // =============================================================================
 
 function openIntendedParentSelectModal(couple, donorOrSurrogate, type, onSuccess) {
@@ -813,23 +1040,24 @@ function openIntendedParentSelectModal(couple, donorOrSurrogate, type, onSuccess
     var infoIcon = _getIcon('CIRCLE_DOT');
     var personIcon = _getIcon('PERSON');
     
-    var modalContent = `
-        <div class="info-box" style="background: var(--bg3); padding: 12px; border-radius: 8px; margin-bottom: 16px;">
-            <div><strong>Couple:</strong> ${_escapeHtml(couple.person1?.name || couple.person?.name)}${couple.person2 ? ' & ' + _escapeHtml(couple.person2.name) : ''}</div>
-            <div><strong>${typeLabel}:</strong> ${_escapeHtml(donorOrSurrogate.name)} ${_escapeHtml(donorOrSurrogate.surname || '')}</div>
-        </div>
+    var modalContent = 
+        '<div class="info-box" style="background: var(--bg3); padding: 12px; border-radius: 8px; margin-bottom: 16px;">' +
+            '<div><strong>Couple:</strong> ' + _escapeHtml(couple.person1?.name || couple.person?.name) + (couple.person2 ? ' & ' + _escapeHtml(couple.person2.name) : '') + '</div>' +
+            '<div><strong>' + typeLabel + ':</strong> ' + _escapeHtml(donorOrSurrogate.name) + ' ' + _escapeHtml(donorOrSurrogate.surname || '') + '</div>' +
+        '</div>' +
         
-        <div class="form-group" style="margin-bottom: 12px;">
-            <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Select Intended Parent</label>
-            <select id="intendedParentSelect" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">
-                ${options.map(function(opt) { return '<option value="' + opt.id + '">' + _escapeHtml(opt.name) + ' ' + _escapeHtml(opt.surname) + ' (' + opt.label + ')</option>'; }).join('')}
-            </select>
-        </div>
+        '<div class="form-group" style="margin-bottom: 12px;">' +
+            '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Select Intended Parent</label>' +
+            '<select id="intendedParentSelect" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
+                options.map(function(opt) { 
+                    return '<option value="' + opt.id + '">' + _escapeHtml(opt.name) + ' ' + _escapeHtml(opt.surname) + ' (' + opt.label + ')</option>'; 
+                }).join('') +
+            '</select>' +
+        '</div>' +
         
-        <div class="info-note" style="margin-top: 12px; padding: 8px; background: var(--bg2); border-radius: 6px; font-size: 0.6rem;">
-            ${infoIcon} This person will be the legal parent of the child born through this surrogacy arrangement.
-        </div>
-    `;
+        '<div class="info-note" style="margin-top: 12px; padding: 8px; background: var(--bg2); border-radius: 6px; font-size: 0.6rem;">' +
+            infoIcon + ' This person will be the legal parent of the child born through this surrogacy arrangement.' +
+        '</div>';
     
     _openModal({
         title: 'Select Intended Parent',
@@ -850,7 +1078,7 @@ function openIntendedParentSelectModal(couple, donorOrSurrogate, type, onSuccess
 }
 
 // =============================================================================
-// 10. COMPLETE SURROGACY MODAL
+// 11. COMPLETE SURROGACY MODAL
 // =============================================================================
 
 function openCompleteSurrogacyModal(couple, donor, surrogate, intendedParent, type, onSuccess) {
@@ -860,37 +1088,36 @@ function openCompleteSurrogacyModal(couple, donor, surrogate, intendedParent, ty
     var locationIcon = _getIcon('LOCATION');
     var checkIcon = _getIcon('CHECK_SIMPLE');
     
-    var modalContent = `
-        <div class="info-box" style="background: var(--bg3); padding: 12px; border-radius: 8px; margin-bottom: 16px;">
-            <div><strong>Intended Parent:</strong> ${_escapeHtml(intendedParent.name)}</div>
-            <div><strong>Surrogate:</strong> ${_escapeHtml(surrogate.name)} ${_escapeHtml(surrogate.surname || '')} (${_calculateAge(surrogate.birthYear, false, null)}y)</div>
-            ${donor ? '<div><strong>Donor:</strong> ' + _escapeHtml(donor.name) + ' ' + _escapeHtml(donor.surname || '') + '</div>' : ''}
-        </div>
+    var modalContent = 
+        '<div class="info-box" style="background: var(--bg3); padding: 12px; border-radius: 8px; margin-bottom: 16px;">' +
+            '<div><strong>Intended Parent:</strong> ' + _escapeHtml(intendedParent.name) + '</div>' +
+            '<div><strong>Surrogate:</strong> ' + _escapeHtml(surrogate.name) + ' ' + _escapeHtml(surrogate.surname || '') + ' (' + _calculateAge(surrogate.birthYear, false, null) + 'y)</div>' +
+            (donor ? '<div><strong>Donor:</strong> ' + _escapeHtml(donor.name) + ' ' + _escapeHtml(donor.surname || '') + '</div>' : '') +
+        '</div>' +
         
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
-            <div>
-                <label style="font-size: 0.65rem;">Number of Children</label>
-                <select id="completeChildCount" style="width:100%; padding: 6px;">
-                    <option value="1">1 Child</option>
-                    <option value="2">2 Children</option>
-                    <option value="3">3 Children</option>
-                </select>
-            </div>
-            <div>
-                <label style="font-size: 0.65rem;">Birth Year</label>
-                <input type="number" id="completeBirthYear" value="${currentYear}" style="width:100%; padding: 6px;">
-            </div>
-        </div>
+        '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">' +
+            '<div>' +
+                '<label style="font-size: 0.65rem;">Number of Children</label>' +
+                '<select id="completeChildCount" style="width:100%; padding: 6px;">' +
+                    '<option value="1">1 Child</option>' +
+                    '<option value="2">2 Children</option>' +
+                    '<option value="3">3 Children</option>' +
+                '</select>' +
+            '</div>' +
+            '<div>' +
+                '<label style="font-size: 0.65rem;">Birth Year</label>' +
+                '<input type="number" id="completeBirthYear" value="' + currentYear + '" style="width:100%; padding: 6px;">' +
+            '</div>' +
+        '</div>' +
         
-        <div style="margin-bottom: 12px;">
-            <label style="font-size: 0.65rem;">Notes</label>
-            <textarea id="completeNotes" rows="2" style="width:100%; padding: 6px; font-size:0.6rem;"></textarea>
-        </div>
+        '<div style="margin-bottom: 12px;">' +
+            '<label style="font-size: 0.65rem;">Notes</label>' +
+            '<textarea id="completeNotes" rows="2" style="width:100%; padding: 6px; font-size:0.6rem;"></textarea>' +
+        '</div>' +
         
-        <div class="warning-box" style="background: rgba(200, 68, 68, 0.15); padding: 8px; border-radius: 4px;">
-            <div style="font-size: 0.55rem;">This will create a permanent surrogacy record.</div>
-        </div>
-    `;
+        '<div class="warning-box" style="background: rgba(200, 68, 68, 0.15); padding: 8px; border-radius: 4px;">' +
+            '<div style="font-size: 0.55rem;">This will create a permanent surrogacy record.</div>' +
+        '</div>';
     
     _openModal({
         title: 'Complete Surrogacy Arrangement',
@@ -933,7 +1160,7 @@ function openCompleteSurrogacyModal(couple, donor, surrogate, intendedParent, ty
 }
 
 // =============================================================================
-// 11. SWAP CONFIRMATION MODAL
+// 12. SWAP CONFIRMATION MODAL
 // =============================================================================
 
 function openSwapConfirmationModal(femaleCouple, maleCouple, onSuccess) {
@@ -945,22 +1172,21 @@ function openSwapConfirmationModal(femaleCouple, maleCouple, onSuccess) {
     var personIcon = _getIcon('PERSON');
     var checkIcon = _getIcon('CHECK_SIMPLE');
     
-    var modalContent = `
-        <div class="info-box" style="background: var(--bg3); padding: 10px; border-radius: 6px; margin-bottom: 12px;">
-            <div style="font-weight: bold; margin-bottom: 6px;">Swap Arrangement</div>
-            <div style="font-size: 0.6rem;">${_escapeHtml(womanA.name)} + ${_escapeHtml(manA.name)} → Female Couple</div>
-            <div style="font-size: 0.6rem;">${_escapeHtml(womanB.name)} + ${_escapeHtml(manB.name)} → Male Couple</div>
-        </div>
+    var modalContent = 
+        '<div class="info-box" style="background: var(--bg3); padding: 10px; border-radius: 6px; margin-bottom: 12px;">' +
+            '<div style="font-weight: bold; margin-bottom: 6px;">Swap Arrangement</div>' +
+            '<div style="font-size: 0.6rem;">' + _escapeHtml(womanA.name) + ' + ' + _escapeHtml(manA.name) + ' → Female Couple</div>' +
+            '<div style="font-size: 0.6rem;">' + _escapeHtml(womanB.name) + ' + ' + _escapeHtml(manB.name) + ' → Male Couple</div>' +
+        '</div>' +
         
-        <div class="form-group" style="margin-bottom: 10px;">
-            <label style="font-size: 0.65rem;">Birth Year</label>
-            <input type="number" id="swapBirthYear" value="${_getCurrentYear()}" style="width:100%; padding: 6px;">
-        </div>
+        '<div class="form-group" style="margin-bottom: 10px;">' +
+            '<label style="font-size: 0.65rem;">Birth Year</label>' +
+            '<input type="number" id="swapBirthYear" value="' + _getCurrentYear() + '" style="width:100%; padding: 6px;">' +
+        '</div>' +
         
-        <div class="warning-box" style="background: rgba(200, 68, 68, 0.15); padding: 6px; border-radius: 4px;">
-            <div style="font-size: 0.5rem;">Each woman carries one child. Each couple gets one child.</div>
-        </div>
-    `;
+        '<div class="warning-box" style="background: rgba(200, 68, 68, 0.15); padding: 6px; border-radius: 4px;">' +
+            '<div style="font-size: 0.5rem;">Each woman carries one child. Each couple gets one child.</div>' +
+        '</div>';
     
     _openModal({
         title: 'Confirm Swap',
@@ -993,7 +1219,7 @@ function openSwapConfirmationModal(femaleCouple, maleCouple, onSuccess) {
 }
 
 // =============================================================================
-// 12. SURROGACY AGREEMENT MODAL (Legacy)
+// 13. SURROGACY AGREEMENT MODAL (Legacy)
 // =============================================================================
 
 function openSurrogacyAgreementModal(intendedParent, intendedPartner, surrogate, onSuccess) {
@@ -1007,29 +1233,28 @@ function openSurrogacyAgreementModal(intendedParent, intendedPartner, surrogate,
     var personIcon = _getIcon('PERSON');
     var checkIcon = _getIcon('CHECK_SIMPLE');
     
-    var modalContent = `
-        <div class="info-box" style="background: var(--bg3); padding: 10px; border-radius: 6px; margin-bottom: 12px;">
-            <div><strong>Parent:</strong> ${_escapeHtml(intendedParent.name || intendedParent)}</div>
-            <div><strong>Surrogate:</strong> ${_escapeHtml(surrogate.name)}</div>
-        </div>
+    var modalContent = 
+        '<div class="info-box" style="background: var(--bg3); padding: 10px; border-radius: 6px; margin-bottom: 12px;">' +
+            '<div><strong>Parent:</strong> ' + _escapeHtml(intendedParent.name || intendedParent) + '</div>' +
+            '<div><strong>Surrogate:</strong> ' + _escapeHtml(surrogate.name) + '</div>' +
+        '</div>' +
         
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
-            <div>
-                <label style="font-size: 0.6rem;">Children</label>
-                <select id="legacyChildCount" style="width:100%; padding: 4px;">
-                    <option value="1">1</option>
-                    <option value="2">2</option>
-                    <option value="3">3</option>
-                </select>
-            </div>
-            <div>
-                <label style="font-size: 0.6rem;">Birth Year</label>
-                <input type="number" id="legacyBirthYear" value="${currentYear}" style="width:100%; padding: 4px;">
-            </div>
-        </div>
+        '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">' +
+            '<div>' +
+                '<label style="font-size: 0.6rem;">Children</label>' +
+                '<select id="legacyChildCount" style="width:100%; padding: 4px;">' +
+                    '<option value="1">1</option>' +
+                    '<option value="2">2</option>' +
+                    '<option value="3">3</option>' +
+                '</select>' +
+            '</div>' +
+            '<div>' +
+                '<label style="font-size: 0.6rem;">Birth Year</label>' +
+                '<input type="number" id="legacyBirthYear" value="' + currentYear + '" style="width:100%; padding: 4px;">' +
+            '</div>' +
+        '</div>' +
         
-        <textarea id="legacyNotes" rows="2" placeholder="Notes..." style="width:100%; padding: 4px; font-size:0.55rem; margin-bottom:10px;"></textarea>
-    `;
+        '<textarea id="legacyNotes" rows="2" placeholder="Notes..." style="width:100%; padding: 4px; font-size:0.55rem; margin-bottom:10px;"></textarea>';
     
     _openModal({
         title: 'Surrogacy Agreement',
@@ -1075,7 +1300,7 @@ function openSurrogacyAgreementModal(intendedParent, intendedPartner, surrogate,
 }
 
 // =============================================================================
-// 13. EXPORTS
+// 14. EXPORTS
 // =============================================================================
 
 window.openDonorSelectionModal = openDonorSelectionModal;

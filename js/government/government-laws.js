@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * STILL WATERS - GOVERNMENT LAWS (government-laws.js)
+ * STILL WATERS - GOVERNMENT LAWS (js/government/government-laws.js)
  * =============================================================================
  * 
  * LOCATION: js/systems/government/government-laws.js

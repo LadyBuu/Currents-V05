@@ -1,0 +1,1211 @@
+/* ============================================================================
+   FAMILY & SOCIAL CIRCLES - COMPLETE CSS
+   TRON-STYLE DARK THEME + FAMILY TREE + SOCIAL CIRCLES + RELATIONSHIP FINDER
+   UNIFIED TRON THEME - Matches Character Manager
+   ============================================================================ */
+
+/* ============================================================================
+   BASE LAYOUT
+   ============================================================================ */
+.family-app {
+  display: flex;
+  height: calc(100vh - var(--topbar-height, 48px));
+  overflow: hidden;
+  background: #0a0e16;
+  position: relative;
+}
+
+/* TRON Grid Background - NO BLUR */
+.family-app::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(var(--accent-glow) 1px, transparent 1px),
+    linear-gradient(90deg, var(--accent-glow) 1px, transparent 1px);
+  background-size: 30px 30px;
+  opacity: 0.04;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ============================================================================
+   LEFT SIDEBAR - SOLID BACKGROUND
+   ============================================================================ */
+.family-app .char-sidebar {
+  width: 320px;
+  min-width: 320px;
+  max-width: 320px;
+  background: #0d1119;
+  border-right: 1px solid var(--accent);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex-shrink: 0;
+  position: relative;
+  transition: transform 0.3s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+  z-index: 10;
+}
+
+.family-app .char-sidebar::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: -1px;
+  bottom: 0;
+  width: 1px;
+  background: linear-gradient(180deg, transparent, var(--accent), transparent);
+  box-shadow: 0 0 6px var(--accent);
+}
+
+.family-app .char-sidebar-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--accent);
+  background: #121820;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.family-app .char-sidebar-header::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent), var(--accent), transparent);
+  box-shadow: 0 0 8px var(--accent);
+}
+
+.family-app .char-sidebar-header h3 {
+  margin: 0 0 4px 0;
+  font-size: 0.65rem;
+  color: var(--accent);
+  font-family: 'Cinzel', serif;
+  text-shadow: 0 0 5px var(--accent-glow);
+}
+
+.family-app .char-sidebar-header p {
+  font-size: 0.5rem;
+  color: var(--dim);
+  margin: 0;
+}
+
+/* Character Tree Container - WITH SCROLLBAR */
+.family-app .char-tree-container {
+  flex: 1;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  padding: 8px;
+  min-height: 0;
+}
+
+.family-app .char-tree-container::-webkit-scrollbar {
+  width: 8px;
+}
+
+.family-app .char-tree-container::-webkit-scrollbar-track {
+  background: #090c12;
+  border-radius: 4px;
+}
+
+.family-app .char-tree-container::-webkit-scrollbar-thumb {
+  background: var(--accent);
+  border-radius: 4px;
+  box-shadow: 0 0 4px var(--accent);
+}
+
+.family-app .char-tree-container::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-dark);
+  box-shadow: 0 0 8px var(--accent);
+}
+
+.family-app .char-tree-container {
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent) #090c12;
+}
+
+/* Character Tree Items - SOLID BACKGROUNDS */
+.family-app .char-item {
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  background: #090c12;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.family-app .char-item:hover {
+  border-color: var(--accent);
+  background: #1a2d48;
+  transform: translateX(3px);
+  box-shadow: 0 0 8px rgba(106, 158, 207, 0.15);
+}
+
+.family-app .char-item.selected {
+  border-color: var(--accent);
+  background: linear-gradient(90deg, rgba(26, 45, 72, 0.9), rgba(13, 17, 25, 0.6));
+  border-left: 3px solid var(--accent);
+  box-shadow: -2px 0 12px rgba(106, 158, 207, 0.2);
+}
+
+.family-app .char-item .char-name {
+  font-family: 'Cinzel', serif;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.family-app .char-item .char-details {
+  font-size: 0.5rem;
+  color: var(--dim);
+  margin-top: 2px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.family-app .char-item .char-details .deceased {
+  color: var(--deceased);
+}
+
+.family-app .char-item .char-details .living {
+  color: var(--success);
+}
+
+/* ============================================================================
+   MAIN CONTENT - SOLID BACKGROUND
+   ============================================================================ */
+.family-app .main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #0a0e16;
+}
+
+/* ============================================================================
+   TABS - UNIFIED - NO SCROLLBAR
+   ============================================================================ */
+.family-app .panel-tabs {
+  padding: 0 12px;
+  border-bottom: 1px solid var(--accent);
+  background: #0d1119;
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  position: relative;
+  overflow-x: auto;
+  white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  min-height: var(--tab-height, 38px);
+  align-items: center;
+}
+
+.family-app .panel-tabs::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.family-app .panel-tabs::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent), var(--accent), transparent);
+  box-shadow: 0 0 6px var(--accent);
+}
+
+.family-app .tab-btn {
+  padding: 10px 16px;
+  background: none;
+  border: none;
+  font-family: 'Cinzel', serif;
+  font-size: 0.55rem;
+  cursor: pointer;
+  color: var(--dim);
+  border-bottom: 2px solid transparent;
+  transition: all 0.3s;
+  flex-shrink: 0;
+  min-height: var(--tab-height, 38px);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.family-app .tab-btn:hover {
+  color: var(--accent);
+  text-shadow: 0 0 5px var(--accent);
+  background: rgba(106, 158, 207, 0.1);
+}
+
+.family-app .tab-btn.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  text-shadow: 0 0 8px var(--accent);
+  box-shadow: 0 2px 8px rgba(106, 158, 207, 0.2);
+}
+
+/* ============================================================================
+   TAB CONTENT
+   ============================================================================ */
+.family-app .tab-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.family-app .tab-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.family-app .tab-content::-webkit-scrollbar-track {
+  background: #090c12;
+  border-radius: 4px;
+}
+
+.family-app .tab-content::-webkit-scrollbar-thumb {
+  background: var(--accent);
+  border-radius: 4px;
+  box-shadow: 0 0 4px var(--accent);
+}
+
+.family-app .tab-content {
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent) #090c12;
+}
+
+/* ============================================================================
+   FAMILY TREE STYLES
+   ============================================================================ */
+.family-app .tree-layout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 8px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.family-app .tree-row {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  position: relative;
+  padding: 6px 0;
+  width: 100%;
+}
+
+.family-app .tree-row-label {
+  width: 100%;
+  text-align: center;
+  font-size: 0.55rem;
+  color: var(--dim);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 3px;
+  font-family: 'Cinzel', serif;
+}
+
+/* Tree Node - SOLID BACKGROUND */
+.family-app .tree-node {
+  background: #090c12;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-width: 80px;
+  max-width: 180px;
+  text-align: center;
+  position: relative;
+  z-index: 2;
+}
+
+.family-app .tree-node:hover {
+  transform: scale(1.04);
+  z-index: 10;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  border-color: var(--accent);
+}
+
+.family-app .tree-node.central {
+  background: rgba(26, 45, 72, 0.8);
+  border: 2px solid var(--accent);
+  min-width: 110px;
+  max-width: 200px;
+  box-shadow: 0 0 15px var(--accent-glow);
+}
+
+.family-app .tree-node .name {
+  font-weight: bold;
+  font-size: 0.75rem;
+  color: var(--accent);
+}
+
+.family-app .tree-node .details {
+  font-size: 0.5rem;
+  color: var(--dim);
+}
+
+.family-app .tree-node .relation-badge {
+  font-size: 0.45rem;
+  color: var(--accent);
+  background: rgba(13, 17, 25, 0.6);
+  padding: 1px 6px;
+  border-radius: 8px;
+  display: inline-block;
+  margin-top: 2px;
+  border: 1px solid var(--accent);
+}
+
+.family-app .tree-node.deceased {
+  opacity: 0.7;
+}
+
+.family-app .tree-node.deceased .name {
+  text-decoration: line-through;
+  color: var(--deceased);
+}
+
+.family-app .tree-node .deceased-badge {
+  color: var(--deceased);
+  font-size: 0.45rem;
+  margin-left: 2px;
+}
+
+/* Tree Connectors */
+.family-app .tree-connector {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 3px;
+  position: relative;
+}
+
+.family-app .tree-connector .line-vertical {
+  width: 2px;
+  height: 16px;
+  background: var(--border);
+  position: relative;
+}
+
+.family-app .tree-connector .line-horizontal {
+  height: 2px;
+  min-width: 24px;
+  background: var(--border);
+  position: relative;
+  flex: 1;
+}
+
+.family-app .tree-connector .line-horizontal::after {
+  content: '';
+  position: absolute;
+  right: -4px;
+  top: -4px;
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid var(--border);
+  border-top: 2px solid var(--border);
+  transform: rotate(45deg);
+}
+
+.family-app .tree-branch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  position: relative;
+}
+
+.family-app .tree-branch .branch-line {
+  width: 2px;
+  height: 16px;
+  background: var(--border);
+  position: absolute;
+  top: -16px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+/* Children Container */
+.family-app .tree-children-container {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 16px;
+  position: relative;
+  padding-top: 16px;
+  width: 100%;
+}
+
+.family-app .tree-children-container::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 2px;
+  height: 16px;
+  background: var(--border);
+  transform: translateX(-50%);
+}
+
+.family-app .tree-child-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+}
+
+.family-app .tree-child-group .child-connector {
+  width: 2px;
+  height: 12px;
+  background: var(--border);
+  margin-bottom: 3px;
+}
+
+/* Partner Group */
+.family-app .partner-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.family-app .partner-connector {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--accent);
+  font-size: 0.65rem;
+}
+
+.family-app .partner-connector .line {
+  width: 16px;
+  height: 2px;
+  background: var(--accent-dim);
+}
+
+.family-app .partner-connector .plus {
+  font-weight: bold;
+}
+
+/* Spouse Connection */
+.family-app .spouse-connection {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+}
+
+.family-app .spouse-connection .line {
+  width: 24px;
+  height: 2px;
+  background: var(--accent);
+  position: relative;
+}
+
+.family-app .spouse-connection .line::after {
+  content: '❤';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 0.55rem;
+  background: rgba(13, 17, 25, 0.9);
+  padding: 0 3px;
+}
+
+/* ============================================================================
+   SOCIAL CIRCLES STYLES
+   ============================================================================ */
+.family-app .social-circles-container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 12px 8px;
+}
+
+.family-app .social-circle-section {
+  margin-bottom: 20px;
+}
+
+.family-app .social-circle-title {
+  color: var(--accent);
+  font-size: 0.65rem;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 3px;
+  font-family: 'Cinzel', serif;
+}
+
+.family-app .social-circle-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+/* Member Card - SOLID BACKGROUND */
+.family-app .member-card {
+  background: #090c12;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+  min-width: 80px;
+  max-width: 160px;
+  text-align: center;
+}
+
+.family-app .member-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+  box-shadow: 0 0 8px rgba(106, 158, 207, 0.15);
+}
+
+.family-app .member-card .member-name {
+  font-weight: bold;
+  font-size: 0.7rem;
+  color: var(--accent);
+}
+
+.family-app .member-card .member-rank {
+  font-size: 0.55rem;
+  color: var(--accent);
+  font-family: monospace;
+}
+
+.family-app .member-card .member-details {
+  font-size: 0.55rem;
+  color: var(--dim);
+}
+
+.family-app .member-card .member-details .deceased {
+  color: var(--deceased);
+  text-decoration: line-through;
+}
+
+/* ============================================================================
+   RELATIONSHIP FINDER
+   ============================================================================ */
+.family-app .relationship-finder {
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.family-app .relationship-finder::-webkit-scrollbar {
+  width: 8px;
+}
+
+.family-app .relationship-finder::-webkit-scrollbar-track {
+  background: #090c12;
+  border-radius: 4px;
+}
+
+.family-app .relationship-finder::-webkit-scrollbar-thumb {
+  background: var(--accent);
+  border-radius: 4px;
+  box-shadow: 0 0 4px var(--accent);
+}
+
+.family-app .relationship-finder {
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent) #090c12;
+}
+
+.family-app .finder-instructions {
+  background: rgba(9, 12, 18, 0.5);
+  padding: 10px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+  font-size: 0.6rem;
+  color: var(--dim);
+  border-left: 3px solid var(--accent);
+}
+
+.family-app .select-with-preview {
+  margin-bottom: 6px;
+}
+
+.family-app .character-select {
+  width: 100%;
+  padding: 6px 8px;
+  background: rgba(9, 12, 18, 0.9);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: 'Crimson Pro', serif;
+  color: var(--text);
+  font-size: 0.65rem;
+}
+
+.family-app .character-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+.family-app .char-preview {
+  margin-top: 6px;
+  padding: 6px 10px;
+  background: rgba(9, 12, 18, 0.5);
+  border-radius: 4px;
+  font-size: 0.6rem;
+  border: 1px solid var(--border);
+}
+
+.family-app .char-preview-content .preview-name {
+  font-weight: bold;
+  color: var(--accent);
+  margin-bottom: 2px;
+}
+
+.family-app .char-preview-content .preview-details {
+  font-size: 0.5rem;
+  color: var(--dim);
+}
+
+/* Relation Result Card */
+.family-app .relation-result-card {
+  background: rgba(13, 17, 25, 0.8);
+  border-radius: 10px;
+  padding: 14px;
+  margin-top: 12px;
+  border: 1px solid var(--border);
+}
+
+.family-app .relation-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.family-app .relation-names {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.family-app .relation-arrow {
+  color: var(--dim);
+  font-size: 0.65rem;
+}
+
+.family-app .relation-badges {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.family-app .relation-badge {
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 0.55rem;
+}
+
+.family-app .relation-badge.direct {
+  background: rgba(74, 144, 96, 0.2);
+  color: var(--success);
+  border: 1px solid var(--success);
+}
+
+.family-app .relation-badge.married {
+  background: rgba(200, 168, 68, 0.2);
+  color: #c8a844;
+  border: 1px solid #c8a844;
+}
+
+.family-app .relation-badge.family {
+  background: rgba(106, 158, 207, 0.2);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.family-app .relation-badge.friend {
+  background: rgba(168, 120, 152, 0.2);
+  color: #a87898;
+  border: 1px solid #a87898;
+}
+
+.family-app .relation-description {
+  font-size: 0.65rem;
+  margin-bottom: 10px;
+  padding: 6px;
+  background: rgba(9, 12, 18, 0.5);
+  border-radius: 4px;
+  color: var(--text);
+}
+
+.family-app .blood-relation-warning {
+  color: var(--warn);
+  font-size: 0.55rem;
+  margin-bottom: 6px;
+  padding: 3px 6px;
+  background: rgba(200, 112, 64, 0.1);
+  border-radius: 4px;
+}
+
+.family-app .blood-relation-safe {
+  color: var(--success);
+  font-size: 0.55rem;
+  margin-bottom: 6px;
+}
+
+.family-app .connection-path {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.family-app .path-title {
+  font-size: 0.6rem;
+  color: var(--accent);
+  margin-bottom: 6px;
+  font-family: 'Cinzel', serif;
+}
+
+.family-app .path-step {
+  padding: 4px 0;
+  font-size: 0.6rem;
+  border-bottom: 1px solid var(--border2);
+  display: flex;
+  gap: 10px;
+}
+
+.family-app .step-number {
+  color: var(--accent);
+  font-weight: bold;
+  min-width: 20px;
+}
+
+.family-app .step-name {
+  color: var(--text);
+  flex: 1;
+}
+
+.family-app .step-relation {
+  color: var(--dim);
+  font-size: 0.5rem;
+}
+
+.family-app .common-ancestors {
+  margin-top: 10px;
+  padding: 6px;
+  background: rgba(9, 12, 18, 0.5);
+  border-radius: 4px;
+}
+
+.family-app .ancestors-title {
+  font-size: 0.55rem;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+
+.family-app .ancestors-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.family-app .ancestor-item {
+  display: inline-block;
+  background: rgba(106, 158, 207, 0.15);
+  padding: 2px 8px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 0.55rem;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  transition: all 0.2s;
+}
+
+.family-app .ancestor-item:hover {
+  background: var(--accent-dim);
+  transform: translateY(-1px);
+}
+
+.family-app .comparison-stats {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.family-app .stat-title {
+  font-size: 0.55rem;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+
+.family-app .stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+
+.family-app .stat-item {
+  font-size: 0.55rem;
+  color: var(--dim);
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+}
+
+/* ============================================================================
+   EMPTY STATE
+   ============================================================================ */
+.family-app .empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--dim);
+  font-size: 0.7rem;
+  border: 1px dashed var(--accent);
+  border-radius: 12px;
+  margin: 16px;
+  background: rgba(13, 17, 25, 0.5);
+}
+
+.family-app .loading {
+  text-align: center;
+  padding: 30px;
+  color: var(--accent);
+  font-size: 0.65rem;
+  font-family: 'Cinzel', serif;
+}
+
+.family-app .warning-text {
+  color: var(--warn);
+  font-size: 0.6rem;
+  padding: 10px;
+  background: rgba(200, 112, 64, 0.1);
+  border-radius: 6px;
+  text-align: center;
+}
+
+/* ============================================================================
+   MOBILE RESPONSIVE
+   ============================================================================ */
+@media (max-width: 768px) {
+  .family-app {
+    flex-direction: column;
+  }
+
+  .family-app .char-sidebar {
+    position: fixed;
+    top: var(--topbar-height, 44px);
+    left: 0;
+    bottom: 0;
+    width: 85%;
+    max-width: 280px;
+    z-index: 100;
+    transform: translateX(-100%);
+    transition: transform 0.3s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+    box-shadow: 4px 0 30px rgba(0, 0, 0, 0.8);
+    border-right: 1px solid var(--accent);
+    background: #0d1119;
+  }
+
+  .family-app .char-sidebar.visible {
+    transform: translateX(0);
+  }
+
+  .sidebar-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    z-index: 98;
+  }
+
+  .sidebar-overlay.active {
+    display: block;
+  }
+
+  .family-app .char-tree-container {
+    display: flex;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    gap: 6px;
+    padding: 8px;
+  }
+
+  .family-app .char-item {
+    min-width: 150px;
+    flex-shrink: 0;
+    margin-bottom: 0;
+  }
+
+  .family-app .main-content {
+    min-height: 65vh;
+  }
+
+  .family-app .panel-tabs {
+    padding: 0 8px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    min-height: 42px;
+  }
+
+  .family-app .panel-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .family-app .tab-btn {
+    padding: 10px 14px;
+    font-size: 0.5rem;
+    flex-shrink: 0;
+    min-height: 42px;
+  }
+
+  .family-app .tab-content {
+    padding: 12px;
+  }
+
+  .family-app .stat-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .family-app .relation-names {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .family-app .relation-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .family-app .tree-layout {
+    padding: 8px 4px;
+  }
+
+  .family-app .tree-node {
+    min-width: 70px;
+    max-width: 130px;
+    padding: 6px 8px;
+  }
+
+  .family-app .tree-node .name {
+    font-size: 0.65rem;
+  }
+
+  .family-app .tree-node .details {
+    font-size: 0.45rem;
+  }
+
+  .family-app .tree-children-container {
+    gap: 6px 10px;
+  }
+
+  .family-app .social-circle-grid {
+    gap: 6px;
+  }
+
+  .family-app .member-card {
+    min-width: 70px;
+    max-width: 130px;
+    padding: 6px 8px;
+  }
+
+  .family-app .member-card .member-name {
+    font-size: 0.65rem;
+  }
+
+  /* Scrollbar on mobile - thinner */
+  .family-app .char-tree-container::-webkit-scrollbar,
+  .family-app .tab-content::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+}
+
+@media (max-width: 480px) {
+  .family-app .char-sidebar {
+    width: 90%;
+    max-width: 260px;
+    top: 36px;
+  }
+
+  .family-app .char-item {
+    min-width: 130px;
+  }
+
+  .family-app .char-sidebar-header h3 {
+    font-size: 0.6rem;
+  }
+
+  .family-app .panel-tabs {
+    min-height: 36px;
+    padding: 0 6px;
+  }
+
+  .family-app .tab-btn {
+    padding: 8px 10px;
+    font-size: 0.45rem;
+    min-height: 36px;
+  }
+
+  .family-app .tree-node {
+    min-width: 60px;
+    max-width: 110px;
+    padding: 4px 6px;
+  }
+
+  .family-app .tree-node.central {
+    min-width: 80px;
+    max-width: 150px;
+  }
+
+  .family-app .tree-node .name {
+    font-size: 0.6rem;
+  }
+
+  .family-app .tree-node .details {
+    font-size: 0.4rem;
+  }
+
+  .family-app .tree-row {
+    gap: 4px 10px;
+  }
+
+  .family-app .tree-children-container {
+    gap: 4px 6px;
+  }
+
+  .family-app .spouse-connection .line {
+    width: 16px;
+  }
+
+  .family-app .spouse-connection .line::after {
+    font-size: 0.45rem;
+    padding: 0 2px;
+  }
+
+  .family-app .member-card {
+    min-width: 60px;
+    max-width: 110px;
+    padding: 4px 6px;
+  }
+
+  .family-app .member-card .member-name {
+    font-size: 0.6rem;
+  }
+
+  .family-app .member-card .member-details {
+    font-size: 0.45rem;
+  }
+
+  .family-app .relationship-finder {
+    max-height: 55vh;
+  }
+
+  .family-app .relation-result-card {
+    padding: 10px;
+  }
+
+  .family-app .path-step {
+    flex-wrap: wrap;
+    gap: 3px;
+  }
+
+  .family-app .stat-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .family-app .ancestors-list {
+    gap: 3px;
+  }
+
+  .family-app .ancestor-item {
+    font-size: 0.45rem;
+    padding: 1px 6px;
+  }
+}
+
+@media (min-width: 769px) {
+  .family-app .char-sidebar {
+    transform: translateX(0) !important;
+    position: relative;
+    top: 0;
+    height: 100%;
+  }
+
+  .sidebar-overlay {
+    display: none !important;
+  }
+}
+
+/* ============================================================================
+   ANIMATIONS
+   ============================================================================ */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes glowPulse {
+  0%, 100% {
+    box-shadow: 0 0 5px var(--accent-glow);
+  }
+  50% {
+    box-shadow: 0 0 15px var(--accent-glow-strong);
+  }
+}
+
+.family-app .char-item {
+  animation: fadeSlideIn 0.2s ease-out;
+}
+
+.family-app .char-item.selected {
+  animation: glowPulse 2s infinite;
+}
+
+.family-app .tree-node {
+  animation: fadeIn 0.2s ease;
+}
+
+.family-app .member-card {
+  animation: fadeIn 0.15s ease;
+}
+
+.family-app .relation-result-card {
+  animation: fadeIn 0.3s ease;
+}

@@ -50,10 +50,30 @@
     };
 
     // =========================================================================
-    // 2. AVAILABLE SYMBOLS (FULL LIST - 50+ SYMBOLS)
+    // 2. INHERITANCE SOURCE TYPES
     // =========================================================================
 
-    // DO NOT MODIFY THIS ARRAY - KEEP AS IS
+    var INHERITANCE_SOURCE = {
+        NONE: 'none',
+        PARENT: 'parent',
+        SPOUSE: 'spouse'
+    };
+
+    // =========================================================================
+    // 3. NUMBERING GROUP TYPES
+    // =========================================================================
+
+    var NUMBERING_GROUP = {
+        GLOBAL: 'global',       // Global numbering (old style)
+        PARENT: 'parent',       // Numbered by parent (children of same parent)
+        SPOUSE: 'spouse',       // Numbered by spouse (spouses of same person)
+        SOURCE: 'source'        // Numbered by the source rank holder
+    };
+
+    // =========================================================================
+    // 4. AVAILABLE SYMBOLS (FULL LIST - 60+ SYMBOLS)
+    // =========================================================================
+
     var AVAILABLE_SYMBOLS = [
         // Level symbols (5)
         '◉', '◧', '◈', '⟡', '⌂',
@@ -73,10 +93,8 @@
         '⚴', '⚷', '⚳', '☉', '☾', '☋'
     ];
 
-    // Total: 60+ symbols
-
     // =========================================================================
-    // 3. DEFAULT RANK
+    // 5. DEFAULT RANK
     // =========================================================================
 
     var DEFAULT_RANK = {
@@ -84,14 +102,15 @@
         name: "New Rank",
         priority: 5,
         numbered: false,
-        numberingType: 'reign',
-        numberingPrefix: '',
-        numberingSuffix: '',
+        numberingType: 'ordinal',           // 'ordinal' (1st, 2nd) or 'roman' (I, II)
+        numberingGroup: 'global',           // 'global', 'parent', 'spouse', 'source'
+        sourceRankId: null,                 // Rank ID this rank is inherited from
+        inheritanceSource: 'none',          // 'none', 'parent', 'spouse'
         symbol: '⟡',
         genderRestriction: 'either',
         locationTypeId: null,
         deprecateOnDeath: false,
-        spouseInheritance: null,
+        spouseInheritance: null,            // Legacy - kept for backward compatibility
         allowsMultipleSpouses: false,
         parentRankId: null,
         customSurnameRule: false,
@@ -103,18 +122,22 @@
     };
 
     // =========================================================================
-    // 4. EXPORTS
+    // 6. EXPORTS
     // =========================================================================
 
     window.RANK_LEVELS = RANK_LEVELS;
     window.AVAILABLE_SYMBOLS = AVAILABLE_SYMBOLS;
     window.DEFAULT_RANK = DEFAULT_RANK;
+    window.INHERITANCE_SOURCE = INHERITANCE_SOURCE;
+    window.NUMBERING_GROUP = NUMBERING_GROUP;
 
     // RankConstants container
     window.RankConstants = {
         RANK_LEVELS: RANK_LEVELS,
         AVAILABLE_SYMBOLS: AVAILABLE_SYMBOLS,
-        DEFAULT_RANK: DEFAULT_RANK
+        DEFAULT_RANK: DEFAULT_RANK,
+        INHERITANCE_SOURCE: INHERITANCE_SOURCE,
+        NUMBERING_GROUP: NUMBERING_GROUP
     };
 
     if (typeof module !== 'undefined' && module.exports) {
@@ -122,10 +145,14 @@
             RANK_LEVELS: RANK_LEVELS,
             AVAILABLE_SYMBOLS: AVAILABLE_SYMBOLS,
             DEFAULT_RANK: DEFAULT_RANK,
+            INHERITANCE_SOURCE: INHERITANCE_SOURCE,
+            NUMBERING_GROUP: NUMBERING_GROUP,
             RankConstants: {
                 RANK_LEVELS: RANK_LEVELS,
                 AVAILABLE_SYMBOLS: AVAILABLE_SYMBOLS,
-                DEFAULT_RANK: DEFAULT_RANK
+                DEFAULT_RANK: DEFAULT_RANK,
+                INHERITANCE_SOURCE: INHERITANCE_SOURCE,
+                NUMBERING_GROUP: NUMBERING_GROUP
             }
         };
     }

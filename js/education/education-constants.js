@@ -7,7 +7,9 @@
  * 
  * DEPENDENCIES: None (pure constants)
  * 
- * UPDATED: Added RELIGIOUS ownership type, religious institution types
+ * UPDATED: Ultra-broad, generic school types from dirt-poor to filthy rich.
+ *          These are simple size/prestige categories that work for ANY setting.
+ *          Specialization comes from curriculum and role assignments, not type.
  * 
  * =============================================================================
  */
@@ -28,207 +30,252 @@
     };
 
     // =============================================================================
-    // 2. GENERAL SUBJECTS (Academic)
+    // 2. SUBJECTS (Combined into one list for simplicity)
     // =============================================================================
 
-    var GENERAL_SUBJECTS = {
-        LITERACY: { id: 'literacy', name: 'Literacy', icon: '⌇', category: 'academic', baseLearnRate: 15, isRoleSubject: false },
-        BASIC_MATH: { id: 'basic_math', name: 'Basic Mathematics', icon: '⌇', category: 'academic', baseLearnRate: 10, isRoleSubject: false },
-        ADVANCED_MATH: { id: 'advanced_math', name: 'Advanced Mathematics', icon: '⌇', category: 'academic', baseLearnRate: 8, isRoleSubject: false },
-        HISTORY: { id: 'history', name: 'History', icon: '⌇', category: 'academic', baseLearnRate: 12, isRoleSubject: false },
-        PHILOSOPHY: { id: 'philosophy', name: 'Philosophy', icon: '⌇', category: 'academic', baseLearnRate: 10, isRoleSubject: false },
-        LAW: { id: 'law', name: 'Law', icon: '⌇', category: 'legal', baseLearnRate: 10, isRoleSubject: false },
-        THEOLOGY: { id: 'theology', name: 'Theology', icon: '⌆', category: 'religious', baseLearnRate: 12, isRoleSubject: false },
-        LATIN: { id: 'latin', name: 'Latin', icon: '⌇', category: 'language', baseLearnRate: 8, isRoleSubject: false },
-        ETIQUETTE: { id: 'etiquette', name: 'Etiquette', icon: '⌇', category: 'social', baseLearnRate: 15, isRoleSubject: false },
-        DIPLOMACY: { id: 'diplomacy', name: 'Diplomacy', icon: '⌇', category: 'social', baseLearnRate: 10, isRoleSubject: false },
-        LANGUAGES: { id: 'languages', name: 'Foreign Languages', icon: '⌇', category: 'language', baseLearnRate: 8, isRoleSubject: false },
-        TACTICS: { id: 'tactics', name: 'Military Tactics', icon: '⚔', category: 'military', baseLearnRate: 10, isRoleSubject: false },
-        STRATEGY: { id: 'strategy', name: 'Strategic Command', icon: '⚔', category: 'military', baseLearnRate: 8, isRoleSubject: false },
-        COMBAT: { id: 'combat', name: 'Combat Training', icon: '⚔', category: 'military', baseLearnRate: 12, isRoleSubject: false },
-        CRAFT: { id: 'craft', name: 'Craftsmanship', icon: '⌇', category: 'craft', baseLearnRate: 12, isRoleSubject: false },
-        TRADE: { id: 'trade', name: 'Trade', icon: '⌇', category: 'commercial', baseLearnRate: 10, isRoleSubject: false },
-        BUSINESS: { id: 'business', name: 'Business', icon: '⌇', category: 'commercial', baseLearnRate: 10, isRoleSubject: false }
+    var ALL_SUBJECTS = {
+        // Core academic
+        LITERACY: { id: 'literacy', name: 'Literacy', icon: '⌇', category: 'academic', baseLearnRate: 15 },
+        BASIC_MATH: { id: 'basic_math', name: 'Basic Mathematics', icon: '⌇', category: 'academic', baseLearnRate: 10 },
+        ADVANCED_MATH: { id: 'advanced_math', name: 'Advanced Mathematics', icon: '⌇', category: 'academic', baseLearnRate: 8 },
+        HISTORY: { id: 'history', name: 'History', icon: '⌇', category: 'academic', baseLearnRate: 12 },
+        PHILOSOPHY: { id: 'philosophy', name: 'Philosophy', icon: '⌇', category: 'academic', baseLearnRate: 10 },
+        
+        // Languages
+        NATIVE_LANGUAGE: { id: 'native_language', name: 'Native Language', icon: '⌇', category: 'language', baseLearnRate: 15 },
+        FOREIGN_LANGUAGES: { id: 'foreign_languages', name: 'Foreign Languages', icon: '⌇', category: 'language', baseLearnRate: 8 },
+        CLASSICAL_LANGUAGES: { id: 'classical_languages', name: 'Classical Languages', icon: '⌇', category: 'language', baseLearnRate: 8 },
+        
+        // Social sciences
+        LAW: { id: 'law', name: 'Law', icon: '⌇', category: 'social', baseLearnRate: 10 },
+        POLITICS: { id: 'politics', name: 'Political Science', icon: '⌇', category: 'social', baseLearnRate: 10 },
+        ECONOMICS: { id: 'economics', name: 'Economics', icon: '⌇', category: 'social', baseLearnRate: 10 },
+        DIPLOMACY: { id: 'diplomacy', name: 'Diplomacy', icon: '⌇', category: 'social', baseLearnRate: 10 },
+        ETIQUETTE: { id: 'etiquette', name: 'Etiquette', icon: '⌇', category: 'social', baseLearnRate: 15 },
+        
+        // Sciences
+        ASTRONOMY: { id: 'astronomy', name: 'Astronomy', icon: '⌇', category: 'science', baseLearnRate: 8 },
+        BIOLOGY: { id: 'biology', name: 'Biology', icon: '⌇', category: 'science', baseLearnRate: 8 },
+        CHEMISTRY: { id: 'chemistry', name: 'Chemistry', icon: '⌇', category: 'science', baseLearnRate: 8 },
+        PHYSICS: { id: 'physics', name: 'Physics', icon: '⌇', category: 'science', baseLearnRate: 8 },
+        MEDICINE: { id: 'medicine', name: 'Medicine', icon: '⌆', category: 'science', baseLearnRate: 8 },
+        GEOGRAPHY: { id: 'geography', name: 'Geography', icon: '⌇', category: 'science', baseLearnRate: 10 },
+        
+        // Humanities
+        LITERATURE: { id: 'literature', name: 'Literature', icon: '⌇', category: 'humanities', baseLearnRate: 10 },
+        RHETORIC: { id: 'rhetoric', name: 'Rhetoric', icon: '⌇', category: 'humanities', baseLearnRate: 10 },
+        LOGIC: { id: 'logic', name: 'Logic', icon: '⌇', category: 'humanities', baseLearnRate: 10 },
+        THEOLOGY: { id: 'theology', name: 'Theology', icon: '⌆', category: 'religious', baseLearnRate: 12 },
+        
+        // Practical skills
+        AGRICULTURE: { id: 'agriculture', name: 'Agriculture', icon: '⌇', category: 'practical', baseLearnRate: 12 },
+        HORTICULTURE: { id: 'horticulture', name: 'Horticulture', icon: '⌇', category: 'practical', baseLearnRate: 10 },
+        ANIMAL_HUSBANDRY: { id: 'animal_husbandry', name: 'Animal Husbandry', icon: '⌇', category: 'practical', baseLearnRate: 12 },
+        NAVIGATION: { id: 'navigation', name: 'Navigation', icon: '⌇', category: 'practical', baseLearnRate: 10 },
+        SEAMANSHIP: { id: 'seamanship', name: 'Seamanship', icon: '⌇', category: 'practical', baseLearnRate: 12 },
+        FISHING: { id: 'fishing', name: 'Fishing', icon: '⌇', category: 'practical', baseLearnRate: 12 },
+        
+        // Craft skills
+        WEAVING: { id: 'weaving', name: 'Weaving', icon: '⌇', category: 'craft', baseLearnRate: 12 },
+        CARPENTRY: { id: 'carpentry', name: 'Carpentry', icon: '⌇', category: 'craft', baseLearnRate: 10 },
+        MASONRY: { id: 'masonry', name: 'Masonry', icon: '⌇', category: 'craft', baseLearnRate: 10 },
+        BLACKSMITHING: { id: 'blacksmithing', name: 'Blacksmithing', icon: '⌇', category: 'craft', baseLearnRate: 10 },
+        POTTERY: { id: 'pottery', name: 'Pottery', icon: '⌇', category: 'craft', baseLearnRate: 12 },
+        WOODWORKING: { id: 'woodworking', name: 'Woodworking', icon: '⌇', category: 'craft', baseLearnRate: 10 },
+        METALWORK: { id: 'metalwork', name: 'Metalwork', icon: '⌇', category: 'craft', baseLearnRate: 10 },
+        LEATHERWORK: { id: 'leatherwork', name: 'Leatherwork', icon: '⌇', category: 'craft', baseLearnRate: 12 },
+        TEXTILE_WORK: { id: 'textile_work', name: 'Textile Work', icon: '⌇', category: 'craft', baseLearnRate: 12 },
+        
+        // Professional
+        ARCHITECTURE: { id: 'architecture', name: 'Architecture', icon: '⌇', category: 'professional', baseLearnRate: 8 },
+        ENGINEERING: { id: 'engineering', name: 'Engineering', icon: '⌇', category: 'professional', baseLearnRate: 8 },
+        BUSINESS: { id: 'business', name: 'Business', icon: '⌇', category: 'professional', baseLearnRate: 10 },
+        ACCOUNTING: { id: 'accounting', name: 'Accounting', icon: '⌇', category: 'professional', baseLearnRate: 10 },
+        
+        // Military
+        TACTICS: { id: 'tactics', name: 'Military Tactics', icon: '⚔', category: 'military', baseLearnRate: 10 },
+        STRATEGY: { id: 'strategy', name: 'Strategic Command', icon: '⚔', category: 'military', baseLearnRate: 8 },
+        COMBAT: { id: 'combat', name: 'Combat Training', icon: '⚔', category: 'military', baseLearnRate: 12 },
+        LEADERSHIP: { id: 'leadership', name: 'Leadership', icon: '⌇', category: 'military', baseLearnRate: 10 },
+        
+        // Arts
+        MUSIC: { id: 'music', name: 'Music', icon: '⌇', category: 'arts', baseLearnRate: 10 },
+        PAINTING: { id: 'painting', name: 'Painting', icon: '⌇', category: 'arts', baseLearnRate: 10 },
+        SCULPTURE: { id: 'sculpture', name: 'Sculpture', icon: '⌇', category: 'arts', baseLearnRate: 10 },
+        PERFORMING_ARTS: { id: 'performing_arts', name: 'Performing Arts', icon: '⌇', category: 'arts', baseLearnRate: 10 }
     };
 
     // =============================================================================
-    // 3. HIGHER SUBJECTS (Advanced)
-    // =============================================================================
-
-    var HIGHER_SUBJECTS = {
-        ASTRONOMY: { id: 'astronomy', name: 'Astronomy', icon: '⌇', category: 'science', baseLearnRate: 8, isRoleSubject: false },
-        BIOLOGY: { id: 'biology', name: 'Biology', icon: '⌇', category: 'science', baseLearnRate: 8, isRoleSubject: false },
-        CHEMISTRY: { id: 'chemistry', name: 'Chemistry', icon: '⌇', category: 'science', baseLearnRate: 8, isRoleSubject: false },
-        PHYSICS: { id: 'physics', name: 'Physics', icon: '⌇', category: 'science', baseLearnRate: 8, isRoleSubject: false },
-        MEDICINE: { id: 'medicine', name: 'Medicine', icon: '⌆', category: 'science', baseLearnRate: 8, isRoleSubject: false },
-        LITERATURE: { id: 'literature', name: 'Literature', icon: '⌇', category: 'humanities', baseLearnRate: 10, isRoleSubject: false },
-        RHETORIC: { id: 'rhetoric', name: 'Rhetoric', icon: '⌇', category: 'humanities', baseLearnRate: 10, isRoleSubject: false },
-        LOGIC: { id: 'logic', name: 'Logic', icon: '⌇', category: 'humanities', baseLearnRate: 10, isRoleSubject: false },
-        POLITICS: { id: 'politics', name: 'Political Science', icon: '⌇', category: 'social', baseLearnRate: 10, isRoleSubject: false },
-        ECONOMICS: { id: 'economics', name: 'Economics', icon: '⌇', category: 'social', baseLearnRate: 10, isRoleSubject: false },
-        GEOGRAPHY: { id: 'geography', name: 'Geography', icon: '⌇', category: 'social', baseLearnRate: 10, isRoleSubject: false },
-        ARCHITECTURE: { id: 'architecture', name: 'Architecture', icon: '⌇', category: 'professional', baseLearnRate: 8, isRoleSubject: false },
-        ENGINEERING: { id: 'engineering', name: 'Engineering', icon: '⌇', category: 'professional', baseLearnRate: 8, isRoleSubject: false }
-    };
-
-    // =============================================================================
-    // 4. ALL SUBJECTS (Combined)
-    // =============================================================================
-
-    var ALL_SUBJECTS = {};
-    for (var key in GENERAL_SUBJECTS) {
-        if (GENERAL_SUBJECTS.hasOwnProperty(key)) {
-            ALL_SUBJECTS[key] = GENERAL_SUBJECTS[key];
-        }
-    }
-    for (var key in HIGHER_SUBJECTS) {
-        if (HIGHER_SUBJECTS.hasOwnProperty(key)) {
-            ALL_SUBJECTS[key] = HIGHER_SUBJECTS[key];
-        }
-    }
-
-    // =============================================================================
-    // 5. INSTITUTION TYPES
+    // 3. ULTRA-BROAD INSTITUTION TYPES
+    // ONLY 7 types - distinguished purely by size, scale, and prestige
+    // Specialization comes from curriculum, not from the type name
     // =============================================================================
 
     var INSTITUTION_TYPES = {
-        VILLAGE_SCHOOL: { 
-            id: 'village_school', 
-            name: 'Village School', 
-            icon: '⌂', 
-            costPerYear: 5, 
+
+        // ================================================================
+        // TYPE 1: HUT SCHOOL - Dirt poor, minimal
+        // ================================================================
+
+        HUT_SCHOOL: {
+            id: 'hut_school',
+            name: 'Hut School',
+            icon: '⌂',
+            costPerYear: 0,
+            maxStudents: 10,
+            baseReputation: 10,
+            requiredYears: 2,
+            minPopulation: 20,
+            description: 'The most basic education possible - a single teacher, often outdoors or in a humble dwelling. Teaches only what the teacher knows.',
+            skillGainPerYear: 5,
+            tier: 'dirt_poor',
+            tuitionBase: 0,
+            requiredTeacherSkill: 10
+        },
+
+        // ================================================================
+        // TYPE 2: SMALL SCHOOL - Poor, basic education
+        // ================================================================
+
+        SMALL_SCHOOL: {
+            id: 'small_school',
+            name: 'Small School',
+            icon: '⌂',
+            costPerYear: 5,
             maxStudents: 30,
-            baseReputation: 30,
+            baseReputation: 25,
             requiredYears: 3,
-            minPopulation: 200,
-            description: 'Small local school for basic education',
-            skillGainPerYear: 10
+            minPopulation: 150,
+            description: 'A modest school serving a local community. One or two teachers provide basic literacy, numeracy, and practical knowledge.',
+            skillGainPerYear: 8,
+            tier: 'poor',
+            tuitionBase: 5,
+            requiredTeacherSkill: 25
         },
-        GUILD_HALL: { 
-            id: 'guild_hall', 
-            name: 'Guild Hall', 
-            icon: '◧', 
-            costPerYear: 20, 
-            maxStudents: 50,
-            baseReputation: 50,
-            requiredYears: 5,
-            minPopulation: 1000,
-            description: 'Trade and craft education center',
-            skillGainPerYear: 10
-        },
-        CATHEDRAL_SCHOOL: { 
-            id: 'cathedral_school', 
-            name: 'Cathedral School', 
-            icon: '⌆', 
-            costPerYear: 15, 
-            maxStudents: 40,
-            baseReputation: 60,
-            requiredYears: 4,
-            minPopulation: 500,
-            description: 'Religious and classical education',
-            skillGainPerYear: 10
-        },
-        UNIVERSITY: { 
-            id: 'university', 
-            name: 'University', 
-            icon: '⌂', 
-            costPerYear: 50, 
-            maxStudents: 200,
-            baseReputation: 80,
-            requiredYears: 6,
-            minPopulation: 5000,
-            description: 'Higher education institution',
-            skillGainPerYear: 12
-        },
-        MILITARY_ACADEMY: { 
-            id: 'military_academy', 
-            name: 'Military Academy', 
-            icon: '⚔', 
-            costPerYear: 30, 
-            maxStudents: 100,
-            baseReputation: 65,
-            requiredYears: 4,
-            minPopulation: 2000,
-            description: 'Officer training and military science',
-            skillGainPerYear: 10
-        },
-        COURT_TUTOR: { 
-            id: 'court_tutor', 
-            name: 'Court Tutor', 
-            icon: '◉', 
-            costPerYear: 100, 
-            maxStudents: 5,
-            baseReputation: 90,
-            requiredYears: 4,
-            minPopulation: 100,
-            description: 'Private education for nobility',
-            skillGainPerYear: 15
-        },
-        SPECIALIZED_SCHOOL: {
-            id: 'specialized_school',
-            name: 'Specialized School',
-            icon: '◉',
-            costPerYear: 25,
-            maxStudents: 40,
-            baseReputation: 50,
-            requiredYears: 4,
-            minPopulation: 500,
-            description: 'School focused on a specific profession',
-            skillGainPerYear: 12
-        },
+
         // ================================================================
-        // NEW: Religious school types
+        // TYPE 3: TOWN SCHOOL - Lower middle, decent education
         // ================================================================
-        RELIGIOUS_SEMINARY: {
-            id: 'religious_seminary',
-            name: 'Religious Seminary',
-            icon: '⌆',
-            costPerYear: 20,
-            maxStudents: 30,
-            baseReputation: 55,
-            requiredYears: 4,
-            minPopulation: 500,
-            description: 'Institution for religious education and clergy training',
-            skillGainPerYear: 10
-        },
-        MONASTIC_SCHOOL: {
-            id: 'monastic_school',
-            name: 'Monastic School',
-            icon: '⌆',
+
+        TOWN_SCHOOL: {
+            id: 'town_school',
+            name: 'Town School',
+            icon: '⌂',
             costPerYear: 12,
-            maxStudents: 20,
-            baseReputation: 50,
-            requiredYears: 3,
-            minPopulation: 300,
-            description: 'School operated by a religious order',
-            skillGainPerYear: 10
+            maxStudents: 50,
+            baseReputation: 40,
+            requiredYears: 4,
+            minPopulation: 400,
+            description: 'A proper school in a town or village. Multiple teachers, a building, and a solid curriculum covering literacy, arithmetic, and basic sciences.',
+            skillGainPerYear: 10,
+            tier: 'lower_middle',
+            tuitionBase: 12,
+            requiredTeacherSkill: 40
+        },
+
+        // ================================================================
+        // TYPE 4: ACADEMY - Middle class, good education
+        // ================================================================
+
+        ACADEMY: {
+            id: 'academy',
+            name: 'Academy',
+            icon: '⌂',
+            costPerYear: 25,
+            maxStudents: 100,
+            baseReputation: 55,
+            requiredYears: 5,
+            minPopulation: 800,
+            description: 'A substantial institution with multiple teachers, specialized subjects, and a reputation for quality education. Often attracts students from surrounding areas.',
+            skillGainPerYear: 11,
+            tier: 'middle',
+            tuitionBase: 25,
+            requiredTeacherSkill: 50
+        },
+
+        // ================================================================
+        // TYPE 5: COLLEGE - Upper middle, excellent education
+        // ================================================================
+
+        COLLEGE: {
+            id: 'college',
+            name: 'College',
+            icon: '⌂',
+            costPerYear: 45,
+            maxStudents: 200,
+            baseReputation: 70,
+            requiredYears: 6,
+            minPopulation: 2000,
+            description: 'A major educational institution with a broad curriculum, specialist teachers, and strong reputation. Prepares students for leadership roles in society.',
+            skillGainPerYear: 13,
+            tier: 'upper_middle',
+            tuitionBase: 45,
+            requiredTeacherSkill: 65
+        },
+
+        // ================================================================
+        // TYPE 6: UNIVERSITY - Rich, elite education
+        // ================================================================
+
+        UNIVERSITY: {
+            id: 'university',
+            name: 'University',
+            icon: '⌂',
+            costPerYear: 80,
+            maxStudents: 400,
+            baseReputation: 85,
+            requiredYears: 7,
+            minPopulation: 5000,
+            description: 'A premier institution of higher learning with world-class faculty, extensive resources, and students from across the known world. The pinnacle of education.',
+            skillGainPerYear: 15,
+            tier: 'rich',
+            tuitionBase: 80,
+            requiredTeacherSkill: 75
+        },
+
+        // ================================================================
+        // TYPE 7: GRAND UNIVERSITY - Filthy rich, unmatched education
+        // ================================================================
+
+        GRAND_UNIVERSITY: {
+            id: 'grand_university',
+            name: 'Grand University',
+            icon: '⌂',
+            costPerYear: 150,
+            maxStudents: 600,
+            baseReputation: 95,
+            requiredYears: 8,
+            minPopulation: 15000,
+            description: 'The most prestigious educational institution in the world. Royal patronage, the greatest minds, and resources beyond compare. Only the wealthiest and most capable gain entry.',
+            skillGainPerYear: 18,
+            tier: 'filthy_rich',
+            tuitionBase: 150,
+            requiredTeacherSkill: 88
         }
     };
 
     // =============================================================================
-    // 6. OWNERSHIP TYPES (NEW: Added RELIGIOUS)
+    // 4. OWNERSHIP TYPES
     // =============================================================================
 
     var OWNERSHIP_TYPES = {
         PUBLIC: 'public',
         PRIVATE: 'private',
-        RELIGIOUS: 'religious'  // NEW
+        RELIGIOUS: 'religious'
     };
 
     // =============================================================================
-    // 7. TUITION CONSTANTS
+    // 5. TUITION CONSTANTS
     // =============================================================================
 
     var DEFAULT_TUITION_BY_TYPE = {
-        'village_school': 5,
-        'guild_hall': 15,
-        'cathedral_school': 12,
-        'university': 40,
-        'military_academy': 25,
-        'court_tutor': 80,
-        'specialized_school': 20,
-        'religious_seminary': 15,  // NEW
-        'monastic_school': 8       // NEW
+        'hut_school': 0,
+        'small_school': 5,
+        'town_school': 12,
+        'academy': 25,
+        'college': 45,
+        'university': 80,
+        'grand_university': 150
     };
 
     var DEFAULT_TUITION = 10;
@@ -240,19 +287,31 @@
     var TUITION_REPUTATION_NEUTRAL = 50;
 
     var TUITION_TYPE_MULTIPLIERS = {
-        'village_school': 1.0,
-        'guild_hall': 1.0,
-        'cathedral_school': 1.0,
-        'university': 1.5,
-        'military_academy': 1.2,
-        'court_tutor': 1.0,
-        'specialized_school': 1.0,
-        'religious_seminary': 1.0,   // NEW
-        'monastic_school': 0.8       // NEW
+        'hut_school': 0.5,
+        'small_school': 0.7,
+        'town_school': 0.9,
+        'academy': 1.0,
+        'college': 1.3,
+        'university': 1.7,
+        'grand_university': 2.5
     };
 
     // =============================================================================
-    // 8. ROLE CATEGORY OPTIONS (for specialization)
+    // 6. SCHOOL TIERS (for easy filtering)
+    // =============================================================================
+
+    var SCHOOL_TIERS = {
+        DIRT_POOR: { id: 'dirt_poor', label: 'Dirt Poor', minReputation: 0, maxReputation: 20, tuitionRange: '0-5' },
+        POOR: { id: 'poor', label: 'Poor', minReputation: 20, maxReputation: 40, tuitionRange: '5-15' },
+        LOWER_MIDDLE: { id: 'lower_middle', label: 'Lower Middle', minReputation: 35, maxReputation: 55, tuitionRange: '10-25' },
+        MIDDLE: { id: 'middle', label: 'Middle', minReputation: 50, maxReputation: 70, tuitionRange: '20-45' },
+        UPPER_MIDDLE: { id: 'upper_middle', label: 'Upper Middle', minReputation: 65, maxReputation: 80, tuitionRange: '40-80' },
+        RICH: { id: 'rich', label: 'Rich', minReputation: 75, maxReputation: 92, tuitionRange: '80-150' },
+        FILTHY_RICH: { id: 'filthy_rich', label: 'Filthy Rich', minReputation: 88, maxReputation: 100, tuitionRange: '150-200' }
+    };
+
+    // =============================================================================
+    // 7. ROLE CATEGORY OPTIONS (for specialization)
     // =============================================================================
 
     var ROLE_CATEGORY_OPTIONS = {
@@ -269,20 +328,24 @@
         'government': { id: 'government', name: 'Government & Public Service', icon: '⌇' },
         'household': { id: 'household', name: 'Household & Domestic Service', icon: '⌇' },
         'industrial': { id: 'industrial', name: 'Industry & Manufacturing', icon: '⌇' },
+        'maritime': { id: 'maritime', name: 'Maritime & Seafaring', icon: '⌇' },
+        'legal': { id: 'legal', name: 'Legal', icon: '⌇' },
+        'diplomacy': { id: 'diplomacy', name: 'Diplomacy & Statecraft', icon: '⌇' },
+        'finance': { id: 'finance', name: 'Finance & Economics', icon: '⌇' },
+        'science': { id: 'science', name: 'Science & Research', icon: '⌇' },
         'other': { id: 'other', name: 'Other', icon: '⌇' }
     };
 
     // =============================================================================
-    // 9. EXPORTS
+    // 8. EXPORTS
     // =============================================================================
 
     window.EDUCATION_LEVELS = EDUCATION_LEVELS;
-    window.GENERAL_SUBJECTS = GENERAL_SUBJECTS;
-    window.HIGHER_SUBJECTS = HIGHER_SUBJECTS;
     window.ALL_SUBJECTS = ALL_SUBJECTS;
     window.INSTITUTION_TYPES = INSTITUTION_TYPES;
-    window.OWNERSHIP_TYPES = OWNERSHIP_TYPES;  // NEW
+    window.OWNERSHIP_TYPES = OWNERSHIP_TYPES;
     window.ROLE_CATEGORY_OPTIONS = ROLE_CATEGORY_OPTIONS;
+    window.SCHOOL_TIERS = SCHOOL_TIERS;
 
     window.DEFAULT_TUITION_BY_TYPE = DEFAULT_TUITION_BY_TYPE;
     window.DEFAULT_TUITION = DEFAULT_TUITION;
@@ -296,12 +359,11 @@
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
             EDUCATION_LEVELS: EDUCATION_LEVELS,
-            GENERAL_SUBJECTS: GENERAL_SUBJECTS,
-            HIGHER_SUBJECTS: HIGHER_SUBJECTS,
             ALL_SUBJECTS: ALL_SUBJECTS,
             INSTITUTION_TYPES: INSTITUTION_TYPES,
             OWNERSHIP_TYPES: OWNERSHIP_TYPES,
             ROLE_CATEGORY_OPTIONS: ROLE_CATEGORY_OPTIONS,
+            SCHOOL_TIERS: SCHOOL_TIERS,
             DEFAULT_TUITION_BY_TYPE: DEFAULT_TUITION_BY_TYPE,
             DEFAULT_TUITION: DEFAULT_TUITION,
             MIN_TUITION: MIN_TUITION,

@@ -1,10 +1,15 @@
 /**
  * =============================================================================
  * STILL WATERS - GOVERNMENT STRUCTURE TAB UI
+ * File: js/ui/gm-government-structure-tab-ui.js
  * =============================================================================
  * 
  * UPDATED: Full integration with GovernmentState, GovernmentCommands,
  *          GovernmentQueries, GovernmentEconomy, GovernmentAssignment
+ * 
+ * FIXED: Add Department button now works properly
+ * FIXED: Single toast on department creation (removed duplicates)
+ * FIXED: Single toast on position creation (removed duplicates)
  * 
  * FEATURES:
  * - Department list with expandable details
@@ -15,6 +20,20 @@
  * - Succession planning integration
  * - Visual hierarchy display
  * - Bulk operations support
+ * 
+ * DEPENDENCIES:
+ *   - government-state.js (GovernmentState)
+ *   - government-commands.js (GovernmentCommands)
+ *   - government-queries.js (GovernmentQueries)
+ *   - government-economy.js (GovernmentEconomy)
+ *   - government-assignment.js (GovernmentAssignment)
+ *   - accessors.js (getPlaceById, getCharacterById, getCharacters, getRoleById, getCurrentYear)
+ *   - modals-government.js (openCreateGovernmentDepartmentModal, etc.)
+ *   - selectors/modals-char-selector.js (openCharacterSelector)
+ * 
+ * ICON POLICY:
+ *   - All icons from icons.js via _getIcon()
+ *   - NO emojis
  * 
  * =============================================================================
  */
@@ -53,7 +72,6 @@
     function _getPersonIcon() { return _getIcon('PERSON', '👤'); }
     function _getFlagIcon() { return _getIcon('FLAG', '🏴'); }
     function _getCrownIcon() { return _getIcon('CROWN', '👑'); }
-    function _getSwordIcon() { return _getIcon('SWORD', '⚔'); }
     function _getBookIcon() { return _getIcon('BOOK', '📚'); }
     function _getCoinIcon() { return _getIcon('COIN', '♢'); }
 
@@ -63,14 +81,19 @@
 
     function _escapeHtml(str) {
         if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
+        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
         if (!str) return '';
         return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     function _showToast(msg, type) {
-        if (typeof window._showToast === 'function') return window._showToast(msg, type);
-        if (typeof window.showToast === 'function') return window.showToast(msg, type);
-        console.log('[' + (type || 'info') + '] ' + msg);
+        var plainMessage = msg;
+        if (typeof msg === 'string') {
+            plainMessage = msg.replace(/<[^>]*>/g, '');
+        }
+        if (typeof window._showToast === 'function') return window._showToast(plainMessage, type);
+        if (typeof window.showToast === 'function') return window.showToast(plainMessage, type);
+        console.log('[' + (type || 'info') + '] ' + plainMessage);
     }
 
     function _getCurrentYear() {
@@ -113,73 +136,25 @@
     }
 
     // =========================================================================
-    // 4. GOVERNMENT SYSTEM WRAPPERS
+    // 4. CHARACTER SELECTOR - Uses proper selector from js/selectors/
     // =========================================================================
 
-    var _state = window.GovernmentState;
-    var _commands = window.GovernmentCommands;
-    var _queries = window.GovernmentQueries;
-    var _economy = window.GovernmentEconomy;
-    var _assignment = window.GovernmentAssignment;
-
-    function _getGovernmentDepartmentTree(locationId) {
-        return _state ? _state.getDepartmentTree(locationId) : [];
-    }
-
-    function _getDepartment(departmentId) {
-        return _state ? _state.getDepartment(departmentId) : null;
-    }
-
-    function _getPositionById(departmentId, positionId) {
-        return _state ? _state.getPositionById(departmentId, positionId) : null;
-    }
-
-    function _getAssignmentsForPosition(departmentId, positionId, activeOnly) {
-        return _state ? _state.getAssignmentsForPosition(departmentId, positionId, activeOnly) : [];
-    }
-
-    function _getAssignmentsForDepartment(departmentId, activeOnly) {
-        return _state ? _state.getAssignmentsForDepartment(departmentId, activeOnly) : [];
-    }
-
-    function _calculatePositionSalary(positionId, department) {
-        return _economy ? _economy.calculatePositionSalary(positionId, department) : 0;
-    }
-
-    function _getSuccessionPlan(departmentId, positionId) {
-        return _assignment ? _assignment.getSuccessionPlan(departmentId, positionId) : null;
-    }
-
-    function _getQualifiedCandidates(departmentId, positionId, options) {
-        return _assignment ? _assignment.getQualifiedCandidates(departmentId, positionId, options) : [];
-    }
-
-    function _isCharacterQualifiedForPosition(characterId, departmentId, positionId) {
-        return _assignment ? _assignment.isCharacterQualifiedForPosition(characterId, departmentId, positionId) : false;
-    }
-
-    function _getPositionSalaryHistory(departmentId, positionId) {
-        return _economy ? _economy.getPositionSalaryHistory(departmentId, positionId) : [];
-    }
-
-    function _updatePositionSalary(departmentId, positionId, newSalary) {
-        return _economy ? _economy.updatePositionSalary(departmentId, positionId, newSalary) : false;
+    function _openCharacterSelector(options) {
+        if (typeof window.openCharacterSelector === 'function') {
+            return window.openCharacterSelector(options);
+        }
+        if (typeof window._openCharacterSelector === 'function') {
+            return window._openCharacterSelector(options);
+        }
+        if (typeof window.openUnifiedCharacterSelector === 'function') {
+            return window.openUnifiedCharacterSelector(options);
+        }
+        _showToast('Character selector not available', 'error');
+        return null;
     }
 
     // =========================================================================
-    // 5. STATE
-    // =========================================================================
-
-    var structureState = {
-        expandedDepartments: new Set(),
-        expandedPositions: new Set(),
-        viewMode: 'hierarchy', // 'hierarchy' | 'list'
-        searchTerm: '',
-        filterByStatus: 'all'
-    };
-
-    // =========================================================================
-    // 6. MODAL WRAPPERS
+    // 5. MODAL WRAPPERS - Uses modals-government.js functions
     // =========================================================================
 
     function _openModal(options) {
@@ -315,7 +290,57 @@
     }
 
     // =========================================================================
-    // 7. MAIN RENDER FUNCTION
+    // 6. GOVERNMENT SYSTEM WRAPPERS
+    // =========================================================================
+
+    var _state = window.GovernmentState;
+    var _commands = window.GovernmentCommands;
+    var _queries = window.GovernmentQueries;
+    var _economy = window.GovernmentEconomy;
+    var _assignment = window.GovernmentAssignment;
+
+    function _getGovernmentDepartmentTree(locationId) {
+        return _state ? _state.getDepartmentTree(locationId) : [];
+    }
+
+    function _getDepartment(departmentId) {
+        return _state ? _state.getDepartment(departmentId) : null;
+    }
+
+    function _getPositionById(departmentId, positionId) {
+        return _state ? _state.getPositionById(departmentId, positionId) : null;
+    }
+
+    function _getAssignmentsForPosition(departmentId, positionId, activeOnly) {
+        return _state ? _state.getAssignmentsForPosition(departmentId, positionId, activeOnly) : [];
+    }
+
+    function _getAssignmentsForDepartment(departmentId, activeOnly) {
+        return _state ? _state.getAssignmentsForDepartment(departmentId, activeOnly) : [];
+    }
+
+    function _calculatePositionSalary(positionId, department) {
+        return _economy ? _economy.calculatePositionSalary(positionId, department) : 0;
+    }
+
+    function _getSuccessionPlan(departmentId, positionId) {
+        return _assignment ? _assignment.getSuccessionPlan(departmentId, positionId) : null;
+    }
+
+    // =========================================================================
+    // 7. STATE
+    // =========================================================================
+
+    var structureState = {
+        expandedDepartments: new Set(),
+        expandedPositions: new Set(),
+        viewMode: 'hierarchy',
+        searchTerm: '',
+        filterByStatus: 'all'
+    };
+
+    // =========================================================================
+    // 8. MAIN RENDER FUNCTION
     // =========================================================================
 
     function renderGovernmentStructureTab(containerId, locationId, onRefresh) {
@@ -335,13 +360,11 @@
             var tree = _getGovernmentDepartmentTree(locationId);
             var placeName = place ? place.displayName : 'Unknown';
 
-            // Get statistics
             var stats = _queries ? _queries.getStatistics({ includeDeprecated: false }) : null;
             var locationStats = _queries ? _queries.getLocationGovernmentSummary(locationId) : null;
 
             var html = 
                 '<div class="government-structure-tab" style="padding:16px;">' +
-                // Header
                 '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px;">' +
                 '<div>' +
                 '<h3 style="margin:0;">' + _getGearIcon() + ' Government Structure</h3>' +
@@ -355,7 +378,6 @@
                 '<button id="refreshStructureBtn" class="btn small" style="padding:6px 12px; font-size:0.65rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">' + _getRefreshIcon() + ' Refresh</button>' +
                 '</div></div>';
 
-            // Stats bar
             html +=
                 '<div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:8px; margin-bottom:16px;">' +
                 '<div style="background:var(--bg2); padding:8px; border-radius:6px; text-align:center;">' +
@@ -387,8 +409,6 @@
 
             html += '</div>';
             container.innerHTML = html;
-
-            // Attach event handlers
             attachStructureEventHandlers(containerId, locationId, onRefresh);
 
         } finally {
@@ -397,7 +417,7 @@
     }
 
     // =========================================================================
-    // 8. DEPARTMENT NODE RENDERER
+    // 9. DEPARTMENT NODE RENDERER
     // =========================================================================
 
     function renderDepartmentNode(node, level, locationId) {
@@ -407,11 +427,9 @@
         var activeAssignments = assignments.filter(function(a) { return !a.endYear; });
         var indent = level * 16;
 
-        // Get department from state for more details
         var dept = _getDepartment(node.id);
         var rolePositions = positions.filter(function(p) { return p.requiredRoleId; }).length;
 
-        // Calculate salary requirements if economy available
         var salaryReq = 0;
         if (_economy && dept) {
             var req = _economy.calculateDepartmentSalaryRequirements(dept.id);
@@ -438,7 +456,6 @@
             html += '<div style="font-size:0.55rem; color:var(--dim); padding:4px 12px;">' + _getBookIcon() + ' ' + _escapeHtml(node.description) + '</div>';
         }
 
-        // Show location if different from parent
         if (node.locationId && node.locationId !== locationId) {
             var loc = _getPlaceById(node.locationId);
             if (loc) {
@@ -464,7 +481,7 @@
     }
 
     // =========================================================================
-    // 9. POSITION ITEM RENDERER
+    // 10. POSITION ITEM RENDERER
     // =========================================================================
 
     function renderPositionItem(deptId, position, allAssignments, dept) {
@@ -479,13 +496,11 @@
         var roleName = position.requiredRoleId ? (_getRoleById(position.requiredRoleId)?.name || 'Unknown') : 'None';
         var hasRoleReq = !!position.requiredRoleId;
 
-        // Get salary
         var salary = 0;
         if (dept && _economy) {
             salary = _economy.calculatePositionSalary(position.id, dept);
         }
 
-        // Get succession plan
         var succession = null;
         if (_assignment && isExpanded) {
             succession = _assignment.getSuccessionPlan(deptId, position.id);
@@ -516,14 +531,12 @@
             html += '<div style="font-size:0.45rem; color:var(--dim); padding-left:12px;">' + _getBookIcon() + ' ' + _escapeHtml(position.description) + '</div>';
         }
 
-        // Show assignments
         if (activeAssignments.length > 0) {
             html += '<div class="assignments-list" style="padding-left:12px; margin-top:4px;">' +
                 activeAssignments.map(function(a) { return renderAssignmentItem(deptId, a); }).join('') +
                 '</div>';
         }
 
-        // Show succession plan
         if (isExpanded && succession && succession.candidates && succession.candidates.length > 0) {
             html += '<div style="padding-left:12px; margin-top:4px; font-size:0.45rem; color:var(--dim);">' +
                 _getCrownIcon() + ' Succession: ' + succession.candidates.length + ' candidates' +
@@ -536,7 +549,7 @@
     }
 
     // =========================================================================
-    // 10. ASSIGNMENT ITEM RENDERER
+    // 11. ASSIGNMENT ITEM RENDERER
     // =========================================================================
 
     function renderAssignmentItem(deptId, assignment) {
@@ -569,26 +582,35 @@
     }
 
     // =========================================================================
-    // 11. EVENT HANDLERS
+    // 12. EVENT HANDLERS - FIXED: Add department works, single toast
     // =========================================================================
 
     function attachStructureEventHandlers(containerId, locationId, onRefresh) {
         var container = document.getElementById(containerId);
         if (!container) return;
 
-        var addDeptBtn = document.getElementById('addDeptBtn');
-        if (addDeptBtn) {
-            addDeptBtn.onclick = function() {
-                _openCreateDepartmentModal(locationId, function() {
+        // FIXED: Add Department button - proper modal call with single toast        var addDeptBtn = document.getElementById('addDeptBtn');
+        if (addDeptBtn && !addDeptBtn._clickAttached) {
+            addDeptBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                if (!locationId) {
+                    _showToast('No location selected', 'warning');
+                    return;
+                }
+                
+                _openCreateDepartmentModal(locationId, function(newDeptId) {
                     if (onRefresh) onRefresh();
+                    // Toast is already shown by the modal function - NO duplicate toast
                 });
-            };
+            });
+            addDeptBtn._clickAttached = true;
         }
 
         var bulkAssignBtn = document.getElementById('bulkAssignBtn');
-        if (bulkAssignBtn) {
-            bulkAssignBtn.onclick = function() {
-                // Find first position with active assignments to use for bulk
+        if (bulkAssignBtn && !bulkAssignBtn._clickAttached) {
+            bulkAssignBtn.addEventListener('click', function() {
                 var tree = _getGovernmentDepartmentTree(locationId);
                 var firstPosition = findFirstPosition(tree);
                 if (firstPosition) {
@@ -598,7 +620,8 @@
                 } else {
                     _showToast('No positions found to bulk assign', 'warning');
                 }
-            };
+            });
+            bulkAssignBtn._clickAttached = true;
         }
 
         function findFirstPosition(nodes) {
@@ -616,19 +639,18 @@
         }
 
         var refreshBtn = document.getElementById('refreshStructureBtn');
-        if (refreshBtn) {
-            refreshBtn.onclick = function() {
+        if (refreshBtn && !refreshBtn._clickAttached) {
+            refreshBtn.addEventListener('click', function() {
                 if (onRefresh) onRefresh();
-                _showToast(_getRefreshIcon() + ' Refreshed', 'success');
-            };
+                _showToast('Refreshed', 'success');
+            });
+            refreshBtn._clickAttached = true;
         }
 
-        // Delegate event handlers using container
         if (container._delegateAttached) return;
         container._delegateAttached = true;
 
         container.addEventListener('click', function(e) {
-            // Department header toggle
             var deptHeader = e.target.closest('.dept-header');
             if (deptHeader && !e.target.closest('button')) {
                 var deptNode = deptHeader.closest('.dept-node');
@@ -652,7 +674,6 @@
                 return;
             }
 
-            // Position toggle
             var posToggle = e.target.closest('.pos-toggle');
             if (posToggle) {
                 var posItem = posToggle.closest('.position-item');
@@ -669,7 +690,6 @@
                 return;
             }
 
-            // Edit department
             var editDeptBtn = e.target.closest('.edit-dept-btn');
             if (editDeptBtn) {
                 var deptId = editDeptBtn.dataset.deptId;
@@ -677,7 +697,6 @@
                 return;
             }
 
-            // Delete department
             var deleteDeptBtn = e.target.closest('.delete-dept-btn');
             if (deleteDeptBtn) {
                 var deptId = deleteDeptBtn.dataset.deptId;
@@ -685,15 +704,17 @@
                 return;
             }
 
-            // Add position
+            // FIXED: Add position - single toast (modal handles toast)
             var addPosBtn = e.target.closest('.add-position-btn');
             if (addPosBtn) {
                 var deptId = addPosBtn.dataset.deptId;
-                _openAddPositionModal(deptId, function() { if (onRefresh) onRefresh(); });
+                _openAddPositionModal(deptId, function() { 
+                    if (onRefresh) onRefresh(); 
+                    // Toast is already shown by the modal function - NO duplicate toast
+                });
                 return;
             }
 
-            // Edit position
             var editPosBtn = e.target.closest('.edit-position-btn');
             if (editPosBtn) {
                 var deptId = editPosBtn.dataset.deptId;
@@ -702,7 +723,6 @@
                 return;
             }
 
-            // Delete position
             var deletePosBtn = e.target.closest('.delete-position-btn');
             if (deletePosBtn) {
                 var deptId = deletePosBtn.dataset.deptId;
@@ -711,7 +731,6 @@
                 return;
             }
 
-            // Assign character
             var assignBtn = e.target.closest('.assign-char-btn');
             if (assignBtn) {
                 var deptId = assignBtn.dataset.deptId;
@@ -720,7 +739,6 @@
                 return;
             }
 
-            // Bulk assign
             var bulkAssignBtn = e.target.closest('.bulk-assign-btn');
             if (bulkAssignBtn) {
                 var deptId = bulkAssignBtn.dataset.deptId;
@@ -729,7 +747,6 @@
                 return;
             }
 
-            // Succession planning
             var successionBtn = e.target.closest('.succession-btn');
             if (successionBtn) {
                 var deptId = successionBtn.dataset.deptId;
@@ -738,7 +755,6 @@
                 return;
             }
 
-            // Salary management
             var salaryBtn = e.target.closest('.salary-btn');
             if (salaryBtn) {
                 var deptId = salaryBtn.dataset.deptId;
@@ -747,7 +763,6 @@
                 return;
             }
 
-            // Remove assignment
             var removeAssignmentBtn = e.target.closest('.remove-assignment-btn');
             if (removeAssignmentBtn) {
                 var deptId = removeAssignmentBtn.dataset.deptId;
@@ -759,12 +774,10 @@
     }
 
     // =========================================================================
-    // 12. EXPORTS
+    // 13. EXPORTS
     // =========================================================================
 
     window.renderGovernmentStructureTab = renderGovernmentStructureTab;
     window.structureState = structureState;
-
-
 
 })();

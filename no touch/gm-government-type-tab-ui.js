@@ -1,12 +1,13 @@
 /**
  * =============================================================================
  * STILL WATERS - GOVERNMENT TYPES UI
+ * File: js/ui/gm-government-type-tab-ui.js
  * =============================================================================
  * 
  * UPDATED: Full integration with GovernmentState, GovernmentCommands,
  *          GovernmentQueries
- * 
- * This file contains ALL government types management UI rendering and event handling
+ * UPDATED: Add button now properly calls the modal function
+ * UPDATED: Edit and Delete buttons now work with the new modal functions
  * 
  * FEATURES:
  * - List all government types with usage counts
@@ -15,6 +16,17 @@
  * - View locations using each type
  * - Filter and search types
  * - Integration with rank system
+ * 
+ * DEPENDENCIES:
+ *   - government-state.js (GovernmentState)
+ *   - government-commands.js (GovernmentCommands)
+ *   - government-queries.js (GovernmentQueries)
+ *   - accessors.js (getPlaceById, getPlaces, getRankById, getRanks)
+ *   - modals-government.js (openAddGovernmentTypeModal, openEditGovernmentTypeModal, openDeleteGovernmentTypeModal)
+ * 
+ * ICON POLICY:
+ *   - All icons from icons.js via _getIcon()
+ *   - NO emojis
  * 
  * =============================================================================
  */
@@ -60,14 +72,19 @@
 
     function _escapeHtml(str) {
         if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
+        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
         if (!str) return '';
         return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     function _showToast(msg, type) {
-        if (typeof window._showToast === 'function') return window._showToast(msg, type);
-        if (typeof window.showToast === 'function') return window.showToast(msg, type);
-        console.log('[' + (type || 'info') + '] ' + msg);
+        var plainMessage = msg;
+        if (typeof msg === 'string') {
+            plainMessage = msg.replace(/<[^>]*>/g, '');
+        }
+        if (typeof window._showToast === 'function') return window._showToast(plainMessage, type);
+        if (typeof window.showToast === 'function') return window.showToast(plainMessage, type);
+        console.log('[' + (type || 'info') + '] ' + plainMessage);
     }
 
     function _getCurrentYear() {
@@ -108,7 +125,55 @@
     }
 
     // =========================================================================
-    // 4. GOVERNMENT SYSTEM WRAPPERS
+    // 4. MODAL WRAPPERS - Uses modals-government.js functions
+    // =========================================================================
+
+    function _openModal(options) {
+        if (typeof window.openModal === 'function') return window.openModal(options);
+        if (typeof window._openModal === 'function') return window._openModal(options);
+        return null;
+    }
+
+    function _closeTopModal() {
+        if (typeof window.closeTopModal === 'function') window.closeTopModal();
+        if (typeof window._closeTopModal === 'function') window._closeTopModal();
+    }
+
+    function _openAddGovernmentTypeModal(onSuccess) {
+        if (typeof window.openAddGovernmentTypeModal === 'function') {
+            return window.openAddGovernmentTypeModal(onSuccess);
+        }
+        if (typeof window._openAddGovernmentTypeModal === 'function') {
+            return window._openAddGovernmentTypeModal(onSuccess);
+        }
+        _showToast('Add government type modal not available', 'error');
+        return null;
+    }
+
+    function _openEditGovernmentTypeModal(typeId, onSuccess) {
+        if (typeof window.openEditGovernmentTypeModal === 'function') {
+            return window.openEditGovernmentTypeModal(typeId, onSuccess);
+        }
+        if (typeof window._openEditGovernmentTypeModal === 'function') {
+            return window._openEditGovernmentTypeModal(typeId, onSuccess);
+        }
+        _showToast('Edit government type modal not available', 'error');
+        return null;
+    }
+
+    function _openDeleteGovernmentTypeModal(typeId, onSuccess) {
+        if (typeof window.openDeleteGovernmentTypeModal === 'function') {
+            return window.openDeleteGovernmentTypeModal(typeId, onSuccess);
+        }
+        if (typeof window._openDeleteGovernmentTypeModal === 'function') {
+            return window._openDeleteGovernmentTypeModal(typeId, onSuccess);
+        }
+        _showToast('Delete government type modal not available', 'error');
+        return null;
+    }
+
+    // =========================================================================
+    // 5. GOVERNMENT SYSTEM WRAPPERS
     // =========================================================================
 
     var _state = window.GovernmentState;
@@ -140,7 +205,7 @@
     }
 
     // =========================================================================
-    // 5. STATE
+    // 6. STATE
     // =========================================================================
 
     var governmentTypesState = {
@@ -150,7 +215,7 @@
     };
 
     // =========================================================================
-    // 6. HELPER FUNCTIONS
+    // 7. HELPER FUNCTIONS
     // =========================================================================
 
     function applyGovernmentTypesFilters(types) {
@@ -202,195 +267,7 @@
     }
 
     // =========================================================================
-    // 7. MODAL HELPERS
-    // =========================================================================
-
-    function _openModal(options) {
-        if (typeof window.openModal === 'function') return window.openModal(options);
-        if (typeof window._openModal === 'function') return window._openModal(options);
-        console.warn('openModal not available');
-        return null;
-    }
-
-    function _confirmDialog(message, title, onConfirm) {
-        if (typeof window.confirmDialog === 'function') return window.confirmDialog(message, title, onConfirm);
-        if (typeof window._confirmDialog === 'function') return window._confirmDialog(message, title, onConfirm);
-        if (confirm(message)) {
-            onConfirm();
-        }
-    }
-
-    // =========================================================================
-    // 8. GOVERNMENT TYPES MODALS
-    // =========================================================================
-
-    function openAddGovernmentTypeModal(onSuccess) {
-        var ranks = _getRanks();
-
-        var modalContent = 
-            '<div style="max-height:500px; overflow-y:auto; padding:4px;">' +
-            '<div class="form-group" style="margin-bottom:15px;">' +
-            '<label style="display:block; font-size:0.7rem; color:var(--accent); margin-bottom:4px;">' + _getCircleIcon() + ' Government Type Name *</label>' +
-            '<input type="text" id="newGovTypeName" placeholder="e.g., Monarchy, Republic, Theocracy" autofocus style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-            '</div>' +
-            '<div class="form-group" style="margin-bottom:15px;">' +
-            '<label style="display:block; font-size:0.7rem; color:var(--accent); margin-bottom:4px;">' + _getBookIcon() + ' Description</label>' +
-            '<textarea id="newGovTypeDesc" rows="2" placeholder="Description of this government type..." style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);"></textarea>' +
-            '</div>' +
-            '<div class="form-group" style="margin-bottom:15px;">' +
-            '<label style="display:block; font-size:0.7rem; color:var(--accent); margin-bottom:4px;">' + _getShieldIcon() + ' Allowed Ranks</label>' +
-            '<select id="newGovTypeRanks" multiple size="5" style="width:100%; height:120px; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-            ranks.map(function(r) {
-                return '<option value="' + r.id + '">' + (r.symbol || _getCircleIcon()) + ' ' + _escapeHtml(r.name) + '</option>';
-            }).join('') +
-            '</select>' +
-            '<small style="font-size:0.55rem; color:var(--dim);">Hold Ctrl/Cmd to select multiple ranks. Leave empty to allow all ranks.</small>' +
-            '</div>' +
-            '<div style="padding:8px; background:var(--bg3); border-radius:6px; font-size:0.55rem; color:var(--dim);">' +
-            _getWarningIcon() + ' Government types define the structure of governance for locations.' +
-            '</div>' +
-            '</div>';
-
-        _openModal({
-            title: _getCheckIcon() + ' Add Government Type',
-            content: modalContent,
-            confirmText: _getCheckIcon() + ' Create Type',
-            cancelText: 'Cancel',
-            onConfirm: function() {
-                var name = document.getElementById('newGovTypeName') ? document.getElementById('newGovTypeName').value.trim() : null;
-                if (!name) {
-                    _showToast(_getCrossIcon() + ' Government type name is required', 'error');
-                    return false;
-                }
-
-                var description = document.getElementById('newGovTypeDesc') ? document.getElementById('newGovTypeDesc').value : '';
-                var rankSelect = document.getElementById('newGovTypeRanks');
-                var allowedRankIds = rankSelect ? Array.from(rankSelect.selectedOptions).map(function(opt) { return opt.value; }) : [];
-
-                var result = _createGovernmentType({
-                    name: name,
-                    description: description,
-                    allowedRankIds: allowedRankIds
-                });
-
-                if (result) {
-                    _closeTopModal();
-                    if (onSuccess) onSuccess(result);
-                    _showToast(_getCheckIcon() + ' Government type "' + name + '" created', 'success');
-                    return true;
-                }
-                return false;
-            }
-        });
-    }
-
-    function openEditGovernmentTypeModal(typeId, onRefresh) {
-        var govType = _getGovernmentTypeById(typeId);
-        if (!govType) {
-            _showToast(_getCrossIcon() + ' Government type not found', 'error');
-            return;
-        }
-
-        var ranks = _getRanks();
-
-        var modalContent = 
-            '<div style="max-height:500px; overflow-y:auto; padding:4px;">' +
-            '<div class="form-group" style="margin-bottom:15px;">' +
-            '<label style="display:block; font-size:0.7rem; color:var(--accent); margin-bottom:4px;">' + _getCircleIcon() + ' Government Type Name *</label>' +
-            '<input type="text" id="editGovTypeName" value="' + _escapeHtml(govType.name) + '" autofocus style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-            '</div>' +
-            '<div class="form-group" style="margin-bottom:15px;">' +
-            '<label style="display:block; font-size:0.7rem; color:var(--accent); margin-bottom:4px;">' + _getBookIcon() + ' Description</label>' +
-            '<textarea id="editGovTypeDesc" rows="3" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' + _escapeHtml(govType.description || '') + '</textarea>' +
-            '</div>' +
-            '<div class="form-group" style="margin-bottom:15px;">' +
-            '<label style="display:block; font-size:0.7rem; color:var(--accent); margin-bottom:4px;">' + _getShieldIcon() + ' Allowed Ranks</label>' +
-            '<select id="editGovTypeRanks" multiple size="5" style="width:100%; height:120px; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-            ranks.map(function(r) {
-                var selected = (govType.allowedRankIds || []).indexOf(r.id) !== -1;
-                return '<option value="' + r.id + '" ' + (selected ? 'selected' : '') + '>' + (r.symbol || _getCircleIcon()) + ' ' + _escapeHtml(r.name) + '</option>';
-            }).join('') +
-            '</select>' +
-            '<small style="font-size:0.55rem; color:var(--dim);">Hold Ctrl/Cmd to select multiple ranks. Leave empty to allow all ranks.</small>' +
-            '</div>' +
-            '<div style="padding:8px; background:var(--bg3); border-radius:6px; font-size:0.55rem; color:var(--dim);">' +
-            _getWarningIcon() + ' Changing allowed ranks affects which characters can hold positions in this government type.' +
-            '</div>' +
-            '</div>';
-
-        _openModal({
-            title: _getGearIcon() + ' Edit Government Type: ' + govType.name,
-            content: modalContent,
-            confirmText: _getCheckIcon() + ' Save Changes',
-            cancelText: 'Cancel',
-            onConfirm: function() {
-                var newName = document.getElementById('editGovTypeName').value.trim();
-                if (!newName) {
-                    _showToast(_getCrossIcon() + ' Government type name is required', 'error');
-                    return false;
-                }
-
-                var newDescription = document.getElementById('editGovTypeDesc').value.trim();
-                var rankSelect = document.getElementById('editGovTypeRanks');
-                var allowedRankIds = rankSelect ? Array.from(rankSelect.selectedOptions).map(function(opt) { return opt.value; }) : [];
-
-                var result = _updateGovernmentType(typeId, {
-                    name: newName,
-                    description: newDescription || null,
-                    allowedRankIds: allowedRankIds
-                });
-
-                if (result) {
-                    _closeTopModal();
-                    if (onRefresh) onRefresh();
-                    _showToast(_getCheckIcon() + ' Government type updated to "' + newName + '"', 'success');
-                    return true;
-                }
-                return false;
-            }
-        });
-    }
-
-    function deleteGovernmentTypeWithConfirm(typeId, onRefresh) {
-        var govType = _getGovernmentTypeById(typeId);
-        if (!govType) {
-            _showToast(_getCrossIcon() + ' Government type not found', 'error');
-            return;
-        }
-
-        var placeCount = getPlacesByGovernmentTypeCount(typeId);
-
-        var warningMessage = _getCrossIcon() + ' Delete government type "' + govType.name + '" permanently?';
-        if (placeCount > 0) {
-            warningMessage = _getWarningIcon() + ' This government type is used by ' + placeCount + ' location(s). Deleting it will remove the government type from those locations. Continue?';
-        }
-
-        _confirmDialog(warningMessage, _getCrossIcon() + ' Delete Government Type', function() {
-            var result = _deleteGovernmentType(typeId);
-            if (result) {
-                // Also clean up places using this type
-                var places = _getPlaces();
-                for (var i = 0; i < places.length; i++) {
-                    if (places[i].governmentTypeId === typeId) {
-                        places[i].governmentTypeId = null;
-                    }
-                }
-                _saveMasterData();
-                _invalidateWorldCache();
-            }
-
-            if (onRefresh) onRefresh();
-            _showToast(_getCrossIcon() + ' Deleted "' + govType.name + '"', 'info');
-        });
-    }
-
-    function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') window.closeTopModal();
-        if (typeof window._closeTopModal === 'function') window._closeTopModal();
-    }
-
-    // =========================================================================
-    // 9. MAIN RENDER FUNCTION
+    // 8. MAIN RENDER FUNCTION
     // =========================================================================
 
     function renderGovernmentTypesTab(containerId, onRefresh) {
@@ -404,7 +281,6 @@
             var govTypes = _getGovernmentTypes();
             govTypes = applyGovernmentTypesFilters(govTypes);
 
-            // Calculate stats
             var totalTypes = govTypes.length;
             var totalUsage = 0;
             for (var i = 0; i < govTypes.length; i++) {
@@ -414,12 +290,10 @@
                 return getPlacesByGovernmentTypeCount(a.id) > getPlacesByGovernmentTypeCount(b.id) ? a : b;
             }) : null;
 
-            // Get government statistics
             var stats = _getGovernmentStatistics();
 
             var html = 
                 '<div class="government-types-tab" style="padding:16px;">' +
-                // Stats Bar
                 '<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px;">' +
                 '<div style="background: var(--bg2); padding: 10px; border-radius: 8px; text-align: center;">' +
                 '<div style="font-size: 1.2rem; font-weight: bold;">' + totalTypes + '</div>' +
@@ -439,7 +313,6 @@
                 '</div>' +
                 '</div>' +
 
-                // Actions Bar
                 '<div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:20px; padding:12px 16px; background:rgba(13,17,25,0.6); border-radius:12px;">' +
                 '<button id="addGovTypeBtn" class="btn primary" style="background:var(--accent);border:none;color:white;padding:6px 14px;border-radius:4px;cursor:pointer;">' + _getCheckIcon() + ' Add Type</button>' +
                 '<div style="flex:1; min-width:150px;">' +
@@ -454,7 +327,6 @@
                 '<button id="refreshGovTypesBtn" class="btn small" style="padding:4px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">' + _getRefreshIcon() + ' Refresh</button>' +
                 '</div>' +
 
-                // Types List
                 '<div id="govTypesList" class="government-types-list">' +
                 (govTypes.length === 0 ? '<div class="empty-state" style="text-align:center;padding:60px;color:var(--dim);">' + _getHomeIcon() + ' No government types defined. Click "' + _getCheckIcon() + ' Add Type" to create one.</div>' : 
                     govTypes.map(function(type) { return renderGovernmentTypeCard(type); }).join('')) +
@@ -473,7 +345,7 @@
     }
 
     // =========================================================================
-    // 10. TYPE CARD RENDERER
+    // 9. TYPE CARD RENDERER
     // =========================================================================
 
     function renderGovernmentTypeCard(type) {
@@ -502,7 +374,7 @@
     }
 
     // =========================================================================
-    // 11. TYPE DETAILS RENDERER
+    // 10. TYPE DETAILS RENDERER
     // =========================================================================
 
     function renderGovernmentTypeDetails(type, allowedRanks, places, hasMorePlaces) {
@@ -510,14 +382,12 @@
         var availableRanks = ranks.filter(function(r) { return (type.allowedRankIds || []).indexOf(r.id) === -1; });
 
         return '<div class="government-type-details" style="padding:16px; border-top:1px solid var(--border); background:rgba(9,12,18,0.4);">' +
-            // Description Section
             '<div style="margin-bottom:16px;">' +
             '<div style="font-size:0.6rem; color:var(--accent); margin-bottom:6px;">' + _getBookIcon() + ' Description</div>' +
             '<textarea id="govTypeDesc_' + type.id + '" class="gov-type-desc" rows="2" placeholder="Description..." style="width:100%; padding:6px 8px; background:rgba(9,12,18,0.8); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:0.65rem;">' + _escapeHtml(type.description || '') + '</textarea>' +
             '<small style="font-size:0.5rem; color:var(--dim);">Changes save automatically when you click away.</small>' +
             '</div>' +
 
-            // Allowed Ranks Section
             '<div style="margin-bottom:16px;">' +
             '<div style="font-size:0.6rem; color:var(--accent); margin-bottom:6px;">' + _getShieldIcon() + ' Allowed Ranks</div>' +
             '<div id="allowedRanksList_' + type.id + '" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;">' +
@@ -542,7 +412,6 @@
             '<div style="font-size:0.55rem; color:var(--dim);">' + _getCircleIcon() + ' All ranks are already allowed or no ranks available.</div>') +
             '</div>' +
 
-            // Places Section
             '<div>' +
             '<div style="font-size:0.6rem; color:var(--accent); margin-bottom:6px;">' + _getHomeIcon() + ' Locations Using This Government</div>' +
             (places.length === 0 ? 
@@ -560,7 +429,7 @@
     }
 
     // =========================================================================
-    // 12. EVENT HANDLERS
+    // 11. EVENT HANDLERS - FIXED: Add button properly calls modal
     // =========================================================================
 
     function attachGovernmentTypeActionHandlers(onRefresh) {
@@ -568,15 +437,26 @@
         var refreshBtn = document.getElementById('refreshGovTypesBtn');
         var clearFiltersBtn = document.getElementById('clearGovTypeFiltersBtn');
 
+        // FIXED: Add button - proper modal call
         if (addBtn && !addBtn._clickAttached) {
-            addBtn.addEventListener('click', function() { openAddGovernmentTypeModal(onRefresh); });
+            addBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                _openAddGovernmentTypeModal(function(result) {
+                    if (onRefresh) onRefresh();
+                    if (result) {
+                        _showToast('Government type created', 'success');
+                    }
+                });
+            });
             addBtn._clickAttached = true;
         }
 
         if (refreshBtn && !refreshBtn._clickAttached) {
             refreshBtn.addEventListener('click', function() {
                 if (onRefresh) onRefresh();
-                _showToast(_getRefreshIcon() + ' Government types refreshed', 'success');
+                _showToast('Government types refreshed', 'success');
             });
             refreshBtn._clickAttached = true;
         }
@@ -590,7 +470,7 @@
                 if (searchInput) searchInput.value = '';
                 if (sortSelect) sortSelect.value = 'name';
                 if (onRefresh) onRefresh();
-                _showToast(_getRefreshIcon() + ' Filters cleared', 'info');
+                _showToast('Filters cleared', 'info');
             });
             clearFiltersBtn._clickAttached = true;
         }
@@ -624,25 +504,22 @@
         container._delegateAttached = true;
 
         container.addEventListener('click', function(e) {
-            // Edit button
             var editBtn = e.target.closest('.edit-gov-type-btn');
             if (editBtn) {
                 e.stopPropagation();
                 var typeId = editBtn.dataset.typeId;
-                openEditGovernmentTypeModal(typeId, onRefresh);
+                _openEditGovernmentTypeModal(typeId, onRefresh);
                 return;
             }
 
-            // Delete button
             var deleteBtn = e.target.closest('.delete-gov-type-btn');
             if (deleteBtn) {
                 e.stopPropagation();
                 var typeId = deleteBtn.dataset.typeId;
-                deleteGovernmentTypeWithConfirm(typeId, onRefresh);
+                _openDeleteGovernmentTypeModal(typeId, onRefresh);
                 return;
             }
 
-            // Expand button
             var expandBtn = e.target.closest('.expand-type-btn');
             if (expandBtn) {
                 e.stopPropagation();
@@ -656,7 +533,6 @@
                 return;
             }
 
-            // Header click (expand/collapse)
             var header = e.target.closest('.government-type-header');
             if (header && !e.target.closest('button')) {
                 var typeId = header.dataset.typeId;
@@ -669,7 +545,6 @@
                 return;
             }
 
-            // Add rank button
             var addRankBtn = e.target.closest('.add-rank-btn');
             if (addRankBtn) {
                 e.stopPropagation();
@@ -686,18 +561,17 @@
                             _saveMasterData();
                             if (onRefresh) onRefresh();
                             var rank = _getRankById(rankId);
-                            _showToast(_getCheckIcon() + ' Added ' + (rank ? rank.name : 'rank'), 'success');
+                            _showToast('Added ' + (rank ? rank.name : 'rank'), 'success');
                         } else {
-                            _showToast(_getWarningIcon() + ' Rank already allowed', 'warning');
+                            _showToast('Rank already allowed', 'warning');
                         }
                     }
                 } else {
-                    _showToast(_getWarningIcon() + ' Select a rank', 'warning');
+                    _showToast('Select a rank', 'warning');
                 }
                 return;
             }
 
-            // Remove rank button
             var removeRankBtn = e.target.closest('.remove-rank-btn');
             if (removeRankBtn) {
                 e.stopPropagation();
@@ -710,12 +584,11 @@
                     _saveMasterData();
                     if (onRefresh) onRefresh();
                     var rank = _getRankById(rankId);
-                    _showToast(_getCrossIcon() + ' Removed ' + (rank ? rank.name : 'rank'), 'info');
+                    _showToast('Removed ' + (rank ? rank.name : 'rank'), 'info');
                 }
                 return;
             }
 
-            // Place item click
             var placeItem = e.target.closest('.place-item');
             if (placeItem) {
                 e.stopPropagation();
@@ -727,7 +600,6 @@
             }
         });
 
-        // Handle description blur events
         var descTextareas = document.querySelectorAll('.gov-type-desc');
         for (var i = 0; i < descTextareas.length; i++) {
             var textarea = descTextareas[i];
@@ -738,7 +610,7 @@
                 if (govType) {
                     govType.description = this.value;
                     _saveMasterData();
-                    _showToast(_getBookIcon() + ' Description saved', 'success');
+                    _showToast('Description saved', 'success');
                 }
             });
             textarea._blurAttached = true;
@@ -746,14 +618,10 @@
     }
 
     // =========================================================================
-    // 13. EXPORTS
+    // 12. EXPORTS
     // =========================================================================
 
     window.renderGovernmentTypesTab = renderGovernmentTypesTab;
-    window.openAddGovernmentTypeModal = openAddGovernmentTypeModal;
-    window.openEditGovernmentTypeModal = openEditGovernmentTypeModal;
-    window.deleteGovernmentTypeWithConfirm = deleteGovernmentTypeWithConfirm;
     window.governmentTypesState = governmentTypesState;
-
 
 })();

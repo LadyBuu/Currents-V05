@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * SETTLEMENT STATE - Single source of truth for settlement data
+ * SETTLEMENT STATE - Single source of truth for settlement data js/settlement/settlement-state.js
  * =============================================================================
  * 
  * Responsibilities:

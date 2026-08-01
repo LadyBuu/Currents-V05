@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * GOVERNMENT QUERIES (government-queries.js)
+ * GOVERNMENT QUERIES (js/government/government-queries.js)
  * =============================================================================
  * 
  * PURPOSE: All read-only queries for government system.

@@ -11,14 +11,13 @@
  * - Progress indicators
  * - Skeleton loaders
  * - Button loading states
+ * - GENERIC TAB SYSTEM (pluggable)
  * 
  * All other modules should use window.showToast, window.showLoading, etc.
  * 
  * DEPENDENCIES:
  *   - formatting.js: escapeHtml, escapeHtmlPreserveSvg
  *   - icons.js: Icons
- * 
- * ICON POLICY: Minimal icons, use icons.js via _getIcon()
  * 
  * =============================================================================
  */
@@ -88,7 +87,34 @@ function injectGlobalStyles() {
         '@keyframes spin { to { transform: rotate(360deg); } }' +
         '@keyframes pulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }' +
         '@keyframes toastSlideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }' +
-        '@keyframes toastSlideOut { from { transform: translateX(0); opacity: 1; } to { transform: translateX(100%); opacity: 0; } }';
+        '@keyframes toastSlideOut { from { transform: translateX(0); opacity: 1; } to { transform: translateX(100%); opacity: 0; } }' +
+        
+        /* Tab Container Scrolling */
+        '.tab-container-scroll {' +
+        '  max-height: calc(100vh - 200px);' +
+        '  overflow-y: auto;' +
+        '  overflow-x: hidden;' +
+        '  padding: 8px 4px 8px 8px;' +
+        '  scroll-behavior: smooth;' +
+        '}' +
+        
+        '.tab-container-scroll::-webkit-scrollbar {' +
+        '  width: 6px;' +
+        '}' +
+        
+        '.tab-container-scroll::-webkit-scrollbar-track {' +
+        '  background: var(--bg2);' +
+        '  border-radius: 3px;' +
+        '}' +
+        
+        '.tab-container-scroll::-webkit-scrollbar-thumb {' +
+        '  background: var(--accent);' +
+        '  border-radius: 3px;' +
+        '}' +
+        
+        '.tab-container-scroll::-webkit-scrollbar-thumb:hover {' +
+        '  background: var(--accent-hover);' +
+        '}';
     document.head.appendChild(style);
 }
 
@@ -563,9 +589,248 @@ window.updateProgressBar = updateProgressBar;
 window.showSkeletonLoader = showSkeletonLoader;
 window.hideSkeletonLoader = hideSkeletonLoader;
 
-// Auto-initialize after exports are set
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initUI);
-} else {
-    initUI();
-}
+// =============================================================================
+// 9. GENERIC TAB SYSTEM - PLUGGABLE & EXTENSIBLE
+// =============================================================================
+
+(function() {
+    'use strict';
+
+    var _tabInitialized = false;
+    
+    // Registry for tab renderers - ANY module can register here
+    var _tabRenderers = {};
+
+    /**
+     * Register a renderer for a tab
+     * @param {string} tabId - The tab ID (matches data-tab attribute)
+     * @param {function} renderFn - Function(containerId, locationId, summary) 
+     * @param {boolean} requiresSettlement - Whether this tab needs settlement data
+     */
+    window.registerTabRenderer = function(tabId, renderFn, requiresSettlement) {
+        _tabRenderers[tabId] = {
+            render: renderFn,
+            requiresSettlement: requiresSettlement !== false
+        };
+        console.log('📌 Tab registered: ' + tabId);
+    };
+
+    /**
+     * Get the current location ID from various sources
+     */
+    function getCurrentLocationId() {
+        var locId = window.currentLocationId || window.selectedLocationId;
+        if (!locId) {
+            var selected = document.querySelector('.location-tree-item.selected, .settlement-item.selected');
+            if (selected) {
+                locId = selected.dataset.nodeId || selected.dataset.locId || selected.dataset.locationId;
+            }
+        }
+        if (!locId) {
+            var places = window.getPlaces ? window.getPlaces() : [];
+            if (places.length > 0) {
+                locId = places[0].id;
+            }
+        }
+        return locId;
+    }
+
+    /**
+     * Build settlement summary from data
+     */
+    function buildSettlementSummary(locationId) {
+        var data = window.SettlementState ? window.SettlementState.getSettlementData(locationId) : null;
+        if (!data) return null;
+        
+        var ranks = window.SettlementState && window.SettlementState._getAllRanks ? 
+            window.SettlementState._getAllRanks() : [];
+        var rank = null;
+        for (var i = 0; i < ranks.length; i++) {
+            if (ranks[i].id === data.rankId) {
+                rank = ranks[i];
+                break;
+            }
+        }
+        
+        return {
+            name: data.locationName || locationId,
+            rank: rank || { id: data.rankId, name: data.rankId || 'Unknown' },
+            prosperity: { value: data.prosperity || 50, description: 'Stable' },
+            wealth: data.wealth || 0,
+            totalDebt: data.totalDebt || 0,
+            netWorth: (data.wealth || 0) - (data.totalDebt || 0),
+            taxRate: data.taxRate || 10,
+            tradeTariff: data.tradeTariff || 5,
+            industryTaxRate: data.industryTaxRate || 8,
+            crimeRate: data.crimeRate || 0.05,
+            foundedYear: data.foundedYear || 1250,
+            lastUpgraded: data.lastUpgraded || 1250,
+            specializationRoleId: data.specializationRoleId || null,
+            features: [],
+            justice: {
+                severity: data.justiceSeverity || 'medium',
+                hasWatch: data.hasWatch || false,
+                watchSize: data.watchSize || 0
+            },
+            spending: {
+                military: data.militarySpending || 0,
+                infrastructure: data.infrastructureSpending || 0,
+                education: data.educationSpending || 0
+            }
+        };
+    }
+
+    /**
+     * Render a tab's content
+     */
+    function renderTabContent(tabId, container) {
+        var locId = getCurrentLocationId();
+
+        if (!locId) {
+            container.innerHTML = '<div style="padding: 20px; color: var(--dim); text-align: center;">Select a location first</div>';
+            return;
+        }
+
+        // Store current location globally
+        window.currentLocationId = locId;
+        window.selectedLocationId = locId;
+
+        // Get settlement data if needed
+        var settlementData = null;
+        var summary = null;
+        
+        if (_tabRenderers[tabId] && _tabRenderers[tabId].requiresSettlement) {
+            settlementData = window.SettlementState ? window.SettlementState.getSettlementData(locId) : null;
+            if (!settlementData) {
+                if (typeof SettlementCrud !== 'undefined' && SettlementCrud.createSettlementData) {
+                    settlementData = SettlementCrud.createSettlementData(locId);
+                }
+            }
+            summary = buildSettlementSummary(locId);
+        }
+
+        // Check if there's a registered renderer
+        if (_tabRenderers[tabId]) {
+            try {
+                _tabRenderers[tabId].render(container.id, locId, summary);
+                return;
+            } catch (e) {
+                console.warn('Tab renderer failed for ' + tabId + ':', e);
+                container.innerHTML = '<div style="padding: 20px; color: var(--danger);">Error loading tab content</div>';
+                return;
+            }
+        }
+
+        // Default handling for unknown tabs
+        container.innerHTML = '<div style="padding: 20px; color: var(--dim);">Tab "' + tabId + '" has no registered renderer</div>';
+    }
+
+    /**
+     * Initialize the tab system
+     */
+    function initTabSystem() {
+        if (_tabInitialized) return;
+        _tabInitialized = true;
+
+        // Get all tabs and containers
+        var tabs = document.querySelectorAll('[data-tab]');
+        var containers = {};
+
+        // Find all tab containers
+        tabs.forEach(function(tab) {
+            var tabId = tab.dataset.tab;
+            var containerId = 'tab-' + tabId;
+            var container = document.getElementById(containerId);
+            if (container) {
+                containers[tabId] = container;
+                container.classList.add('tab-container-scroll');
+            }
+        });
+
+        // Handle tab clicks
+        tabs.forEach(function(tab) {
+            // Remove any existing click listeners by cloning
+            var newTab = tab.cloneNode(true);
+            tab.parentNode.replaceChild(newTab, tab);
+            
+            newTab.addEventListener('click', function(e) {
+                var tabId = this.dataset.tab;
+                
+                // Update active state
+                document.querySelectorAll('[data-tab]').forEach(function(t) {
+                    t.classList.remove('active');
+                });
+                this.classList.add('active');
+                
+                // Show/hide containers
+                Object.keys(containers).forEach(function(id) {
+                    var container = containers[id];
+                    if (id === tabId) {
+                        container.style.display = 'block';
+                        container.style.visibility = 'visible';
+                        container.style.opacity = '1';
+                        container.style.height = 'auto';
+                        renderTabContent(id, container);
+                    } else {
+                        container.style.display = 'none';
+                        container.style.visibility = 'hidden';
+                        container.style.opacity = '0';
+                    }
+                });
+            });
+        });
+
+        // Handle location selection - update active tab
+        document.addEventListener('click', function(e) {
+            var item = e.target.closest('.location-tree-item, .settlement-item');
+            if (item) {
+                var locId = item.dataset.nodeId || item.dataset.locId || item.dataset.locationId;
+                if (locId) {
+                    window.currentLocationId = locId;
+                    window.selectedLocationId = locId;
+                    
+                    var activeTab = document.querySelector('[data-tab].active');
+                    if (activeTab) {
+                        var tabId = activeTab.dataset.tab;
+                        var container = document.getElementById('tab-' + tabId);
+                        if (container) {
+                            renderTabContent(tabId, container);
+                        }
+                    }
+                }
+            }
+        });
+
+        // Initial render - find active tab or first tab
+        var activeTab = document.querySelector('[data-tab].active');
+        if (!activeTab && tabs.length > 0) {
+            activeTab = tabs[0];
+            activeTab.classList.add('active');
+        }
+        
+        if (activeTab) {
+            var tabId = activeTab.dataset.tab;
+            var container = document.getElementById('tab-' + tabId);
+            if (container) {
+                container.style.display = 'block';
+                container.style.visibility = 'visible';
+                container.style.opacity = '1';
+                renderTabContent(tabId, container);
+            }
+        }
+    }
+
+    // Expose the tab system
+    window._tabRenderers = _tabRenderers;
+    window.renderTabContent = renderTabContent;
+    window.getCurrentLocationId = getCurrentLocationId;
+    window.buildSettlementSummary = buildSettlementSummary;
+
+    // Initialize when DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initTabSystem);
+    } else {
+        setTimeout(initTabSystem, 100);
+    }
+
+})();

@@ -10,7 +10,7 @@
  * EXPORTED FUNCTIONS:
  *   - RankAssignment.assignRankToCharacter(characterId, rankId, options)
  *   - RankAssignment.deprecateRankAssignment(characterId, rankId)
- *   - RankAssignment.getNextRankNumber(rankId, characterId, characterName, gender)
+ *   - RankAssignment.getNextRankNumber(rankId, characterId, characterName, gender, sourceCharacterId)
  *   - RankAssignment.renumberRankHolders(rankId)
  *   - RankAssignment.fixAllNumberingForCharacter(characterId)
  *   - RankAssignment.toOrdinal(n)
@@ -19,6 +19,7 @@
  *   - RankAssignment.updateRankSurnameRule(rankId, ruleSettings)
  *   - RankAssignment.checkAndFixSpouseInheritance()
  *   - RankAssignment.applySpouseInheritanceFixes(fixes)
+ *   - RankAssignment.getInheritanceSource(characterId, rankId)
  * 
  * DEPENDENCIES:
  *   - rank-state.js: RankState
@@ -26,6 +27,7 @@
  *   - accessors.js: getCharacterById, getCharacters
  *   - time.js: getCurrentYearSafe
  *   - storage.js: saveMasterData
+ *   - relationship system: RomanceLogic, FamilyLogic
  * 
  * ICON POLICY: No emojis. No icons.
  * 
@@ -81,6 +83,86 @@
         }
     }
 
+    function _getRankById(id) {
+        if (typeof window.RankQueries !== 'undefined' && 
+            typeof window.RankQueries.getRank === 'function') {
+            return window.RankQueries.getRank(id);
+        }
+        if (typeof window.getRankById === 'function') {
+            return window.getRankById(id);
+        }
+        return null;
+    }
+
+    function _getAllRanks() {
+        if (typeof window.RankQueries !== 'undefined' && 
+            typeof window.RankQueries.getAllRanks === 'function') {
+            return window.RankQueries.getAllRanks();
+        }
+        if (typeof window.getRanks === 'function') {
+            return window.getRanks();
+        }
+        return [];
+    }
+
+    function _getParents(characterId) {
+        if (typeof window.FamilyLogic !== 'undefined' && 
+            typeof window.FamilyLogic.getParents === 'function') {
+            return window.FamilyLogic.getParents(characterId);
+        }
+        if (typeof window.getParents === 'function') {
+            return window.getParents(characterId);
+        }
+        return { father: null, mother: null };
+    }
+
+    function _getChildren(characterId, activeOnly) {
+        if (typeof window.FamilyLogic !== 'undefined' && 
+            typeof window.FamilyLogic.getChildren === 'function') {
+            return window.FamilyLogic.getChildren(characterId, activeOnly !== false);
+        }
+        if (typeof window.getChildren === 'function') {
+            return window.getChildren(characterId, activeOnly !== false);
+        }
+        return [];
+    }
+
+    function _getPrimaryPartner(characterId) {
+        if (typeof window.RomanceLogic !== 'undefined' && 
+            typeof window.RomanceLogic.getPrimaryPartner === 'function') {
+            return window.RomanceLogic.getPrimaryPartner(characterId);
+        }
+        if (typeof window.FamilyLogic !== 'undefined' && 
+            typeof window.FamilyLogic.getCurrentSpouse === 'function') {
+            return window.FamilyLogic.getCurrentSpouse(characterId);
+        }
+        if (typeof window.getCurrentSpouse === 'function') {
+            return window.getCurrentSpouse(characterId);
+        }
+        return null;
+    }
+
+    function _getSpouses(characterId) {
+        if (typeof window.FamilyLogic !== 'undefined' && 
+            typeof window.FamilyLogic.getSpouses === 'function') {
+            return window.FamilyLogic.getSpouses(characterId, true);
+        }
+        if (typeof window.getSpouses === 'function') {
+            return window.getSpouses(characterId);
+        }
+        return [];
+    }
+
+    function _showToast(msg, type) {
+        if (typeof window._showToast === 'function') {
+            window._showToast(msg, type);
+        } else if (typeof window.showToast === 'function') {
+            window.showToast(msg, type);
+        } else if (typeof window.showToastMessage === 'function') {
+            window.showToastMessage(msg, type);
+        }
+    }
+
     // =========================================================================
     // 2. NUMBERING HELPERS
     // =========================================================================
@@ -105,15 +187,56 @@
     }
 
     // =========================================================================
-    // 3. GET NEXT RANK NUMBER
+    // 3. GET INHERITANCE SOURCE - USING RELATIONSHIP SYSTEM
     // =========================================================================
 
-    function getNextRankNumber(rankId, characterId, characterName, gender) {
-        var rank = window.RankQueries.getRank(rankId);
+    function getInheritanceSource(characterId, rankId) {
+        var char = _getCharacterById(characterId);
+        if (!char) return null;
+        
+        var rank = _getRankById(rankId);
+        if (!rank) return null;
+        
+        // Check if rank is inherited from spouse
+        if (rank.inheritanceSource === 'spouse' || rank.spouseInheritance) {
+            var spouse = _getPrimaryPartner(characterId);
+            if (spouse) {
+                // Check if spouse has the source rank
+                if (spouse.activeRankId === rank.sourceRankId) {
+                    return spouse.id;
+                }
+                // Legacy: check spouseInheritance field
+                if (rank.spouseInheritance && spouse.activeRankId === rank.spouseInheritance) {
+                    return spouse.id;
+                }
+            }
+        }
+        
+        // Check if rank is inherited from parent
+        if (rank.inheritanceSource === 'parent') {
+            var parents = _getParents(characterId);
+            if (parents.father && parents.father.activeRankId === rank.sourceRankId) {
+                return parents.father.id;
+            }
+            if (parents.mother && parents.mother.activeRankId === rank.sourceRankId) {
+                return parents.mother.id;
+            }
+        }
+        
+        return null;
+    }
+
+    // =========================================================================
+    // 4. GET NEXT RANK NUMBER - WITH GROUPING
+    // =========================================================================
+
+    function getNextRankNumber(rankId, characterId, characterName, gender, sourceCharacterId) {
+        var rank = _getRankById(rankId);
         if (!rank || !rank.numbered) return null;
 
         var characters = _getCharacters();
 
+        // Get all holders of this rank (non-deprecated)
         var holders = characters.filter(function(c) {
             if (c.id === characterId) return false;
             var assignment = c.rankAssignments ? c.rankAssignments.find(function(ra) {
@@ -122,65 +245,60 @@
             return assignment !== undefined;
         });
 
+        var numberingGroup = rank.numberingGroup || 'global';
+
+        // Filter holders by numbering group
+        var filteredHolders = holders;
+        
+        if (numberingGroup === 'parent' && sourceCharacterId) {
+            // Only holders with the same parent/source
+            filteredHolders = holders.filter(function(c) {
+                var parents = _getParents(c.id);
+                return parents.father?.id === sourceCharacterId || parents.mother?.id === sourceCharacterId;
+            });
+        } else if (numberingGroup === 'spouse' && sourceCharacterId) {
+            // Only holders married to the same person
+            filteredHolders = holders.filter(function(c) {
+                var spouse = _getPrimaryPartner(c.id);
+                return spouse?.id === sourceCharacterId;
+            });
+        } else if (numberingGroup === 'source' && sourceCharacterId) {
+            // Only holders inheriting from the same source
+            filteredHolders = holders.filter(function(c) {
+                var source = getInheritanceSource(c.id, rankId);
+                return source === sourceCharacterId;
+            });
+        }
+        // 'global' - no filtering
+
+        // Sort by birth year (ordinal) or assignment year (reign)
         if (rank.numberingType === 'reign') {
-            var firstName = characterName ? characterName.split(' ')[0] : '';
-            var sameNameHolders = holders.filter(function(c) {
-                var cFirstName = c.name ? c.name.split(' ')[0] : '';
-                return cFirstName === firstName;
+            filteredHolders.sort(function(a, b) {
+                var aAssign = a.rankAssignments ? a.rankAssignments.find(function(ra) { return ra.rankId === rankId && !ra.isDeprecated; }) : null;
+                var bAssign = b.rankAssignments ? b.rankAssignments.find(function(ra) { return ra.rankId === rankId && !ra.isDeprecated; }) : null;
+                return (aAssign?.assignedYear || 0) - (bAssign?.assignedYear || 0);
             });
-
-            var holdersWithYear = [];
-            for (var i = 0; i < sameNameHolders.length; i++) {
-                var c = sameNameHolders[i];
-                var assignment = c.rankAssignments ? c.rankAssignments.find(function(ra) {
-                    return ra.rankId === rankId && !ra.isDeprecated;
-                }) : null;
-                if (assignment) {
-                    holdersWithYear.push({
-                        character: c,
-                        assignment: assignment
-                    });
-                }
-            }
-
-            holdersWithYear.sort(function(a, b) {
-                return (a.assignment.assignedYear || 0) - (b.assignment.assignedYear || 0);
-            });
-
-            var nextNumber = holdersWithYear.length + 1;
-
-            return {
-                rawNumber: nextNumber,
-                display: toRoman(nextNumber),
-                type: 'roman'
-            };
         } else {
-            var filteredHolders = holders;
-
-            if (rank.genderRestriction === 'male') {
-                filteredHolders = holders.filter(function(c) { return c.gender === 'male'; });
-            } else if (rank.genderRestriction === 'female') {
-                filteredHolders = holders.filter(function(c) { return c.gender === 'female'; });
-            } else if (gender) {
-                filteredHolders = holders.filter(function(c) { return c.gender === gender; });
-            }
-
+            // Ordinal - sort by birth year
             filteredHolders.sort(function(a, b) {
                 return (a.birthYear || 9999) - (b.birthYear || 9999);
             });
-
-            var nextNumber = filteredHolders.length + 1;
-
-            return {
-                rawNumber: nextNumber,
-                display: toOrdinal(nextNumber),
-                type: 'ordinal'
-            };
         }
+
+        var nextNumber = filteredHolders.length + 1;
+        var display = rank.numberingType === 'roman' ? toRoman(nextNumber) : toOrdinal(nextNumber);
+
+        return {
+            rawNumber: nextNumber,
+            display: display,
+            type: rank.numberingType === 'roman' ? 'roman' : 'ordinal',
+            groupId: sourceCharacterId || 'global',
+            holdersInGroup: filteredHolders.length
+        };
     }
 
     // =========================================================================
-    // 4. ASSIGN RANK TO CHARACTER
+    // 5. ASSIGN RANK TO CHARACTER
     // =========================================================================
 
     function assignRankToCharacter(characterId, rankId, options) {
@@ -192,7 +310,7 @@
         try {
             options = options || {};
             var character = _getCharacterById(characterId);
-            var rank = window.RankQueries.getRank(rankId);
+            var rank = _getRankById(rankId);
 
             if (!character) {
                 return { success: false, error: 'Character not found' };
@@ -220,9 +338,15 @@
 
             var currentYear = _getCurrentYear();
 
+            // Get inheritance source for numbering group
+            var sourceId = null;
+            if (rank.numbered && (rank.numberingGroup === 'parent' || rank.numberingGroup === 'spouse' || rank.numberingGroup === 'source')) {
+                sourceId = getInheritanceSource(characterId, rankId);
+            }
+
             var numberInfo = null;
             if (rank.numbered && options.number === undefined) {
-                numberInfo = getNextRankNumber(rankId, characterId, character.name, character.gender);
+                numberInfo = getNextRankNumber(rankId, characterId, character.name, character.gender, sourceId);
             } else if (options.number) {
                 if (typeof options.number === 'object') {
                     numberInfo = options.number;
@@ -244,7 +368,8 @@
                 isActive: character.rankAssignments.length === 0,
                 isDeprecated: false,
                 assignedYear: options.assignedYear || currentYear,
-                notes: options.notes || ''
+                notes: options.notes || '',
+                inheritedFrom: sourceId || null
             };
 
             character.rankAssignments.push(newAssignment);
@@ -273,7 +398,7 @@
     }
 
     // =========================================================================
-    // 5. DEPRECATE RANK ASSIGNMENT
+    // 6. DEPRECATE RANK ASSIGNMENT
     // =========================================================================
 
     function deprecateRankAssignment(characterId, rankId) {
@@ -318,7 +443,7 @@
     }
 
     // =========================================================================
-    // 6. RENUMBER RANK HOLDERS
+    // 7. RENUMBER RANK HOLDERS - WITH GROUPING
     // =========================================================================
 
     function renumberRankHolders(rankId) {
@@ -328,7 +453,7 @@
         _processingAssignment = true;
 
         try {
-            var rank = window.RankQueries.getRank(rankId);
+            var rank = _getRankById(rankId);
             if (!rank || !rank.numbered) {
                 return { success: false, error: 'Rank is not numbered' };
             }
@@ -383,29 +508,48 @@
                     }
                 }
             } else {
-                var holdersToNumber = holders;
-
-                if (rank.genderRestriction === 'male') {
-                    holdersToNumber = holders.filter(function(c) { return c.gender === 'male'; });
-                } else if (rank.genderRestriction === 'female') {
-                    holdersToNumber = holders.filter(function(c) { return c.gender === 'female'; });
-                }
-
-                holdersToNumber.sort(function(a, b) {
-                    return (a.birthYear || 9999) - (b.birthYear || 9999);
-                });
-
-                for (var k = 0; k < holdersToNumber.length; k++) {
-                    var assignment = holdersToNumber[k].rankAssignments ? holdersToNumber[k].rankAssignments.find(function(ra) {
+                // Group by inheritance source for ordinal numbering
+                var groups = new Map();
+                
+                for (var i = 0; i < holders.length; i++) {
+                    var holder = holders[i];
+                    var assignment = holder.rankAssignments ? holder.rankAssignments.find(function(ra) {
                         return ra.rankId === rankId && !ra.isDeprecated;
                     }) : null;
-                    if (assignment) {
-                        var expectedNumber = k + 1;
+                    if (!assignment) continue;
+                    
+                    // Determine group key based on numbering group
+                    var groupKey = 'global';
+                    if (rank.numberingGroup === 'parent' || rank.numberingGroup === 'spouse' || rank.numberingGroup === 'source') {
+                        var sourceId = getInheritanceSource(holder.id, rankId);
+                        groupKey = sourceId || 'unknown';
+                    }
+                    
+                    if (!groups.has(groupKey)) {
+                        groups.set(groupKey, []);
+                    }
+                    groups.get(groupKey).push({
+                        holder: holder,
+                        assignment: assignment,
+                        sourceId: groupKey
+                    });
+                }
+                
+                // Sort each group by birth year
+                for (var entry of groups) {
+                    var items = entry[1];
+                    items.sort(function(a, b) {
+                        return (a.holder.birthYear || 9999) - (b.holder.birthYear || 9999);
+                    });
+                    
+                    // Apply numbers
+                    for (var j = 0; j < items.length; j++) {
+                        var expectedNumber = j + 1;
                         var expectedDisplay = toOrdinal(expectedNumber);
-                        var currentDisplay = assignment.number ? assignment.number.display : null;
-
+                        var currentDisplay = items[j].assignment.number ? items[j].assignment.number.display : null;
+                        
                         if (currentDisplay !== expectedDisplay) {
-                            assignment.number = {
+                            items[j].assignment.number = {
                                 rawNumber: expectedNumber,
                                 display: expectedDisplay,
                                 type: 'ordinal'
@@ -431,7 +575,7 @@
     }
 
     // =========================================================================
-    // 7. FIX ALL NUMBERING FOR CHARACTER
+    // 8. FIX ALL NUMBERING FOR CHARACTER
     // =========================================================================
 
     function fixAllNumberingForCharacter(characterId) {
@@ -452,7 +596,7 @@
             for (var i = 0; i < character.rankAssignments.length; i++) {
                 var assignment = character.rankAssignments[i];
                 if (assignment.isDeprecated) continue;
-                var rank = window.RankQueries.getRank(assignment.rankId);
+                var rank = _getRankById(assignment.rankId);
                 if (rank && rank.numbered) {
                     if (!rankGroups.has(assignment.rankId)) {
                         rankGroups.set(assignment.rankId, []);
@@ -478,13 +622,13 @@
     }
 
     // =========================================================================
-    // 8. SURNAME RULE FUNCTIONS
+    // 9. SURNAME RULE FUNCTIONS
     // =========================================================================
 
     function generateSurnameFromRankRule(character, context) {
         if (!character || !character.activeRankId) return null;
 
-        var rank = window.RankQueries.getRank(character.activeRankId);
+        var rank = _getRankById(character.activeRankId);
         if (!rank || !rank.customSurnameRule) return null;
 
         var locationName = context && context.locationName ? context.locationName : null;
@@ -524,7 +668,7 @@
         _processingAssignment = true;
 
         try {
-            var rank = window.RankQueries.getRank(rankId);
+            var rank = _getRankById(rankId);
             if (!rank) {
                 return { success: false, error: 'Rank not found' };
             }
@@ -547,7 +691,7 @@
     }
 
     // =========================================================================
-    // 9. SPOUSE INHERITANCE
+    // 10. SPOUSE INHERITANCE - USING RELATIONSHIP SYSTEM
     // =========================================================================
 
     function checkAndFixSpouseInheritance() {
@@ -559,40 +703,65 @@
         try {
             var characters = _getCharacters();
             var fixes = [];
+            var ranks = _getAllRanks();
+            
+            var rankMap = {};
+            for (var i = 0; i < ranks.length; i++) {
+                rankMap[ranks[i].id] = ranks[i];
+            }
 
             for (var i = 0; i < characters.length; i++) {
                 var c = characters[i];
                 if (c.isDeceased) continue;
 
-                var inheritanceRanks = window.RankQueries.getSpouseInheritanceRanks(c.id);
-                for (var j = 0; j < inheritanceRanks.length; j++) {
-                    var inheritedRank = inheritanceRanks[j];
-                    var alreadyHas = c.rankAssignments && c.rankAssignments.some(function(ra) {
-                        return ra.rankId === inheritedRank.id && !ra.isDeprecated;
+                // Get spouse using relationship system
+                var spouse = _getPrimaryPartner(c.id);
+                if (!spouse) continue;
+
+                // Get spouse's active rank
+                if (!spouse.activeRankId) continue;
+                
+                var spouseRank = rankMap[spouse.activeRankId];
+                if (!spouseRank) continue;
+
+                // Check if spouse's rank grants inheritance
+                var inheritedRankId = null;
+                
+                // Check spouseInheritance field
+                if (spouseRank.spouseInheritance) {
+                    inheritedRankId = spouseRank.spouseInheritance;
+                }
+                
+                // Check inheritanceSource with sourceRankId
+                if (spouseRank.inheritanceSource === 'spouse' && spouseRank.sourceRankId) {
+                    inheritedRankId = spouseRank.sourceRankId;
+                }
+
+                if (!inheritedRankId) continue;
+                
+                var inheritedRank = rankMap[inheritedRankId];
+                if (!inheritedRank) continue;
+
+                // Check if character already has the inherited rank
+                var alreadyHas = c.rankAssignments && c.rankAssignments.some(function(ra) {
+                    return ra.rankId === inheritedRankId && !ra.isDeprecated;
+                });
+                
+                if (!alreadyHas) {
+                    fixes.push({
+                        character: c,
+                        characterId: c.id,
+                        characterName: c.name + (c.surname ? ' ' + c.surname : ''),
+                        rank: inheritedRank,
+                        rankId: inheritedRankId,
+                        rankName: inheritedRank.name,
+                        spouseName: spouse.name + (spouse.surname ? ' ' + spouse.surname : ''),
+                        sourceRankName: spouseRank.name
                     });
-                    if (!alreadyHas) {
-                        var spouseName = 'Unknown';
-                        if (c.relationships) {
-                            for (var k = 0; k < c.relationships.length; k++) {
-                                if (c.relationships[k].status === 'ongoing') {
-                                    var spouse = _getCharacterById(c.relationships[k].partnerId);
-                                    if (spouse) {
-                                        spouseName = spouse.name;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        fixes.push({
-                            character: c,
-                            rank: inheritedRank,
-                            spouseName: spouseName
-                        });
-                    }
                 }
             }
 
-            return { success: true, fixes: fixes };
+            return { success: true, fixes: fixes, count: fixes.length };
 
         } catch (e) {
             return { success: false, error: e.message || 'Failed to check spouse inheritance' };
@@ -613,13 +782,19 @@
 
             for (var i = 0; i < fixes.length; i++) {
                 var fix = fixes[i];
-                var result = assignRankToCharacter(fix.character.id, fix.rank.id, {
-                    notes: 'Inherited from spouse ' + fix.spouseName,
+                var result = assignRankToCharacter(fix.characterId, fix.rankId, {
+                    notes: 'Inherited from spouse ' + fix.spouseName + ' via ' + fix.sourceRankName,
                     assignedYear: currentYear
                 });
                 if (result.success) {
                     applied++;
                 }
+            }
+
+            if (applied > 0) {
+                _saveMasterData();
+                _invalidateAccessorCaches();
+                _showToast('Applied ' + applied + ' spouse inheritance fixes', 'success');
             }
 
             return { success: true, applied: applied };
@@ -632,7 +807,7 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 11. EXPORTS
     // =========================================================================
 
     window.RankAssignment = {
@@ -646,7 +821,8 @@
         generateSurnameFromRankRule: generateSurnameFromRankRule,
         updateRankSurnameRule: updateRankSurnameRule,
         checkAndFixSpouseInheritance: checkAndFixSpouseInheritance,
-        applySpouseInheritanceFixes: applySpouseInheritanceFixes
+        applySpouseInheritanceFixes: applySpouseInheritanceFixes,
+        getInheritanceSource: getInheritanceSource
     };
 
     // Legacy aliases

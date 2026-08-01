@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * STILL WATERS - APPRENTICESHIP CONSTANTS (apprenticeship-constants.js)
+ * STILL WATERS - APPRENTICESHIP CONSTANTS js/apprenticeship/apprenticeship-constants.js
  * =============================================================================
  * 
  * This file contains ALL apprenticeship-related constants.

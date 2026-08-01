@@ -1,15 +1,16 @@
 /**
  * =============================================================================
- * STILL WATERS - PROFESSIONAL LOGIC
+ * STILL WATERS - PROFESSIONAL LOGIC (PURE QUERY LAYER)
  * =============================================================================
  * 
- * Professional relationship business logic built on top of the relationship registry.
- * Includes: Apprenticeship, Employment, Guild Membership
+ * PURE QUERY FUNCTIONS for professional relationships.
+ * NO CREATION - creation belongs in domain modules (apprenticeship, industry, household, government).
  * 
  * DEPENDENCIES:
- *   - relationship-registry.js (createRelationship, getRelationshipBetween)
+ *   - relationship-registry.js (getRelationshipBetween, getRelationshipsForCharacter)
  *   - relationship-types.js (RELATIONSHIP_ARCHETYPES, RELATIONSHIP_STATUS)
- *   - accessors.js (getCharacterById, getCharacters, getRoleById)
+ *   - accessors.js (getCharacterById, getCharacters)
+ *   - skill-utils.js (getSkillLevelName, getStageFromLevel)
  * 
  * =============================================================================
  */
@@ -22,15 +23,30 @@
     // =========================================================================
 
     function _getCharacterById(id) {
-        return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+        if (typeof window.getCharacterById === 'function') {
+            return window.getCharacterById(id);
+        }
+        if (typeof window._getCharacterById === 'function') {
+            return window._getCharacterById(id);
+        }
+        return null;
     }
 
     function _getCharacters() {
-        return typeof window.getCharacters === 'function' ? window.getCharacters() : [];
+        if (typeof window.getCharacters === 'function') {
+            return window.getCharacters();
+        }
+        return [];
     }
 
     function _getRoleById(id) {
-        return typeof window.getRoleById === 'function' ? window.getRoleById(id) : null;
+        if (typeof window.getRoleById === 'function') {
+            return window.getRoleById(id);
+        }
+        if (typeof window._getRoleById === 'function') {
+            return window._getRoleById(id);
+        }
+        return null;
     }
 
     function _getCurrentYear() {
@@ -40,64 +56,15 @@
         if (typeof window.getCurrentYear === 'function') {
             return window.getCurrentYear();
         }
+        if (typeof window._getCurrentYear === 'function') {
+            return window._getCurrentYear();
+        }
         return 1250;
-    }
-
-    function _calculateAge(birthYear, isDeceased, deathYear) {
-        if (typeof window.calculateAge === 'function') {
-            return window.calculateAge(birthYear, isDeceased, deathYear);
-        }
-        var currentYear = _getCurrentYear();
-        if (!birthYear) return 0;
-        if (isDeceased && deathYear) return Math.max(0, deathYear - birthYear);
-        return Math.max(0, currentYear - birthYear);
-    }
-
-    function _saveMasterData() {
-        if (typeof window.saveMasterData === 'function') {
-            window.saveMasterData();
-        }
-    }
-
-    function _logEvent(category, type, message, subjects) {
-        if (typeof window.logEvent === 'function') {
-            window.logEvent(category, type, message, subjects);
-        }
-    }
-
-    function _getSkillLevelName(level) {
-        if (typeof window.getSkillLevelName === 'function') {
-            return window.getSkillLevelName(level);
-        }
-        if (level >= 91) return 'Master';
-        if (level >= 76) return 'Expert';
-        if (level >= 51) return 'Journeyman';
-        if (level >= 26) return 'Apprentice';
-        if (level >= 1) return 'Novice';
-        return 'Untrained';
-    }
-
-    function _getStageFromLevel(skillLevel) {
-        var stages = window.APPRENTICESHIP_STAGES || {};
-        for (var key in stages) {
-            var stage = stages[key];
-            if (skillLevel >= stage.minLevel && skillLevel <= stage.maxLevel) {
-                return stage;
-            }
-        }
-        return stages.NOVICE || { id: 'novice', name: 'Novice', minLevel: 0, maxLevel: 25 };
     }
 
     // =========================================================================
     // 2. RELATIONSHIP REGISTRY WRAPPERS
     // =========================================================================
-
-    function _createRelationship(idA, idB, options) {
-        if (typeof window.createRelationship === 'function') {
-            return window.createRelationship(idA, idB, options);
-        }
-        return null;
-    }
 
     function _getRelationshipBetween(idA, idB) {
         if (typeof window.getRelationshipBetween === 'function') {
@@ -113,109 +80,64 @@
         return [];
     }
 
-    function _updateRelationship(relId, updates) {
-        if (typeof window.updateRelationship === 'function') {
-            return window.updateRelationship(relId, updates);
+    // =========================================================================
+    // 3. SKILL/ROLE DELEGATION (QUERY ONLY)
+    // =========================================================================
+
+    function _getSkillLevel(characterId, roleId) {
+        if (typeof window.RoleQueries !== 'undefined' && typeof window.RoleQueries.getSkillLevel === 'function') {
+            return window.RoleQueries.getSkillLevel(characterId, roleId);
         }
-        return null;
+        var char = _getCharacterById(characterId);
+        if (char && char.professions) {
+            for (var i = 0; i < char.professions.length; i++) {
+                if (char.professions[i].id === roleId) {
+                    return char.professions[i].skillLevel || 0;
+                }
+            }
+        }
+        return 0;
     }
 
-    function _endRelationship(relId, endYear, reason) {
-        if (typeof window.endRelationship === 'function') {
-            return window.endRelationship(relId, endYear, reason);
+    function _getSkillLevelName(level) {
+        if (typeof window.SkillUtils !== 'undefined') {
+            return window.SkillUtils.getSkillLevelName(level);
         }
-        return false;
+        if (level >= 91) return 'Master';
+        if (level >= 76) return 'Expert';
+        if (level >= 51) return 'Journeyman';
+        if (level >= 26) return 'Apprentice';
+        if (level >= 1) return 'Novice';
+        return 'Untrained';
     }
 
-    function _addProfession(characterId, roleId, options) {
-        if (typeof window.addProfession === 'function') {
-            return window.addProfession(characterId, roleId, options);
+    function _getStageFromLevel(level) {
+        if (typeof window.SkillUtils !== 'undefined') {
+            return window.SkillUtils.getStageFromLevel(level);
         }
-        return { success: false };
-    }
-
-    function _updateProfessionSkill(characterId, roleId, skillLevel) {
-        if (typeof window.updateProfessionSkill === 'function') {
-            return window.updateProfessionSkill(characterId, roleId, skillLevel);
-        }
-        return false;
+        if (level >= 76) return { id: 'master', name: 'Master', minLevel: 76, maxLevel: 100 };
+        if (level >= 51) return { id: 'journeyman', name: 'Journeyman', minLevel: 51, maxLevel: 75 };
+        if (level >= 26) return { id: 'apprentice', name: 'Apprentice', minLevel: 26, maxLevel: 50 };
+        if (level >= 1) return { id: 'novice', name: 'Novice', minLevel: 1, maxLevel: 25 };
+        return { id: 'novice', name: 'Novice', minLevel: 0, maxLevel: 25 };
     }
 
     // =========================================================================
-    // 3. CONSTANTS
+    // 4. CONSTANTS
     // =========================================================================
 
     var ARCHETYPES = window.RELATIONSHIP_ARCHETYPES || {};
     var STATUS = window.RELATIONSHIP_STATUS || { ONGOING: 'ongoing' };
 
     // =========================================================================
-    // 4. APPRENTICESHIP
+    // 5. APPRENTICESHIP QUERIES
     // =========================================================================
 
-    function createApprenticeship(masterId, apprenticeId, options) {
-        options = options || {};
-        var master = _getCharacterById(masterId);
-        var apprentice = _getCharacterById(apprenticeId);
-
-        if (!master || !apprentice) return null;
-        if (masterId === apprenticeId) return null;
-        if (master.isDeceased || apprentice.isDeceased) return null;
-
-        var roleId = options.roleId;
-        if (!roleId) return null;
-
-        var role = _getRoleById(roleId);
-        if (!role) return null;
-
-        var masterSkill = 0;
-        if (master.professions) {
-            for (var i = 0; i < master.professions.length; i++) {
-                if (master.professions[i].id === roleId) {
-                    masterSkill = master.professions[i].skillLevel || 0;
-                    break;
-                }
-            }
-        }
-
-        if (masterSkill < 51) return null;
-
-        var startYear = options.startYear || _getCurrentYear();
-        var initialSkill = options.initialSkill !== undefined ? options.initialSkill : 10;
-        var initialStage = _getStageFromLevel(initialSkill);
-
-        var relationship = _createRelationship(masterId, apprenticeId, {
-            type: ARCHETYPES.APPRENTICESHIP,
-            status: STATUS.ONGOING,
-            startYear: startYear,
-            metadata: {
-                roleId: roleId,
-                roleName: role.name,
-                skillLevel: Math.min(100, Math.max(0, initialSkill)),
-                stage: initialStage.id,
-                startSkill: initialSkill,
-                specializationsTaught: options.specializations || [],
-                teachingHistory: [],
-                notes: options.notes || ''
-            }
-        });
-
-        if (relationship) {
-            _addProfession(apprenticeId, roleId, {
-                skillLevel: initialSkill,
-                startYear: startYear,
-                learnedVia: 'apprenticeship',
-                masterId: masterId,
-                notes: 'Apprenticeship under ' + master.name
-            });
-
-            _logEvent('professional', 'Apprenticeship Created',
-                apprentice.name + ' began apprenticing under ' + master.name + ' as a ' + role.name,
-                [master, apprentice]);
-        }
-
-        return relationship;
-    }
-
+    /**
+     * Gets the master of a character (if they are an apprentice)
+     * @param {string} characterId - Character ID
+     * @returns {Object|null} Master character or null
+     */
     function getMaster(characterId) {
         var relationships = _getRelationshipsForCharacter(characterId, {
             type: ARCHETYPES.APPRENTICESHIP,
@@ -232,6 +154,12 @@
         return null;
     }
 
+    /**
+     * Gets all apprentices of a master
+     * @param {string} masterId - Master character ID
+     * @param {boolean} activeOnly - Only return active apprenticeships
+     * @returns {Array} Array of apprentice objects with details
+     */
     function getApprentices(masterId, activeOnly) {
         activeOnly = activeOnly !== undefined ? activeOnly : true;
         var relationships = _getRelationshipsForCharacter(masterId, {
@@ -270,156 +198,246 @@
         return result;
     }
 
-    function progressApprenticeship(masterId, apprenticeId, amount) {
-        amount = amount || 5;
-
-        var relationship = _getRelationshipBetween(masterId, apprenticeId);
-        if (!relationship || relationship.type !== ARCHETYPES.APPRENTICESHIP) {
-            return { success: false, reason: 'Apprenticeship not found' };
-        }
-
-        if (relationship.status !== STATUS.ONGOING) {
-            return { success: false, reason: 'Apprenticeship is not active' };
-        }
-
-        var metadata = relationship.metadata || {};
-        var currentLevel = metadata.skillLevel || 0;
-        var oldStage = _getStageFromLevel(currentLevel);
-        var newLevel = Math.min(100, currentLevel + amount);
-        var newStage = _getStageFromLevel(newLevel);
-
-        metadata.skillLevel = newLevel;
-        metadata.stage = newStage.id;
-
-        if (!metadata.teachingHistory) metadata.teachingHistory = [];
-        metadata.teachingHistory.push({
-            gain: amount,
-            newLevel: newLevel,
-            year: _getCurrentYear()
-        });
-
-        _updateRelationship(relationship.id, {
-            metadata: metadata
-        });
-
-        if (metadata.roleId) {
-            _updateProfessionSkill(apprenticeId, metadata.roleId, newLevel);
-        }
-
-        var completed = false;
-        if (newStage.id === 'master') {
-            completed = completeApprenticeship(masterId, apprenticeId);
-        }
-
-        return {
-            success: true,
-            oldLevel: currentLevel,
-            newLevel: newLevel,
-            gained: newLevel - currentLevel,
-            oldStage: oldStage.name,
-            newStage: newStage.name,
-            stageChanged: oldStage.id !== newStage.id,
-            completed: completed
-        };
+    /**
+     * Checks if a character is an apprentice
+     * @param {string} characterId - Character ID
+     * @returns {boolean} True if apprentice
+     */
+    function isApprentice(characterId) {
+        return getMaster(characterId) !== null;
     }
 
-    function completeApprenticeship(masterId, apprenticeId, finalSkillLevel) {
-        var relationship = _getRelationshipBetween(masterId, apprenticeId);
-        if (!relationship || relationship.type !== ARCHETYPES.APPRENTICESHIP) {
-            return false;
-        }
+    /**
+     * Checks if a character is a master (has apprentices)
+     * @param {string} characterId - Character ID
+     * @returns {boolean} True if master
+     */
+    function isMaster(characterId) {
+        return getApprentices(characterId, true).length > 0;
+    }
 
-        if (relationship.status !== STATUS.ONGOING) {
-            return false;
-        }
+    /**
+     * Gets the apprenticeship relationship between master and apprentice
+     * @param {string} masterId - Master character ID
+     * @param {string} apprenticeId - Apprentice character ID
+     * @returns {Object|null} Relationship object or null
+     */
+    function getApprenticeship(masterId, apprenticeId) {
+        return _getRelationshipBetween(masterId, apprenticeId);
+    }
 
-        var metadata = relationship.metadata || {};
-        var currentLevel = metadata.skillLevel || 0;
-        var finalLevel = finalSkillLevel !== undefined ? finalSkillLevel : Math.max(currentLevel, 76);
-
-        metadata.skillLevel = finalLevel;
-        metadata.stage = 'master';
-
-        _updateRelationship(relationship.id, {
-            status: 'completed',
-            endYear: _getCurrentYear(),
-            metadata: metadata
+    /**
+     * Gets the role being learned in an apprenticeship
+     * @param {string} characterId - Character ID
+     * @returns {string|null} Role ID or null
+     */
+    function getApprenticeshipRole(characterId) {
+        var relationships = _getRelationshipsForCharacter(characterId, {
+            type: ARCHETYPES.APPRENTICESHIP,
+            activeOnly: true
         });
 
-        var apprentice = _getCharacterById(apprenticeId);
-        if (apprentice) {
-            if (finalLevel >= 51) apprentice.isJourneyman = true;
-            if (finalLevel >= 76) apprentice.isMaster = true;
-
-            if (metadata.roleId) {
-                _updateProfessionSkill(apprenticeId, metadata.roleId, finalLevel);
+        for (var i = 0; i < relationships.length; i++) {
+            var rel = relationships[i];
+            if (rel.participantB === characterId) {
+                return rel.metadata?.roleId || null;
             }
         }
 
-        _logEvent('professional', 'Apprenticeship Completed',
-            (_getCharacterById(apprenticeId)?.name || 'Apprentice') + ' completed apprenticeship',
-            [_getCharacterById(masterId), _getCharacterById(apprenticeId)]);
-
-        return true;
+        return null;
     }
 
-    function endApprenticeship(masterId, apprenticeId, options) {
-        options = options || {};
-        var relationship = _getRelationshipBetween(masterId, apprenticeId);
-
-        if (!relationship || relationship.type !== ARCHETYPES.APPRENTICESHIP) {
-            return false;
+    /**
+     * Gets the current apprenticeship stage for a character
+     * @param {string} characterId - Character ID
+     * @param {string} roleId - Optional role ID
+     * @returns {Object} Stage object
+     */
+    function getApprenticeshipStage(characterId, roleId) {
+        var skillLevel = 0;
+        if (roleId) {
+            skillLevel = _getSkillLevel(characterId, roleId);
+        } else {
+            var relationships = _getRelationshipsForCharacter(characterId, {
+                type: ARCHETYPES.APPRENTICESHIP,
+                activeOnly: true
+            });
+            for (var i = 0; i < relationships.length; i++) {
+                var rel = relationships[i];
+                if (rel.participantB === characterId) {
+                    skillLevel = rel.metadata?.skillLevel || 0;
+                    break;
+                }
+            }
         }
+        return _getStageFromLevel(skillLevel);
+    }
 
-        var endYear = options.endYear || _getCurrentYear();
-        var reason = options.reason || 'Apprenticeship ended';
+    /**
+     * Gets the apprenticeship progress percentage (0-100)
+     * @param {string} characterId - Character ID
+     * @param {string} roleId - Optional role ID
+     * @returns {number} Progress percentage
+     */
+    function getApprenticeshipProgress(characterId, roleId) {
+        var stage = getApprenticeshipStage(characterId, roleId);
+        var skillLevel = 0;
+        if (roleId) {
+            skillLevel = _getSkillLevel(characterId, roleId);
+        } else {
+            var relationships = _getRelationshipsForCharacter(characterId, {
+                type: ARCHETYPES.APPRENTICESHIP,
+                activeOnly: true
+            });
+            for (var i = 0; i < relationships.length; i++) {
+                var rel = relationships[i];
+                if (rel.participantB === characterId) {
+                    skillLevel = rel.metadata?.skillLevel || 0;
+                    break;
+                }
+            }
+        }
+        var range = stage.maxLevel - stage.minLevel;
+        if (range === 0) return 100;
+        var stageProgress = ((skillLevel - stage.minLevel) / range) * 100;
+        return Math.min(100, Math.max(0, Math.floor(stageProgress)));
+    }
 
-        var result = _endRelationship(relationship.id, endYear, reason);
+    /**
+     * Gets all skills a character can teach
+     * @param {string} characterId - Character ID
+     * @param {number} minSkillLevel - Minimum skill level to teach (default 51)
+     * @returns {Array} Array of teachable skills
+     */
+    function getTeachableSkills(characterId, minSkillLevel) {
+        minSkillLevel = minSkillLevel || 51;
+        var char = _getCharacterById(characterId);
+        if (!char || !char.professions) return [];
 
-        if (result) {
-            _logEvent('professional', 'Apprenticeship Ended',
-                'Apprenticeship between ' + (_getCharacterById(masterId)?.name || 'Master') + ' and ' +
-                (_getCharacterById(apprenticeId)?.name || 'Apprentice') + ' ended: ' + reason,
-                [_getCharacterById(masterId), _getCharacterById(apprenticeId)]);
+        var result = [];
+        for (var i = 0; i < char.professions.length; i++) {
+            var prof = char.professions[i];
+            var skillLevel = prof.skillLevel || 0;
+            if (skillLevel >= minSkillLevel) {
+                var role = _getRoleById(prof.id);
+                if (role) {
+                    result.push({
+                        id: prof.id,
+                        name: role.name,
+                        skillLevel: skillLevel,
+                        tier: _getSkillLevelName(skillLevel)
+                    });
+                }
+            }
         }
 
         return result;
     }
 
-    // =========================================================================
-    // 5. EMPLOYMENT
-    // =========================================================================
+    /**
+     * Finds potential masters for a role
+     * @param {string} roleId - Role ID
+     * @param {string} locationId - Location ID
+     * @param {number} minSkillLevel - Minimum skill level (default 51)
+     * @returns {Array} Array of potential masters with details
+     */
+    function findPotentialMasters(roleId, locationId, minSkillLevel) {
+        minSkillLevel = minSkillLevel || 51;
+        var characters = _getCharacters();
+        var result = [];
 
-    function createEmployment(employerId, employeeId, options) {
-        options = options || {};
-        var employer = _getCharacterById(employerId);
-        var employee = _getCharacterById(employeeId);
+        for (var i = 0; i < characters.length; i++) {
+            var char = characters[i];
+            if (char.isDeceased) continue;
 
-        if (!employer || !employee) return null;
-        if (employerId === employeeId) return null;
-
-        var startYear = options.startYear || _getCurrentYear();
-
-        var relationship = _createRelationship(employerId, employeeId, {
-            type: ARCHETYPES.EMPLOYMENT,
-            status: STATUS.ONGOING,
-            startYear: startYear,
-            metadata: {
-                role: options.role || 'Employee',
-                wages: options.wages || 0,
-                notes: options.notes || ''
+            if (char.professions) {
+                for (var j = 0; j < char.professions.length; j++) {
+                    if (char.professions[j].id === roleId) {
+                        var skillLevel = char.professions[j].skillLevel || 0;
+                        if (skillLevel >= minSkillLevel) {
+                            result.push({
+                                character: char,
+                                skillLevel: skillLevel,
+                                apprenticeCount: getApprentices(char.id, true).length
+                            });
+                            break;
+                        }
+                    }
+                }
             }
-        });
-
-        if (relationship) {
-            _logEvent('professional', 'Employment Created',
-                employee.name + ' employed by ' + employer.name + ' as ' + (options.role || 'Employee'),
-                [employer, employee]);
         }
 
-        return relationship;
+        result.sort(function(a, b) {
+            return b.skillLevel - a.skillLevel;
+        });
+
+        return result;
     }
 
+    /**
+     * Recommends masters for a character
+     * @param {string} characterId - Character ID
+     * @param {string} roleId - Role ID to learn
+     * @returns {Array} Array of recommended masters
+     */
+    function recommendMastersForCharacter(characterId, roleId) {
+        var char = _getCharacterById(characterId);
+        if (!char) return [];
+
+        // Find masters of the role
+        var masters = findPotentialMasters(roleId, null, 51);
+        if (masters.length === 0) return [];
+
+        // Score masters by proximity, apprentice count, skill level
+        var scored = masters.map(function(m) {
+            var score = m.skillLevel / 100;
+            // Prefer masters with fewer apprentices (more time to teach)
+            if (m.apprenticeCount < 3) score += 0.2;
+            else if (m.apprenticeCount < 6) score += 0.1;
+            else score -= 0.1;
+
+            // If character has a location, prefer masters in same location
+            if (char.currentLocationId && m.character.currentLocationId) {
+                if (char.currentLocationId === m.character.currentLocationId) {
+                    score += 0.2;
+                }
+            }
+
+            return {
+                character: m.character,
+                skillLevel: m.skillLevel,
+                apprenticeCount: m.apprenticeCount,
+                score: Math.min(1, Math.max(0, score))
+            };
+        });
+
+        scored.sort(function(a, b) { return b.score - a.score; });
+
+        return scored;
+    }
+
+    /**
+     * Checks if a character can teach a role
+     * @param {string} characterId - Character ID
+     * @param {string} roleId - Role ID
+     * @param {number} minSkillLevel - Minimum skill level (default 51)
+     * @returns {boolean} True if can teach
+     */
+    function canTeach(characterId, roleId, minSkillLevel) {
+        minSkillLevel = minSkillLevel || 51;
+        var skill = _getSkillLevel(characterId, roleId);
+        return skill >= minSkillLevel;
+    }
+
+    // =========================================================================
+    // 6. EMPLOYMENT QUERIES
+    // =========================================================================
+
+    /**
+     * Gets the employer of a character
+     * @param {string} characterId - Character ID
+     * @returns {Object|null} Employer character or null
+     */
     function getEmployer(characterId) {
         var relationships = _getRelationshipsForCharacter(characterId, {
             type: ARCHETYPES.EMPLOYMENT,
@@ -436,6 +454,12 @@
         return null;
     }
 
+    /**
+     * Gets the employees of an employer
+     * @param {string} employerId - Employer character ID
+     * @param {boolean} activeOnly - Only return active employees
+     * @returns {Array} Array of employee objects with details
+     */
     function getEmployees(employerId, activeOnly) {
         activeOnly = activeOnly !== undefined ? activeOnly : true;
         var relationships = _getRelationshipsForCharacter(employerId, {
@@ -467,39 +491,35 @@
         return result;
     }
 
-    // =========================================================================
-    // 6. GUILD MEMBERSHIP
-    // =========================================================================
-
-    function createGuildMembership(guildId, memberId, options) {
-        options = options || {};
-        var guild = _getCharacterById(guildId);
-        var member = _getCharacterById(memberId);
-
-        if (!guild || !member) return null;
-        if (guildId === memberId) return null;
-
-        var startYear = options.startYear || _getCurrentYear();
-
-        var relationship = _createRelationship(guildId, memberId, {
-            type: ARCHETYPES.GUILD_MEMBERSHIP,
-            status: STATUS.ONGOING,
-            startYear: startYear,
-            metadata: {
-                rank: options.rank || 'Member',
-                notes: options.notes || ''
-            }
-        });
-
-        if (relationship) {
-            _logEvent('professional', 'Guild Membership Created',
-                member.name + ' joined guild ' + guild.name + ' as ' + (options.rank || 'Member'),
-                [guild, member]);
-        }
-
-        return relationship;
+    /**
+     * Checks if a character has an employer
+     * @param {string} characterId - Character ID
+     * @returns {boolean} True if employed
+     */
+    function isEmployed(characterId) {
+        return getEmployer(characterId) !== null;
     }
 
+    /**
+     * Gets the employment relationship between employer and employee
+     * @param {string} employerId - Employer character ID
+     * @param {string} employeeId - Employee character ID
+     * @returns {Object|null} Relationship object or null
+     */
+    function getEmployment(employerId, employeeId) {
+        return _getRelationshipBetween(employerId, employeeId);
+    }
+
+    // =========================================================================
+    // 7. GUILD MEMBERSHIP QUERIES
+    // =========================================================================
+
+    /**
+     * Gets the guild members of a guild
+     * @param {string} guildId - Guild character ID
+     * @param {boolean} activeOnly - Only return active members
+     * @returns {Array} Array of member objects with details
+     */
     function getGuildMembers(guildId, activeOnly) {
         activeOnly = activeOnly !== undefined ? activeOnly : true;
         var relationships = _getRelationshipsForCharacter(guildId, {
@@ -530,36 +550,277 @@
         return result;
     }
 
+    /**
+     * Checks if a character is in a guild
+     * @param {string} characterId - Character ID
+     * @param {string} guildId - Optional guild ID to check specific guild
+     * @returns {boolean} True if in guild
+     */
+    function isInGuild(characterId, guildId) {
+        var relationships = _getRelationshipsForCharacter(characterId, {
+            type: ARCHETYPES.GUILD_MEMBERSHIP,
+            activeOnly: true
+        });
+
+        for (var i = 0; i < relationships.length; i++) {
+            var rel = relationships[i];
+            if (guildId) {
+                if (rel.participantA === guildId && rel.participantB === characterId) {
+                    return true;
+                }
+            } else {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Gets the guild membership of a character
+     * @param {string} characterId - Character ID
+     * @param {string} guildId - Optional guild ID
+     * @returns {Object|null} Relationship object or null
+     */
+    function getGuildMembership(characterId, guildId) {
+        var relationships = _getRelationshipsForCharacter(characterId, {
+            type: ARCHETYPES.GUILD_MEMBERSHIP,
+            activeOnly: true
+        });
+
+        for (var i = 0; i < relationships.length; i++) {
+            var rel = relationships[i];
+            if (guildId) {
+                if (rel.participantA === guildId && rel.participantB === characterId) {
+                    return rel;
+                }
+            } else {
+                return rel;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Gets the guild rank of a character
+     * @param {string} characterId - Character ID
+     * @param {string} guildId - Guild ID
+     * @returns {string|null} Rank name or null
+     */
+    function getGuildRank(characterId, guildId) {
+        var membership = getGuildMembership(characterId, guildId);
+        return membership?.metadata?.rank || null;
+    }
+
+    /**
+     * Gets all guild memberships for a character
+     * @param {string} characterId - Character ID
+     * @param {boolean} activeOnly - Only return active memberships
+     * @returns {Array} Array of membership objects with details
+     */
+    function getGuildMembershipsForCharacter(characterId, activeOnly) {
+        activeOnly = activeOnly !== undefined ? activeOnly : true;
+        var relationships = _getRelationshipsForCharacter(characterId, {
+            type: ARCHETYPES.GUILD_MEMBERSHIP
+        });
+
+        var result = [];
+        for (var i = 0; i < relationships.length; i++) {
+            var rel = relationships[i];
+            if (activeOnly && rel.status !== STATUS.ONGOING) continue;
+
+            var guildId = rel.participantA;
+            var guild = _getCharacterById(guildId);
+            if (!guild) continue;
+
+            var metadata = rel.metadata || {};
+
+            result.push({
+                id: rel.id,
+                guild: guild,
+                guildId: guildId,
+                rank: metadata.rank || 'Member',
+                startYear: rel.startYear,
+                notes: metadata.notes || '',
+                status: rel.status
+            });
+        }
+
+        return result;
+    }
+
     // =========================================================================
-    // 7. EXPORTS
+    // 8. GENERAL PROFESSIONAL RELATIONSHIP QUERIES
+    // =========================================================================
+
+    /**
+     * Gets all professional relationships for a character
+     * @param {string} characterId - Character ID
+     * @param {Object} options - Filter options
+     * @param {boolean} options.activeOnly - Only return active relationships
+     * @param {string} options.type - Filter by relationship type
+     * @returns {Array} Array of relationship objects
+     */
+    function getProfessionalRelationships(characterId, options) {
+        options = options || {};
+        var activeOnly = options.activeOnly !== undefined ? options.activeOnly : true;
+
+        var professionalTypes = [
+            ARCHETYPES.APPRENTICESHIP,
+            ARCHETYPES.EMPLOYMENT,
+            ARCHETYPES.GUILD_MEMBERSHIP
+        ];
+
+        if (options.type) {
+            professionalTypes = [options.type];
+        }
+
+        var allRelationships = [];
+        for (var i = 0; i < professionalTypes.length; i++) {
+            var rels = _getRelationshipsForCharacter(characterId, {
+                type: professionalTypes[i],
+                activeOnly: activeOnly
+            });
+            allRelationships = allRelationships.concat(rels);
+        }
+
+        return allRelationships;
+    }
+
+    /**
+     * Gets the professional relationship between two characters
+     * @param {string} charAId - First character ID
+     * @param {string} charBId - Second character ID
+     * @returns {Object|null} Relationship object or null
+     */
+    function getProfessionalRelationshipBetween(charAId, charBId) {
+        var professionalTypes = [
+            ARCHETYPES.APPRENTICESHIP,
+            ARCHETYPES.EMPLOYMENT,
+            ARCHETYPES.GUILD_MEMBERSHIP
+        ];
+
+        for (var i = 0; i < professionalTypes.length; i++) {
+            var rel = _getRelationshipBetween(charAId, charBId);
+            if (rel && rel.type === professionalTypes[i]) {
+                return rel;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Gets the professional relationship description between two characters
+     * @param {string} charAId - First character ID
+     * @param {string} charBId - Second character ID
+     * @returns {string|null} Description or null
+     */
+    function getProfessionalRelationshipDescription(charAId, charBId) {
+        var rel = getProfessionalRelationshipBetween(charAId, charBId);
+        if (!rel) return null;
+
+        var charA = _getCharacterById(charAId);
+        var charB = _getCharacterById(charBId);
+        if (!charA || !charB) return null;
+
+        var metadata = rel.metadata || {};
+        var typeName = '';
+        var direction = '';
+
+        switch (rel.type) {
+            case ARCHETYPES.APPRENTICESHIP:
+                if (rel.participantA === charAId) {
+                    typeName = 'master of';
+                    direction = charA.name + ' is the master of ' + charB.name;
+                } else {
+                    typeName = 'apprentice of';
+                    direction = charA.name + ' is the apprentice of ' + charB.name;
+                }
+                if (metadata.roleName) {
+                    direction += ' (learning ' + metadata.roleName + ')';
+                }
+                break;
+            case ARCHETYPES.EMPLOYMENT:
+                if (rel.participantA === charAId) {
+                    typeName = 'employer of';
+                    direction = charA.name + ' employs ' + charB.name;
+                } else {
+                    typeName = 'employee of';
+                    direction = charA.name + ' is employed by ' + charB.name;
+                }
+                if (metadata.role) {
+                    direction += ' as ' + metadata.role;
+                }
+                break;
+            case ARCHETYPES.GUILD_MEMBERSHIP:
+                if (rel.participantA === charAId) {
+                    typeName = 'guild master of';
+                    direction = charA.name + ' leads the guild containing ' + charB.name;
+                } else {
+                    typeName = 'guild member of';
+                    direction = charA.name + ' is a member of ' + charB.name + '\'s guild';
+                }
+                if (metadata.rank) {
+                    direction += ' (' + metadata.rank + ')';
+                }
+                break;
+            default:
+                return null;
+        }
+
+        return direction;
+    }
+
+    // =========================================================================
+    // 9. EXPORTS
     // =========================================================================
 
     window.ProfessionalLogic = {
-        // Apprenticeship
-        createApprenticeship: createApprenticeship,
+        // Apprenticeship queries
         getMaster: getMaster,
         getApprentices: getApprentices,
-        progressApprenticeship: progressApprenticeship,
-        completeApprenticeship: completeApprenticeship,
-        endApprenticeship: endApprenticeship,
+        isApprentice: isApprentice,
+        isMaster: isMaster,
+        getApprenticeship: getApprenticeship,
+        getApprenticeshipRole: getApprenticeshipRole,
+        getApprenticeshipStage: getApprenticeshipStage,
+        getApprenticeshipProgress: getApprenticeshipProgress,
+        getTeachableSkills: getTeachableSkills,
+        findPotentialMasters: findPotentialMasters,
+        recommendMastersForCharacter: recommendMastersForCharacter,
+        canTeach: canTeach,
 
-        // Employment
-        createEmployment: createEmployment,
+        // Employment queries
         getEmployer: getEmployer,
         getEmployees: getEmployees,
+        isEmployed: isEmployed,
+        getEmployment: getEmployment,
 
-        // Guild
-        createGuildMembership: createGuildMembership,
-        getGuildMembers: getGuildMembers
+        // Guild membership queries
+        getGuildMembers: getGuildMembers,
+        isInGuild: isInGuild,
+        getGuildMembership: getGuildMembership,
+        getGuildRank: getGuildRank,
+        getGuildMembershipsForCharacter: getGuildMembershipsForCharacter,
+
+        // General professional queries
+        getProfessionalRelationships: getProfessionalRelationships,
+        getProfessionalRelationshipBetween: getProfessionalRelationshipBetween,
+        getProfessionalRelationshipDescription: getProfessionalRelationshipDescription
     };
 
-    // Legacy aliases
-    window.createApprenticeship = createApprenticeship;
+    // Legacy aliases for backward compatibility
     window.getMaster = getMaster;
     window.getApprentices = getApprentices;
-    window.progressApprenticeship = progressApprenticeship;
-    window.completeApprenticeship = completeApprenticeship;
-    window.endApprenticeship = endApprenticeship;
+    window.isApprentice = isApprentice;
+    window.isMaster = isMaster;
+    window.getApprenticeship = getApprenticeship;
+    window.getApprenticeshipRole = getApprenticeshipRole;
+    window.getTeachableSkills = getTeachableSkills;
+    window.findPotentialMasters = findPotentialMasters;
+    window.canTeach = canTeach;
+    window.getEmployer = getEmployer;
+    window.getEmployees = getEmployees;
+    window.getGuildMembers = getGuildMembers;
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.ProfessionalLogic;

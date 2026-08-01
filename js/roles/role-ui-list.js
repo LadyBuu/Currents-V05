@@ -24,6 +24,7 @@
  *   - formatting.js (escapeHtml)
  *   - icons.js (Icons)
  *   - ui.js (showToast)
+ *   - skill-utils.js (SkillUtils)
  * 
  * =============================================================================
  */
@@ -61,7 +62,124 @@
     }
 
     // =========================================================================
-    // 3. DEPENDENCY WRAPPERS
+    // 3. ICON DROPDOWN HELPER - Custom icon grid selector with SVG icons
+    // =========================================================================
+
+    function _getIconDisplayChar(iconName) {
+        if (window.Icons && window.Icons[iconName]) {
+            var svg = window.Icons[iconName];
+            return svg.replace(/width="[^"]*"/, 'width="16"').replace(/height="[^"]*"/, 'height="16"');
+        }
+        if (iconName && iconName.indexOf('<svg') === 0) {
+            return iconName.replace(/width="[^"]*"/, 'width="16"').replace(/height="[^"]*"/, 'height="16"');
+        }
+        return '<svg viewBox="0 0 20 20" width="16" height="16" style="display:inline-block;fill:currentColor;vertical-align:middle;"><circle cx="10" cy="10" r="5.71" fill="currentColor"/></svg>';
+    }
+
+    function _getAllIconNames() {
+        var iconNames = [];
+        if (window.Icons) {
+            for (var key in window.Icons) {
+                if (window.Icons.hasOwnProperty(key) && typeof window.Icons[key] === 'string') {
+                    iconNames.push(key);
+                }
+            }
+        }
+        return iconNames.sort();
+    }
+
+    function _renderIconSelector(selectedIcon) {
+        var iconNames = _getAllIconNames();
+        var commonIcons = ['CIRCLE', 'STAR_4', 'STAR', 'CROWN', 'PERSON', 'LOCATION', 'BOOK', 'GEAR', 'HEART', 'FLAG', 'HOME', 'SWORD', 'SHIELD'];
+        var commonSet = {};
+        for (var i = 0; i < commonIcons.length; i++) {
+            commonSet[commonIcons[i]] = true;
+        }
+
+        var html = '<div class="icon-selector" style="display:flex;flex-wrap:wrap;gap:4px;padding:4px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;max-height:120px;overflow-y:auto;">';
+
+        for (var i = 0; i < commonIcons.length; i++) {
+            var name = commonIcons[i];
+            if (window.Icons[name]) {
+                var selected = (selectedIcon === name) ? 'selected' : '';
+                var iconSvg = _getIconDisplayChar(name);
+                html += '<div class="icon-option" data-icon="' + name + '" style="' +
+                    'width:36px;height:36px;display:flex;align-items:center;justify-content:center;' +
+                    'border-radius:4px;cursor:pointer;border:2px solid ' + (selected ? 'var(--accent)' : 'transparent') + ';' +
+                    'background:' + (selected ? 'rgba(var(--accent-rgb),0.15)' : 'var(--bg)') + ';' +
+                    'transition:all 0.1s;' +
+                    '" title="' + name + '">' +
+                    iconSvg +
+                    '</div>';
+            }
+        }
+
+        html += '<div style="width:100%;height:1px;background:var(--border);margin:4px 0;"></div>';
+
+        for (var i = 0; i < iconNames.length; i++) {
+            var name = iconNames[i];
+            if (commonSet[name]) continue;
+            if (window.Icons[name]) {
+                var selected = (selectedIcon === name) ? 'selected' : '';
+                var iconSvg = _getIconDisplayChar(name);
+                html += '<div class="icon-option" data-icon="' + name + '" style="' +
+                    'width:36px;height:36px;display:flex;align-items:center;justify-content:center;' +
+                    'border-radius:4px;cursor:pointer;border:2px solid ' + (selected ? 'var(--accent)' : 'transparent') + ';' +
+                    'background:' + (selected ? 'rgba(var(--accent-rgb),0.15)' : 'var(--bg)') + ';' +
+                    'transition:all 0.1s;' +
+                    '" title="' + name + '">' +
+                    iconSvg +
+                    '</div>';
+            }
+        }
+
+        html += '</div>';
+        return html;
+    }
+
+    // =========================================================================
+    // 4. SKILL UTILITIES
+    // =========================================================================
+
+    function _getSkillLevelName(level) {
+        if (typeof window.SkillUtils !== 'undefined') {
+            return window.SkillUtils.getSkillLevelName(level);
+        }
+        if (typeof window._getSkillLevelName === 'function') {
+            return window._getSkillLevelName(level);
+        }
+        if (typeof window.getSkillLevelName === 'function') {
+            return window.getSkillLevelName(level);
+        }
+        if (typeof window.ApprenticeshipQueries !== 'undefined' && window.ApprenticeshipQueries.getSkillLevelName) {
+            return window.ApprenticeshipQueries.getSkillLevelName(level);
+        }
+        if (level >= 91) return 'Master';
+        if (level >= 76) return 'Expert';
+        if (level >= 51) return 'Journeyman';
+        if (level >= 26) return 'Apprentice';
+        if (level >= 1) return 'Novice';
+        return 'Untrained';
+    }
+
+    function _getTeachingThresholds() {
+        if (typeof window.SkillUtils !== 'undefined') {
+            return window.SkillUtils.getThresholds();
+        }
+        if (typeof window._getThresholds === 'function') {
+            return window._getThresholds();
+        }
+        return window.TEACHING_THRESHOLDS || {
+            NOVICE: 0,
+            APPRENTICE: 26,
+            JOURNEYMAN: 51,
+            EXPERT: 76,
+            MASTER: 91
+        };
+    }
+
+    // =========================================================================
+    // 5. DEPENDENCY WRAPPERS
     // =========================================================================
 
     function _escapeHtml(str) {
@@ -87,12 +205,18 @@
         if (typeof window.openModal === 'function') {
             return window.openModal(options);
         }
+        if (typeof window._openModal === 'function') {
+            return window._openModal(options);
+        }
         return null;
     }
 
     function _closeTopModal() {
         if (typeof window.closeTopModal === 'function') {
             window.closeTopModal();
+        }
+        if (typeof window._closeTopModal === 'function') {
+            window._closeTopModal();
         }
     }
 
@@ -102,6 +226,9 @@
         }
         if (typeof window.getRoles === 'function') {
             return window.getRoles();
+        }
+        if (typeof window._getRoles === 'function') {
+            return window._getRoles();
         }
         return [];
     }
@@ -113,6 +240,9 @@
         if (typeof window.getRole === 'function') {
             return window.getRole(id);
         }
+        if (typeof window._getRoleById === 'function') {
+            return window._getRoleById(id);
+        }
         return null;
     }
 
@@ -122,6 +252,9 @@
         }
         if (typeof window.getRoleStatistics === 'function') {
             return window.getRoleStatistics(roleId);
+        }
+        if (typeof window._getRoleStatistics === 'function') {
+            return window._getRoleStatistics(roleId);
         }
         return {};
     }
@@ -133,6 +266,9 @@
         if (typeof window.getCharactersWithRoleDetails === 'function') {
             return window.getCharactersWithRoleDetails(roleId, mastersOnly);
         }
+        if (typeof window._getCharactersWithRoleDetails === 'function') {
+            return window._getCharactersWithRoleDetails(roleId, mastersOnly);
+        }
         return [];
     }
 
@@ -143,32 +279,30 @@
         if (typeof window.getRoleCategories === 'function') {
             return window.getRoleCategories();
         }
+        if (typeof window._getRoleCategories === 'function') {
+            return window._getRoleCategories();
+        }
         return {};
     }
 
-    function _getSkillLevelName(level) {
-        if (typeof window.ApprenticeshipQueries !== 'undefined') {
-            return window.ApprenticeshipQueries.getSkillLevelName(level);
+    function _getCharacters() {
+        if (typeof window.getCharacters === 'function') {
+            return window.getCharacters();
         }
-        if (typeof window.getSkillLevelName === 'function') {
-            return window.getSkillLevelName(level);
+        if (typeof window._getCharacters === 'function') {
+            return window._getCharacters();
         }
-        if (level >= 91) return 'Master';
-        if (level >= 76) return 'Expert';
-        if (level >= 51) return 'Journeyman';
-        if (level >= 26) return 'Apprentice';
-        if (level >= 1) return 'Novice';
-        return 'Untrained';
+        return [];
     }
 
-    function _getTeachingThresholds() {
-        return window.TEACHING_THRESHOLDS || {
-            NOVICE: 0,
-            APPRENTICE: 26,
-            JOURNEYMAN: 51,
-            EXPERT: 76,
-            MASTER: 91
-        };
+    function _getCurrentLocation(character) {
+        if (typeof window.getCurrentLocation === 'function') {
+            return window.getCurrentLocation(character);
+        }
+        if (typeof window._getCurrentLocation === 'function') {
+            return window._getCurrentLocation(character);
+        }
+        return 'Unknown';
     }
 
     function _updateRole(roleId, updates) {
@@ -177,6 +311,9 @@
         }
         if (typeof window.updateRole === 'function') {
             return window.updateRole(roleId, updates);
+        }
+        if (typeof window._updateRole === 'function') {
+            return window._updateRole(roleId, updates);
         }
         return null;
     }
@@ -188,6 +325,9 @@
         if (typeof window.deleteRole === 'function') {
             return window.deleteRole(roleId, removeFromCharacters);
         }
+        if (typeof window._deleteRole === 'function') {
+            return window._deleteRole(roleId, removeFromCharacters);
+        }
         return false;
     }
 
@@ -195,11 +335,18 @@
         if (typeof window.saveMasterData === 'function') {
             window.saveMasterData();
         }
+        if (typeof window._saveMasterData === 'function') {
+            window._saveMasterData();
+        }
     }
 
     function _openDeleteRoleModal(roleId, onSuccess) {
         if (typeof window.openDeleteRoleModal === 'function') {
             window.openDeleteRoleModal(roleId, onSuccess);
+            return true;
+        }
+        if (typeof window._openDeleteRoleModal === 'function') {
+            window._openDeleteRoleModal(roleId, onSuccess);
             return true;
         }
         return false;
@@ -210,164 +357,15 @@
             window.openEditRoleSkillModal(roleId, characterId, onSuccess);
             return true;
         }
+        if (typeof window._openEditRoleSkillModal === 'function') {
+            window._openEditRoleSkillModal(roleId, characterId, onSuccess);
+            return true;
+        }
         return false;
     }
 
     // =========================================================================
-    // 4. ROLE DETAIL PANEL RENDERING
-    // =========================================================================
-
-    /**
-     * Renders a role detail edit panel in the specified container
-     * @param {string} containerId - Container element ID
-     * @param {string} roleId - Role ID
-     * @param {Function} onBack - Callback when back button is clicked
-     * @param {Function} onRefresh - Callback when data changes
-     * @param {Object} options - Optional settings
-     * @param {boolean} options.mastersOnly - Filter characters by master level
-     * @returns {boolean} True if rendered
-     */
-    function renderRoleDetailPanel(containerId, roleId, onBack, onRefresh, options) {
-        if (_processingRender) {
-            return false;
-        }
-        _processingRender = true;
-
-        try {
-            var container = document.getElementById(containerId);
-            if (!container) return false;
-
-            var role = _getRole(roleId);
-            if (!role) {
-                if (onBack) onBack();
-                return false;
-            }
-
-            options = options || {};
-            var mastersOnly = options.mastersOnly || false;
-
-            var stats = _getRoleStatistics(roleId);
-            var categories = _getRoleCategories();
-            var charDetails = _getCharactersWithRoleDetails(roleId, mastersOnly);
-            var thresholds = _getTeachingThresholds();
-            var editIcon = _getIcon('EDIT');
-            var personIcon = _getIcon('PERSON');
-            var locationIcon = _getIcon('LOCATION');
-            var warningIcon = _getIcon('WARNING');
-            var crossIcon = _getIcon('X_HEAVY');
-            var plusIcon = _getIcon('PLUS');
-            var searchIcon = _getIcon('SEARCH');
-
-            // Build category options
-            var categoryOptions = '';
-            for (var catKey in categories) {
-                if (categories.hasOwnProperty(catKey)) {
-                    var cat = categories[catKey];
-                    var selected = (role.category === catKey) ? 'selected' : '';
-                    categoryOptions += '<option value="' + catKey + '" ' + selected + '>' + (cat.icon || '⌇') + ' ' + _escapeHtml(cat.name) + '</option>';
-                }
-            }
-
-            container.innerHTML = 
-                '<div class="role-detail-panel">' +
-                    // Header
-                    '<div class="detail-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 8px;">' +
-                        '<button id="backToRolesBtn" class="btn small" style="background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 4px 12px; cursor: pointer;">← Back to Roles</button>' +
-                        '<h2 style="margin: 0; font-size: 1rem;">' + editIcon + ' Edit Role: ' + _escapeHtml(role.name) + '</h2>' +
-                        '<button id="deleteRoleBtn" class="btn danger" style="background: #8a2020; color: white; border: none; border-radius: 6px; padding: 4px 12px; cursor: pointer;">' + crossIcon + ' Delete</button>' +
-                    '</div>' +
-
-                    // Edit Form
-                    '<form id="roleDetailForm">' +
-                        // Name
-                        '<div class="form-group" style="margin-bottom: 12px;">' +
-                            '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Role Name</label>' +
-                            '<input type="text" id="roleName" value="' + _escapeHtml(role.name) + '" required autofocus style="width: 100%; padding: 8px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;">' +
-                        '</div>' +
-
-                        // Category
-                        '<div class="form-group" style="margin-bottom: 12px;">' +
-                            '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Category</label>' +
-                            '<select id="roleCategory" style="width: 100%; padding: 8px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;">' +
-                                categoryOptions +
-                            '</select>' +
-                        '</div>' +
-
-                        // Gender Restriction
-                        '<div class="form-group" style="margin-bottom: 12px;">' +
-                            '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Gender Restriction</label>' +
-                            '<select id="roleGender" style="width: 100%; padding: 8px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;">' +
-                                '<option value="both"' + (role.genderRestriction === 'both' ? ' selected' : '') + '>⚥ Both Genders</option>' +
-                                '<option value="male"' + (role.genderRestriction === 'male' ? ' selected' : '') + '>♂ Male Only</option>' +
-                                '<option value="female"' + (role.genderRestriction === 'female' ? ' selected' : '') + '>♀ Female Only</option>' +
-                            '</select>' +
-                        '</div>' +
-
-                        // Icon
-                        '<div class="form-group" style="margin-bottom: 12px;">' +
-                            '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Icon (monochrome)</label>' +
-                            '<input type="text" id="roleIcon" value="' + (role.icon || '◉') + '" maxlength="2" style="width: 60px; padding: 8px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;">' +
-                            '<small style="font-size: 0.55rem; color: var(--dim); margin-left: 8px;">Single character (◉, ⌇, ⚔, ⌆)</small>' +
-                        '</div>' +
-
-                        // Specializations
-                        '<div class="form-group" style="margin-bottom: 12px;">' +
-                            '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Specializations</label>' +
-                            '<div id="specsList" class="specs-list" style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px;">' +
-                                _renderSpecializations(role.specializations || []) +
-                            '</div>' +
-                            '<div class="add-spec-row" style="display: flex; gap: 8px; margin-top: 4px;">' +
-                                '<input type="text" id="newSpec" placeholder="New specialization..." style="flex: 1; padding: 6px 10px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;">' +
-                                '<button type="button" id="addSpecBtn" class="btn small" style="background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 4px 12px; cursor: pointer;">' + plusIcon + ' Add</button>' +
-                            '</div>' +
-                            '<small style="font-size: 0.55rem; color: var(--dim);">Specializations can be taught during apprenticeship</small>' +
-                        '</div>' +
-
-                        // Notes
-                        '<div class="form-group" style="margin-bottom: 12px;">' +
-                            '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes</label>' +
-                            '<textarea id="roleNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;">' + _escapeHtml(role.notes || '') + '</textarea>' +
-                        '</div>' +
-
-                        // Statistics
-                        '<div class="stats-info" style="background: var(--bg3); padding: 12px; border-radius: 8px; margin: 16px 0;">' +
-                            '<h4 style="margin: 0 0 8px 0; font-size: 0.75rem;">⌇ Role Statistics</h4>' +
-                            '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 8px; font-size: 0.7rem;">' +
-                                '<div>👥 Characters: ' + stats.totalCharacters + '</div>' +
-                                '<div>⌇ Specializations: ' + stats.totalSpecializations + '</div>' +
-                                '<div>◉ Average Skill: ' + stats.averageSkill + '</div>' +
-                                '<div>◉ Masters (91+): ' + stats.masterCount + '</div>' +
-                                '<div>◉ Experts (76-90): ' + stats.expertCount + '</div>' +
-                                '<div>⌇ Journeymen (51-75): ' + stats.journeymanCount + '</div>' +
-                                '<div>⌇ Apprentices (26-50): ' + stats.apprenticeCount + '</div>' +
-                                '<div>⌇ Novices (1-25): ' + stats.noviceCount + '</div>' +
-                                '<div>⌇ Can Teach (51+): ' + stats.canTeachCount + '</div>' +
-                            '</div>' +
-                        '</div>' +
-
-                        // Characters with role
-                        _renderCharactersWithRole(charDetails, roleId, stats.totalCharacters) +
-
-                        // Action buttons
-                        '<div class="action-buttons" style="display: flex; gap: 8px; margin-top: 16px;">' +
-                            '<button type="submit" class="btn primary" style="background: var(--accent); color: var(--bg); border: none; border-radius: 6px; padding: 6px 16px; cursor: pointer;">✓ Save Changes</button>' +
-                            '<button type="button" id="cancelEditBtn" class="btn" style="background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 6px 16px; cursor: pointer;">Cancel</button>' +
-                        '</div>' +
-                    '</form>' +
-                '</div>';
-
-            // Attach handlers
-            _attachDetailPanelHandlers(role, containerId, onBack, onRefresh, options);
-
-            return true;
-
-        } finally {
-            _processingRender = false;
-        }
-    }
-
-    // =========================================================================
-    // 5. PRIVATE RENDER HELPERS
+    // 6. PRIVATE RENDER HELPERS
     // =========================================================================
 
     function _renderSpecializations(specializations) {
@@ -417,7 +415,7 @@
         for (var i = 0; i < displayCount; i++) {
             var cd = charDetails[i];
             var char = cd.character;
-            var location = (typeof window.getCurrentLocation === 'function') ? window.getCurrentLocation(char) : 'Unknown';
+            var location = _getCurrentLocation(char);
 
             html += 
                 '<tr style="border-top: 1px solid var(--border-light);">' +
@@ -448,7 +446,163 @@
     }
 
     // =========================================================================
-    // 6. DETAIL PANEL EVENT HANDLERS
+    // 7. ROLE DETAIL PANEL RENDERING - FIXED with SVG icons and role-level specializations
+    // =========================================================================
+
+    function renderRoleDetailPanel(containerId, roleId, onBack, onRefresh, options) {
+        if (_processingRender) {
+            return false;
+        }
+        _processingRender = true;
+
+        try {
+            var container = document.getElementById(containerId);
+            if (!container) {
+                _processingRender = false;
+                return false;
+            }
+
+            var role = _getRole(roleId);
+            if (!role) {
+                container.innerHTML = '<div class="placeholder" style="text-align:center;padding:40px;color:var(--dim);">Role not found</div>';
+                if (onBack) onBack();
+                _processingRender = false;
+                return false;
+            }
+
+            options = options || {};
+            var mastersOnly = options.mastersOnly || false;
+
+            var stats = _getRoleStatistics(roleId);
+            var categories = _getRoleCategories();
+            var charDetails = _getCharactersWithRoleDetails(roleId, mastersOnly);
+            var thresholds = _getTeachingThresholds();
+            
+            var editIcon = _getIcon('EDIT');
+            var personIcon = _getIcon('PERSON');
+            var locationIcon = _getIcon('LOCATION');
+            var warningIcon = _getIcon('WARNING');
+            var crossIcon = _getIcon('X_HEAVY');
+            var plusIcon = _getIcon('PLUS');
+            var searchIcon = _getIcon('SEARCH');
+
+            // Build category options
+            var categoryOptions = '';
+            if (categories && typeof categories === 'object') {
+                for (var catKey in categories) {
+                    if (categories.hasOwnProperty(catKey)) {
+                        var cat = categories[catKey];
+                        if (cat && cat.id) {
+                            var selected = (role.category === catKey) ? 'selected' : '';
+                            var catIcon = cat.icon || '⌇';
+                            var catName = cat.name || catKey;
+                            categoryOptions += '<option value="' + catKey + '" ' + selected + '>' + catIcon + ' ' + _escapeHtml(catName) + '</option>';
+                        }
+                    }
+                }
+            }
+            if (!categoryOptions) {
+                categoryOptions = '<option value="uncategorized">⌇ Uncategorized</option>';
+            }
+
+            // Get the display icon for the header
+            var displayIcon = _getIcon(role.icon || 'CIRCLE');
+            
+            // Get the custom icon selector HTML
+            var iconSelectorHtml = _renderIconSelector(role.icon || 'CIRCLE');
+
+            var html = 
+                '<div class="role-detail-panel">' +
+                    '<div class="detail-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 8px;">' +
+                        '<button id="backToRolesBtn" class="btn small" style="background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 0.6rem;">← Back to Roles</button>' +
+                        '<h2 style="margin: 0; font-size: 1rem; display: flex; align-items: center; gap: 6px;"><span style="font-size:1.2rem; display:inline-flex; align-items:center;">' + displayIcon + '</span> Edit Role: ' + _escapeHtml(role.name) + '</h2>' +
+                        '<button id="deleteRoleBtn" class="btn danger" style="background: #8a2020; color: white; border: none; border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 0.6rem;">' + crossIcon + ' Delete</button>' +
+                    '</div>' +
+
+                    '<form id="roleDetailForm">' +
+                        '<div class="form-group" style="margin-bottom: 12px;">' +
+                            '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Role Name</label>' +
+                            '<input type="text" id="roleName" value="' + _escapeHtml(role.name) + '" required autofocus style="width: 100%; padding: 8px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
+                        '</div>' +
+
+                        '<div class="form-group" style="margin-bottom: 12px;">' +
+                            '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Category</label>' +
+                            '<select id="roleCategory" style="width: 100%; padding: 8px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
+                                categoryOptions +
+                            '</select>' +
+                        '</div>' +
+
+                        '<div class="form-group" style="margin-bottom: 12px;">' +
+                            '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Gender Restriction</label>' +
+                            '<select id="roleGender" style="width: 100%; padding: 8px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
+                                '<option value="both"' + (role.genderRestriction === 'both' ? ' selected' : '') + '>⚥ Both Genders</option>' +
+                                '<option value="male"' + (role.genderRestriction === 'male' ? ' selected' : '') + '>♂ Male Only</option>' +
+                                '<option value="female"' + (role.genderRestriction === 'female' ? ' selected' : '') + '>♀ Female Only</option>' +
+                            '</select>' +
+                        '</div>' +
+
+                        // CUSTOM ICON SELECTOR - with SVG icons
+                        '<div class="form-group" style="margin-bottom: 12px;">' +
+                            '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Icon</label>' +
+                            '<div id="roleIconSelector">' + iconSelectorHtml + '</div>' +
+                            '<input type="hidden" id="roleIconValue" value="' + (role.icon || 'CIRCLE') + '">' +
+                            '<small style="font-size: 0.55rem; color: var(--dim); display: block; margin-top: 4px;">Click an icon to select it</small>' +
+                        '</div>' +
+
+                        // SPECIALIZATIONS - using role-level specializations
+                        '<div class="form-group" style="margin-bottom: 12px;">' +
+                            '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Specializations</label>' +
+                            '<div id="specsList" class="specs-list" style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px;">' +
+                                _renderSpecializations(role.specializations || []) +
+                            '</div>' +
+                            '<div class="add-spec-row" style="display: flex; gap: 8px; margin-top: 4px;">' +
+                                '<input type="text" id="newSpec" placeholder="New specialization..." style="flex: 1; padding: 6px 10px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
+                                '<button type="button" id="addSpecBtn" class="btn small" style="background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 0.6rem;">' + plusIcon + ' Add</button>' +
+                            '</div>' +
+                            '<small style="font-size: 0.55rem; color: var(--dim);">Add specializations that can be taught to apprentices</small>' +
+                        '</div>' +
+
+                        '<div class="form-group" style="margin-bottom: 12px;">' +
+                            '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes</label>' +
+                            '<textarea id="roleNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' + _escapeHtml(role.notes || '') + '</textarea>' +
+                        '</div>' +
+
+                        '<div class="stats-info" style="background: var(--bg3); padding: 12px; border-radius: 8px; margin: 16px 0;">' +
+                            '<h4 style="margin: 0 0 8px 0; font-size: 0.75rem;">⌇ Role Statistics</h4>' +
+                            '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 8px; font-size: 0.7rem;">' +
+                                '<div>👥 Characters: ' + stats.totalCharacters + '</div>' +
+                                '<div>⌇ Specializations: ' + stats.totalSpecializations + '</div>' +
+                                '<div>◉ Average Skill: ' + stats.averageSkill + '</div>' +
+                                '<div>◉ Masters (91+): ' + stats.masterCount + '</div>' +
+                                '<div>◉ Experts (76-90): ' + stats.expertCount + '</div>' +
+                                '<div>⌇ Journeymen (51-75): ' + stats.journeymanCount + '</div>' +
+                                '<div>⌇ Apprentices (26-50): ' + stats.apprenticeCount + '</div>' +
+                                '<div>⌇ Novices (1-25): ' + stats.noviceCount + '</div>' +
+                                '<div>⌇ Can Teach (51+): ' + stats.canTeachCount + '</div>' +
+                            '</div>' +
+                        '</div>' +
+
+                        _renderCharactersWithRole(charDetails, roleId, stats.totalCharacters) +
+
+                        '<div class="action-buttons" style="display: flex; gap: 8px; margin-top: 16px;">' +
+                            '<button type="submit" class="btn primary" style="background: var(--accent); color: var(--bg); border: none; border-radius: 6px; padding: 6px 16px; cursor: pointer; font-size: 0.7rem;">✓ Save Changes</button>' +
+                            '<button type="button" id="cancelEditBtn" class="btn" style="background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 6px 16px; cursor: pointer; font-size: 0.7rem;">Cancel</button>' +
+                        '</div>' +
+                    '</form>' +
+                '</div>';
+
+            container.innerHTML = html;
+            _attachDetailPanelHandlers(role, containerId, onBack, onRefresh, options);
+
+            return true;
+
+        } finally {
+            _processingRender = false;
+        }
+    }
+
+    // =========================================================================
+    // 8. DETAIL PANEL EVENT HANDLERS - FIXED for role-level specializations
     // =========================================================================
 
     function _attachDetailPanelHandlers(role, containerId, onBack, onRefresh, options) {
@@ -458,8 +612,28 @@
         var deleteBtn = document.getElementById('deleteRoleBtn');
         var addSpecBtn = document.getElementById('addSpecBtn');
 
-        // Store role data for re-renders
         var _roleData = role;
+
+        // Custom icon selector handlers
+        function attachIconSelectorHandlers() {
+            var iconOptions = document.querySelectorAll('.icon-option');
+            var hiddenInput = document.getElementById('roleIconValue');
+            for (var i = 0; i < iconOptions.length; i++) {
+                var opt = iconOptions[i];
+                if (opt._clickAttached) continue;
+                opt.addEventListener('click', function() {
+                    var iconName = this.dataset.icon;
+                    if (hiddenInput) hiddenInput.value = iconName;
+                    document.querySelectorAll('.icon-option').forEach(function(el) {
+                        el.style.border = '2px solid transparent';
+                        el.style.background = 'var(--bg)';
+                    });
+                    this.style.border = '2px solid var(--accent)';
+                    this.style.background = 'rgba(var(--accent-rgb), 0.15)';
+                });
+                opt._clickAttached = true;
+            }
+        }
 
         function attachRemoveSpecHandlers() {
             var removeBtns = document.querySelectorAll('.remove-spec');
@@ -470,12 +644,29 @@
                     var idx = parseInt(this.dataset.index);
                     if (!isNaN(idx)) {
                         var specs = _roleData.specializations || [];
-                        specs.splice(idx, 1);
-                        _roleData.specializations = specs;
-                        _updateRole(_roleData.id, { specializations: specs });
-                        _saveMasterData();
-                        renderRoleDetailPanel(containerId, _roleData.id, onBack, onRefresh, options);
-                        _showToast('Specialization removed', 'info');
+                        var specToRemove = specs[idx];
+                        if (specToRemove) {
+                            // Use RoleCommands.removeRoleSpecialization if available
+                            if (typeof window.RoleCommands !== 'undefined' && 
+                                typeof window.RoleCommands.removeRoleSpecialization === 'function') {
+                                var result = window.RoleCommands.removeRoleSpecialization(_roleData.id, specToRemove);
+                                if (result && result.success) {
+                                    _roleData = result.role;
+                                    renderRoleDetailPanel(containerId, _roleData.id, onBack, onRefresh, options);
+                                    _showToast('Specialization "' + specToRemove + '" removed from role', 'info');
+                                } else {
+                                    _showToast(result?.reason || 'Failed to remove specialization', 'error');
+                                }
+                            } else {
+                                // Fallback: direct manipulation
+                                specs.splice(idx, 1);
+                                _roleData.specializations = specs;
+                                _updateRole(_roleData.id, { specializations: specs });
+                                _saveMasterData();
+                                renderRoleDetailPanel(containerId, _roleData.id, onBack, onRefresh, options);
+                                _showToast('Specialization "' + specToRemove + '" removed from role', 'info');
+                            }
+                        }
                     }
                 });
                 btn._clickAttached = true;
@@ -484,7 +675,6 @@
 
         attachRemoveSpecHandlers();
 
-        // Back button
         if (backBtn && !backBtn._clickAttached) {
             backBtn.addEventListener('click', function() {
                 if (onBack) onBack();
@@ -492,7 +682,6 @@
             backBtn._clickAttached = true;
         }
 
-        // Cancel button
         if (cancelBtn && !cancelBtn._clickAttached) {
             cancelBtn.addEventListener('click', function() {
                 if (onBack) onBack();
@@ -500,7 +689,6 @@
             cancelBtn._clickAttached = true;
         }
 
-        // Form submit (Save)
         if (form && !form._submitAttached) {
             form.addEventListener('submit', function(e) {
                 e.preventDefault();
@@ -511,7 +699,6 @@
                     return;
                 }
 
-                // Collect specializations from the DOM
                 var specItems = document.querySelectorAll('.spec-item');
                 var specializations = [];
                 for (var i = 0; i < specItems.length; i++) {
@@ -519,11 +706,15 @@
                     if (text) specializations.push(text);
                 }
 
+                // Get icon from hidden input
+                var hiddenIcon = document.getElementById('roleIconValue');
+                var icon = hiddenIcon ? hiddenIcon.value : 'CIRCLE';
+
                 var updates = {
                     name: newName,
                     category: document.getElementById('roleCategory').value,
                     genderRestriction: document.getElementById('roleGender').value,
-                    icon: document.getElementById('roleIcon').value || '◉',
+                    icon: icon,
                     specializations: specializations,
                     notes: document.getElementById('roleNotes').value
                 };
@@ -533,13 +724,60 @@
                     _roleData = result;
                     _showToast('Role "' + newName + '" saved', 'success');
                     if (onRefresh) onRefresh();
-                    if (onBack) onBack();
                 }
             });
             form._submitAttached = true;
         }
 
-        // Delete button
+        // FIXED: Add Spec button - uses RoleCommands.addRoleSpecialization
+        if (addSpecBtn && !addSpecBtn._clickAttached) {
+            addSpecBtn.addEventListener('click', function() {
+                var newSpec = document.getElementById('newSpec')?.value.trim();
+                if (newSpec) {
+                    // Use RoleCommands.addRoleSpecialization
+                    if (typeof window.RoleCommands !== 'undefined' && 
+                        typeof window.RoleCommands.addRoleSpecialization === 'function') {
+                        var result = window.RoleCommands.addRoleSpecialization(_roleData.id, newSpec);
+                        if (result && result.success) {
+                            _roleData = result.role;
+                            document.getElementById('newSpec').value = '';
+                            renderRoleDetailPanel(containerId, _roleData.id, onBack, onRefresh, options);
+                            _showToast('Specialization "' + newSpec + '" added to role', 'success');
+                        } else {
+                            _showToast(result?.reason || 'Failed to add specialization', 'error');
+                        }
+                    } else {
+                        // Fallback: direct manipulation
+                        var specs = _roleData.specializations || [];
+                        if (!specs.includes(newSpec)) {
+                            specs.push(newSpec);
+                            _roleData.specializations = specs;
+                            _updateRole(_roleData.id, { specializations: specs });
+                            _saveMasterData();
+                            document.getElementById('newSpec').value = '';
+                            renderRoleDetailPanel(containerId, _roleData.id, onBack, onRefresh, options);
+                            _showToast('Specialization "' + newSpec + '" added to role', 'success');
+                        } else {
+                            _showToast('Specialization already exists on this role', 'error');
+                        }
+                    }
+                }
+            });
+            addSpecBtn._clickAttached = true;
+        }
+
+        var newSpecInput = document.getElementById('newSpec');
+        if (newSpecInput && !newSpecInput._enterAttached) {
+            newSpecInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    var addBtn = document.getElementById('addSpecBtn');
+                    if (addBtn) addBtn.click();
+                }
+            });
+            newSpecInput._enterAttached = true;
+        }
+
         if (deleteBtn && !deleteBtn._clickAttached) {
             deleteBtn.addEventListener('click', function() {
                 var opened = _openDeleteRoleModal(_roleData.id, function() {
@@ -547,7 +785,6 @@
                     if (onBack) onBack();
                 });
                 if (!opened) {
-                    // Fallback: direct delete with confirm
                     var charCount = _getCharactersWithRoleDetails(_roleData.id).length;
                     var warningMsg = 'Delete role "' + _roleData.name + '" permanently?';
                     if (charCount > 0) {
@@ -566,42 +803,6 @@
             deleteBtn._clickAttached = true;
         }
 
-        // Add specialization button
-        if (addSpecBtn && !addSpecBtn._clickAttached) {
-            addSpecBtn.addEventListener('click', function() {
-                var newSpec = document.getElementById('newSpec')?.value.trim();
-                if (newSpec) {
-                    var specs = _roleData.specializations || [];
-                    if (!specs.includes(newSpec)) {
-                        specs.push(newSpec);
-                        _roleData.specializations = specs;
-                        _updateRole(_roleData.id, { specializations: specs });
-                        _saveMasterData();
-                        renderRoleDetailPanel(containerId, _roleData.id, onBack, onRefresh, options);
-                        _showToast('Specialization added', 'success');
-                    } else {
-                        _showToast('Specialization already exists', 'error');
-                    }
-                    document.getElementById('newSpec').value = '';
-                }
-            });
-            addSpecBtn._clickAttached = true;
-        }
-
-        // Enter key for specialization input
-        var newSpecInput = document.getElementById('newSpec');
-        if (newSpecInput && !newSpecInput._enterAttached) {
-            newSpecInput.addEventListener('keydown', function(e) {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    var addBtn = document.getElementById('addSpecBtn');
-                    if (addBtn) addBtn.click();
-                }
-            });
-            newSpecInput._enterAttached = true;
-        }
-
-        // Edit skill buttons (dynamic)
         var skillBtns = document.querySelectorAll('.edit-skill-btn');
         for (var i = 0; i < skillBtns.length; i++) {
             var btn = skillBtns[i];
@@ -619,27 +820,15 @@
             });
             btn._clickAttached = true;
         }
+
+        // Attach icon selector handlers after DOM update
+        setTimeout(attachIconSelectorHandlers, 50);
     }
 
     // =========================================================================
-    // 7. ROLE LIST RENDERING
+    // 9. ROLE LIST RENDERING - FIXED with SVG icons
     // =========================================================================
 
-    /**
-     * Renders a list of roles in the specified container
-     * @param {string} containerId - Container element ID
-     * @param {Object} options - Options
-     * @param {Array} options.filteredRoles - Pre-filtered list
-     * @param {Function} options.onSelect - Callback when a role is selected
-     * @param {Function} options.onEdit - Callback when edit is requested
-     * @param {Function} options.onDelete - Callback when delete is requested
-     * @param {string} options.emptyMessage - Empty state message
-     * @param {string} options.rowClass - CSS class for rows
-     * @param {boolean} options.showStats - Show role statistics
-     * @param {boolean} options.showActions - Show action buttons
-     * @param {string} options.selectedId - Selected role ID
-     * @returns {boolean} True if rendered
-     */
     function renderRoleList(containerId, options) {
         if (_processingRender) {
             return false;
@@ -682,9 +871,8 @@
                 var role = roles[i];
                 var isSelected = (selectedId === role.id);
 
-                // Count characters with this role
                 var charCount = 0;
-                var characters = typeof window.getCharacters === 'function' ? window.getCharacters() : [];
+                var characters = _getCharacters();
                 for (var j = 0; j < characters.length; j++) {
                     var char = characters[j];
                     if (char.professions && char.professions.some(function(p) { return p.id === role.id; })) {
@@ -713,6 +901,7 @@
                 }
 
                 var genderIcon = role.genderRestriction === 'male' ? '♂' : (role.genderRestriction === 'female' ? '♀' : '⚥');
+                var roleIcon = _getIcon(role.icon || 'CIRCLE');
 
                 html += 
                     '<div class="' + rowClass + '" data-role-id="' + role.id + '" style="' +
@@ -725,7 +914,7 @@
                     '">' +
                         '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">' +
                             '<div style="display: flex; align-items: center; gap: 8px; flex: 1; min-width: 150px;">' +
-                                '<span style="font-size: 1.1rem;">' + (role.icon || '◉') + '</span>' +
+                                '<span style="font-size: 1.1rem; display: inline-flex; align-items: center;">' + roleIcon + '</span>' +
                                 '<div>' +
                                     '<strong>' + _escapeHtml(role.name) + '</strong>' +
                                     '<span style="font-size: 0.55rem; color: var(--dim); margin-left: 8px;">' + genderIcon + ' ' + (role.category || 'uncategorized') + '</span>' +
@@ -744,14 +933,12 @@
             html += '</div>';
             container.innerHTML = html;
 
-            // Attach event handlers
             var rows = container.querySelectorAll('.' + rowClass);
             for (var i = 0; i < rows.length; i++) {
                 var row = rows[i];
                 if (row._clickAttached) continue;
 
                 row.addEventListener('click', function(e) {
-                    // Ignore clicks on buttons
                     if (e.target.closest('button')) return;
                     var roleId = this.dataset.roleId;
                     if (options.onSelect) options.onSelect(roleId);
@@ -759,7 +946,6 @@
                 row._clickAttached = true;
             }
 
-            // Edit buttons
             var editBtns = container.querySelectorAll('.role-edit-btn');
             for (var i = 0; i < editBtns.length; i++) {
                 var btn = editBtns[i];
@@ -772,7 +958,6 @@
                 btn._clickAttached = true;
             }
 
-            // Delete buttons
             var deleteBtns = container.querySelectorAll('.role-delete-btn');
             for (var i = 0; i < deleteBtns.length; i++) {
                 var btn = deleteBtns[i];
@@ -793,20 +978,9 @@
     }
 
     // =========================================================================
-    // 8. ROLE CARD RENDERING
+    // 10. ROLE CARD RENDERING - FIXED with SVG icons
     // =========================================================================
 
-    /**
-     * Renders a single role as a card
-     * @param {Object} role - Role object
-     * @param {Object} options - Options
-     * @param {boolean} options.showStats - Show role statistics
-     * @param {boolean} options.showActions - Show action buttons
-     * @param {Function} options.onSelect - Callback when selected
-     * @param {Function} options.onEdit - Callback when edit is requested
-     * @param {Function} options.onDelete - Callback when delete is requested
-     * @returns {string} HTML for the card
-     */
     function renderRoleCard(role, options) {
         if (!role) return '';
 
@@ -817,9 +991,10 @@
         var personIcon = _getIcon('PERSON');
         var editIcon = _getIcon('EDIT');
         var crossIcon = _getIcon('X_HEAVY');
+        var roleIcon = _getIcon(role.icon || 'CIRCLE');
 
         var charCount = 0;
-        var characters = typeof window.getCharacters === 'function' ? window.getCharacters() : [];
+        var characters = _getCharacters();
         for (var i = 0; i < characters.length; i++) {
             var char = characters[i];
             if (char.professions && char.professions.some(function(p) { return p.id === role.id; })) {
@@ -862,7 +1037,7 @@
                 '<div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px;">' +
                     '<div>' +
                         '<div style="display: flex; align-items: center; gap: 8px;">' +
-                            '<span style="font-size: 1.2rem;">' + (role.icon || '◉') + '</span>' +
+                            '<span style="font-size: 1.2rem; display: inline-flex; align-items: center;">' + roleIcon + '</span>' +
                             '<div>' +
                                 '<strong>' + _escapeHtml(role.name) + '</strong>' +
                                 '<span style="font-size: 0.55rem; color: var(--dim); margin-left: 8px;">' + genderIcon + ' ' + (role.category || 'uncategorized') + '</span>' +
@@ -881,18 +1056,9 @@
     }
 
     // =========================================================================
-    // 9. MASTER CHARACTERS FILTER TOGGLE
+    // 11. MASTER CHARACTERS FILTER TOGGLE
     // =========================================================================
 
-    /**
-     * Renders a filter toggle for master-only view
-     * @param {string} containerId - Container element ID
-     * @param {boolean} mastersOnly - Current filter state
-     * @param {Function} onToggle - Callback when toggled
-     * @param {Function} onRefresh - Callback to refresh the view
-     * @param {string} roleId - Current role ID (for refresh)
-     * @returns {boolean} True if rendered
-     */
     function renderMasterFilterToggle(containerId, mastersOnly, onToggle, onRefresh, roleId) {
         var container = document.getElementById(containerId);
         if (!container) return false;
@@ -920,7 +1086,7 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 12. EXPORTS
     // =========================================================================
 
     window.RoleUI = {
@@ -944,6 +1110,5 @@
             renderMasterFilterToggle: renderMasterFilterToggle
         };
     }
-
 
 })();

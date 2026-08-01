@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * STILL WATERS - CHARACTER COMMANDS (js/core/character/character-commands.js)
+ * STILL WATERS - CHARACTER COMMANDS js/character/character-commands.js
  * =============================================================================
  * 
  * All write operations for character management.
@@ -19,6 +19,8 @@
  *   - BULK OPERATIONS - Create, update, delete multiple characters at once
  *   - RANDOM CHARACTER GENERATION - Fully automatic with cultural name support
  *   - RELIGION MANAGEMENT - Assign, remove, and track religion changes
+ *   - CULTURE INTEGRATION - Generate appearance from culture
+ *   - FAMILY ACCESSORS - Uses FamilyAccessors core module for family relationships
  * 
  * DEPENDENCIES:
  *   - character-state.js (CharacterState)
@@ -28,6 +30,8 @@
  *   - world.js (location functions)
  *   - time.js (getCurrentYearSafe)
  *   - religion-commands.js (ReligionCommands)
+ *   - culture-generation.js (CultureGeneration)
+ *   - family-accessors.js (FamilyAccessors) - NEW
  * 
  * =============================================================================
  */
@@ -209,6 +213,76 @@
     }
 
     // =========================================================================
+    // NEW: FAMILY ACCESSORS WRAPPERS
+    // =========================================================================
+
+    function _getFamilyAccessors() {
+        return typeof window.FamilyAccessors !== 'undefined' ? window.FamilyAccessors : null;
+    }
+
+    function _setParentViaFamilyAccessors(childId, parentId, parentType, options) {
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.setParent === 'function') {
+            return fa.setParent(childId, parentId, parentType, options);
+        }
+        return null;
+    }
+
+    function _getChildrenViaFamilyAccessors(parentId, includeDeceased) {
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.getAllChildren === 'function') {
+            return fa.getAllChildren(parentId, includeDeceased || false);
+        }
+        return null;
+    }
+
+    function _getParentsViaFamilyAccessors(childId) {
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.getParents === 'function') {
+            return fa.getParents(childId);
+        }
+        return null;
+    }
+
+    function _hasChildrenViaFamilyAccessors(parentId, includeAdopted, includeDeceased) {
+        var fa = _getFamilyAccessors();
+        if (fa && typeof fa.hasChildren === 'function') {
+            return fa.hasChildren(parentId, includeAdopted !== false, includeDeceased || false);
+        }
+        return null;
+    }
+
+    // =========================================================================
+    // CULTURE GENERATION WRAPPERS
+    // =========================================================================
+
+    function _generateAppearance(cultureId, gender) {
+        if (typeof window.CultureGeneration !== 'undefined' &&
+            typeof window.CultureGeneration.generateAppearance === 'function') {
+            return window.CultureGeneration.generateAppearance(cultureId, gender);
+        }
+        // Fallback to hardcoded defaults if culture system not available
+        return {
+            skinTone: _pickRandom(['Pale', 'Fair', 'Olive', 'Tan', 'Dark']),
+            eyeColor: _pickRandom(['Blue', 'Green', 'Hazel', 'Brown', 'Gray']),
+            hairColor: _pickRandom(['Blonde', 'Brown', 'Black', 'Red', 'Auburn']),
+            hairType: _pickRandom(['Straight', 'Wavy', 'Curly']),
+            build: _pickRandom(['Slim', 'Average', 'Athletic', 'Stocky']),
+            height: Math.floor(Math.random() * 40) + 155,
+            commonFeatures: []
+        };
+    }
+
+    function _getCultureForLocation(locationId) {
+        if (typeof window.CultureQueries !== 'undefined' &&
+            typeof window.CultureQueries.getCultureByLocation === 'function') {
+            var culture = window.CultureQueries.getCultureByLocation(locationId);
+            return culture ? culture.id : null;
+        }
+        return null;
+    }
+
+    // =========================================================================
     // 2. RECURSION GUARD
     // =========================================================================
 
@@ -263,6 +337,7 @@
                 fatherId: data.fatherId || null,
                 children: data.children || [],
                 adoptedParents: data.adoptedParents || [],
+                adoptedChildren: data.adoptedChildren || [],
 
                 // Apprenticeship
                 apprentices: data.apprentices || [],
@@ -281,29 +356,24 @@
                 notes: data.notes || '',
                 appearance: data.appearance || {},
 
-                // ================================================================
-                // HOUSEHOLD HISTORY
-                // ================================================================
+                // Household History
                 householdHistory: data.householdHistory || [],
 
-                // ================================================================
-                // SURNAME HISTORY
-                // ================================================================
+                // Surname History
                 surnameHistory: data.surnameHistory || {
                     birthSurname: data.surname || '',
                     entries: [],
                     lastUpdated: data.birthYear || currentYear
                 },
 
-                // ================================================================
-                // RELIGION (NEW)
-                // ================================================================
+                // Religion
                 religionId: data.religionId || null,
                 religionHistory: data.religionHistory || [],
 
-                // ================================================================
-                // SOFT DELETE FLAG
-                // ================================================================
+                // Culture
+                cultureId: data.cultureId || null,
+
+                // Soft Delete Flag
                 isDeleted: false,
                 deletedAt: null,
 
@@ -311,6 +381,16 @@
                 createdAt: Date.now(),
                 updatedAt: Date.now()
             };
+
+            // If appearance wasn't provided, generate from culture
+            if (!data.appearance || Object.keys(data.appearance).length === 0) {
+                var cultureId = newCharacter.cultureId;
+                if (!cultureId && newCharacter.birthplaceId) {
+                    cultureId = _getCultureForLocation(newCharacter.birthplaceId);
+                    newCharacter.cultureId = cultureId;
+                }
+                newCharacter.appearance = _generateAppearance(cultureId, newCharacter.gender);
+            }
 
             var state = _getState();
             if (state) {
@@ -323,6 +403,31 @@
                 allChars.push(newCharacter);
                 if (typeof window.saveMasterData === 'function') {
                     window.saveMasterData();
+                }
+            }
+
+            // ================================================================
+            // NEW: REGISTER FAMILY RELATIONSHIPS USING FAMILY ACCESSORS
+            // ================================================================
+            if (data.motherId) {
+                var mother = _getCharacterById(data.motherId);
+                if (mother) {
+                    _setParentViaFamilyAccessors(newCharacter.id, mother.id, 'mother', {
+                        biological: true,
+                        startYear: newCharacter.birthYear || currentYear,
+                        notes: 'Set during character creation'
+                    });
+                }
+            }
+
+            if (data.fatherId) {
+                var father = _getCharacterById(data.fatherId);
+                if (father) {
+                    _setParentViaFamilyAccessors(newCharacter.id, father.id, 'father', {
+                        biological: true,
+                        startYear: newCharacter.birthYear || currentYear,
+                        notes: 'Set during character creation'
+                    });
                 }
             }
 
@@ -375,6 +480,12 @@
             if (!updates.householdHistory && character.householdHistory) {
                 updates.householdHistory = character.householdHistory;
             }
+            if (!updates.cultureId && character.cultureId) {
+                updates.cultureId = character.cultureId;
+            }
+            if (!updates.appearance && character.appearance) {
+                updates.appearance = character.appearance;
+            }
 
             // Deep merge for relationships
             if (updates.relationships && character.relationships) {
@@ -387,11 +498,12 @@
                 'birthplaceId', 'currentLocationId', 'moves', 'household',
                 'rankAssignments', 'activeRankId', 'activeRankNumber',
                 'professions', 'motherId', 'fatherId', 'children', 'adoptedParents',
-                'apprentices', 'masterId', 'isMaster', 'masterProfessionId',
+                'adoptedChildren', 'apprentices', 'masterId', 'isMaster', 'masterProfessionId',
                 'apprenticeshipDetails', 'friendshipDetails', 'epithet',
                 'notes', 'appearance', 'householdHistory', 'surnameHistory',
                 'relationships', 'friends',
-                'religionId', 'religionHistory'  // NEW: religion fields
+                'religionId', 'religionHistory',
+                'cultureId'
             ];
 
             var changed = false;
@@ -426,6 +538,41 @@
             } else {
                 if (typeof window.saveMasterData === 'function') {
                     window.saveMasterData();
+                }
+            }
+
+            // ================================================================
+            // NEW: UPDATE FAMILY RELATIONSHIPS IF PARENTS CHANGED
+            // ================================================================
+            if (updates.motherId !== undefined || updates.fatherId !== undefined) {
+                var currentYear = _getCurrentYear();
+                
+                // Handle mother update
+                if (updates.motherId !== undefined) {
+                    if (updates.motherId) {
+                        var mother = _getCharacterById(updates.motherId);
+                        if (mother) {
+                            _setParentViaFamilyAccessors(character.id, mother.id, 'mother', {
+                                biological: true,
+                                startYear: character.birthYear || currentYear,
+                                notes: 'Updated via character update'
+                            });
+                        }
+                    }
+                }
+
+                // Handle father update
+                if (updates.fatherId !== undefined) {
+                    if (updates.fatherId) {
+                        var father = _getCharacterById(updates.fatherId);
+                        if (father) {
+                            _setParentViaFamilyAccessors(character.id, father.id, 'father', {
+                                biological: true,
+                                startYear: character.birthYear || currentYear,
+                                notes: 'Updated via character update'
+                            });
+                        }
+                    }
                 }
             }
 
@@ -582,6 +729,11 @@
                 c.adoptedParents = c.adoptedParents.filter(function(ap) { return ap.parentId !== id; });
             }
 
+            // Remove from adopted children
+            if (c.adoptedChildren) {
+                c.adoptedChildren = c.adoptedChildren.filter(function(ac) { return ac.childId !== id; });
+            }
+
             // Remove from friendship details
             if (c.friendshipDetails && c.friendshipDetails[id]) {
                 delete c.friendshipDetails[id];
@@ -628,7 +780,7 @@
     }
 
     // =========================================================================
-    // 6. SOFT DELETE - NEW
+    // 6. SOFT DELETE
     // =========================================================================
 
     /**
@@ -781,7 +933,7 @@
     }
 
     // =========================================================================
-    // 7. BULK OPERATIONS - NEW
+    // 7. BULK OPERATIONS
     // =========================================================================
 
     /**
@@ -955,7 +1107,7 @@
     }
 
     // =========================================================================
-    // 8. RANDOM CHARACTER GENERATION - NEW
+    // 8. RANDOM CHARACTER GENERATION
     // =========================================================================
 
     /**
@@ -1049,6 +1201,21 @@
             return countries[Math.floor(Math.random() * countries.length)];
         }
         
+        return null;
+    }
+
+    /**
+     * Helper: Generate surname from rules
+     */
+    function _generateSurnameFromRules(mother, father, countryId, childGender) {
+        // Try to use the name system if available
+        if (typeof window.NameQueries !== 'undefined' && 
+            typeof window.NameQueries.generateSurnameFromRules === 'function') {
+            var rules = window.NameQueries.getCountrySurnameRules(countryId);
+            if (rules && rules.type) {
+                return window.NameQueries.generateSurnameFromRules(mother, father, childGender, rules);
+            }
+        }
         return null;
     }
 
@@ -1188,7 +1355,7 @@
             // If still no surname, leave EMPTY (no fallback)
             
             // =========================================================================
-            // STEP 7: Select a religion (NEW)
+            // STEP 7: Select a religion
             // =========================================================================
             
             var religionId = null;
@@ -1235,7 +1402,22 @@
             }
             
             // =========================================================================
-            // STEP 8: Build the character object
+            // STEP 8: Determine culture for appearance
+            // =========================================================================
+            
+            var cultureId = null;
+            if (birthplaceId) {
+                cultureId = _getCultureForLocation(birthplaceId);
+            }
+            
+            // =========================================================================
+            // STEP 9: Generate appearance from culture
+            // =========================================================================
+            
+            var appearance = _generateAppearance(cultureId, gender);
+            
+            // =========================================================================
+            // STEP 10: Build the character object
             // =========================================================================
             
             var character = {
@@ -1260,9 +1442,10 @@
                     entries: [],
                     lastUpdated: birthYear
                 },
-                // NEW: Religion fields
                 religionId: religionId,
                 religionHistory: [],
+                cultureId: cultureId,
+                appearance: appearance,
                 relationships: [],
                 friends: [],
                 household: null,
@@ -1271,6 +1454,7 @@
                 activeRankNumber: null,
                 professions: [],
                 adoptedParents: [],
+                adoptedChildren: [],
                 apprentices: [],
                 masterId: null,
                 isMaster: false,
@@ -1278,11 +1462,6 @@
                 apprenticeshipDetails: {},
                 friendshipDetails: {},
                 epithet: '',
-                appearance: {
-                    hairColor: _pickRandom(['Blonde', 'Brown', 'Black', 'Red', 'Gray']),
-                    eyeColor: _pickRandom(['Blue', 'Green', 'Brown', 'Gray', 'Hazel']),
-                    height: _pickRandom(['Short', 'Average', 'Tall'])
-                },
                 children: [],
                 householdHistory: [],
                 isDeleted: false,
@@ -1292,7 +1471,7 @@
             };
             
             // =========================================================================
-            // STEP 9: Assign a random profession (if roles exist and enabled)
+            // STEP 11: Assign a random profession (if roles exist and enabled)
             // =========================================================================
             
             if (options.assignProfession !== false && age >= 14) {
@@ -1325,7 +1504,7 @@
             }
             
             // =========================================================================
-            // STEP 10: Add to data and save
+            // STEP 12: Add to data and save
             // =========================================================================
             
             var state = _getState();
@@ -1352,21 +1531,6 @@
         } finally {
             _processing = false;
         }
-    }
-
-    /**
-     * Helper: Generate surname from rules
-     */
-    function _generateSurnameFromRules(mother, father, countryId, childGender) {
-        // Try to use the name system if available
-        if (typeof window.NameQueries !== 'undefined' && 
-            typeof window.NameQueries.generateSurnameFromRules === 'function') {
-            var rules = window.NameQueries.getCountrySurnameRules(countryId);
-            if (rules && rules.type) {
-                return window.NameQueries.generateSurnameFromRules(mother, father, childGender, rules);
-            }
-        }
-        return null;
     }
 
     // =========================================================================
@@ -1839,7 +2003,7 @@
     }
 
     // =========================================================================
-    // 12. RELIGION MANAGEMENT (NEW)
+    // 12. RELIGION MANAGEMENT
     // =========================================================================
 
     /**
@@ -2136,7 +2300,165 @@
     }
 
     // =========================================================================
-    // 14. EXPORTS
+    // 14. FAMILY-RELATED COMMANDS (NEW - Using FamilyAccessors)
+    // =========================================================================
+
+    /**
+     * Adds a child to a character using FamilyAccessors
+     * @param {string} parentId - Parent character ID
+     * @param {string} childId - Child character ID
+     * @param {string} parentType - 'father' or 'mother'
+     * @param {Object} options - Options
+     * @returns {Object} Result
+     */
+    function addChildToParent(parentId, childId, parentType, options) {
+        if (_processing) {
+            return { success: false, reason: 'Already processing' };
+        }
+        _processing = true;
+
+        try {
+            options = options || {};
+            var fa = _getFamilyAccessors();
+
+            if (fa && typeof fa.setParent === 'function') {
+                var result = fa.setParent(childId, parentId, parentType, {
+                    biological: options.biological !== false,
+                    startYear: options.startYear || _getCurrentYear(),
+                    notes: options.notes || 'Added via character command'
+                });
+
+                if (result) {
+                    _invalidateCaches();
+                    return { success: true, data: result };
+                }
+            }
+
+            // Fallback: direct data access
+            var child = _getCharacterById(childId);
+            var parent = _getCharacterById(parentId);
+            if (!child || !parent) {
+                return { success: false, reason: 'Child or parent not found' };
+            }
+
+            if (parentType === 'father') {
+                child.fatherId = parentId;
+            } else if (parentType === 'mother') {
+                child.motherId = parentId;
+            } else {
+                return { success: false, reason: 'Invalid parent type' };
+            }
+
+            if (!parent.children) parent.children = [];
+            if (parent.children.indexOf(childId) === -1) {
+                parent.children.push(childId);
+            }
+
+            child.updatedAt = Date.now();
+            parent.updatedAt = Date.now();
+
+            _saveCharacter(child, _getState());
+            _saveCharacter(parent, _getState());
+            _invalidateCaches();
+
+            return { success: true, data: { child: child, parent: parent } };
+
+        } finally {
+            _processing = false;
+        }
+    }
+
+    /**
+     * Gets all children of a character (using FamilyAccessors if available)
+     * @param {string} characterId - Character ID
+     * @param {boolean} includeDeceased - Include deceased children
+     * @returns {Array} Array of child characters
+     */
+    function getCharacterChildren(characterId, includeDeceased) {
+        if (_processing) return [];
+        _processing = true;
+
+        try {
+            var fa = _getFamilyAccessors();
+            if (fa && typeof fa.getAllChildren === 'function') {
+                var result = fa.getAllChildren(characterId, includeDeceased || false);
+                if (result) {
+                    return result.map(function(item) { return item.character; });
+                }
+            }
+
+            // Fallback: direct data access
+            var character = _getCharacterById(characterId);
+            if (!character) return [];
+
+            var allChars = _getCharacters();
+            var children = [];
+
+            for (var i = 0; i < allChars.length; i++) {
+                var child = allChars[i];
+                if (child.id === characterId) continue;
+                if (!includeDeceased && child.isDeceased) continue;
+
+                if (child.motherId === characterId || child.fatherId === characterId) {
+                    children.push(child);
+                }
+            }
+
+            // Also check children array for backward compatibility
+            if (character.children) {
+                for (var i = 0; i < character.children.length; i++) {
+                    var child = _getCharacterById(character.children[i]);
+                    if (child && (!includeDeceased || !child.isDeceased)) {
+                        var exists = false;
+                        for (var j = 0; j < children.length; j++) {
+                            if (children[j].id === child.id) {
+                                exists = true;
+                                break;
+                            }
+                        }
+                        if (!exists) {
+                            children.push(child);
+                        }
+                    }
+                }
+            }
+
+            return children;
+        } finally {
+            _processing = false;
+        }
+    }
+
+    /**
+     * Gets parents of a character (using FamilyAccessors if available)
+     * @param {string} characterId - Character ID
+     * @returns {Object} { father, mother }
+     */
+    function getCharacterParents(characterId) {
+        if (_processing) return { father: null, mother: null };
+        _processing = true;
+
+        try {
+            var fa = _getFamilyAccessors();
+            if (fa && typeof fa.getParents === 'function') {
+                return fa.getParents(characterId);
+            }
+
+            // Fallback: direct data access
+            var character = _getCharacterById(characterId);
+            if (!character) return { father: null, mother: null };
+
+            return {
+                father: character.fatherId ? _getCharacterById(character.fatherId) : null,
+                mother: character.motherId ? _getCharacterById(character.motherId) : null
+            };
+        } finally {
+            _processing = false;
+        }
+    }
+
+    // =========================================================================
+    // 15. EXPORTS
     // =========================================================================
 
     window.CharacterCommands = {
@@ -2182,12 +2504,17 @@
         recordCharacterSurnameChange: recordCharacterSurnameChange,
         revertCharacterSurnameChange: revertCharacterSurnameChange,
 
-        // Religion Management (NEW)
+        // Religion Management
         assignCharacterReligion: assignCharacterReligion,
         removeCharacterReligion: removeCharacterReligion,
         convertCharacterReligion: convertCharacterReligion,
         getCharacterReligionHistory: getCharacterReligionHistory,
-        getCharacterReligion: getCharacterReligion
+        getCharacterReligion: getCharacterReligion,
+
+        // Family Commands (NEW)
+        addChildToParent: addChildToParent,
+        getCharacterChildren: getCharacterChildren,
+        getCharacterParents: getCharacterParents
     };
 
     if (typeof module !== 'undefined' && module.exports) {

@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * GOVERNMENT POSITION MODALS (modals-government-positions.js)
+ * GOVERNMENT POSITION MODALS (js/government/modals-government-positions.js)
  * =============================================================================
  * 
  * PURPOSE: UI modals for government position management.
@@ -79,12 +79,16 @@
     }
 
     function _showToast(message, type) {
+        var plainMessage = message;
+        if (typeof message === 'string') {
+            plainMessage = message.replace(/<[^>]*>/g, '');
+        }
         if (typeof window._showToast === 'function') {
-            window._showToast(message, type);
+            window._showToast(plainMessage, type);
         } else if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
+            window.showToast(plainMessage, type);
         } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(message, type);
+            window.showToastMessage(plainMessage, type);
         }
     }
 
@@ -313,6 +317,16 @@
                     });
 
                     if (result) {
+                        if (typeof window.saveMasterData === 'function') {
+                            window.saveMasterData(true);
+                        }
+                        if (typeof window.invalidateAccessorCaches === 'function') {
+                            window.invalidateAccessorCaches();
+                        }
+                        if (typeof window.GovernmentState !== 'undefined' && 
+                            typeof window.GovernmentState.invalidateCache === 'function') {
+                            window.GovernmentState.invalidateCache();
+                        }
                         _showToast('Position "' + name + '" added', 'success');
                         _closeTopModal();
                         _processingModal = false;
@@ -447,6 +461,16 @@
                     });
 
                     if (result) {
+                        if (typeof window.saveMasterData === 'function') {
+                            window.saveMasterData(true);
+                        }
+                        if (typeof window.invalidateAccessorCaches === 'function') {
+                            window.invalidateAccessorCaches();
+                        }
+                        if (typeof window.GovernmentState !== 'undefined' && 
+                            typeof window.GovernmentState.invalidateCache === 'function') {
+                            window.GovernmentState.invalidateCache();
+                        }
                         _showToast('Position updated', 'success');
                         _closeTopModal();
                         _processingModal = false;
@@ -505,6 +529,16 @@
             _confirmDialog(message, 'Delete Position', function() {
                 var result = _commands.deletePosition(deptId, positionId);
                 if (result) {
+                    if (typeof window.saveMasterData === 'function') {
+                        window.saveMasterData(true);
+                    }
+                    if (typeof window.invalidateAccessorCaches === 'function') {
+                        window.invalidateAccessorCaches();
+                    }
+                    if (typeof window.GovernmentState !== 'undefined' && 
+                        typeof window.GovernmentState.invalidateCache === 'function') {
+                        window.GovernmentState.invalidateCache();
+                    }
                     _showToast('Position deleted', 'info');
                     if (onSuccess) {
                         onSuccess();
@@ -644,15 +678,11 @@
                     assignBtn.onclick = function() {
                         _closeTopModal();
                         _processingModal = false;
-                        if (typeof window.openAssignCharacterToPositionModal === 'function') {
-                            window.openAssignCharacterToPositionModal(deptId, positionId, function() {
-                                setTimeout(function() {
-                                    openViewPositionDetailsModal(deptId, positionId);
-                                }, 100);
-                            });
-                        } else {
-                            _showToast('Assign modal not available', 'error');
-                        }
+                        openAssignCharacterToPositionModal(deptId, positionId, function() {
+                            setTimeout(function() {
+                                openViewPositionDetailsModal(deptId, positionId);
+                            }, 100);
+                        });
                     };
                 }
 
@@ -683,18 +713,134 @@
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 9. ASSIGN CHARACTER TO POSITION MODAL (NEW - FIXED)
+    // =========================================================================
+
+    function openAssignCharacterToPositionModal(departmentId, positionId, onSuccess) {
+        if (_processingModal) {
+            _showToast('Already processing a modal action', 'warning');
+            return;
+        }
+        _processingModal = true;
+
+        try {
+            var dept = _getDepartment(departmentId);
+            if (!dept) {
+                _showToast('Department not found', 'error');
+                _processingModal = false;
+                return;
+            }
+
+            var position = _getPositionById(departmentId, positionId);
+            if (!position) {
+                _showToast('Position not found', 'error');
+                _processingModal = false;
+                return;
+            }
+
+            // Open character selector
+            if (typeof window.openCharacterSelector === 'function' || 
+                typeof window.openUnifiedCharacterSelector === 'function') {
+                _openCharacterSelector({
+                    title: 'Assign to: ' + position.name,
+                    filters: {
+                        status: 'all',
+                        showDeceased: false
+                    },
+                    onSelect: function(character) {
+                        // Check if character already assigned to this position
+                        var existing = _state.getAssignmentsForPosition(departmentId, positionId, true);
+                        var alreadyAssigned = false;
+                        for (var i = 0; i < existing.length; i++) {
+                            if (existing[i].characterId === character.id) {
+                                alreadyAssigned = true;
+                                break;
+                            }
+                        }
+                        
+                        if (alreadyAssigned) {
+                            _showToast('Character already assigned to this position', 'warning');
+                            _processingModal = false;
+                            return;
+                        }
+
+                        // Check qualification
+                        var isQualified = true;
+                        if (window.GovernmentAssignment && 
+                            typeof window.GovernmentAssignment.isCharacterQualifiedForPosition === 'function') {
+                            isQualified = window.GovernmentAssignment.isCharacterQualifiedForPosition(
+                                character.id, departmentId, positionId
+                            );
+                        }
+
+                        if (!isQualified) {
+                            _showToast('Character is not qualified for this position', 'warning');
+                            _processingModal = false;
+                            return;
+                        }
+
+                        var startYear = _getCurrentYear();
+                        var result = _commands.assignCharacterToPosition(
+                            departmentId,
+                            positionId,
+                            character.id,
+                            {
+                                startYear: startYear,
+                                title: position.name,
+                                addRoleIfMissing: true
+                            }
+                        );
+
+                        if (result) {
+                            if (typeof window.saveMasterData === 'function') {
+                                window.saveMasterData(true);
+                            }
+                            if (typeof window.invalidateAccessorCaches === 'function') {
+                                window.invalidateAccessorCaches();
+                            }
+                            if (typeof window.GovernmentState !== 'undefined' && 
+                                typeof window.GovernmentState.invalidateCache === 'function') {
+                                window.GovernmentState.invalidateCache();
+                            }
+                            _closeTopModal();
+                            _showToast(character.name + ' assigned to ' + position.name, 'success');
+                            _processingModal = false;
+                            if (onSuccess) onSuccess();
+                        } else {
+                            _showToast('Failed to assign character', 'error');
+                            _processingModal = false;
+                        }
+                    },
+                    onCancel: function() {
+                        _processingModal = false;
+                    }
+                });
+            } else {
+                _showToast('Character selector not available', 'error');
+                _processingModal = false;
+            }
+
+        } catch (e) {
+            _processingModal = false;
+            _showToast('Error opening assign modal', 'error');
+        }
+    }
+
+    // =========================================================================
+    // 10. EXPORTS
     // =========================================================================
 
     window.openAddPositionModal = openAddPositionModal;
     window.openEditPositionModal = openEditPositionModal;
     window.openDeletePositionModal = openDeletePositionModal;
     window.openViewPositionDetailsModal = openViewPositionDetailsModal;
+    window.openAssignCharacterToPositionModal = openAssignCharacterToPositionModal;
 
     // Legacy aliases
     window._openAddPositionModal = openAddPositionModal;
     window._openEditPositionModal = openEditPositionModal;
     window._openDeletePositionModal = openDeletePositionModal;
     window._openViewPositionDetailsModal = openViewPositionDetailsModal;
+    window._openAssignCharacterToPositionModal = openAssignCharacterToPositionModal;
 
 })();

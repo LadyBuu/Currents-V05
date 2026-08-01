@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * GOVERNMENT COMMANDS (government-commands.js)
+ * GOVERNMENT COMMANDS (js/government/government-commands.js)
  * =============================================================================
  * 
  * PURPOSE: All write operations for government system.
@@ -9,6 +9,11 @@
  *          Salary payment now checks settlement allocation
  *          Added checkSalaryBudgetSufficiency()
  *          Kept assignment, position, department, leader, and justice management
+ * 
+ * FIXED: createGovernmentType now forces immediate save
+ * FIXED: updateGovernmentType now forces immediate save
+ * FIXED: deleteGovernmentType now forces immediate save
+ * FIXED: Removed double toasts (toasts now only shown by commands)
  * 
  * DEPENDENCIES:
  *   - government-state.js (GovernmentState)
@@ -68,10 +73,16 @@
     }
 
     function _showToast(message, type) {
+        var plainMessage = message;
+        if (typeof message === 'string') {
+            plainMessage = message.replace(/<[^>]*>/g, '');
+        }
         if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
+            window.showToast(plainMessage, type);
         } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(message, type);
+            window.showToastMessage(plainMessage, type);
+        } else if (typeof window._showToast === 'function') {
+            window._showToast(plainMessage, type);
         }
     }
 
@@ -117,7 +128,6 @@
             typeof window.HouseholdEconomy.updateHouseholdWealth === 'function') {
             return window.HouseholdEconomy.updateHouseholdWealth(householdId, delta, reason);
         }
-        // Fallback: try direct household update
         if (typeof window.HouseholdState !== 'undefined' && 
             typeof window.HouseholdState.updateHousehold === 'function') {
             var household = window.HouseholdState.getHousehold(householdId);
@@ -249,14 +259,12 @@
             return { valid: false, reason: 'Character is deceased' };
         }
 
-        // Check gender restriction
         if (position.genderRestriction && position.genderRestriction !== 'either') {
             if (character.gender !== position.genderRestriction) {
                 return { valid: false, reason: 'Character gender does not meet position requirement' };
             }
         }
 
-        // Check if already assigned to this position
         var existing = GovernmentState.getAssignmentsForPosition(data.departmentId, data.positionId, true);
         for (var i = 0; i < existing.length; i++) {
             if (existing[i].characterId === data.characterId) {
@@ -264,7 +272,6 @@
             }
         }
 
-        // Check role requirement
         if (position.requiredRoleId) {
             var hasRole = false;
             var skillLevel = 0;
@@ -347,24 +354,14 @@
     }
 
     // =========================================================================
-    // 4. SALARY PAYMENT HELPER (UPDATED with settlement allocation check)
+    // 4. SALARY PAYMENT HELPER
     // =========================================================================
 
-    /**
-     * Pays salary to a character's household using settlement allocation
-     * @param {string} characterId - Character ID
-     * @param {number} salary - Salary amount
-     * @param {string} positionName - Name of the position (for logging)
-     * @param {string} departmentName - Name of the department (for logging)
-     * @param {string} locationId - Location ID (for settlement allocation check)
-     * @returns {Object} Result with payment details
-     */
     function _payGovernmentSalary(characterId, salary, positionName, departmentName, locationId) {
         if (salary <= 0) {
             return { success: false, reason: 'Salary is zero or negative' };
         }
 
-        // Check settlement allocation
         if (locationId && typeof window.SettlementState !== 'undefined') {
             var allocated = window.SettlementState.getGovernmentSalaryBudget(locationId) || 0;
             if (allocated < salary) {
@@ -434,6 +431,7 @@
             };
 
             GovernmentState._addDepartment(dept);
+            _saveMasterData();
 
             _logEvent('government', 'department_created',
                 'Department "' + dept.name + '" created at ' + (_getPlaceById(dept.locationId)?.displayName || 'Unknown'),
@@ -467,6 +465,7 @@
             }
 
             var result = GovernmentState._updateDepartment(departmentId, updates);
+            _saveMasterData();
 
             _logEvent('government', 'department_updated',
                 'Department "' + dept.name + '" updated',
@@ -515,6 +514,7 @@
             }
 
             var result = GovernmentState._deleteDepartment(departmentId);
+            _saveMasterData();
 
             _logEvent('government', 'department_deleted',
                 'Department "' + dept.name + '" deleted' + (cascade ? ' (cascade)' : ''),
@@ -565,8 +565,9 @@
             };
 
             var result = GovernmentState._addPosition(departmentId, position);
+            _saveMasterData();
 
-            var roleName = data.requiredRoleId ? (_getRoleById(data.requiredRoleId)?.name || 'Unknown') : 'None';
+            var roleName = data.requiredRoleId ? (_getRoleById(data.requiredRoleId)?.name || 'None') : 'None';
             _logEvent('government', 'position_added',
                 'Position "' + position.name + '" added to department "' + dept.name + '" (Role: ' + roleName + ')',
                 []);
@@ -605,6 +606,7 @@
             }
 
             var result = GovernmentState._updatePosition(departmentId, positionId, updates);
+            _saveMasterData();
 
             _logEvent('government', 'position_updated',
                 'Position "' + position.name + '" updated in department "' + dept.name + '"',
@@ -644,6 +646,7 @@
             }
 
             var result = GovernmentState._deletePosition(departmentId, positionId);
+            _saveMasterData();
 
             _logEvent('government', 'position_deleted',
                 'Position "' + position.name + '" deleted from department "' + dept.name + '"',
@@ -658,7 +661,7 @@
     }
 
     // =========================================================================
-    // 7. ASSIGNMENT COMMANDS (UPDATED with settlement allocation check)
+    // 7. ASSIGNMENT COMMANDS
     // =========================================================================
 
     function assignCharacterToPosition(departmentId, positionId, characterId, options) {
@@ -688,7 +691,6 @@
                 return null;
             }
 
-            // Handle role requirement - check before validation
             var roleId = position.requiredRoleId;
             var skillLevel = 0;
             var hasRole = false;
@@ -762,6 +764,7 @@
             };
 
             var result = GovernmentState._addAssignment(departmentId, assignment);
+            _saveMasterData();
 
             var roleName = roleId ? (_getRoleById(roleId)?.name || 'None') : 'None';
             _logEvent('government', 'character_assigned',
@@ -770,15 +773,11 @@
 
             var endMsg = options.endYear ? ' until ' + options.endYear : '';
 
-            // =====================================================================
-            // INTEGRATION: Pay salary using settlement allocation
-            // =====================================================================
             var salaryResult = null;
             if (typeof window.GovernmentEconomy !== 'undefined' && 
                 typeof window.GovernmentEconomy.calculatePositionSalary === 'function') {
                 var salary = window.GovernmentEconomy.calculatePositionSalary(positionId, dept);
                 if (salary > 0) {
-                    // Check settlement allocation before paying
                     var allocationCheck = checkSalaryBudgetSufficiency(departmentId, _getCurrentYear());
                     if (allocationCheck && !allocationCheck.sufficient) {
                         _showToast('Warning: Insufficient settlement salary budget for this position', 'warning');
@@ -837,12 +836,10 @@
                 endYear: endYearValue,
                 endReason: reason || 'Term ended'
             });
+            _saveMasterData();
 
             var character = _getCharacterById(assignment.characterId);
 
-            // =====================================================================
-            // INTEGRATION: Log salary ended (no further payments)
-            // =====================================================================
             var position = GovernmentState.getPositionById(departmentId, assignment.positionId);
             if (position && character) {
                 _logEvent('economy', 'government_salary_ended',
@@ -883,6 +880,7 @@
             }
 
             var result = GovernmentState._deleteAssignment(departmentId, assignmentId);
+            _saveMasterData();
 
             var character = _getCharacterById(assignment.characterId);
 
@@ -899,15 +897,9 @@
     }
 
     // =========================================================================
-    // 8. SALARY BUDGET SUFFICIENCY CHECK (NEW)
+    // 8. SALARY BUDGET SUFFICIENCY CHECK
     // =========================================================================
 
-    /**
-     * Checks if there is sufficient settlement allocation for government salaries
-     * @param {string} departmentId - Department ID
-     * @param {number} year - Year to check
-     * @returns {Object} Result with sufficiency details
-     */
     function checkSalaryBudgetSufficiency(departmentId, year) {
         if (_processingCommand) {
             return { sufficient: false, reason: 'Command already processing' };
@@ -949,7 +941,7 @@
     }
 
     // =========================================================================
-    // 9. GOVERNMENT TYPE COMMANDS
+    // 9. GOVERNMENT TYPE COMMANDS - FIXED: Force save, NO double toast
     // =========================================================================
 
     function createGovernmentType(data) {
@@ -969,15 +961,29 @@
                 id: _generateId('govtype'),
                 name: data.name.trim(),
                 description: data.description || '',
-                allowedRankIds: data.allowedRankIds || []
+                allowedRankIds: data.allowedRankIds || [],
+                icon: data.icon || ''
             };
 
             GovernmentState._addGovernmentType(type);
+            
+            // FORCE SAVE IMMEDIATELY
+            if (typeof window.saveMasterData === 'function') {
+                window.saveMasterData(true);
+            }
+            if (typeof window.invalidateAccessorCaches === 'function') {
+                window.invalidateAccessorCaches();
+            }
+            if (typeof window.GovernmentState !== 'undefined' && 
+                typeof window.GovernmentState.invalidateCache === 'function') {
+                window.GovernmentState.invalidateCache();
+            }
 
             _logEvent('government', 'type_created',
                 'Government type "' + type.name + '" created',
                 []);
 
+            // SHOW TOAST HERE (single source)
             _showToast('Government type "' + type.name + '" created', 'success');
             return type;
 
@@ -1005,12 +1011,30 @@
                 return null;
             }
 
-            var result = GovernmentState._updateGovernmentType(typeId, updates);
+            var result = GovernmentState._updateGovernmentType(typeId, {
+                name: updates.name,
+                description: updates.description,
+                allowedRankIds: updates.allowedRankIds,
+                icon: updates.icon
+            });
+            
+            // FORCE SAVE IMMEDIATELY
+            if (typeof window.saveMasterData === 'function') {
+                window.saveMasterData(true);
+            }
+            if (typeof window.invalidateAccessorCaches === 'function') {
+                window.invalidateAccessorCaches();
+            }
+            if (typeof window.GovernmentState !== 'undefined' && 
+                typeof window.GovernmentState.invalidateCache === 'function') {
+                window.GovernmentState.invalidateCache();
+            }
 
             _logEvent('government', 'type_updated',
                 'Government type "' + type.name + '" updated',
                 []);
 
+            // SHOW TOAST HERE (single source)
             _showToast('Government type updated', 'success');
             return result;
 
@@ -1040,11 +1064,24 @@
             }
 
             var result = GovernmentState._deleteGovernmentType(typeId);
+            
+            // FORCE SAVE IMMEDIATELY
+            if (typeof window.saveMasterData === 'function') {
+                window.saveMasterData(true);
+            }
+            if (typeof window.invalidateAccessorCaches === 'function') {
+                window.invalidateAccessorCaches();
+            }
+            if (typeof window.GovernmentState !== 'undefined' && 
+                typeof window.GovernmentState.invalidateCache === 'function') {
+                window.GovernmentState.invalidateCache();
+            }
 
             _logEvent('government', 'type_deleted',
                 'Government type "' + type.name + '" deleted',
                 []);
 
+            // SHOW TOAST HERE (single source)
             _showToast('Government type deleted', 'info');
             return result;
 
@@ -1102,7 +1139,7 @@
     }
 
     // =========================================================================
-    // 11. LEADER COMMANDS (UPDATED with Settlement Integration)
+    // 11. LEADER COMMANDS
     // =========================================================================
 
     function assignLeader(placeId, characterId, startYear, title) {
@@ -1151,9 +1188,6 @@
                 LocationState.invalidateCache();
             }
 
-            // =====================================================================
-            // INTEGRATION: Leader assigned → Update settlement prosperity
-            // =====================================================================
             if (typeof SettlementEconomy !== 'undefined' && typeof SettlementState !== 'undefined') {
                 try {
                     var newProsperity = SettlementEconomy.calculateProsperity(placeId);
@@ -1161,15 +1195,8 @@
                         prosperity: newProsperity,
                         lastUpgraded: _getCurrentYear()
                     });
-
-                    _logEvent('government', 'leader_prosperity_updated',
-                        'Prosperity updated to ' + newProsperity + '% for ' + place.displayName + ' after leader assignment',
-                        [character]);
-                } catch(e) {
-                    // Silent fail - prosperity will update on next cycle
-                }
+                } catch(e) {}
             }
-            // =====================================================================
 
             _logEvent('leadership', 'assigned',
                 character.name + ' assigned as leader of ' + place.displayName,
@@ -1228,20 +1255,14 @@
 
             var character = _getCharacterById(characterId);
 
-            // =====================================================================
-            // INTEGRATION: Leader term ended → Update settlement prosperity
-            // =====================================================================
             if (typeof SettlementEconomy !== 'undefined' && typeof SettlementState !== 'undefined') {
                 try {
                     var newProsperity = SettlementEconomy.calculateProsperity(placeId);
                     SettlementState._updateSettlementData(placeId, { 
                         prosperity: newProsperity 
                     });
-                } catch(e) {
-                    // Silent fail
-                }
+                } catch(e) {}
             }
-            // =====================================================================
 
             _logEvent('leadership', 'term_ended',
                 (character ? character.name : 'Character') + ' ended leadership term at ' + place.displayName,
@@ -1256,7 +1277,7 @@
     }
 
     // =========================================================================
-    // 12. JUSTICE COMMANDS (UPDATED with Crime Integration)
+    // 12. JUSTICE COMMANDS
     // =========================================================================
 
     function updateJusticeSeverity(locationId, severity) {
@@ -1283,9 +1304,6 @@
                 SettlementState._updateSettlementData(locationId, { justiceSeverity: severity });
             }
 
-            // =====================================================================
-            // INTEGRATION: Justice severity changed → Recalculate crime rate
-            // =====================================================================
             if (typeof SettlementEconomy !== 'undefined') {
                 try {
                     var newCrimeRate = SettlementEconomy.calculateCrimeRate(locationId);
@@ -1299,11 +1317,8 @@
                         'Crime rate updated to ' + Math.round(newCrimeRate * 100) + '% after justice severity change at ' + 
                         (_getPlaceById(locationId)?.displayName || 'Unknown'),
                         []);
-                } catch(e) {
-                    // Silent fail
-                }
+                } catch(e) {}
             }
-            // =====================================================================
 
             _showToast('Justice severity updated to ' + severity, 'success');
             return { success: true, data: { justiceSeverity: severity } };
@@ -1340,9 +1355,6 @@
                 });
             }
 
-            // =====================================================================
-            // INTEGRATION: Watch changed → Recalculate crime rate
-            // =====================================================================
             if (typeof SettlementEconomy !== 'undefined') {
                 try {
                     var newCrimeRate = SettlementEconomy.calculateCrimeRate(locationId);
@@ -1351,11 +1363,8 @@
                             crimeRate: newCrimeRate 
                         });
                     }
-                } catch(e) {
-                    // Silent fail
-                }
+                } catch(e) {}
             }
-            // =====================================================================
 
             _showToast(hasWatch ? 'Watch established with ' + size + ' members' : 'Watch disbanded', 'success');
             return { success: true, data: { hasWatch: data.hasWatch, watchSize: data.watchSize } };
@@ -1370,44 +1379,34 @@
     // =========================================================================
 
     window.GovernmentCommands = {
-        // Department commands
         createDepartment: createDepartment,
         updateDepartment: updateDepartment,
         deleteDepartment: deleteDepartment,
 
-        // Position commands
         addPosition: addPosition,
         updatePosition: updatePosition,
         deletePosition: deletePosition,
 
-        // Assignment commands (UPDATED with settlement allocation check)
         assignCharacterToPosition: assignCharacterToPosition,
         endAssignment: endAssignment,
         removeAssignment: removeAssignment,
 
-        // Government type commands
         createGovernmentType: createGovernmentType,
         updateGovernmentType: updateGovernmentType,
         deleteGovernmentType: deleteGovernmentType,
 
-        // Bulk operations
         bulkAssignCharacters: bulkAssignCharacters,
 
-        // Leader commands (INTEGRATED)
         assignLeader: assignLeader,
         endLeaderTerm: endLeaderTerm,
 
-        // Justice commands (INTEGRATED)
         updateJusticeSeverity: updateJusticeSeverity,
         updateWatch: updateWatch,
 
-        // NEW: Salary budget sufficiency check
         checkSalaryBudgetSufficiency: checkSalaryBudgetSufficiency,
 
-        // Internal salary payment (exposed for potential use)
         _payGovernmentSalary: _payGovernmentSalary,
 
-        // Validation (exposed for UI)
         validateDepartment: _validateDepartment,
         validatePosition: _validatePosition,
         validateAssignment: _validateAssignment,

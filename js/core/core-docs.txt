@@ -1,6 +1,3 @@
-# STILL WATERS - COMPLETE FILE DOCUMENTATION
-
-## DOCUMENTATION GENERATED: 2026-07-11
 
 ---
 
@@ -13,6 +10,8 @@
 **PURPOSE:** Global constants used across the application. Load FIRST before any other modules.
 
 **DEPENDENCIES:** None (pure constants)
+
+**ICON POLICY:** No emojis. No icons.
 
 ### LOCATION / TREE CONSTANTS
 
@@ -66,6 +65,8 @@
 **PURPOSE:** SINGLE SOURCE OF TRUTH for ALL random number generation. Seeded, deterministic RNG.
 
 **DEPENDENCIES:** None (pure RNG)
+
+**ICON POLICY:** No emojis. No icons.
 
 ### CONSTANTS
 
@@ -157,6 +158,8 @@
 
 **DEPENDENCIES:** randomness.js (optional - seeded RNG)
 
+**ICON POLICY:** No emojis. No icons.
+
 ### CONSTANTS
 
 | Constant | Type | Description |
@@ -223,6 +226,8 @@
 
 **DEPENDENCIES:** None (pure JavaScript utilities)
 
+**ICON POLICY:** No emojis. No icons.
+
 ### DEEP CLONING
 
 | Function | Parameters | Returns | Description |
@@ -281,6 +286,8 @@
 **PURPOSE:** SINGLE SOURCE OF TRUTH for ALL validation functions.
 
 **DEPENDENCIES:** None (pure validation)
+
+**ICON POLICY:** No emojis. No icons.
 
 ### CONSTANTS
 
@@ -360,6 +367,8 @@
 **PURPOSE:** SINGLE SOURCE OF TRUTH for ALL formatting functions.
 
 **DEPENDENCIES:** None (pure formatting)
+
+**ICON POLICY:** No emojis. No icons.
 
 ### HTML ESCAPING
 
@@ -466,6 +475,8 @@
 
 **DEPENDENCIES:** None (pure time calculations)
 
+**ICON POLICY:** No emojis. No icons.
+
 ### CONSTANTS
 
 | Constant | Type | Description |
@@ -537,6 +548,8 @@
 
 **DEPENDENCIES:** accessors.js (invalidateAccessorCaches, refreshCaches), ui.js (showToast)
 
+**ICON POLICY:** No emojis. No icons.
+
 ### CONSTANTS
 
 | Constant | Type | Description |
@@ -573,6 +586,8 @@
 **PURPOSE:** SINGLE SOURCE OF TRUTH for ALL data access AND cache management.
 
 **DEPENDENCIES:** storage.js (masterData), time.js (calculateAge)
+
+**ICON POLICY:** No emojis. No icons.
 
 ### CACHE MANAGEMENT
 
@@ -737,81 +752,35 @@
 
 ## 10. world.js
 
-**PURPOSE:** PURE read-only queries for world/location data. All writes moved to location-commands.js.
+**PURPOSE:** PURE read-only queries for world/location data. Uses ONLY accessors.js - NO system dependencies.
 
-**DEPENDENCIES:** location-state.js (LocationState), accessors.js (getCharacters, getPlaces, getRanks)
+**DEPENDENCIES:** accessors.js (getPlaces, getPlaceById, getLocationTypes, getCharacters)
+
+**ICON POLICY:** No emojis. No icons.
 
 ### LOCATION HIERARCHY QUERIES
 
 | Function | Parameters | Returns | Description |
 |----------|------------|---------|-------------|
-| `getChildPlaces` | `parentId` (string), `recursive` (boolean, default false) | Array | Gets child places |
+| `getChildPlaces` | `parentId` (string), `recursive` (boolean, default false) | Array | Gets child places (pure - computes from accessors) |
 | `getPlacesByPriority` | `priority` (number) | Array | Gets places by priority |
 | `getTopLevelPlaces` | None | Array | Gets top-level places (no parent) |
-| `getAllSubLocationIds` | `locationId` (string) | Array | Gets all sub-location IDs (including self) |
-| `getLocationHierarchy` | `placeId` (string) | Array | Gets location hierarchy from root to target |
 | `getLocationHierarchyDisplay` | `place` (Object) | string | Gets formatted hierarchy breadcrumb |
 | `getLocationTypePriority` | `typeId` (string) | number | Gets location type priority |
 | `getPlacePriority` | `place` (Object) | number | Gets place priority |
-| `getCountryId` | `place` (Object) | string \| null | Gets country ID for a place |
 | `getLocationCountry` | `place` (Object) | string | Gets country name for a place |
 | `getLocationDistrict` | `place` (Object) | string \| null | Gets district for a place |
 | `getParentChain` | `place` (Object) | Array | Gets parent chain for a place |
-| `getLocationAtPriority` | `place` (Object), `targetPriority` (number) | Object \| null | Gets location at specific priority level |
 | `isAncestorOf` | `possibleAncestor` (Object), `place` (Object) | boolean | Checks if one place is ancestor of another |
-| `areInSameCountry` | `place1` (Object), `place2` (Object) | boolean | Checks if two places are in same country |
-| `findLowestCommonAncestor` | `place1` (Object), `place2` (Object) | Object \| null | Finds lowest common ancestor of two places |
 
-### LOCATION GROUPING QUERIES
+### CHARACTER LOCATION QUERIES (Pure - uses character.moves data)
 
 | Function | Parameters | Returns | Description |
 |----------|------------|---------|-------------|
-| `getCharacterLocationPath` | `character` (Object) | Array | Gets hierarchical location path (highest to lowest) |
-| `getCharacterLocationGroup` | `character` (Object), `withIcons` (boolean, default false) | string | Gets formatted location group name |
-| `getCharacterCountry` | `character` (Object) | Object \| null | Gets country location for a character |
-| `getCharacterMostSpecificLocation` | `character` (Object) | Object \| null | Gets most specific location |
-| `getCharactersGroupedByLocation` | `includeDeceased` (boolean, default false) | Object | Gets characters grouped by location hierarchy |
-| `getCharacterGroupCounts` | `includeDeceased` (boolean, default false) | Object | Gets character counts by location group |
-| `getLocationHierarchyTree` | `countryId` (string, optional) | Object | Gets location hierarchy as tree structure |
-| `getFormattedLocationHierarchy` | `countryId` (string, optional), `maxDepth` (number, default 5) | string | Gets formatted location hierarchy |
-
-### CHARACTER DROPDOWN GENERATION
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `generateGroupedCharacterDropdown` | `selectedId` (string, optional), `includeDeceased` (boolean, default false), `placeholderText` (string, default '— Select a character —') | string | Generates HTML for grouped character dropdown |
-| `attachGroupedCharacterDropdownListener` | `containerId` (string\|Element), `onSelect` (Function) | boolean | Attaches change listener to grouped dropdown |
-
-### POPULATION QUERIES
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getLocationOwnPopulation` | `locationId` (string) | number | Gets population directly in location (not including sub-locations) |
-| `getLocationPopulationCount` | `locationId` (string) | number | Gets total population including sub-locations |
-| `getLocationPopulationWithBreakdown` | `locationId` (string) | { total, byAgeGroup, byGender } | Gets population with breakdown |
-
-### MOVE QUERIES (Read-only)
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getCharacterLocationHistory` | `characterId` (string) | Array | Gets character's location history |
+| `getCurrentLocationId` | `character` (Object) | string \| null | Gets current location ID from character.moves |
 | `getCurrentLocation` | `character` (Object) | string | Gets current location name |
-| `getCurrentLocationId` | `character` (Object) | string \| null | Gets current location ID |
-| `getLocationAtYear` | `character` (Object), `year` (number) | Object \| null | Gets location at specific year |
-| `getCharacterMoves` | `character` (Object) | Array | Gets character's move records |
-
-### LEADER QUERIES (Read-only)
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getCurrentLeader` | `placeId` (string) | { characterId, character, startYear, title, notes } \| null | Gets current leader |
-| `getLeaderHistory` | `placeId` (string) | Array | Gets leader history |
-
-### SETTLEMENT QUERIES
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getSettlementData` | `locationId` (string) | Object \| null | Gets settlement data |
+| `getCharacterLocationPath` | `character` (Object) | Array | Gets hierarchical location path (highest to lowest) |
+| `getCharactersGroupedByLocation` | `includeDeceased` (boolean, default false) | Object | Gets characters grouped by location hierarchy |
 
 ---
 
@@ -821,6 +790,8 @@
 
 **DEPENDENCIES:** randomness.js (pickRandom, random, randomBoolean), accessors.js (getCharacters, getCharacterById, getActiveRankDisplay, getRoles)
 
+**ICON POLICY:** No emojis. No icons.
+
 ### CHARACTER NAMES
 
 | Function | Parameters | Returns | Description |
@@ -829,7 +800,7 @@
 | `getRandomSurnameFromCountry` | `countryId` (string) | string | Gets random surname from country (empty if none) |
 | `generateRandomFullName` | `countryId` (string), `gender` (string) | { name, surname } \| null | Generates full name |
 
-### CHARACTER SURNAME RULES & EPITHETS (MOVED FROM accessors.js)
+### CHARACTER SURNAME RULES & EPITHETS
 
 | Function | Parameters | Returns | Description |
 |----------|------------|---------|-------------|
@@ -837,7 +808,7 @@
 | `getCharacterEpithet` | `characterId` (string) | string | Gets character's epithet/nickname |
 | `getCharacterSurnameSource` | `characterId` (string) | string | Gets surname source ('country' or 'rank') |
 
-### ROLE CATEGORIES (MOVED FROM accessors.js)
+### ROLE CATEGORIES
 
 | Function | Parameters | Returns | Description |
 |----------|------------|---------|-------------|
@@ -887,7 +858,9 @@
 
 **PURPOSE:** Data integrity and repair functions (ANTI-CORRUPTION LAYER).
 
-**DEPENDENCIES:** accessors.js (getCharacters, getPlaces, getRanks, getRoles, getHouseholds, getCharacterById, getPlaceById), storage.js (saveMasterData), family.js (clearFamilyCache)
+**DEPENDENCIES:** accessors.js (getCharacters, getPlaces, getRanks, getRoles, getHouseholds, getCharacterById, getPlaceById), storage.js (saveMasterData)
+
+**ICON POLICY:** No emojis. No icons.
 
 ### CORE INTEGRITY
 
@@ -957,6 +930,8 @@
 **PURPOSE:** Runtime state management (UI state, selections, filters, modals).
 
 **DEPENDENCIES:** None (pure runtime state)
+
+**ICON POLICY:** No emojis. No icons.
 
 ### MAIN STATE OBJECT
 
@@ -1071,38 +1046,13 @@
 
 ---
 
-## 14. exportUtils.js
-
-**PURPOSE:** Data export functions for CSV and JSON.
-
-**DEPENDENCIES:** ui.js (showToast - optional), time.js (calculateAge - optional), accessors.js (getActiveRankDisplay - optional), world.js (getCurrentLocation - optional)
-
-### CSV EXPORT
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `exportToCSV` | `data` (Array), `filename` (string, default 'export'), `headers` (Array, optional) | void | Exports array of objects as CSV file |
-
-### JSON EXPORT
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `exportToJSON` | `data` (Object\|Array), `filename` (string, default 'export') | void | Exports object/array as JSON file |
-
-### CHARACTER-SPECIFIC EXPORTS
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `exportCharactersToCSV` | `characters` (Array), `filename` (string, default 'characters') | void | Exports character array to CSV |
-| `exportMasterData` | None | void | Exports complete masterData to JSON |
-
----
-
-## 15. icons.js
+## 14. icons.js
 
 **PURPOSE:** Custom SVG icons rendered as inline SVGs. All icons are custom SVG paths.
 
 **DEPENDENCIES:** None
+
+**ICON POLICY:** No emojis. Use icons.js for all icons.
 
 ### ICON OBJECT
 
@@ -1145,176 +1095,13 @@
 
 ---
 
-# MODALS (js/core/modals/)
-
----
-
-## 16. modals-core.js
-
-**PURPOSE:** Core modal system - modal manager, simple dialogs, undo/redo.
-
-**DEPENDENCIES:** formatting.js (escapeHtml, escapeHtmlPreserveSvg, containsSvg), ui.js (showToast), accessors.js (getCharacterById, getCharacters, getPlaces, getPlaceById), time.js (getCurrentYearSafe, calculateAge), icons.js (Icons)
-
-### MODAL MANAGER
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `openModal` | `options` (Object) | Element | Opens a modal dialog |
-| `closeTopModal` | None | void | Closes the top-most modal |
-| `closeAllModals` | None | void | Closes all modals |
-
-**Options for openModal:**
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `title` | string | 'Modal' | Modal title |
-| `content` | string | '' | HTML content |
-| `onConfirm` | Function | null | Called when confirm button is clicked |
-| `onCancel` | Function | null | Called when cancel button is clicked |
-| `onOpen` | Function | null | Called when modal opens |
-| `confirmText` | string | 'Confirm' | Confirm button text |
-| `cancelText` | string | 'Cancel' | Cancel button text |
-| `closeOnOverlay` | boolean | true | Whether clicking overlay closes modal |
-| `showCloseButton` | boolean | true | Whether to show close button |
-| `size` | string | 'medium' | 'small', 'medium', 'large' |
-
-### SIMPLE DIALOGS
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `alertDialog` | `message` (string), `title` (string, default 'Notice') | void | Shows an alert dialog |
-| `confirmDialog` | `message` (string), `title` (string, default 'Confirm'), `onConfirm` (Function) | void | Shows a confirmation dialog |
-| `successDialog` | `message` (string), `title` (string, default 'Success') | void | Shows a success dialog |
-| `errorDialog` | `message` (string), `title` (string, default 'Error') | void | Shows an error dialog |
-
-### UNDO/REDO MANAGER
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `undo` | None | boolean | Undoes the last action |
-| `redo` | None | boolean | Redoes the last undone action |
-| `showUndoPrompt` | `actionDescription` (string), `undoFunction` (Function), `redoFunction` (Function, optional), `timeoutMs` (number, default 5000) | void | Shows an undo prompt with timeout |
-
-### PREVIEW MODAL
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `openPreviewModal` | `options` (Object) | void | Opens a confirmation modal with consequences list |
-
-### UNIFIED SELECTOR FORWARDING
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `openUnifiedCharacterSelector` | `options` (Object) | boolean | Forwards to modals-char-select.js |
-| `buildLocationDropdown` | `selectedId` (string), `placeholderText` (string), `includeAll` (boolean), `includeUnknown` (boolean) | string | Forwards to locationDropdown.js |
-| `getLocationName` | `locationId` (string) | string | Gets location name |
-| `getLocationIdByName` | `name` (string) | string \| null | Gets location ID by name |
-
----
-
-## 17. modals-char-select.js
-
-**PURPOSE:** SINGLE SOURCE OF TRUTH for character selection modals.
-
-**DEPENDENCIES:** modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon), accessors.js (getCharacterById, getCharacters, getPlaceById, getPlaces), time.js (getCurrentYearSafe, calculateAge), family.js (getChildren, getSpouses, getParents, getConsanguinityDegree)
-
-### MAIN FUNCTIONS
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `openCharacterSelector` | `options` (Object) | Element \| null | Opens character selector modal |
-
-**Options for openCharacterSelector:**
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `title` | string | 'Select Character' | Modal title |
-| `targetId` | string | null | Target character ID for filtering |
-| `onSelect` | Function | function() {} | Called when character is selected |
-| `onCancel` | Function | function() {} | Called when cancelled |
-| `preset` | string | null | Filter preset ('partner', 'father', 'mother', 'child', 'master', 'apprentice', 'elder', 'available', 'all') |
-| `excludeIds` | Array | [] | Character IDs to exclude |
-| `filters` | Object | {} | Filter options |
-
-### FILTER OPTIONS
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `search` | string | '' | Search term |
-| `gender` | string | 'all' | 'all', 'male', 'female' |
-| `status` | string | 'all' | 'all', 'single', 'partnered', 'widowed' |
-| `ageGroup` | string | 'all' | Age group (e.g., '21-30') |
-| `location` | string | 'all' | Location ID |
-| `role` | string | 'all' | Role ID |
-| `showDeceased` | boolean | false | Include deceased characters |
-| `peers` | boolean | false | Only peers (±10 years) |
-| `sameLocation` | boolean | false | Only same location |
-| `hasChildren` | boolean | false | Only characters with children |
-| `noChildren` | boolean | false | Only characters without children |
-| `isHead` | boolean | false | Only household heads |
-| `isNotHead` | boolean | false | Only non-household heads |
-| `hasParents` | boolean | false | Only characters with parents |
-| `orphan` | boolean | false | Only orphans |
-| `sortBy` | string | 'age_desc' | 'age_desc', 'age_asc', 'name', 'birth_year' |
-
-### OTHER FUNCTIONS
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `closeCharacterSelector` | None | void | Closes the character selector |
-
----
-
-## 18. modals-household-selector.js
-
-**PURPOSE:** SINGLE SOURCE OF TRUTH for household selection modals.
-
-**DEPENDENCIES:** modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon), accessors.js (getCharacterById, getCharacters, getPlaceById, getPlaces), household-state.js (HouseholdState)
-
-### MAIN FUNCTIONS
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `openHouseholdSelector` | `options` (Object) | Element \| null | Opens household selector modal |
-
-**Options for openHouseholdSelector:**
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `title` | string | 'Select Household' | Modal title |
-| `targetCharacterId` | string | null | Target character ID for filtering |
-| `onSelect` | Function | function() {} | Called when household is selected |
-| `onCancel` | Function | function() {} | Called when cancelled |
-| `preselectedId` | string | null | Pre-selected household ID |
-| `filterConfig` | Object | {} | Filter configuration |
-
-### FILTER CONFIGURATION
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `showActive` | boolean | true | Show active households (living members) |
-| `showVacant` | boolean | false | Show vacant households (deceased only) |
-| `showEmpty` | boolean | false | Show empty households (no members) |
-| `locationFilter` | string | 'all' | Filter by location ID |
-| `searchTerm` | string | '' | Search term |
-
-### OTHER FUNCTIONS
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `closeHouseholdSelector` | None | void | Closes the household selector |
-
----
-
-# UI MODULES (js/core/ui/)
-
----
-
-## 19. ui.js
+## 15. ui.js
 
 **PURPOSE:** SINGLE SOURCE OF TRUTH for toast notifications, loading overlays, progress indicators, skeleton loaders, and button loading states.
 
 **DEPENDENCIES:** formatting.js (escapeHtml, escapeHtmlPreserveSvg), icons.js (Icons)
+
+**ICON POLICY:** Uses icons.js for icons.
 
 ### TOAST NOTIFICATIONS
 
@@ -1368,11 +1155,13 @@
 
 ---
 
-## 20. collapsible.js
+## 16. collapsible.js
 
 **PURPOSE:** SINGLE SOURCE OF TRUTH for all collapsible UI components.
 
 **DEPENDENCIES:** formatting.js (escapeHtml)
+
+**ICON POLICY:** No emojis. No icons.
 
 ### COLLAPSIBLE SIDEBAR
 
@@ -1409,11 +1198,13 @@
 
 ---
 
-## 21. responsive.js
+## 17. responsive.js
 
 **PURPOSE:** Responsive/mobile utility functions including viewport detection, responsive body class management, responsive grid, mobile menu, and touch-friendly adjustments.
 
 **DEPENDENCIES:** collections.js (debounce - optional)
+
+**ICON POLICY:** No emojis. No icons.
 
 ### CONSTANTS
 
@@ -1471,11 +1262,245 @@
 
 ---
 
+## 18. modals-core.js
+
+**PURPOSE:** Core modal system - modal manager, simple dialogs, undo/redo. PURE - NO system dependencies.
+
+**DEPENDENCIES:** formatting.js (escapeHtml, escapeHtmlPreserveSvg, containsSvg), ui.js (showToast), accessors.js (getCharacterById, getCharacters, getPlaces, getPlaceById), time.js (getCurrentYearSafe, calculateAge), icons.js (Icons)
+
+**ICON POLICY:** Uses icons.js for icons.
+
+### MODAL MANAGER
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `openModal` | `options` (Object) | Element | Opens a modal dialog |
+| `closeTopModal` | None | void | Closes the top-most modal |
+| `closeAllModals` | None | void | Closes all modals |
+
+**Options for openModal:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `title` | string | 'Modal' | Modal title |
+| `content` | string | '' | HTML content |
+| `onConfirm` | Function | null | Called when confirm button is clicked |
+| `onCancel` | Function | null | Called when cancel button is clicked |
+| `onOpen` | Function | null | Called when modal opens |
+| `confirmText` | string | 'Confirm' | Confirm button text |
+| `cancelText` | string | 'Cancel' | Cancel button text |
+| `closeOnOverlay` | boolean | true | Whether clicking overlay closes modal |
+| `showCloseButton` | boolean | true | Whether to show close button |
+| `size` | string | 'medium' | 'small', 'medium', 'large' |
+
+### SIMPLE DIALOGS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `alertDialog` | `message` (string), `title` (string, default 'Notice') | void | Shows an alert dialog |
+| `confirmDialog` | `message` (string), `title` (string, default 'Confirm'), `onConfirm` (Function) | void | Shows a confirmation dialog |
+| `successDialog` | `message` (string), `title` (string, default 'Success') | void | Shows a success dialog |
+| `errorDialog` | `message` (string), `title` (string, default 'Error') | void | Shows an error dialog |
+
+### UNDO/REDO MANAGER
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `undo` | None | boolean | Undoes the last action |
+| `redo` | None | boolean | Redoes the last undone action |
+| `showUndoPrompt` | `actionDescription` (string), `undoFunction` (Function), `redoFunction` (Function, optional), `timeoutMs` (number, default 5000) | void | Shows an undo prompt with timeout |
+
+### PREVIEW MODAL
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `openPreviewModal` | `options` (Object) | void | Opens a confirmation modal with consequences list |
+
+---
+
+## 19. exportUtils.js
+
+**PURPOSE:** Data export functions for CSV and JSON.
+
+**DEPENDENCIES:** ui.js (showToast - optional), time.js (calculateAge - optional), accessors.js (getActiveRankDisplay - optional), world.js (getCurrentLocation - optional)
+
+**ICON POLICY:** No emojis. No icons.
+
+### CSV EXPORT
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `exportToCSV` | `data` (Array), `filename` (string, default 'export'), `headers` (Array, optional) | void | Exports array of objects as CSV file |
+
+### JSON EXPORT
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `exportToJSON` | `data` (Object\|Array), `filename` (string, default 'export') | void | Exports object/array as JSON file |
+
+### CHARACTER EXPORTS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `exportCharactersToCSV` | `characters` (Array), `filename` (string, default 'characters') | void | Exports character array to CSV |
+| `exportMasterData` | None | void | Exports complete masterData to JSON |
+
+---
+
+## 20. query-helpers.js
+
+**PURPOSE:** Core query utilities that use ONLY core dependencies. Provides basic character status, role, location, parent/child, and age group queries without depending on system files (relationship-registry, etc.).
+
+**DEPENDENCIES:** accessors.js (core), time.js (core), constants.js (core)
+
+**ICON POLICY:** No emojis. No icons.
+
+### CHARACTER STATUS (Core-only)
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCharacterStatusBasic` | `char` (Object) | string | Gets character status using ONLY character data (no relationship system). Returns 'single', 'partnered', 'widowed', or 'deceased'. |
+
+### CHARACTER ROLES
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCharacterRoles` | `char` (Object) | Array | Gets character profession/role names from `char.professions` |
+
+### CHARACTER LOCATION
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCharacterLocationId` | `char` (Object) | string \| null | Gets current location ID from `char.moves` or `char.currentLocationId` |
+| `getCharacterLocationName` | `char` (Object) | string | Gets current location name |
+
+### PARENT/CHILD QUERIES
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCharacterParents` | `char` (Object) | { father, mother } | Gets father and mother objects |
+| `getCharacterChildren` | `char` (Object) | Array | Gets biological children |
+| `getCharacterHasChildren` | `char` (Object) | boolean | Checks if character has biological children |
+| `getCharacterHasParents` | `char` (Object) | boolean | Checks if character has parents |
+
+### AGE GROUP
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getAgeGroupForAge` | `age` (number) | string | Returns age group key (e.g., '21-30') |
+| `getAgeGroupLabel` | `group` (string) | string | Returns human-readable age group label |
+
+### LOCATION HIERARCHY
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getLocationHierarchy` | `place` (Object) | Array | Gets parent chain as array of place objects |
+| `getLocationHierarchyDisplay` | `place` (Object) | string | Formats location hierarchy as breadcrumb |
+| `getAllLocationsHierarchical` | None | Array | Gets all locations in hierarchical order with indentation |
+
+---
+
+## 21. family-accessors.js
+
+**PURPOSE:** PURE read-only accessors for family relationships. NO system dependencies, uses only core accessors and time.js. NO UI, NO business logic, NO mutations.
+
+**DEPENDENCIES:** accessors.js (getCharacterById, getCharacters), time.js (calculateAge, getCurrentYearSafe)
+
+**ICON POLICY:** No emojis. No icons.
+
+### PARENT ACCESSORS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getFather` | `characterId` (string) | Object \| null | Gets the father of a character |
+| `getMother` | `characterId` (string) | Object \| null | Gets the mother of a character |
+| `getParents` | `characterId` (string) | { father, mother } | Gets both parents of a character |
+| `getAllParents` | `characterId` (string), `includeAdoptive` (boolean, default false) | Array | Gets all biological and optionally adoptive parents with type info |
+| `hasParents` | `characterId` (string), `includeAdoptive` (boolean, default false) | boolean | Checks if a character has parents |
+| `isOrphan` | `characterId` (string), `includeAdoptive` (boolean, default false) | boolean | Checks if a character is an orphan (no living parents) |
+
+### CHILD ACCESSORS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getBiologicalChildren` | `characterId` (string), `includeDeceased` (boolean, default false) | Array | Gets all biological children |
+| `getAdoptedChildren` | `characterId` (string), `includeDeceased` (boolean, default false) | Array | Gets all adopted children with adoption info |
+| `getAllChildren` | `characterId` (string), `includeDeceased` (boolean, default false) | Array | Gets all children (biological + adopted) with type info |
+| `getLivingChildrenCount` | `characterId` (string), `includeAdopted` (boolean, default true) | number | Gets living children count |
+| `getTotalChildrenCount` | `characterId` (string), `includeAdopted` (boolean, default true), `includeDeceased` (boolean, default true) | number | Gets total children count |
+| `hasChildren` | `characterId` (string), `includeAdopted` (boolean, default true), `includeDeceased` (boolean, default false) | boolean | Checks if a character has children |
+| `getEldestChild` | `characterId` (string), `includeAdopted` (boolean, default true), `includeDeceased` (boolean, default false) | Object \| null | Gets the eldest child |
+| `getYoungestChild` | `characterId` (string), `includeAdopted` (boolean, default true), `includeDeceased` (boolean, default false) | Object \| null | Gets the youngest child |
+
+### SIBLING ACCESSORS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getSiblings` | `characterId` (string), `includeHalfSiblings` (boolean, default true), `includeDeceased` (boolean, default false), `includeAdopted` (boolean, default true) | Array | Gets all siblings with relationship info |
+| `getFullSiblings` | `characterId` (string), `includeDeceased` (boolean, default false) | Array | Gets full siblings (same father AND mother) |
+| `getHalfSiblings` | `characterId` (string), `includeDeceased` (boolean, default false) | Array | Gets half-siblings (share one parent) |
+| `getEldestSibling` | `characterId` (string), `includeHalfSiblings` (boolean, default false), `includeDeceased` (boolean, default false) | Object \| null | Gets the eldest sibling |
+| `getYoungestSibling` | `characterId` (string), `includeHalfSiblings` (boolean, default false), `includeDeceased` (boolean, default false) | Object \| null | Gets the youngest sibling |
+| `areSiblings` | `charId1` (string), `charId2` (string), `includeHalfSiblings` (boolean, default true), `includeAdopted` (boolean, default true) | boolean | Checks if two characters are siblings |
+
+### GRANDPARENT ACCESSORS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getGrandparents` | `characterId` (string), `generation` (number, default 1), `includeAdoptive` (boolean, default false) | Array | Gets grandparents of a character |
+| `getGrandchildren` | `characterId` (string), `includeDeceased` (boolean, default false), `includeAdopted` (boolean, default true) | Array | Gets grandchildren of a character |
+
+### EXTENDED FAMILY
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getAuntsAndUncles` | `characterId` (string), `includeDeceased` (boolean, default false) | Array | Gets aunts and uncles with relationship info |
+| `getCousins` | `characterId` (string), `includeDeceased` (boolean, default false), `degree` (number, default 1) | Array | Gets cousins (1st, 2nd, etc.) |
+| `getNiecesAndNephews` | `characterId` (string), `includeDeceased` (boolean, default false) | Array | Gets nieces and nephews with relationship info |
+
+### IN-LAW ACCESSORS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getSpouses` | `characterId` (string), `activeOnly` (boolean, default true) | Array | Gets spouse(s) of a character |
+| `getCurrentSpouse` | `characterId` (string) | Object \| null | Gets the current spouse (first active) |
+| `getSiblingsInLaw` | `characterId` (string), `includeDeceased` (boolean, default false) | Array | Gets siblings-in-law of a character |
+
+### HOUSEHOLD ACCESSORS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getCharacterHousehold` | `characterId` (string) | Object \| null | Gets the household of a character |
+| `getHouseholdFamilyMembers` | `characterId` (string), `includeNonFamily` (boolean, default false) | Array | Gets family members in a character's household |
+| `getHouseholdHead` | `characterId` (string) | Object \| null | Gets the head of a character's household |
+
+### CONSANGUINITY
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getConsanguinity` | `charId1` (string), `charId2` (string) | { degree: string, closeness: number } \| null | Gets the consanguinity relationship between two characters |
+| `getRelationshipDescription` | `charId1` (string), `charId2` (string) | string | Gets a human-readable relationship description |
+| `getConsanguinityDegree` | `charId1` (string), `charId2` (string) | number | Gets the consanguinity degree (closeness) |
+
+### STATISTICS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `getFamilyStatistics` | `characterId` (string) | Object | Gets comprehensive family statistics for a character |
+
+---
+
+# SELECTORS (js/selectors/)
+
+---
+
 ## 22. locationDropdown.js
 
 **PURPOSE:** SINGLE SOURCE OF TRUTH for location dropdown components.
 
 **DEPENDENCIES:** formatting.js (escapeHtml), accessors.js (getPlaces, getPlaceById, getLocationTypes, getLocationTypePriority), world.js (getLocationHierarchyDisplay, getLocationCountry, getLocationDistrict, getChildPlaces, getPlacesByPriority, getPlacePriority)
+
+**ICON POLICY:** Uses icons.js sparingly.
 
 ### CORE BUILDERS
 
@@ -1511,83 +1536,185 @@
 
 ---
 
-# ADDITIONAL MODULES
+## 23. modals-char-select.js
 
----
+**PURPOSE:** SINGLE SOURCE OF TRUTH for character selection modals.
 
-## 23. annualProcessing.js
+**DEPENDENCIES:** modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon), accessors.js (getCharacterById, getCharacters, getPlaceById, getPlaces), time.js (getCurrentYearSafe, calculateAge)
 
-**PURPOSE:** Main annual processing - complete year update.
+**ICON POLICY:** Uses icons.js for icons.
 
-**DEPENDENCIES:** None (uses external functions via window)
-
-### MAIN FUNCTION
+### MAIN FUNCTIONS
 
 | Function | Parameters | Returns | Description |
 |----------|------------|---------|-------------|
-| `processFullAnnualUpdate` | `year` (number) | { year, timestamp, residence, characters, households } | Processes full annual update for all systems |
+| `openCharacterSelector` | `options` (Object) | Element \| null | Opens character selector modal |
 
----
+**Options for openCharacterSelector:**
 
-## 24. exportUtils.js
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `title` | string | 'Select Character' | Modal title |
+| `targetId` | string | null | Target character ID for filtering |
+| `onSelect` | Function | function() {} | Called when character is selected |
+| `onCancel` | Function | function() {} | Called when cancelled |
+| `preset` | string | null | Filter preset ('partner', 'father', 'mother', 'child', 'master', 'apprentice', 'elder', 'available', 'all') |
+| `excludeIds` | Array | [] | Character IDs to exclude |
+| `filters` | Object | {} | Filter options |
 
-**PURPOSE:** Data export utilities for CSV and JSON.
+### FILTER OPTIONS
 
-**DEPENDENCIES:** ui.js (showToast - optional), time.js (calculateAge - optional), accessors.js (getActiveRankDisplay - optional), world.js (getCurrentLocation - optional)
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `search` | string | '' | Search term |
+| `gender` | string | 'all' | 'all', 'male', 'female' |
+| `status` | string | 'all' | 'all', 'single', 'partnered', 'widowed' |
+| `ageGroup` | string | 'all' | Age group (e.g., '21-30') |
+| `location` | string | 'all' | Location ID |
+| `role` | string | 'all' | Role ID |
+| `showDeceased` | boolean | false | Include deceased characters |
+| `peers` | boolean | false | Only peers (±10 years) |
+| `sameLocation` | boolean | false | Only same location |
+| `hasChildren` | boolean | false | Only characters with children |
+| `noChildren` | boolean | false | Only characters without children |
+| `isHead` | boolean | false | Only household heads |
+| `isNotHead` | boolean | false | Only non-household heads |
+| `hasParents` | boolean | false | Only characters with parents |
+| `orphan` | boolean | false | Only orphans |
+| `sortBy` | string | 'age_desc' | 'age_desc', 'age_asc', 'name', 'birth_year' |
 
-### CSV EXPORT
+### OTHER FUNCTIONS
 
 | Function | Parameters | Returns | Description |
 |----------|------------|---------|-------------|
-| `exportToCSV` | `data` (Array), `filename` (string, default 'export'), `headers` (Array, optional) | void | Exports array of objects as CSV file |
-
-### JSON EXPORT
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `exportToJSON` | `data` (Object\|Array), `filename` (string, default 'export') | void | Exports object/array as JSON file |
-
-### CHARACTER EXPORTS
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `exportCharactersToCSV` | `characters` (Array), `filename` (string, default 'characters') | void | Exports character array to CSV |
-| `exportMasterData` | None | void | Exports complete masterData to JSON |
+| `closeCharacterSelector` | None | void | Closes the character selector |
 
 ---
 
-# DEPENDENCY LOAD ORDER
+## 24. modals-household-selector.js
 
-```
-1. constants.js       (MUST BE FIRST - no dependencies)
-2. randomness.js       (pure RNG, no dependencies)
-3. ids.js              (depends on randomness.js)
-4. collections.js      (pure utilities)
-5. validation.js       (pure validation)
-6. formatting.js       (pure formatting)
-7. time.js             (pure time calculations)
-8. storage.js          (depends on none, creates masterData)
-9. accessors.js        (depends on storage.js for masterData)
-10. world.js           (depends on accessors.js, time.js)
-11. names.js           (depends on randomness.js, accessors.js)
-12. integrity.js       (depends on accessors.js, storage.js, family.js)
-13. state.js           (no dependencies - pure runtime state)
-14. exportUtils.js     (depends on ui.js optional)
-15. icons.js           (no dependencies)
-16. ui.js              (depends on formatting.js, icons.js)
-17. collapsible.js     (depends on formatting.js)
-18. responsive.js      (depends on collections.js optional)
-19. locationDropdown.js (depends on formatting.js, accessors.js, world.js)
-20. modals-core.js     (depends on formatting.js, ui.js, accessors.js, time.js, icons.js)
-21. modals-char-select.js (depends on modals-core.js, accessors.js, time.js, family.js)
-22. modals-household-selector.js (depends on modals-core.js, accessors.js)
-23. annualProcessing.js (uses external functions)
-```
+**PURPOSE:** SINGLE SOURCE OF TRUTH for household selection modals.
+
+**DEPENDENCIES:** modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon), accessors.js (getCharacterById, getCharacters, getPlaceById, getPlaces)
+
+**ICON POLICY:** Uses icons.js for icons.
+
+### MAIN FUNCTIONS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `openHouseholdSelector` | `options` (Object) | Element \| null | Opens household selector modal |
+
+**Options for openHouseholdSelector:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `title` | string | 'Select Household' | Modal title |
+| `targetCharacterId` | string | null | Target character ID for filtering |
+| `onSelect` | Function | function() {} | Called when household is selected |
+| `onCancel` | Function | function() {} | Called when cancelled |
+| `preselectedId` | string | null | Pre-selected household ID |
+| `filterConfig` | Object | {} | Filter configuration |
+
+### FILTER CONFIGURATION
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `showActive` | boolean | true | Show active households (living members) |
+| `showVacant` | boolean | false | Show vacant households (deceased only) |
+| `showEmpty` | boolean | false | Show empty households (no members) |
+| `locationFilter` | string | 'all' | Filter by location ID |
+| `searchTerm` | string | '' | Search term |
+
+### OTHER FUNCTIONS
+
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `closeHouseholdSelector` | None | void | Closes the household selector |
 
 ---
 
-# END OF DOCUMENTATION
+# COMPLETE LOAD ORDER
 
-**Generated:** 2026-07-11
-**Version:** 2.0
-**File Count:** 24 core modules documented
+```html
+<!-- ============================================================ -->
+<!-- CORE - NO SYSTEM DEPENDENCIES (21 files)                     -->
+<!-- ============================================================ -->
+
+<!-- 1. Constants (MUST BE FIRST) -->
+<script src="js/core/constants.js"></script>
+
+<!-- 2. Pure utilities -->
+<script src="js/core/randomness.js"></script>
+<script src="js/core/collections.js"></script>
+<script src="js/core/validation.js"></script>
+<script src="js/core/formatting.js"></script>
+<script src="js/core/time.js"></script>
+
+<!-- 3. IDs (depends on randomness) -->
+<script src="js/core/ids.js"></script>
+
+<!-- 4. Data layer -->
+<script src="js/core/storage.js"></script>
+<script src="js/core/accessors.js"></script>
+<script src="js/core/world.js"></script>
+<script src="js/core/names.js"></script>
+
+<!-- 5. State & integrity -->
+<script src="js/core/state.js"></script>
+<script src="js/core/integrity.js"></script>
+
+<!-- 6. Core query utilities -->
+<script src="js/core/query-helpers.js"></script>
+
+<!-- 7. Family accessors (pure, uses core only) -->
+<script src="js/core/family-accessors.js"></script>
+
+<!-- 8. Icons & UI -->
+<script src="js/core/icons.js"></script>
+<script src="js/core/ui.js"></script>
+<script src="js/core/collapsible.js"></script>
+<script src="js/core/responsive.js"></script>
+
+<!-- 9. Core modals (PURE - no system deps) -->
+<script src="js/core/modals-core.js"></script>
+
+<!-- 10. Utilities -->
+<script src="js/core/exportUtils.js"></script>
+
+<!-- ============================================================ -->
+<!-- SELECTORS - Depend on core (3 files)                         -->
+<!-- ============================================================ -->
+
+<script src="js/selectors/locationDropdown.js"></script>
+<script src="js/selectors/modals-char-select.js"></script>
+<script src="js/selectors/modals-household-selector.js"></script>
+
+<!-- ============================================================ -->
+<!-- LOCATION SYSTEM - Depend on core (8 files)                   -->
+<!-- ============================================================ -->
+
+<script src="js/location/location-state.js"></script>
+<script src="js/location/location-hierarchy.js"></script>
+<script src="js/location/location-movement.js"></script>
+<script src="js/location/location-queries.js"></script>
+<script src="js/location/location-commands.js"></script>
+<script src="js/location/location-ui-list.js"></script>
+<script src="js/location/modals-location.js"></script>
+<script src="js/location/modals-moves.js"></script>
+
+<!-- ============================================================ -->
+<!-- SOCIAL SYSTEM - Depend on core (5 files)                     -->
+<!-- ============================================================ -->
+
+<script src="js/relationships/relationship-types.js"></script>
+<script src="js/relationships/relationship-registry.js"></script>
+<script src="js/relationships/relationship-queries.js"></script>
+<script src="js/relationships/family-logic.js"></script>
+<script src="js/relationships/modals-family.js"></script>
+
+<!-- ============================================================ -->
+<!-- ORCHESTRATORS - Depend on everything (1 file)                -->
+<!-- ============================================================ -->
+
+<script src="js/events/annualProcessing.js"></script>

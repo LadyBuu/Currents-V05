@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * SETTLEMENT RANKS - Business logic for settlement ranks
+ * SETTLEMENT RANKS - Business logic for settlement ranks js/settlement/settlement-ranks.js
  * =============================================================================
  * 
  * This file contains business logic for:

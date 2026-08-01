@@ -1,11 +1,14 @@
 /**
  * =============================================================================
- * GOVERNMENT STATE (government-state.js)
+ * GOVERNMENT STATE (js/government/government-state.js)
  * =============================================================================
  * 
  * PURPOSE: Single source of truth for government data.
  * 
  * UPDATED: Added industry tax revenue, enterprise stats, and settlement integration
+ * UPDATED: Added icon field support for government types
+ * FIXED: _getCachedTypes() now properly reads from masterData.data.governmentTypes
+ * FIXED: _addGovernmentType now properly persists to masterData
  * 
  * DEPENDENCIES:
  *   - accessors.js (getPlaces, getPlaceById, getCharacters, getCharacterById)
@@ -150,7 +153,7 @@
         try {
             if (_state.initialized) return;
 
-            // Load from masterData
+            // Load from masterData - FIXED: Properly read governmentTypes
             if (window.masterData && window.masterData.data) {
                 _state.governmentDepartments = window.masterData.data.governmentDepartments || [];
                 _state.governmentTypes = window.masterData.data.governmentTypes || [];
@@ -516,15 +519,24 @@
         return null;
     }
 
+    // =========================================================================
+    // 7. GOVERNMENT TYPES - FIXED: Proper reading from masterData
+    // =========================================================================
+
     function getGovernmentTypes() {
-        return _state.governmentTypes.slice();
+        // Always read fresh from masterData
+        if (window.masterData && window.masterData.data && window.masterData.data.governmentTypes) {
+            return window.masterData.data.governmentTypes.slice();
+        }
+        return [];
     }
 
     function getGovernmentTypeById(typeId) {
         if (!typeId) return null;
-        for (var i = 0; i < _state.governmentTypes.length; i++) {
-            if (_state.governmentTypes[i].id === typeId) {
-                return _state.governmentTypes[i];
+        var types = getGovernmentTypes();
+        for (var i = 0; i < types.length; i++) {
+            if (types[i].id === typeId) {
+                return types[i];
             }
         }
         return null;
@@ -536,7 +548,7 @@
     }
 
     // =========================================================================
-    // 7. INDUSTRY INTEGRATION - NEW
+    // 8. INDUSTRY INTEGRATION
     // =========================================================================
 
     function getIndustryTaxRevenue(locationId, year) {
@@ -651,7 +663,7 @@
     }
 
     // =========================================================================
-    // 8. UI STATE MANAGEMENT
+    // 9. UI STATE MANAGEMENT
     // =========================================================================
 
     function getUIState() {
@@ -690,7 +702,7 @@
     }
 
     // =========================================================================
-    // 9. MUTATION HELPERS (Internal - used by commands)
+    // 10. MUTATION HELPERS (Internal - used by commands)
     // =========================================================================
 
     function _addDepartment(department) {
@@ -860,8 +872,31 @@
         return true;
     }
 
+    // =========================================================================
+    // 11. GOVERNMENT TYPE MUTATIONS - FIXED: Proper persistence
+    // =========================================================================
+
     function _addGovernmentType(type) {
-        _state.governmentTypes.push(type);
+        // Ensure icon exists
+        if (!type.icon) type.icon = '';
+        
+        // Push to masterData directly
+        if (!window.masterData) {
+            window.masterData = { data: {} };
+        }
+        if (!window.masterData.data) {
+            window.masterData.data = {};
+        }
+        if (!window.masterData.data.governmentTypes) {
+            window.masterData.data.governmentTypes = [];
+        }
+        
+        window.masterData.data.governmentTypes.push(type);
+        
+        // Also update state cache
+        _state.governmentTypes = window.masterData.data.governmentTypes.slice();
+        
+        // Save and invalidate
         _saveMasterData();
         invalidateCache();
         _notifySubscribers('governmentTypeAdded', type);
@@ -875,6 +910,18 @@
         if (updates.name !== undefined) type.name = updates.name;
         if (updates.description !== undefined) type.description = updates.description;
         if (updates.allowedRankIds !== undefined) type.allowedRankIds = updates.allowedRankIds;
+        if (updates.icon !== undefined) type.icon = updates.icon;
+
+        // Update in masterData
+        if (window.masterData && window.masterData.data && window.masterData.data.governmentTypes) {
+            var types = window.masterData.data.governmentTypes;
+            for (var i = 0; i < types.length; i++) {
+                if (types[i].id === typeId) {
+                    types[i] = type;
+                    break;
+                }
+            }
+        }
 
         _saveMasterData();
         invalidateCache();
@@ -883,16 +930,23 @@
     }
 
     function _deleteGovernmentType(typeId) {
+        if (!window.masterData || !window.masterData.data || !window.masterData.data.governmentTypes) {
+            return false;
+        }
+
+        var types = window.masterData.data.governmentTypes;
         var index = -1;
-        for (var i = 0; i < _state.governmentTypes.length; i++) {
-            if (_state.governmentTypes[i].id === typeId) {
+        for (var i = 0; i < types.length; i++) {
+            if (types[i].id === typeId) {
                 index = i;
                 break;
             }
         }
         if (index === -1) return false;
 
-        _state.governmentTypes.splice(index, 1);
+        types.splice(index, 1);
+        _state.governmentTypes = types.slice();
+
         _saveMasterData();
         invalidateCache();
         _notifySubscribers('governmentTypeDeleted', typeId);
@@ -900,7 +954,7 @@
     }
 
     // =========================================================================
-    // 10. CHANGE NOTIFICATIONS (Observer Pattern)
+    // 12. CHANGE NOTIFICATIONS (Observer Pattern)
     // =========================================================================
 
     function subscribe(callback) {
@@ -936,7 +990,7 @@
     }
 
     // =========================================================================
-    // 11. EXPORTS (UPDATED with Industry Integration)
+    // 13. EXPORTS
     // =========================================================================
 
     _initializeState();
@@ -967,7 +1021,7 @@
         getGovernmentTypeById: getGovernmentTypeById,
         getGovernmentHistory: getGovernmentHistory,
 
-        // INDUSTRY INTEGRATION - NEW
+        // Industry integration
         getIndustryTaxRevenue: getIndustryTaxRevenue,
         getIndustryEnterpriseStats: getIndustryEnterpriseStats,
         getIndustryTaxRate: getIndustryTaxRate,

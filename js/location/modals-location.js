@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * STILL WATERS - LOCATION MODALS (modals-location.js)
+ * STILL WATERS - LOCATION MODALS (js/location/modals-location.js)
  * =============================================================================
  * 
  * This file contains ALL location-related UI modals:
@@ -9,7 +9,9 @@
  * - View location hierarchy
  * - Cascade deletion with dependency checking
  * 
- * REFACTORED: Uses LocationState, LocationCommands, LocationQueries
+ * REFACTORED: Uses core wrappers from modals-core.js
+ * REFACTORED: Uses hierarchical location dropdown
+ * REFACTORED: Uses icon dropdown from modals-core.js
  * FIXED: All confirm buttons use plain text (no SVG icons)
  * FIXED: Recursion guards on all modal functions
  * FIXED: Icons from icons.js only (no emojis)
@@ -27,45 +29,29 @@
     var _openingModal = false;
 
     // =========================================================================
-    // 2. ICON HELPERS (using icons.js)
-    // =========================================================================
-
-    function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
-        if (window.Icons && window.Icons.CIRCLE) {
-            return window.Icons.CIRCLE;
-        }
-        return '';
-    }
-
-    // =========================================================================
-    // 3. DEPENDENCY WRAPPERS
+    // 2. DEPENDENCY WRAPPERS (Using core wrappers)
     // =========================================================================
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        return typeof window._escapeHtml === 'function' ? window._escapeHtml(str) : (str || '');
     }
 
-    function _showToast(msg, type) {
+    function _getIcon(name) {
+        return typeof window._getIcon === 'function' ? window._getIcon(name) : '';
+    }
+
+    function _getIconSafe(name) {
+        return typeof window._getIconSafe === 'function' ? window._getIconSafe(name) : '';
+    }
+
+    function _showToast(message, type) {
         if (typeof window._showToast === 'function') {
-            window._showToast(msg, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(msg, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(msg, type);
+            window._showToast(message, type);
         }
     }
 
     function _openModal(options) {
-        if (typeof window.openModal === 'function') {
-            return window.openModal(options);
-        }
-        return null;
+        return typeof window.openModal === 'function' ? window.openModal(options) : null;
     }
 
     function _closeTopModal() {
@@ -84,53 +70,51 @@
     }
 
     function _getCurrentYear() {
-        if (typeof window._getCurrentYear === 'function') return window._getCurrentYear();
-        if (typeof window.getCurrentYearSafe === 'function') return window.getCurrentYearSafe();
-        if (typeof window.getCurrentYear === 'function') return window.getCurrentYear();
-        return 1250;
+        return typeof window._getCurrentYear === 'function' ? window._getCurrentYear() : 1250;
     }
 
     function _getPlaceById(id) {
-        return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+        return typeof window._getPlaceById === 'function' ? window._getPlaceById(id) : null;
     }
 
     function _getPlaces() {
-        return typeof window.getPlaces === 'function' ? window.getPlaces() : [];
+        return typeof window._getPlaces === 'function' ? window._getPlaces() : [];
     }
 
     function _getLocationTypeById(id) {
-        return typeof window.getLocationTypeById === 'function' ? window.getLocationTypeById(id) : null;
+        return typeof window._getLocationTypeById === 'function' ? window._getLocationTypeById(id) : null;
     }
 
     function _getLocationTypes() {
-        return typeof window.getLocationTypes === 'function' ? window.getLocationTypes() : [];
+        return typeof window._getLocationTypes === 'function' ? window._getLocationTypes() : [];
     }
 
     function _getCharacters() {
-        return typeof window.getCharacters === 'function' ? window.getCharacters() : [];
+        return typeof window._getCharacters === 'function' ? window._getCharacters() : [];
     }
 
     function _getResidences() {
         return typeof window.getResidences === 'function' ? window.getResidences() : [];
     }
 
-    function _getEnterprises() {
-        return typeof window.getAllEnterprises === 'function' ? window.getAllEnterprises() : [];
-    }
-
     function _getHouseholds() {
         return typeof window.getHouseholds === 'function' ? window.getHouseholds() : [];
     }
 
-    function _getGovernments() {
-        return typeof window.getGovernments === 'function' ? window.getGovernments() : [];
+    function _getIconDropdown(selectedIcon, placeholder) {
+        if (typeof window.getIconDropdown === 'function') {
+            return window.getIconDropdown(selectedIcon, placeholder);
+        }
+        // Fallback: simple input if helper not available
+        return '<input type="text" id="newTypeIcon" value="' + _escapeHtml(selectedIcon || '⌇') + '" placeholder="' + _escapeHtml(placeholder || 'Icon') + '" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">';
     }
 
     function _buildLocationDropdown(selectedId, placeholderText, includeAll) {
         if (typeof window.buildLocationDropdown === 'function') {
             return window.buildLocationDropdown(selectedId, placeholderText, includeAll);
         }
-        var places = _getPlaces();
+        // Fallback: use LocationState directly
+        var places = LocationState.getAllPlaces({ includeDeprecated: false });
         var html = '';
         if (placeholderText) {
             html += '<option value="">' + _escapeHtml(placeholderText) + '</option>';
@@ -139,73 +123,57 @@
             html += '<option value="all">All Locations</option>';
         }
         for (var i = 0; i < places.length; i++) {
-            var selected = (selectedId === places[i].id) ? 'selected' : '';
-            var type = _getLocationTypeById(places[i].typeId);
+            var p = places[i];
+            var selected = (selectedId === p.id) ? 'selected' : '';
+            var type = LocationState.getLocationType(p.typeId);
             var icon = (type && type.icon) ? type.icon : '⌂';
-            html += '<option value="' + places[i].id + '" ' + selected + '>' +
-                icon + ' ' + _escapeHtml(places[i].displayName) +
+            html += '<option value="' + p.id + '" ' + selected + '>' +
+                icon + ' ' + _escapeHtml(p.displayName) +
                 (type ? ' (' + _escapeHtml(type.displayName) + ')' : '') +
                 '</option>';
         }
-        html += '<option value="unknown" ' + (selectedId === 'unknown' ? 'selected' : '') + '>Unknown Location</option>';
+        html += '<option value="unknown"' + (selectedId === 'unknown' ? ' selected' : '') + '>Unknown Location</option>';
         return html;
     }
+
+    // =========================================================================
+    // 3. DEPENDENCY CHECKING
+    // =========================================================================
 
     function _hasDependents(placeId) {
         var children = LocationState.getPlaceChildren(placeId, false);
         var characters = _getCharacters();
         var residences = _getResidences();
-        var enterprises = _getEnterprises();
         var households = _getHouseholds();
-        var governments = _getGovernments();
 
-        // Check characters
         var charsAtLocation = 0;
         for (var i = 0; i < characters.length; i++) {
-            if (characters[i].currentLocationId === placeId ||
-                characters[i].birthplaceId === placeId ||
-                characters[i].deathLocationId === placeId) {
+            var char = characters[i];
+            var locId = LocationState.getCurrentLocationId(char.id);
+            if (locId === placeId || char.birthplaceId === placeId) {
                 charsAtLocation++;
             }
         }
 
-        // Check residences
         var resAtLocation = 0;
         for (var i = 0; i < residences.length; i++) {
             if (residences[i].locationId === placeId) resAtLocation++;
         }
 
-        // Check enterprises
-        var entAtLocation = 0;
-        for (var i = 0; i < enterprises.length; i++) {
-            if (enterprises[i].locationId === placeId) entAtLocation++;
-        }
-
-        // Check households
         var hhAtLocation = 0;
         for (var i = 0; i < households.length; i++) {
             if (households[i].locationId === placeId) hhAtLocation++;
-        }
-
-        // Check governments
-        var govAtLocation = 0;
-        for (var i = 0; i < governments.length; i++) {
-            if (governments[i].locationId === placeId) govAtLocation++;
         }
 
         return {
             hasChildren: children.length > 0,
             hasCharacters: charsAtLocation > 0,
             hasResidences: resAtLocation > 0,
-            hasEnterprises: entAtLocation > 0,
             hasHouseholds: hhAtLocation > 0,
-            hasGovernments: govAtLocation > 0,
             childCount: children.length,
             characterCount: charsAtLocation,
             residenceCount: resAtLocation,
-            enterpriseCount: entAtLocation,
-            householdCount: hhAtLocation,
-            governmentCount: govAtLocation
+            householdCount: hhAtLocation
         };
     }
 
@@ -235,13 +203,13 @@
 
             var parentOptions = '<option value="">None (Root Location)</option>';
             for (var i = 0; i < places.length; i++) {
-                var place = places[i];
-                if (place.id === parentId) continue;
-                var selected = (place.id === parentId) ? 'selected' : '';
-                parentOptions += '<option value="' + place.id + '" ' + selected + '>' + _escapeHtml(place.displayName) + '</option>';
+                var p = places[i];
+                if (p.id === parentId) continue;
+                var selected = (p.id === parentId) ? 'selected' : '';
+                parentOptions += '<option value="' + p.id + '" ' + selected + '>' + _escapeHtml(p.displayName) + '</option>';
             }
 
-            var infoIcon = _getIcon('CIRCLE_DOT');
+            var infoIcon = _getIconSafe('CIRCLE_DOT');
 
             var modalContent =
                 '<div style="max-height: 500px; overflow-y: auto; padding: 4px;">' +
@@ -362,7 +330,7 @@
                 parentOptions += '<option value="' + p.id + '" ' + selected + '>' + _escapeHtml(p.displayName) + '</option>';
             }
 
-            var infoIcon = _getIcon('CIRCLE_DOT');
+            var infoIcon = _getIconSafe('CIRCLE_DOT');
 
             var modalContent =
                 '<div style="max-height: 500px; overflow-y: auto; padding: 4px;">' +
@@ -454,11 +422,10 @@
 
             var dependents = _hasDependents(placeId);
             var hasDependents = dependents.hasChildren || dependents.hasCharacters ||
-                dependents.hasResidences || dependents.hasEnterprises ||
-                dependents.hasHouseholds || dependents.hasGovernments;
+                dependents.hasResidences || dependents.hasHouseholds;
 
-            var infoIcon = _getIcon('CIRCLE_DOT');
-            var warningIcon = _getIcon('WARNING');
+            var infoIcon = _getIconSafe('CIRCLE_DOT');
+            var warningIcon = _getIconSafe('WARNING');
 
             var dependentsHtml = '';
             if (hasDependents) {
@@ -466,9 +433,7 @@
                 if (dependents.hasChildren) details.push(dependents.childCount + ' sub-location(s)');
                 if (dependents.hasCharacters) details.push(dependents.characterCount + ' character(s)');
                 if (dependents.hasResidences) details.push(dependents.residenceCount + ' residence(s)');
-                if (dependents.hasEnterprises) details.push(dependents.enterpriseCount + ' enterprise(s)');
                 if (dependents.hasHouseholds) details.push(dependents.householdCount + ' household(s)');
-                if (dependents.hasGovernments) details.push('Government structure');
 
                 dependentsHtml =
                     '<div style="background: rgba(200, 112, 64, 0.15); padding: 12px; border-radius: 8px; margin-bottom: 16px; border-left: 4px solid #c87040;">' +
@@ -552,8 +517,8 @@
         try {
             var place = LocationState.getPlace(locationId);
             var hierarchy = LocationState.getPlaceHierarchy(locationId);
-            var locationIcon = _getIcon('LOCATION');
-            var infoIcon = _getIcon('CIRCLE_DOT');
+            var locationIcon = _getIconSafe('LOCATION');
+            var infoIcon = _getIconSafe('CIRCLE_DOT');
 
             var html = '<div style="max-height: 450px; overflow-y: auto; padding: 4px;">';
 
@@ -569,6 +534,8 @@
                     }
                     var prefix = i > 0 ? '└─ ' : '';
                     var typeName = LocationState.getLocationTypeName(p.typeId);
+                    var type = LocationState.getLocationType(p.typeId);
+                    var typeIcon = (type && type.icon) ? type.icon : '⌇';
 
                     html +=
                         '<div class="hierarchy-item" data-loc-id="' + p.id + '" style="' +
@@ -580,10 +547,10 @@
                         'border-radius: 4px;' +
                         '">' +
                         '<span style="font-size: 0.75rem; font-weight: ' + (isSelected ? 'bold' : 'normal') + ';">' +
-                        indent + prefix + locationIcon + ' ' + _escapeHtml(p.displayName) +
+                        indent + prefix + typeIcon + ' ' + _escapeHtml(p.displayName) +
                         '</span>' +
                         '<span style="font-size: 0.55rem; color: var(--dim); margin-left: 8px;">' + _escapeHtml(typeName) + '</span>' +
-                        (p.isCapital ? ' <span style="font-size: 0.5rem; color: var(--accent);">(Capital)</span>' : '') +
+                        (p.isCapital ? ' <span style="font-size: 0.5rem; color: var(--accent);">⭐ Capital</span>' : '') +
                         '</div>';
                 }
             }
@@ -626,7 +593,7 @@
     }
 
     // =========================================================================
-    // 8. LOCATION TYPE MODALS
+    // 8. LOCATION TYPE MODALS - WITH ICON DROPDOWN
     // =========================================================================
 
     function openAddLocationTypeModal(onSuccess) {
@@ -637,7 +604,8 @@
         _openingModal = true;
 
         try {
-            var infoIcon = _getIcon('CIRCLE_DOT');
+            var infoIcon = _getIconSafe('CIRCLE_DOT');
+            var iconDropdown = _getIconDropdown('LOCATION', 'Select an icon');
 
             var modalContent =
                 '<div style="max-height: 500px; overflow-y: auto; padding: 4px;">' +
@@ -657,7 +625,9 @@
                 '</div>' +
                 '<div class="form-group" style="margin-bottom: 12px;">' +
                 '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Icon</label>' +
-                '<input type="text" id="newTypeIcon" value="⌇" placeholder="e.g., ⭐, ◉, ⌂" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
+                '<select id="newTypeIcon" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
+                iconDropdown +
+                '</select>' +
                 '</div>' +
                 '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
                 infoIcon + ' Priority determines hierarchy order. 1 = highest (Country), 5 = lowest (Other).' +
@@ -677,7 +647,7 @@
                     }
 
                     var priority = parseInt(document.getElementById('newTypePriority').value) || 5;
-                    var icon = document.getElementById('newTypeIcon').value.trim() || '⌇';
+                    var icon = document.getElementById('newTypeIcon').value || '⌇';
 
                     var result = LocationCommands.createLocationType({
                         displayName: name,
@@ -713,7 +683,8 @@
                 return;
             }
 
-            var infoIcon = _getIcon('CIRCLE_DOT');
+            var infoIcon = _getIconSafe('CIRCLE_DOT');
+            var iconDropdown = _getIconDropdown(type.icon || 'LOCATION', 'Select an icon');
 
             var modalContent =
                 '<div style="max-height: 500px; overflow-y: auto; padding: 4px;">' +
@@ -733,7 +704,9 @@
                 '</div>' +
                 '<div class="form-group" style="margin-bottom: 12px;">' +
                 '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Icon</label>' +
-                '<input type="text" id="editTypeIcon" value="' + _escapeHtml(type.icon || '⌇') + '" placeholder="e.g., ⭐, ◉, ⌂" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
+                '<select id="editTypeIcon" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
+                iconDropdown +
+                '</select>' +
                 '</div>' +
                 '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
                 infoIcon + ' Changing priority will affect how locations of this type are sorted.' +
@@ -753,7 +726,7 @@
                     }
 
                     var priority = parseInt(document.getElementById('editTypePriority').value) || 5;
-                    var icon = document.getElementById('editTypeIcon').value.trim() || '⌇';
+                    var icon = document.getElementById('editTypeIcon').value || '⌇';
 
                     var result = LocationCommands.updateLocationType(typeId, {
                         displayName: name,
@@ -792,8 +765,8 @@
             var places = LocationState.getPlacesByType(typeId);
             var hasDependents = places.length > 0;
 
-            var warningIcon = _getIcon('WARNING');
-            var infoIcon = _getIcon('CIRCLE_DOT');
+            var warningIcon = _getIconSafe('WARNING');
+            var infoIcon = _getIconSafe('CIRCLE_DOT');
 
             var dependentsHtml = '';
             if (hasDependents) {

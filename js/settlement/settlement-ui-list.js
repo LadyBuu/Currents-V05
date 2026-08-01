@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * SETTLEMENT UI LIST - UI list rendering for settlements
+ * SETTLEMENT UI LIST - UI list rendering for settlements js/settlement/settlement-ui-list.js
  * =============================================================================
  * 
  * Responsibilities:

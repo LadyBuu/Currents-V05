@@ -1,0 +1,1478 @@
+/* ================================================================
+   HOUSEHOLD MANAGER · EXTERNAL CSS
+   ================================================================
+   File: household-manager.css
+   Dependencies: common.css (for variables, base, topbar, sidebar, etc.)
+   Icons: all from icons.js (no emojis)
+   
+   PURPOSE: Styles for tab content and interactive elements in the
+            Household Manager tool.
+   ================================================================ */
+
+/* ================================================================
+   1. TAB CONTENT BASE
+   ================================================================ */
+
+.tab-pane .placeholder {
+    color: var(--tmut, #6a8098);
+    text-align: center;
+    padding: 40px 20px;
+    font-size: 0.9rem;
+    background: var(--bg2, #0d1119);
+    border-radius: 8px;
+    border: 1px solid var(--border, #1e2738);
+}
+
+/* ================================================================
+   2. OVERVIEW TAB
+   ================================================================ */
+
+.household-overview-grid {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 6px 16px;
+    font-size: 0.7rem;
+    margin: 12px 0;
+    padding: 12px;
+    background: var(--bg3, #121820);
+    border-radius: 6px;
+    border: 1px solid var(--border, #1e2738);
+}
+
+.household-overview-grid .label {
+    color: var(--dim, #8aabb8);
+    font-weight: 400;
+}
+
+.household-overview-grid .value {
+    color: var(--text, #cdd5e0);
+    word-break: break-word;
+}
+
+.household-overview-grid .value .highlight {
+    color: var(--accent, #6a9ecf);
+}
+
+/* Name history block */
+.name-history-block {
+    margin-top: 4px;
+    padding: 6px 10px;
+    background: var(--bg2, #0d1119);
+    border-radius: 4px;
+    font-size: 0.55rem;
+    border-left: 2px solid var(--accent, #6a9ecf);
+}
+
+.name-history-block .history-title {
+    color: var(--dim, #8aabb8);
+    font-size: 0.5rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-bottom: 2px;
+}
+
+.name-history-block .history-entry {
+    display: block;
+    color: var(--tmut, #6a8098);
+    padding: 1px 0;
+}
+
+.name-history-block .history-entry .year {
+    color: var(--dim, #8aabb8);
+    font-weight: 500;
+}
+
+.name-history-block .history-entry .arrow {
+    color: var(--accent, #6a9ecf);
+    margin: 0 4px;
+}
+
+/* Overview action buttons */
+.overview-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border, #1e2738);
+}
+
+.overview-actions .btn {
+    padding: 4px 12px;
+    font-size: 0.55rem;
+    background: var(--bg3, #121820);
+    border: 1px solid var(--border, #1e2738);
+    border-radius: 4px;
+    color: var(--text, #cdd5e0);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.overview-actions .btn-primary {
+    background: var(--accent-dim, rgba(106, 158, 207, 0.15));
+    border-color: var(--accent, #6a9ecf);
+    color: var(--accent, #6a9ecf);
+}
+
+.overview-actions .btn-primary:hover {
+    background: rgba(106, 158, 207, 0.25);
+}
+
+.overview-actions .btn-danger {
+    background: rgba(139, 64, 64, 0.2);
+    border-color: var(--danger, #8b4040);
+    color: var(--danger-lt, #c08080);
+}
+
+.overview-actions .btn-danger:hover {
+    background: rgba(139, 64, 64, 0.35);
+}
+
+.overview-actions .btn:hover {
+    border-color: var(--accent, #6a9ecf);
+    color: var(--accent, #6a9ecf);
+}
+
+/* ================================================================
+   3. MEMBERS TAB
+   ================================================================ */
+
+.member-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 10px;
+    background: var(--bg3, #121820);
+    border-radius: 4px;
+    margin-bottom: 2px;
+    border-left: 3px solid var(--border, #1e2738);
+    transition: background 0.1s ease;
+    color: var(--text, #cdd5e0);
+}
+
+.member-row:hover {
+    background: var(--bg4, #161e2a);
+}
+
+.member-row.is-head {
+    border-left-color: var(--accent, #6a9ecf);
+}
+
+.member-row.is-deceased {
+    opacity: 0.6;
+}
+
+.member-row .member-info {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    flex: 1;
+    min-width: 0;
+}
+
+.member-row .member-name {
+    font-size: 0.7rem;
+    font-weight: 500;
+}
+
+.member-row .member-name.head {
+    font-weight: 700;
+    color: var(--accent, #6a9ecf);
+}
+
+.member-row .member-detail {
+    font-size: 0.5rem;
+    color: var(--dim, #8aabb8);
+}
+
+.member-row .member-detail .role {
+    color: var(--accent-light, #8ab0e0);
+}
+
+.member-row .member-status {
+    font-size: 0.55rem;
+    padding: 1px 8px;
+    border-radius: 10px;
+}
+
+.member-row .member-status.living {
+    color: var(--success, #4a9060);
+}
+
+.member-row .member-status.deceased {
+    color: var(--dim, #8aabb8);
+}
+
+.member-row .member-badge {
+    font-size: 0.45rem;
+    padding: 1px 8px;
+    border-radius: 10px;
+    background: var(--bg2, #0d1119);
+    border: 1px solid var(--border, #1e2738);
+    color: var(--dim, #8aabb8);
+}
+
+.member-row .member-badge.head-badge {
+    border-color: var(--accent, #6a9ecf);
+    color: var(--accent, #6a9ecf);
+}
+
+.member-row .member-badge.staff-badge {
+    border-color: var(--accent-dim, rgba(106, 158, 207, 0.3));
+    color: var(--accent-light, #8ab0e0);
+}
+
+.member-row .member-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.member-row .member-actions .btn-icon {
+    padding: 1px 6px;
+    font-size: 0.4rem;
+    background: var(--bg2, #0d1119);
+    border: 1px solid var(--border, #1e2738);
+    border-radius: 3px;
+    color: var(--dim, #8aabb8);
+    cursor: pointer;
+    transition: all 0.1s ease;
+}
+
+.member-row .member-actions .btn-icon:hover {
+    border-color: var(--accent, #6a9ecf);
+    color: var(--accent, #6a9ecf);
+}
+
+.member-row .member-actions .btn-icon.danger {
+    background: rgba(139, 64, 64, 0.15);
+    border-color: var(--danger, #8b4040);
+    color: var(--danger-lt, #c08080);
+}
+
+.member-row .member-actions .btn-icon.danger:hover {
+    background: rgba(139, 64, 64, 0.3);
+}
+
+/* Members stats grid */
+.members-stats {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+    margin-bottom: 12px;
+}
+
+.members-stats .stat-card {
+    background: var(--bg3, #121820);
+    padding: 6px;
+    border-radius: 4px;
+    text-align: center;
+    border: 1px solid var(--border, #1e2738);
+}
+
+.members-stats .stat-card .stat-label {
+    font-size: 0.5rem;
+    color: var(--dim, #8aabb8);
+}
+
+.members-stats .stat-card .stat-value {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text, #cdd5e0);
+}
+
+.members-stats .stat-card .stat-value.living {
+    color: var(--success, #4a9060);
+}
+
+.members-stats .stat-card .stat-value.deceased {
+    color: var(--dim, #8aabb8);
+}
+
+/* Section headers */
+.section-header {
+    font-size: 0.6rem;
+    color: var(--accent, #6a9ecf);
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.section-header .section-count {
+    font-size: 0.5rem;
+    color: var(--dim, #8aabb8);
+    font-weight: 400;
+}
+
+.section-header .section-icon {
+    font-size: 0.7rem;
+}
+
+/* ================================================================
+   4. ECONOMY TAB
+   ================================================================ */
+
+.economy-summary-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.economy-summary-grid .eco-card {
+    background: var(--bg3, #121820);
+    padding: 10px;
+    border-radius: 6px;
+    text-align: center;
+    border: 1px solid var(--border, #1e2738);
+}
+
+.economy-summary-grid .eco-card .eco-label {
+    font-size: 0.55rem;
+    color: var(--dim, #8aabb8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+}
+
+.economy-summary-grid .eco-card .eco-value {
+    font-size: 1rem;
+    font-weight: 700;
+}
+
+.economy-summary-grid .eco-card .eco-value.positive {
+    color: var(--success, #4a9060);
+}
+
+.economy-summary-grid .eco-card .eco-value.negative {
+    color: var(--warn, #c87040);
+}
+
+.economy-summary-grid .eco-card .eco-value.neutral {
+    color: var(--text, #cdd5e0);
+}
+
+/* Resource grid */
+.resource-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.resource-grid .resource-card {
+    background: var(--bg3, #121820);
+    padding: 8px;
+    border-radius: 6px;
+    text-align: center;
+    border: 1px solid var(--border, #1e2738);
+}
+
+.resource-grid .resource-card .resource-label {
+    font-size: 0.5rem;
+    color: var(--dim, #8aabb8);
+}
+
+.resource-grid .resource-card .resource-value {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text, #cdd5e0);
+}
+
+/* Income/Expense row */
+.income-expense-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.income-expense-row .ie-card {
+    background: var(--bg3, #121820);
+    padding: 10px;
+    border-radius: 6px;
+    text-align: center;
+    border: 1px solid var(--border, #1e2738);
+}
+
+.income-expense-row .ie-card .ie-label {
+    font-size: 0.55rem;
+    color: var(--dim, #8aabb8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+}
+
+.income-expense-row .ie-card .ie-value {
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.income-expense-row .ie-card .ie-value.income {
+    color: var(--success, #4a9060);
+}
+
+.income-expense-row .ie-card .ie-value.expense {
+    color: var(--warn, #c87040);
+}
+
+/* Net change display */
+.net-change-display {
+    text-align: center;
+    padding: 8px;
+    background: var(--bg, #090c12);
+    border-radius: 4px;
+    margin-bottom: 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    border: 1px solid var(--border, #1e2738);
+}
+
+.net-change-display.positive {
+    color: var(--success, #4a9060);
+    border-color: rgba(74, 144, 96, 0.3);
+}
+
+.net-change-display.negative {
+    color: var(--warn, #c87040);
+    border-color: rgba(200, 112, 64, 0.3);
+}
+
+/* Economy actions */
+.economy-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+}
+
+.economy-actions .btn {
+    padding: 4px 12px;
+    font-size: 0.55rem;
+    background: var(--bg3, #121820);
+    border: 1px solid var(--border, #1e2738);
+    border-radius: 4px;
+    color: var(--text, #cdd5e0);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.economy-actions .btn-primary {
+    background: var(--accent-dim, rgba(106, 158, 207, 0.15));
+    border-color: var(--accent, #6a9ecf);
+    color: var(--accent, #6a9ecf);
+}
+
+.economy-actions .btn-primary:hover {
+    background: rgba(106, 158, 207, 0.25);
+}
+
+.economy-actions .btn-success {
+    background: rgba(74, 144, 96, 0.15);
+    border-color: var(--success, #4a9060);
+    color: var(--success, #4a9060);
+}
+
+.economy-actions .btn-success:hover {
+    background: rgba(74, 144, 96, 0.25);
+}
+
+.economy-actions .btn:hover {
+    border-color: var(--accent, #6a9ecf);
+    color: var(--accent, #6a9ecf);
+}
+
+/* Enterprise list in economy */
+.enterprise-list-compact {
+    background: var(--bg2, #0d1119);
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border, #1e2738);
+    margin-bottom: 12px;
+}
+
+.enterprise-list-compact .enterprise-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 3px 4px;
+    background: var(--bg, #090c12);
+    border-radius: 4px;
+    margin-bottom: 2px;
+    font-size: 0.55rem;
+    color: var(--text, #cdd5e0);
+}
+
+.enterprise-list-compact .enterprise-item .name {
+    color: var(--text, #cdd5e0);
+}
+
+.enterprise-list-compact .enterprise-item .profit.positive {
+    color: var(--success, #4a9060);
+}
+
+.enterprise-list-compact .enterprise-item .profit.negative {
+    color: var(--warn, #c87040);
+}
+
+.enterprise-list-compact .enterprise-item .status {
+    font-size: 0.45rem;
+}
+
+.enterprise-list-compact .enterprise-item .status.active {
+    color: var(--success, #4a9060);
+}
+
+.enterprise-list-compact .enterprise-item .status.bankrupt {
+    color: var(--danger, #8b4040);
+}
+
+.enterprise-list-compact .enterprise-item .status.ailing {
+    color: var(--warn, #c87040);
+}
+
+/* ================================================================
+   5. DEPARTMENTS TAB
+   ================================================================ */
+
+.department-card {
+    background: var(--bg3, #121820);
+    border: 1px solid var(--border, #1e2738);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    transition: border-color 0.1s ease;
+}
+
+.department-card:hover {
+    border-color: var(--accent-dim, rgba(106, 158, 207, 0.3));
+}
+
+.department-card .dept-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.department-card .dept-header .dept-name {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--accent, #6a9ecf);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.department-card .dept-header .dept-stats {
+    font-size: 0.5rem;
+    color: var(--dim, #8aabb8);
+    display: flex;
+    gap: 8px;
+}
+
+.department-card .dept-header .dept-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.department-card .dept-header .dept-actions .btn-icon {
+    padding: 2px 4px;
+    font-size: 0.45rem;
+    background: none;
+    border: none;
+    color: var(--dim, #8aabb8);
+    cursor: pointer;
+    transition: color 0.1s ease;
+}
+
+.department-card .dept-header .dept-actions .btn-icon:hover {
+    color: var(--accent, #6a9ecf);
+}
+
+.department-card .dept-header .dept-actions .btn-icon.danger:hover {
+    color: var(--danger-lt, #c08080);
+}
+
+/* Staff list in department */
+.dept-staff-list {
+    margin-top: 4px;
+    padding-left: 12px;
+}
+
+.dept-staff-list .staff-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 2px 6px;
+    font-size: 0.55rem;
+    color: var(--text, #cdd5e0);
+    border-left: 2px solid var(--border, #1e2738);
+    margin-bottom: 2px;
+}
+
+.dept-staff-list .staff-item .staff-name {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.dept-staff-list .staff-item .staff-role {
+    color: var(--dim, #8aabb8);
+    font-size: 0.5rem;
+}
+
+.dept-staff-list .staff-item .staff-head {
+    color: var(--accent, #6a9ecf);
+    font-size: 0.45rem;
+}
+
+.dept-staff-list .staff-item .staff-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.dept-staff-list .staff-item .staff-actions .btn-icon {
+    padding: 0px 4px;
+    font-size: 0.4rem;
+    background: none;
+    border: none;
+    color: var(--dim, #8aabb8);
+    cursor: pointer;
+}
+
+.dept-staff-list .staff-item .staff-actions .btn-icon:hover {
+    color: var(--accent, #6a9ecf);
+}
+
+.dept-staff-list .staff-item .staff-actions .btn-icon.danger:hover {
+    color: var(--danger-lt, #c08080);
+}
+
+/* Position list in department */
+.dept-positions {
+    margin-top: 4px;
+    padding-left: 12px;
+    border-top: 1px solid var(--border, #1e2738);
+    padding-top: 4px;
+}
+
+.dept-positions .position-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 2px 6px;
+    font-size: 0.5rem;
+    border-left: 2px solid var(--accent-dim, rgba(106, 158, 207, 0.2));
+    margin-bottom: 2px;
+    color: var(--text, #cdd5e0);
+}
+
+.dept-positions .position-item .pos-name {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.dept-positions .position-item .pos-assignee {
+    color: var(--dim, #8aabb8);
+    font-size: 0.45rem;
+}
+
+.dept-positions .position-item .pos-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.dept-positions .position-item .pos-actions .btn-icon {
+    padding: 0px 4px;
+    font-size: 0.4rem;
+    background: none;
+    border: none;
+    color: var(--dim, #8aabb8);
+    cursor: pointer;
+}
+
+.dept-positions .position-item .pos-actions .btn-icon:hover {
+    color: var(--accent, #6a9ecf);
+}
+
+.dept-positions .position-item .pos-actions .btn-icon.success:hover {
+    color: var(--success, #4a9060);
+}
+
+/* Unassigned positions */
+.unassigned-positions {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border, #1e2738);
+}
+
+.unassigned-positions .unassigned-title {
+    font-size: 0.55rem;
+    color: var(--warn, #c87040);
+    margin-bottom: 4px;
+}
+
+/* ================================================================
+   6. HOLDINGS TAB
+   ================================================================ */
+
+.holding-item {
+    background: var(--bg3, #121820);
+    border: 1px solid var(--border, #1e2738);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 6px;
+    transition: border-color 0.1s ease;
+    cursor: pointer;
+    color: var(--text, #cdd5e0);
+}
+
+.holding-item:hover {
+    border-color: var(--accent-dim, rgba(106, 158, 207, 0.3));
+}
+
+.holding-item .holding-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.holding-item .holding-header .holding-name {
+    font-size: 0.75rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.holding-item .holding-header .holding-type {
+    font-size: 0.5rem;
+    color: var(--dim, #8aabb8);
+}
+
+.holding-item .holding-header .holding-status {
+    font-size: 0.45rem;
+    padding: 1px 6px;
+    border-radius: 8px;
+}
+
+.holding-item .holding-header .holding-status.active {
+    color: var(--success, #4a9060);
+    border: 1px solid rgba(74, 144, 96, 0.3);
+}
+
+.holding-item .holding-header .holding-status.bankrupt {
+    color: var(--danger, #8b4040);
+    border: 1px solid rgba(139, 64, 64, 0.3);
+}
+
+.holding-item .holding-header .holding-status.rented {
+    color: var(--success, #4a9060);
+    border: 1px solid rgba(74, 144, 96, 0.3);
+}
+
+.holding-item .holding-header .holding-status.vacant {
+    color: var(--warn, #c87040);
+    border: 1px solid rgba(200, 112, 64, 0.3);
+}
+
+.holding-item .holding-header .holding-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.holding-item .holding-header .holding-actions .btn-icon {
+    padding: 1px 6px;
+    font-size: 0.4rem;
+    background: none;
+    border: none;
+    color: var(--dim, #8aabb8);
+    cursor: pointer;
+    transition: color 0.1s ease;
+}
+
+.holding-item .holding-header .holding-actions .btn-icon:hover {
+    color: var(--accent, #6a9ecf);
+}
+
+.holding-item .holding-header .holding-actions .btn-icon.danger:hover {
+    color: var(--danger-lt, #c08080);
+}
+
+.holding-item .holding-details {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 0.5rem;
+    color: var(--dim, #8aabb8);
+    margin-top: 4px;
+}
+
+.holding-item .holding-details .detail {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+}
+
+.holding-item .holding-details .detail .icon {
+    font-size: 0.5rem;
+}
+
+.holding-item .holding-details .detail .profit.positive {
+    color: var(--success, #4a9060);
+}
+
+.holding-item .holding-details .detail .profit.negative {
+    color: var(--warn, #c87040);
+}
+
+/* Holding stats grid */
+.holdings-stats {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.holdings-stats .stat-card {
+    background: var(--bg3, #121820);
+    padding: 6px;
+    border-radius: 4px;
+    text-align: center;
+    border: 1px solid var(--border, #1e2738);
+}
+
+.holdings-stats .stat-card .stat-label {
+    font-size: 0.5rem;
+    color: var(--dim, #8aabb8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+}
+
+.holdings-stats .stat-card .stat-value {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text, #cdd5e0);
+}
+
+.holdings-stats .stat-card .stat-value.positive {
+    color: var(--success, #4a9060);
+}
+
+/* ================================================================
+   7. ACTIVITY LOG TAB
+   ================================================================ */
+
+.activity-event {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 10px;
+    background: var(--bg2, #0d1119);
+    border-radius: 4px;
+    margin-bottom: 2px;
+    border-left: 3px solid var(--border, #1e2738);
+    cursor: pointer;
+    transition: background 0.1s ease;
+    color: var(--text, #cdd5e0);
+}
+
+.activity-event:hover {
+    background: var(--bg3, #121820);
+}
+
+.activity-event .event-info {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+    flex-wrap: wrap;
+}
+
+.activity-event .event-info .event-year {
+    font-size: 0.6rem;
+    font-weight: 600;
+    color: var(--dim, #8aabb8);
+    min-width: 36px;
+}
+
+.activity-event .event-info .event-icon {
+    font-size: 0.6rem;
+}
+
+.activity-event .event-info .event-label {
+    font-size: 0.6rem;
+    font-weight: 500;
+}
+
+.activity-event .event-info .event-detail {
+    font-size: 0.5rem;
+    color: var(--dim, #8aabb8);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+.activity-event .event-info .event-badge {
+    font-size: 0.4rem;
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: var(--bg, #090c12);
+    border: 1px solid var(--border, #1e2738);
+    color: var(--dim, #8aabb8);
+}
+
+.activity-event .event-info .event-badge.important {
+    background: rgba(139, 64, 64, 0.2);
+    border-color: var(--danger, #8b4040);
+    color: var(--danger-lt, #c08080);
+}
+
+.activity-event .event-info .event-badge.major {
+    background: rgba(200, 112, 64, 0.15);
+    border-color: var(--warn, #c87040);
+    color: var(--warn, #c87040);
+}
+
+.activity-event .event-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.activity-event .event-actions .btn-icon {
+    padding: 1px 6px;
+    font-size: 0.4rem;
+    background: none;
+    border: none;
+    color: var(--dim, #8aabb8);
+    cursor: pointer;
+}
+
+.activity-event .event-actions .btn-icon:hover {
+    color: var(--accent, #6a9ecf);
+}
+
+/* Activity filters */
+.activity-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 12px;
+    padding: 8px 10px;
+    background: var(--bg2, #0d1119);
+    border-radius: 6px;
+    border: 1px solid var(--border, #1e2738);
+}
+
+.activity-filters .filter-group {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    flex: 1;
+}
+
+.activity-filters .filter-group input,
+.activity-filters .filter-group select {
+    padding: 4px 8px;
+    background: var(--bg, #090c12);
+    border: 1px solid var(--border, #1e2738);
+    border-radius: 4px;
+    font-size: 0.6rem;
+    color: var(--text, #cdd5e0);
+    font-family: 'Crimson Pro', serif;
+}
+
+.activity-filters .filter-group input:focus,
+.activity-filters .filter-group select:focus {
+    outline: none;
+    border-color: var(--accent, #6a9ecf);
+}
+
+.activity-filters .filter-group input::placeholder {
+    color: var(--tmut, #6a8098);
+}
+
+.activity-filters .filter-actions {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+
+.activity-filters .filter-actions .btn {
+    padding: 2px 8px;
+    font-size: 0.5rem;
+    background: var(--bg3, #121820);
+    border: 1px solid var(--border, #1e2738);
+    border-radius: 4px;
+    color: var(--text, #cdd5e0);
+    cursor: pointer;
+}
+
+.activity-filters .filter-actions .btn:hover {
+    border-color: var(--accent, #6a9ecf);
+    color: var(--accent, #6a9ecf);
+}
+
+/* Activity stats */
+.activity-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.activity-stats .stat-card {
+    background: var(--bg3, #121820);
+    padding: 6px;
+    border-radius: 4px;
+    text-align: center;
+    border: 1px solid var(--border, #1e2738);
+}
+
+.activity-stats .stat-card .stat-label {
+    font-size: 0.5rem;
+    color: var(--dim, #8aabb8);
+}
+
+.activity-stats .stat-card .stat-value {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text, #cdd5e0);
+}
+
+/* ================================================================
+   8. MODAL OVERLAYS (for consistency)
+   ================================================================ */
+
+.hh-modal-content .form-group {
+    margin-bottom: 12px;
+}
+
+.hh-modal-content .form-group label {
+    display: block;
+    font-size: 0.7rem;
+    color: var(--accent, #6a9ecf);
+    margin-bottom: 4px;
+    font-weight: 500;
+}
+
+.hh-modal-content .form-group input,
+.hh-modal-content .form-group select,
+.hh-modal-content .form-group textarea {
+    width: 100%;
+    padding: 8px 10px;
+    background: var(--bg, #090c12);
+    border: 1px solid var(--border, #1e2738);
+    border-radius: 6px;
+    font-size: 0.8rem;
+    color: var(--text, #cdd5e0);
+    font-family: 'Crimson Pro', serif;
+}
+
+.hh-modal-content .form-group input:focus,
+.hh-modal-content .form-group select:focus,
+.hh-modal-content .form-group textarea:focus {
+    outline: none;
+    border-color: var(--accent, #6a9ecf);
+    box-shadow: 0 0 6px var(--accent-glow, rgba(106, 158, 207, 0.4));
+}
+
+.hh-modal-content .form-group input::placeholder,
+.hh-modal-content .form-group textarea::placeholder {
+    color: var(--tmut, #6a8098);
+}
+
+.hh-modal-content .form-group textarea {
+    resize: vertical;
+    min-height: 50px;
+}
+
+.hh-modal-content .info-box {
+    background: var(--bg3, #121820);
+    padding: 8px 12px;
+    border-radius: 6px;
+    margin-bottom: 12px;
+    font-size: 0.6rem;
+    border: 1px solid var(--border, #1e2738);
+    color: var(--text, #cdd5e0);
+}
+
+.hh-modal-content .info-box strong {
+    color: var(--accent, #6a9ecf);
+}
+
+/* ================================================================
+   9. SCROLLBARS - Ensures EVERY list and tab has scrollbars
+   ================================================================ */
+
+/* Force scrollbars on tab panes */
+.tab-pane {
+    overflow-y: auto;
+    overflow-x: hidden;
+    max-height: 100%;
+    scrollbar-width: thin;
+    scrollbar-color: var(--accent, #6a9ecf) var(--bg, #090c12);
+}
+
+.tab-pane::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.tab-pane::-webkit-scrollbar-track {
+    background: var(--bg, #090c12);
+    border-radius: 4px;
+}
+
+.tab-pane::-webkit-scrollbar-thumb {
+    background: var(--accent, #6a9ecf);
+    border-radius: 4px;
+    box-shadow: 0 0 4px var(--accent-glow, rgba(106, 158, 207, 0.4));
+}
+
+.tab-pane::-webkit-scrollbar-thumb:hover {
+    background: var(--accent-dark, #4a7aa5);
+}
+
+/* Member list container */
+.member-list-container {
+    max-height: 400px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: var(--accent, #6a9ecf) var(--bg, #090c12);
+}
+
+.member-list-container::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+.member-list-container::-webkit-scrollbar-track {
+    background: var(--bg, #090c12);
+    border-radius: 3px;
+}
+
+.member-list-container::-webkit-scrollbar-thumb {
+    background: var(--accent, #6a9ecf);
+    border-radius: 3px;
+}
+
+/* Department lists */
+.dept-staff-list,
+.dept-positions {
+    max-height: 250px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: var(--accent, #6a9ecf) var(--bg, #090c12);
+}
+
+.dept-staff-list::-webkit-scrollbar,
+.dept-positions::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+}
+
+.dept-staff-list::-webkit-scrollbar-track,
+.dept-positions::-webkit-scrollbar-track {
+    background: var(--bg, #090c12);
+    border-radius: 3px;
+}
+
+.dept-staff-list::-webkit-scrollbar-thumb,
+.dept-positions::-webkit-scrollbar-thumb {
+    background: var(--accent, #6a9ecf);
+    border-radius: 3px;
+}
+
+/* Holdings/Enterprise lists */
+.holdings-list-container {
+    max-height: 500px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: var(--accent, #6a9ecf) var(--bg, #090c12);
+}
+
+.holdings-list-container::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+.holdings-list-container::-webkit-scrollbar-track {
+    background: var(--bg, #090c12);
+    border-radius: 3px;
+}
+
+.holdings-list-container::-webkit-scrollbar-thumb {
+    background: var(--accent, #6a9ecf);
+    border-radius: 3px;
+}
+
+/* Enterprise list compact (economy tab) */
+.enterprise-list-compact {
+    max-height: 200px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: var(--accent, #6a9ecf) var(--bg, #090c12);
+}
+
+.enterprise-list-compact::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+}
+
+.enterprise-list-compact::-webkit-scrollbar-track {
+    background: var(--bg, #090c12);
+    border-radius: 3px;
+}
+
+.enterprise-list-compact::-webkit-scrollbar-thumb {
+    background: var(--accent, #6a9ecf);
+    border-radius: 3px;
+}
+
+/* Activity log list */
+.activity-list-container {
+    max-height: 500px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: var(--accent, #6a9ecf) var(--bg, #090c12);
+}
+
+.activity-list-container::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+.activity-list-container::-webkit-scrollbar-track {
+    background: var(--bg, #090c12);
+    border-radius: 3px;
+}
+
+.activity-list-container::-webkit-scrollbar-thumb {
+    background: var(--accent, #6a9ecf);
+    border-radius: 3px;
+}
+
+/* ================================================================
+   10. RESPONSIVE ADJUSTMENTS
+   ================================================================ */
+
+@media (max-width: 768px) {
+    .members-stats {
+        grid-template-columns: repeat(3, 1fr);
+    }
+
+    .members-stats .stat-card:last-child,
+    .members-stats .stat-card:nth-last-child(2) {
+        grid-column: span 1;
+    }
+
+    .economy-summary-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .economy-summary-grid .eco-card:last-child {
+        grid-column: span 2;
+    }
+
+    .resource-grid {
+        grid-template-columns: 1fr 1fr 1fr;
+    }
+
+    .income-expense-row {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .holdings-stats {
+        grid-template-columns: repeat(3, 1fr);
+    }
+
+    .holdings-stats .stat-card:last-child,
+    .holdings-stats .stat-card:nth-last-child(2) {
+        grid-column: span 1;
+    }
+
+    .activity-stats {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .household-overview-grid {
+        grid-template-columns: 1fr;
+        gap: 4px 0;
+    }
+
+    .household-overview-grid .label {
+        font-weight: 600;
+        color: var(--dim, #8aabb8);
+        border-bottom: 1px solid var(--border, #1e2738);
+        padding-bottom: 2px;
+    }
+
+    .household-overview-grid .value {
+        padding-left: 4px;
+        margin-bottom: 6px;
+    }
+
+    .activity-filters {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .activity-filters .filter-group {
+        flex-direction: column;
+    }
+
+    .activity-filters .filter-group input,
+    .activity-filters .filter-group select {
+        width: 100%;
+    }
+
+    .activity-filters .filter-actions {
+        justify-content: center;
+        padding-top: 4px;
+    }
+
+    .department-card .dept-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .department-card .dept-header .dept-actions {
+        align-self: flex-start;
+        margin-top: 4px;
+    }
+
+    .holding-item .holding-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .holding-item .holding-header .holding-actions {
+        align-self: flex-start;
+        margin-top: 4px;
+    }
+
+    .holding-item .holding-details {
+        gap: 4px;
+    }
+
+    .member-row {
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+
+    .member-row .member-info {
+        width: 100%;
+    }
+
+    .member-row .member-actions {
+        width: 100%;
+        justify-content: flex-end;
+        padding-top: 4px;
+        border-top: 1px solid var(--border, #1e2738);
+    }
+
+    .economy-actions {
+        justify-content: center;
+    }
+
+    .overview-actions {
+        justify-content: center;
+    }
+
+    /* Scrollbar adjustments for mobile */
+    .tab-pane::-webkit-scrollbar {
+        width: 4px;
+        height: 4px;
+    }
+
+    .member-list-container::-webkit-scrollbar,
+    .holdings-list-container::-webkit-scrollbar,
+    .activity-list-container::-webkit-scrollbar {
+        width: 4px;
+        height: 4px;
+    }
+
+    .dept-staff-list::-webkit-scrollbar,
+    .dept-positions::-webkit-scrollbar,
+    .enterprise-list-compact::-webkit-scrollbar {
+        width: 3px;
+        height: 3px;
+    }
+}
+
+@media (max-width: 480px) {
+    .members-stats {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .members-stats .stat-card:last-child {
+        grid-column: span 2;
+    }
+
+    .economy-summary-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .economy-summary-grid .eco-card:last-child {
+        grid-column: span 1;
+    }
+
+    .resource-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .resource-grid .resource-card:last-child {
+        grid-column: span 2;
+    }
+
+    .income-expense-row {
+        grid-template-columns: 1fr;
+    }
+
+    .holdings-stats {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .holdings-stats .stat-card:last-child {
+        grid-column: span 2;
+    }
+
+    .activity-stats {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .activity-event .event-info {
+        flex-wrap: wrap;
+    }
+
+    .activity-event .event-info .event-detail {
+        white-space: normal;
+        width: 100%;
+        flex: 0 0 100%;
+    }
+}

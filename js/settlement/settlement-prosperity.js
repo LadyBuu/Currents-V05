@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * SETTLEMENT PROSPERITY - Prosperity calculation with multi-factor weighting
+ * SETTLEMENT PROSPERITY - Prosperity calculation with multi-factor weighting js/settlement/settlement-prosperity.js
  * =============================================================================
  * 
  * This file contains the prosperity calculation logic with all factors:

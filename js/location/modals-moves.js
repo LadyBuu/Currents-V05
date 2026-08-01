@@ -1,13 +1,13 @@
 /**
  * =============================================================================
- * STILL WATERS - MOVES MODALS (modals-moves.js)
+ * STILL WATERS - MOVES MODALS (js/location/modals-moves.js)
  * =============================================================================
  * 
  * This file contains character move and bulk move modals.
  * 
- * REFACTORED: Uses LocationState, LocationCommands, LocationMovement directly
- * REFACTORED: Uses unified location dropdown from modals-core.js
- * REFACTORED: Uses unified character selector from modals-core.js
+ * REFACTORED: Uses core wrappers from modals-core.js
+ * REFACTORED: Uses hierarchical location dropdown
+ * REFACTORED: Uses unified character selector via wrapper
  * FIXED: All confirm buttons use plain text (no SVG icons)
  * FIXED: Recursion guards on all modal functions
  * FIXED: Icons from icons.js only (no emojis)
@@ -25,45 +25,29 @@
     var _openingModal = false;
 
     // =========================================================================
-    // 2. ICON HELPERS (using icons.js)
-    // =========================================================================
-
-    function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
-        if (window.Icons && window.Icons.CIRCLE) {
-            return window.Icons.CIRCLE;
-        }
-        return '';
-    }
-
-    // =========================================================================
-    // 3. DEPENDENCY WRAPPERS
+    // 2. DEPENDENCY WRAPPERS (Using core wrappers)
     // =========================================================================
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        return typeof window._escapeHtml === 'function' ? window._escapeHtml(str) : (str || '');
     }
 
-    function _showToast(msg, type) {
+    function _getIcon(name) {
+        return typeof window._getIcon === 'function' ? window._getIcon(name) : '';
+    }
+
+    function _getIconSafe(name) {
+        return typeof window._getIconSafe === 'function' ? window._getIconSafe(name) : '';
+    }
+
+    function _showToast(message, type) {
         if (typeof window._showToast === 'function') {
-            window._showToast(msg, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(msg, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(msg, type);
+            window._showToast(message, type);
         }
     }
 
     function _openModal(options) {
-        if (typeof window.openModal === 'function') {
-            return window.openModal(options);
-        }
-        return null;
+        return typeof window.openModal === 'function' ? window.openModal(options) : null;
     }
 
     function _closeTopModal() {
@@ -73,55 +57,134 @@
     }
 
     function _getCurrentYear() {
-        if (typeof window._getCurrentYear === 'function') return window._getCurrentYear();
-        if (typeof window.getCurrentYearSafe === 'function') return window.getCurrentYearSafe();
-        if (typeof window.getCurrentYear === 'function') return window.getCurrentYear();
-        return 1250;
+        return typeof window._getCurrentYear === 'function' ? window._getCurrentYear() : 1250;
     }
 
     function _getCharacterById(id) {
-        return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+        return typeof window._getCharacterById === 'function' ? window._getCharacterById(id) : null;
     }
 
     function _getCharacters() {
-        return typeof window.getCharacters === 'function' ? window.getCharacters() : [];
+        return typeof window._getCharacters === 'function' ? window._getCharacters() : [];
     }
 
     function _getPlaceById(id) {
-        return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
-    }
-
-    function _getPlaces() {
-        return typeof window.getPlaces === 'function' ? window.getPlaces() : [];
+        return typeof window._getPlaceById === 'function' ? window._getPlaceById(id) : null;
     }
 
     function _getLocationTypeById(id) {
-        return typeof window.getLocationTypeById === 'function' ? window.getLocationTypeById(id) : null;
+        return typeof window._getLocationTypeById === 'function' ? window._getLocationTypeById(id) : null;
     }
 
     function _buildLocationDropdown(selectedId, placeholderText, includeAll) {
         if (typeof window.buildLocationDropdown === 'function') {
             return window.buildLocationDropdown(selectedId, placeholderText, includeAll);
         }
-        var places = _getPlaces();
+        // Fallback: use LocationState directly with hierarchical tree
+        var places = LocationState.getAllPlaces({ includeDeprecated: false });
+        var tree = _buildLocationTree(places);
+        var flat = _flattenLocationTree(tree);
+        
         var html = '';
         if (placeholderText) {
             html += '<option value="">' + _escapeHtml(placeholderText) + '</option>';
         }
         if (includeAll) {
-            html += '<option value="all">All Locations</option>';
+            html += '<option value="all"' + (selectedId === 'all' ? ' selected' : '') + '>All Locations</option>';
         }
-        for (var i = 0; i < places.length; i++) {
-            var selected = (selectedId === places[i].id) ? 'selected' : '';
-            var type = _getLocationTypeById(places[i].typeId);
-            var icon = (type && type.icon) ? type.icon : '⌂';
-            html += '<option value="' + places[i].id + '" ' + selected + '>' +
-                icon + ' ' + _escapeHtml(places[i].displayName) +
-                (type ? ' (' + _escapeHtml(type.displayName) + ')' : '') +
+        
+        for (var i = 0; i < flat.length; i++) {
+            var item = flat[i];
+            var selected = (selectedId === item.id) ? 'selected' : '';
+            var style = item.depth > 0 ? 'padding-left:' + (item.depth * 16 + 4) + 'px;' : '';
+            var type = _getLocationTypeById(item.typeId);
+            var icon = (type && type.icon) ? type.icon : '⌇';
+            html += '<option value="' + item.id + '" ' + selected + ' style="' + style + '">' +
+                icon + ' ' + _escapeHtml(item.displayName) +
+                (item.isCapital ? ' ⭐' : '') +
                 '</option>';
         }
-        html += '<option value="unknown" ' + (selectedId === 'unknown' ? 'selected' : '') + '>Unknown Location</option>';
+        
+        html += '<option value="unknown"' + (selectedId === 'unknown' ? ' selected' : '') + '>❓ Unknown Location</option>';
         return html;
+    }
+
+    function _buildLocationTree(places) {
+        var locationMap = {};
+        var roots = [];
+
+        for (var i = 0; i < places.length; i++) {
+            var p = places[i];
+            var priority = LocationState.getLocationTypePriority(p.typeId);
+            locationMap[p.id] = {
+                id: p.id,
+                name: p.displayName,
+                typeId: p.typeId,
+                priority: priority,
+                parentId: p.parentId || null,
+                isCapital: p.isCapital || false,
+                status: p.status || 'active',
+                children: []
+            };
+        }
+
+        for (var id in locationMap) {
+            if (locationMap.hasOwnProperty(id)) {
+                var node = locationMap[id];
+                if (node.parentId && locationMap[node.parentId]) {
+                    locationMap[node.parentId].children.push(node);
+                } else {
+                    roots.push(node);
+                }
+            }
+        }
+
+        function sortNodes(nodes) {
+            nodes.sort(function(a, b) {
+                if (a.priority !== b.priority) return a.priority - b.priority;
+                return a.name.localeCompare(b.name);
+            });
+            for (var i = 0; i < nodes.length; i++) {
+                if (nodes[i].children && nodes[i].children.length > 0) {
+                    sortNodes(nodes[i].children);
+                }
+            }
+        }
+        sortNodes(roots);
+
+        return roots;
+    }
+
+    function _flattenLocationTree(nodes, depth) {
+        depth = depth || 0;
+        var flat = [];
+        var prefix = '';
+        for (var j = 0; j < depth; j++) {
+            prefix += '    ';
+        }
+
+        for (var i = 0; i < nodes.length; i++) {
+            var node = nodes[i];
+            var isLast = (i === nodes.length - 1);
+            var connector = depth === 0 ? '' : (isLast ? '└── ' : '├── ');
+            
+            flat.push({
+                id: node.id,
+                name: node.name,
+                displayName: prefix + connector + node.name,
+                depth: depth,
+                typeId: node.typeId,
+                isCapital: node.isCapital,
+                status: node.status
+            });
+
+            if (node.children && node.children.length > 0) {
+                var childFlat = _flattenLocationTree(node.children, depth + 1);
+                flat = flat.concat(childFlat);
+            }
+        }
+
+        return flat;
     }
 
     function _openCharacterSelector(options) {
@@ -164,21 +227,11 @@
             return;
         }
 
-        if (typeof window.openCharacterSelectModal === 'function') {
-            window.openCharacterSelectModal({
-                title: title,
-                targetCharacterId: excludeId || null,
-                onSelect: onSelect,
-                includeDeceased: filters.showDeceased || false
-            });
-            return;
-        }
-
         _showToast('Character selector not available', 'error');
     }
 
     // =========================================================================
-    // 4. SINGLE CHARACTER MOVE MODAL
+    // 3. SINGLE CHARACTER MOVE MODAL
     // =========================================================================
 
     function openMoveCharacterModal(characterId, onSuccess) {
@@ -198,8 +251,8 @@
             var currentLocation = LocationState.getCurrentLocation(characterId);
             var currentYear = _getCurrentYear();
 
-            var locationIcon = _getIcon('LOCATION');
-            var infoIcon = _getIcon('CIRCLE_DOT');
+            var locationIcon = _getIconSafe('LOCATION');
+            var infoIcon = _getIconSafe('CIRCLE_DOT');
 
             var modalContent =
                 '<div style="margin-bottom: 16px; padding: 12px; background: var(--bg2); border-radius: 8px;">' +
@@ -243,7 +296,6 @@
                         return false;
                     }
 
-                    // Use LocationCommands directly
                     var result = LocationCommands.recordMove(characterId, destinationId, {
                         year: moveYear,
                         note: reason || null
@@ -266,7 +318,7 @@
     }
 
     // =========================================================================
-    // 5. BULK CHARACTER MOVE MODAL
+    // 4. BULK CHARACTER MOVE MODAL
     // =========================================================================
 
     function openBulkMoveModal(fromPlaceId, onSuccess) {
@@ -289,6 +341,7 @@
             var searchTerm = '';
             var toPlaceId = null;
 
+            // Get characters at this location
             var charactersAtLocation = [];
             for (var i = 0; i < allChars.length; i++) {
                 var char = allChars[i];
@@ -303,9 +356,9 @@
                 return a.name.localeCompare(b.name);
             });
 
-            var locationIcon = _getIcon('LOCATION');
-            var infoIcon = _getIcon('CIRCLE_DOT');
-            var personIcon = _getIcon('PERSON');
+            var locationIcon = _getIconSafe('LOCATION');
+            var infoIcon = _getIconSafe('CIRCLE_DOT');
+            var personIcon = _getIconSafe('PERSON');
 
             function renderCharacterList() {
                 var filtered = charactersAtLocation;
@@ -352,19 +405,27 @@
             }
 
             function renderDestinationList() {
-                var places = _getPlaces().filter(function(p) { return p.id !== fromPlaceId; });
-                if (places.length === 0) {
+                var places = LocationState.getAllPlaces({ includeDeprecated: false });
+                var filtered = places.filter(function(p) { return p.id !== fromPlaceId; });
+                
+                if (filtered.length === 0) {
                     return '<div style="text-align:center; padding:20px; color:var(--dim);">No other locations available</div>';
                 }
 
+                // Build hierarchical tree for destinations
+                var tree = _buildLocationTree(filtered);
+                var flat = _flattenLocationTree(tree);
+
                 var html = '';
-                for (var i = 0; i < places.length; i++) {
-                    var p = places[i];
-                    var isSelected = toPlaceId === p.id;
-                    var typeIcon = _getLocationTypeById(p.typeId)?.icon || '⌂';
+                for (var i = 0; i < flat.length; i++) {
+                    var item = flat[i];
+                    var isSelected = toPlaceId === item.id;
+                    var type = _getLocationTypeById(item.typeId);
+                    var typeIcon = (type && type.icon) ? type.icon : '⌂';
+                    var style = item.depth > 0 ? 'padding-left:' + (item.depth * 16 + 4) + 'px;' : '';
 
                     html +=
-                        '<div class="destination-place" data-place-id="' + p.id + '" style="' +
+                        '<div class="destination-place" data-place-id="' + item.id + '" style="' +
                         'background: ' + (isSelected ? 'var(--accent-dim)' : 'var(--bg3)') + ';' +
                         'border: 1px solid ' + (isSelected ? 'var(--accent)' : 'var(--border)') + ';' +
                         'border-radius: 6px;' +
@@ -376,8 +437,9 @@
                         'gap: 8px;' +
                         '">' +
                         '<input type="radio" name="destinationRadio" class="destination-radio" ' + (isSelected ? 'checked' : '') + ' style="width: 14px; height: 14px; cursor: pointer;">' +
-                        '<div>' +
-                        '<strong style="font-size: 0.7rem;">' + typeIcon + ' ' + _escapeHtml(p.displayName) + '</strong>' +
+                        '<div style="' + style + '">' +
+                        '<strong style="font-size: 0.7rem;">' + typeIcon + ' ' + _escapeHtml(item.displayName) + '</strong>' +
+                        (item.isCapital ? ' <span style="font-size:0.5rem;color:var(--accent);">⭐</span>' : '') +
                         '</div>' +
                         '</div>';
                 }
@@ -503,7 +565,6 @@
                         });
                     }
 
-                    // Use LocationCommands directly
                     var results = LocationCommands.bulkRecordMoves(moves);
 
                     if (results && results.success.length > 0) {
@@ -580,7 +641,7 @@
     }
 
     // =========================================================================
-    // 6. MOVE HISTORY MODAL
+    // 5. MOVE HISTORY MODAL
     // =========================================================================
 
     function openMoveHistoryModal(characterId) {
@@ -598,8 +659,8 @@
             }
 
             var moves = LocationState.getMoveHistory(characterId);
-            var locationIcon = _getIcon('LOCATION');
-            var infoIcon = _getIcon('CIRCLE_DOT');
+            var locationIcon = _getIconSafe('LOCATION');
+            var infoIcon = _getIconSafe('CIRCLE_DOT');
 
             if (moves.length === 0) {
                 _showToast('No moves recorded for ' + character.name, 'info');
@@ -645,7 +706,7 @@
     }
 
     // =========================================================================
-    // 7. EXPORTS
+    // 6. EXPORTS
     // =========================================================================
 
     window.openMoveCharacterModal = openMoveCharacterModal;
