@@ -85,14 +85,11 @@
     }
 
     function _getCurrentYear() {
-        if (typeof window.getCurrentYearSafe === 'function') {
-            return window.getCurrentYearSafe();
-        }
-        if (typeof window.getCurrentYear === 'function') {
-            return window.getCurrentYear();
-        }
-        return 1250;
-    }
+    // Delegates to time.js â€” do not add fallback logic here.
+    return typeof window.getCurrentYearSafe === 'function'
+        ? window.getCurrentYearSafe()
+        : 1250;
+}
 
     function _escapeHtml(str) {
         if (typeof window._escapeHtml === 'function') {
@@ -970,8 +967,8 @@
                         '</div>' +
                     '</div>' +
                     '<div style="font-size:0.5rem;color:var(--dim);text-align:center;">' +
-                        'Showing ' + eventCount + ' events ¡¤ ' +
-                        data.total + ' total ¡¤ ' +
+                        'Showing ' + eventCount + ' events ï¿½ï¿½ ' +
+                        data.total + ' total ï¿½ï¿½ ' +
                         'Click an event for details' +
                     '</div>' +
                 '</div>';
@@ -1224,7 +1221,7 @@
                     '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding:12px;background:var(--bg2);border-radius:8px;border-left:4px solid ' + color + ';">' +
                         '<div>' +
                             '<div style="font-size:0.8rem;font-weight:bold;">' + icon + ' ' + _escapeHtml(label) + '</div>' +
-                            '<div style="font-size:0.6rem;color:var(--dim);">' + event.year + ' ¡¤ ' + _escapeHtml(category) + ' ¡¤ ' + (event.source || 'unknown') + '</div>' +
+                            '<div style="font-size:0.6rem;color:var(--dim);">' + event.year + ' ï¿½ï¿½ ' + _escapeHtml(category) + ' ï¿½ï¿½ ' + (event.source || 'unknown') + '</div>' +
                         '</div>' +
                         '<span style="font-size:0.5rem;color:' + color + ';">' + event.type + '</span>' +
                     '</div>' +

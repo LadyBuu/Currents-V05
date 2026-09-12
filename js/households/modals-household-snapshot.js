@@ -84,17 +84,11 @@
     }
 
     function _getCurrentYear() {
-        if (typeof window._getCurrentYear === 'function') {
-            return window._getCurrentYear();
-        }
-        if (typeof window.getCurrentYearSafe === 'function') {
-            return window.getCurrentYearSafe();
-        }
-        if (typeof window.getCurrentYear === 'function') {
-            return window.getCurrentYear();
-        }
-        return 1250;
-    }
+    // Delegates to time.js — do not add fallback logic here.
+    return typeof window.getCurrentYearSafe === 'function'
+        ? window.getCurrentYearSafe()
+        : 1250;
+}
 
     function _getIcon(name) {
         if (typeof window._getIcon === 'function') {
@@ -135,14 +129,12 @@
     }
 
     function _calculateAge(birthYear, isDeceased, deathYear) {
-        if (typeof window.calculateAge === 'function') {
-            return window.calculateAge(birthYear, isDeceased, deathYear);
-        }
-        var currentYear = _getCurrentYear();
-        if (!birthYear) return 0;
-        if (isDeceased && deathYear) return Math.max(0, deathYear - birthYear);
-        return Math.max(0, currentYear - birthYear);
+    // Delegates to time.js — do not reimplement age logic here.
+    if (typeof window.calculateAge === 'function') {
+        return window.calculateAge(birthYear, isDeceased, deathYear);
     }
+    return null;
+}
 
     function _getHouseholdNamePeriods(householdId) {
         if (typeof window.HouseholdState !== 'undefined' && window.HouseholdState.getHouseholdNamePeriods) {

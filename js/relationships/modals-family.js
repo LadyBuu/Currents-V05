@@ -51,9 +51,10 @@ function _showToast(msg, type) {
 }
 
 function _getCurrentYear() {
-    if (typeof window.getCurrentYearSafe === 'function') return window.getCurrentYearSafe();
-    if (typeof window.getCurrentYear === 'function') return window.getCurrentYear();
-    return 1250;
+    // Delegates to time.js — do not add fallback logic here.
+    return typeof window.getCurrentYearSafe === 'function'
+        ? window.getCurrentYearSafe()
+        : 1250;
 }
 
 function _getCharacterById(id) {
@@ -102,11 +103,11 @@ function _getHousehold(id) {
 }
 
 function _calculateAge(birthYear, isDeceased, deathYear) {
-    if (typeof window.calculateAge === 'function') return window.calculateAge(birthYear, isDeceased, deathYear);
-    var currentYear = _getCurrentYear();
-    if (!birthYear) return 0;
-    if (isDeceased && deathYear) return Math.max(0, deathYear - birthYear);
-    return Math.max(0, currentYear - birthYear);
+    // Delegates to time.js — do not reimplement age logic here.
+    if (typeof window.calculateAge === 'function') {
+        return window.calculateAge(birthYear, isDeceased, deathYear);
+    }
+    return null;
 }
 
 function _getAge(char) {

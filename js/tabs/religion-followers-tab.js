@@ -103,10 +103,11 @@
     }
 
     function _getCurrentYear() {
-        if (typeof window.getCurrentYearSafe === 'function') return window.getCurrentYearSafe();
-        if (typeof window.getCurrentYear === 'function') return window.getCurrentYear();
-        return 1250;
-    }
+    // Delegates to time.js — do not add fallback logic here.
+    return typeof window.getCurrentYearSafe === 'function'
+        ? window.getCurrentYearSafe()
+        : 1250;
+}
 
     function _getFollowers(religionId, options) {
         if (typeof window.ReligionQueries !== 'undefined' &&
@@ -179,14 +180,13 @@
         return '⚥';
     }
 
-    function _calculateAge(char) {
-        if (!char || !char.birthYear) return 0;
-        var currentYear = _getCurrentYear();
-        if (char.isDeceased && char.deathYear) {
-            return Math.max(0, char.deathYear - char.birthYear);
-        }
-        return Math.max(0, currentYear - char.birthYear);
+    function _calculateAge(birthYear, isDeceased, deathYear) {
+    // Delegates to time.js — do not reimplement age logic here.
+    if (typeof window.calculateAge === 'function') {
+        return window.calculateAge(birthYear, isDeceased, deathYear);
     }
+    return null;
+}
 
     var _followerState = {
         searchTerm: '',

@@ -175,20 +175,12 @@
     }
 
     function _calculateAge(birthYear, isDeceased, deathYear) {
-        if (typeof window.calculateAge === 'function') {
-            return window.calculateAge(birthYear, isDeceased, deathYear);
-        }
-        if (typeof window._calculateAge === 'function') {
-            return window._calculateAge(birthYear, isDeceased, deathYear);
-        }
-        var currentYear = 1250;
-        if (typeof window.getCurrentYear === 'function') {
-            currentYear = window.getCurrentYear();
-        }
-        if (!birthYear) return 0;
-        if (isDeceased && deathYear) return Math.max(0, deathYear - birthYear);
-        return Math.max(0, currentYear - birthYear);
+    // Delegates to time.js — do not reimplement age logic here.
+    if (typeof window.calculateAge === 'function') {
+        return window.calculateAge(birthYear, isDeceased, deathYear);
     }
+    return null;
+}
 
     function _getLocationDisplayName(place) {
         if (!place) return 'Unknown';

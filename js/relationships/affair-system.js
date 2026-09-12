@@ -109,13 +109,10 @@ function _getCharacters() {
 }
 
 function _getCurrentYear() {
-    if (typeof window.getCurrentYearSafe === 'function') {
-        return window.getCurrentYearSafe();
-    }
-    if (typeof window.getCurrentYear === 'function') {
-        return window.getCurrentYear();
-    }
-    return 1250;
+    // Delegates to time.js — do not add fallback logic here.
+    return typeof window.getCurrentYearSafe === 'function'
+        ? window.getCurrentYearSafe()
+        : 1250;
 }
 
 function _chance(probability) {
