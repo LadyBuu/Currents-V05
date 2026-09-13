@@ -5,62 +5,28 @@
  * 
  * LOCATION: js/core/collections.js
  * 
- * This file contains generic helper functions including:
- * - deepClone (object/array deep copying)
- * - debounce (function rate limiting)
- * - Array manipulation helpers (unique, groupBy, sortBy)
- * - Object helpers (pick, omit, merge)
- * - String helpers (capitalize, titleCase, kebabCase, snakeCase)
+ * SCOPE:
+ *   - Deep cloning
+ *   - Function utilities (debounce, throttle)
+ *   - Array operations (unique, groupBy, sortBy, chunk, etc.)
+ *   - Object operations (pick, omit, merge, deepMerge)
+ *   - String operations (titleCase, toKebabCase, toSnakeCase, etc.)
  * 
- * PURPOSE: Pure utility functions that work on any data structure
+ * OUT OF SCOPE:
+ *   - String truncation (see formatting.js → truncateString)
+ *   - Domain logic (no characters, places, ranks, etc.)
  * 
- * DEPENDENCIES: None (pure JavaScript utilities)
+ * SEMANTIC RULES:
+ *   - All functions are pure (except debounce/throttle/deepClone-in-place).
+ *   - No `||` defaults that could destroy 0, '', or false.
+ *   - `deepClone` handles circular references.
+ *   - `deepMerge` recurses only into plain objects.
+ *   - String helpers handle Unicode correctly.
+ *   - No `Object.prototype` pollution via unsafe `hasOwnProperty` calls.
  * 
- * NOTE: String truncation is now in formatting.js (truncateString)
- *       Use window.truncateString() for Unicode-aware truncation.
- * =============================================================================
- * EXPORTED FUNCTIONS (on window):
- * =============================================================================
+ * DEPENDENCIES: None.
  * 
- * Deep Cloning:
- *   - deepClone(obj) - Recursively clones objects, arrays, Dates, RegExps, Maps, Sets
- *   - safeDeepClone(obj, fallback) - Uses structuredClone with JSON fallback
- *   - quickClone(obj) - JSON-based deep clone (faster but less robust)
- * 
- * Function Utilities:
- *   - debounce(func, wait) - Delays execution until after wait time
- *   - debounceLeading(func, wait) - Leading edge debounce (executes immediately)
- *   - throttle(func, limit) - Limits execution to once per interval
- * 
- * Array Helpers:
- *   - unique(arr, keyFn) - Removes duplicates, optional key function
- *   - groupBy(arr, keyFn) - Groups by key function, returns Map
- *   - groupByObject(arr, keyFn) - Groups by string key, returns plain object
- *   - sortBy(arr, keyFn, ascending) - Sorts by key function (non-mutating)
- *   - sortByMultiple(arr, sortConfigs) - Sorts by multiple key functions
- *   - chunk(arr, size) - Splits array into chunks
- *   - flatten(arr) - Flattens array by one level
- *   - flattenDeep(arr) - Flattens array completely
- *   - intersection(...arrays) - Returns common elements across all arrays
- *   - arrayToMap(arr, keyProp) - Converts array of objects to Map keyed by property
- *   - arrayToObject(arr, keyProp) - Converts array of objects to plain object
- * 
- * Object Helpers:
- *   - pick(obj, keys) - Returns new object with only specified keys
- *   - omit(obj, keys) - Returns new object without specified keys
- *   - shallowMerge(...objects) - Shallow merges multiple objects (last wins)
- *   - merge(...objects) - Alias for shallowMerge (deprecated)
- *   - deepMerge(...objects) - Deep merges multiple objects recursively
- *   - isEmptyObject(obj) - Checks if object has no enumerable own properties
- * 
- * String Helpers:
- *   - capitalize(str) - Capitalizes first letter only
- *   - titleCase(str) - Title case (each word capitalized, rest lowercased)
- *   - toKebabCase(str) - Converts to kebab-case, preserves Unicode letters
- *   - toSnakeCase(str) - Converts to snake_case, preserves Unicode letters
- * 
- * DEPRECATED / MOVED:
- *   - truncate() - Moved to js/core/formatting.js as truncateString()
+ * ICON POLICY: No emojis. No icons.
  * 
  * =============================================================================
  */
@@ -70,89 +36,101 @@
 // =============================================================================
 
 /**
- * Creates a deep clone of an object, array, or other complex data structure
- * Handles: Objects, Arrays, Dates, RegExps, Maps, Sets, and primitive types
+ * Recursively clones objects, arrays, Dates, RegExps, Maps, Sets.
+ * Handles circular references by tracking visited nodes.
  * 
- * @param {*} obj - Object or array to clone
- * @returns {*} Deep cloned copy
+ * @param {*} obj
+ * @param {WeakMap} [seen] - internal, for cycle tracking
+ * @returns {*}
  */
-function deepClone(obj) {
-    // Handle null, undefined, and non-objects (primitives)
+function deepClone(obj, seen) {
+    // Primitives
     if (obj === null || typeof obj !== 'object') return obj;
-    
-    // Handle Date objects
+
+    // Cycle tracking
+    if (!seen) seen = new WeakMap();
+    if (seen.has(obj)) return seen.get(obj);
+
+    // Date
     if (obj instanceof Date) {
         return new Date(obj.getTime());
     }
-    
-    // Handle RegExp objects
+
+    // RegExp
     if (obj instanceof RegExp) {
         return new RegExp(obj.source, obj.flags);
     }
-    
-    // Handle Map
+
+    // Map
     if (obj instanceof Map) {
-        const clonedMap = new Map();
-        for (const [key, value] of obj) {
-            clonedMap.set(deepClone(key), deepClone(value));
-        }
+        var clonedMap = new Map();
+        seen.set(obj, clonedMap);
+        obj.forEach(function(v, k) {
+            clonedMap.set(deepClone(k, seen), deepClone(v, seen));
+        });
         return clonedMap;
     }
-    
-    // Handle Set
+
+    // Set
     if (obj instanceof Set) {
-        const clonedSet = new Set();
-        for (const value of obj) {
-            clonedSet.add(deepClone(value));
-        }
+        var clonedSet = new Set();
+        seen.set(obj, clonedSet);
+        obj.forEach(function(v) {
+            clonedSet.add(deepClone(v, seen));
+        });
         return clonedSet;
     }
-    
-    // Handle Arrays
+
+    // Array
     if (Array.isArray(obj)) {
-        return obj.map(item => deepClone(item));
-    }
-    
-    // Handle plain objects
-    const cloned = {};
-    for (const key in obj) {
-        if (obj.hasOwnProperty(key)) {
-            cloned[key] = deepClone(obj[key]);
+        var clonedArr = [];
+        seen.set(obj, clonedArr);
+        for (var i = 0; i < obj.length; i++) {
+            clonedArr.push(deepClone(obj[i], seen));
         }
+        return clonedArr;
+    }
+
+    // Plain object (or class instance — treats as plain object)
+    var cloned = {};
+    seen.set(obj, cloned);
+    var keys = Object.keys(obj);
+    for (var k = 0; k < keys.length; k++) {
+        cloned[keys[k]] = deepClone(obj[keys[k]], seen);
     }
     return cloned;
 }
 
 /**
- * Safe deep clone that uses structuredClone if available, falls back to JSON
- * This is faster than recursive deepClone for large objects but has limitations
- * @param {*} obj - Object to clone
- * @param {*} fallback - Fallback value if cloning fails (default null)
- * @returns {*} Cloned object or fallback
+ * Uses structuredClone when available, falls back to JSON clone.
+ * Faster than deepClone for large acyclic objects.
+ * Does NOT handle functions, class instances with prototypes, or symbols.
+ * 
+ * @param {*} obj
+ * @param {*} [fallback] - returned if cloning fails
+ * @returns {*}
  */
-function safeDeepClone(obj, fallback = null) {
-    // Use structuredClone if available (modern browsers)
+function safeDeepClone(obj, fallback) {
+    if (fallback === undefined) fallback = null;
+
     if (typeof structuredClone === 'function') {
         try {
             return structuredClone(obj);
         } catch (e) {
-            console.warn('structuredClone failed, falling back to JSON:', e);
+            // fall through to JSON
         }
     }
-    
-    // Fallback to JSON methods
+
     try {
         return JSON.parse(JSON.stringify(obj));
     } catch (e) {
-        console.error('Safe deep clone failed:', e);
         return fallback;
     }
 }
 
 /**
- * Quick JSON-based deep clone (faster but less robust than deepClone)
- * @param {*} obj - Object to clone
- * @returns {*} Cloned object or null if failed
+ * @deprecated Use safeDeepClone instead.
+ * Kept for backward compatibility. Prefer safeDeepClone.
  */
 function quickClone(obj) {
     try {
@@ -163,62 +141,84 @@ function quickClone(obj) {
 }
 
 // =============================================================================
-// 2. DEBOUNCE & THROTTLE
+// 2. FUNCTION UTILITIES
 // =============================================================================
 
 /**
- * Creates a debounced version of a function that delays execution
- * until after a specified wait time has elapsed since the last call
+ * Debounce: delays execution until after `wait` ms have elapsed since the
+ * last call.
  * 
- * @param {Function} func - Function to debounce
- * @param {number} wait - Wait time in milliseconds
- * @returns {Function} Debounced function
+ * The returned function exposes `.cancel()` to clear pending execution.
+ * 
+ * @param {Function} func
+ * @param {number} wait
+ * @returns {Function}
  */
 function debounce(func, wait) {
-    let timeout;
-    return function executedFunction(...args) {
-        const later = () => {
-            clearTimeout(timeout);
-            func.apply(this, args);
-        };
+    var timeout;
+    var debounced = function() {
+        var context = this;
+        var args = arguments;
         clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
+        timeout = setTimeout(function() {
+            timeout = null;
+            func.apply(context, args);
+        }, wait);
     };
+    debounced.cancel = function() {
+        clearTimeout(timeout);
+        timeout = null;
+    };
+    debounced.flush = function() {
+        if (timeout) {
+            clearTimeout(timeout);
+            timeout = null;
+            func.apply(this, arguments);
+        }
+    };
+    return debounced;
 }
 
 /**
- * Creates a debounced version with immediate execution on the leading edge
- * @param {Function} func - Function to debounce
- * @param {number} wait - Wait time in milliseconds
- * @returns {Function} Debounced function with leading edge execution
+ * Debounce with immediate leading-edge execution.
+ * Executes on the leading edge; ignored during the wait window.
  */
 function debounceLeading(func, wait) {
-    let timeout = null;
-    return function(...args) {
-        const callNow = !timeout;
+    var timeout = null;
+    var debounced = function() {
+        var context = this;
+        var args = arguments;
+        var callNow = !timeout;
         if (timeout) clearTimeout(timeout);
-        timeout = setTimeout(() => {
+        timeout = setTimeout(function() {
             timeout = null;
         }, wait);
-        if (callNow) func.apply(this, args);
+        if (callNow) func.apply(context, args);
     };
+    debounced.cancel = function() {
+        if (timeout) {
+            clearTimeout(timeout);
+            timeout = null;
+        }
+    };
+    return debounced;
 }
 
 /**
- * Creates a throttled version of a function that limits execution
- * to at most once per specified interval
+ * Throttle: leading-edge execution, at most once per `limit` ms.
+ * Calls during the interval are dropped (no trailing call).
  * 
- * @param {Function} func - Function to throttle
- * @param {number} limit - Limit in milliseconds
- * @returns {Function} Throttled function
+ * @param {Function} func
+ * @param {number} limit
+ * @returns {Function}
  */
 function throttle(func, limit) {
-    let inThrottle;
-    return function(...args) {
+    var inThrottle = false;
+    return function() {
         if (!inThrottle) {
-            func.apply(this, args);
+            func.apply(this, arguments);
             inThrottle = true;
-            setTimeout(() => {
+            setTimeout(function() {
                 inThrottle = false;
             }, limit);
         }
@@ -230,201 +230,211 @@ function throttle(func, limit) {
 // =============================================================================
 
 /**
- * Removes duplicate values from an array
- * @param {Array} arr - Input array
- * @param {Function} keyFn - Optional function to extract comparison key
- * @returns {Array} Array with duplicates removed
+ * Removes duplicate values.
+ * With keyFn, uniqueness is by the key function's return value.
  */
-function unique(arr, keyFn = null) {
+function unique(arr, keyFn) {
     if (!Array.isArray(arr)) return [];
-    
-    if (keyFn) {
-        const seen = new Map();
-        return arr.filter(item => {
-            const key = keyFn(item);
-            if (seen.has(key)) return false;
-            seen.set(key, true);
-            return true;
-        });
+    if (typeof keyFn === 'function') {
+        var seen = new Set();
+        var out = [];
+        for (var i = 0; i < arr.length; i++) {
+            var k = keyFn(arr[i]);
+            if (seen.has(k)) continue;
+            seen.add(k);
+            out.push(arr[i]);
+        }
+        return out;
     }
-    
-    return [...new Set(arr)];
+    return Array.from(new Set(arr));
 }
 
 /**
- * Groups array elements by a key function (returns Map for better key support)
- * @param {Array} arr - Input array
- * @param {Function} keyFn - Function that returns the grouping key
- * @returns {Map} Map with keys mapped to arrays of items
+ * Groups array elements by a key function, returning a Map.
  */
 function groupBy(arr, keyFn) {
-    if (!Array.isArray(arr) || typeof keyFn !== 'function') return new Map();
-    
-    const result = new Map();
-    for (const item of arr) {
-        const key = keyFn(item);
-        if (!result.has(key)) {
-            result.set(key, []);
-        }
-        result.get(key).push(item);
+    var result = new Map();
+    if (!Array.isArray(arr) || typeof keyFn !== 'function') return result;
+    for (var i = 0; i < arr.length; i++) {
+        var k = keyFn(arr[i]);
+        if (!result.has(k)) result.set(k, []);
+        result.get(k).push(arr[i]);
     }
     return result;
 }
 
 /**
- * Groups array elements by a key function (returns plain object for string keys)
- * @param {Array} arr - Input array
- * @param {Function} keyFn - Function that returns a string key
- * @returns {Object} Object with keys mapped to arrays of items
+ * Groups by string key, returning a plain object.
+ * Uses Object.create(null) to avoid prototype pollution from keys like
+ * "__proto__" or "constructor".
  */
 function groupByObject(arr, keyFn) {
     if (!Array.isArray(arr) || typeof keyFn !== 'function') return {};
-    
-    return arr.reduce((result, item) => {
-        const key = String(keyFn(item));
-        if (!result[key]) result[key] = [];
-        result[key].push(item);
-        return result;
-    }, {});
+    var result = Object.create(null);
+    for (var i = 0; i < arr.length; i++) {
+        var k = String(keyFn(arr[i]));
+        if (!result[k]) result[k] = [];
+        result[k].push(arr[i]);
+    }
+    return result;
 }
 
 /**
- * Sorts an array by a key function (non-mutating)
- * @param {Array} arr - Input array
- * @param {Function} keyFn - Function that returns the sort key
- * @param {boolean} ascending - Sort ascending (true) or descending (false)
- * @returns {Array} New sorted array
+ * Comparison helper used by sortBy and sortByMultiple.
+ * Missing values (null/undefined) always sort last, regardless of direction.
+ * @private
  */
-function sortBy(arr, keyFn, ascending = true) {
-    if (!Array.isArray(arr)) return [];
-    
-    const sorted = [...arr];
-    sorted.sort((a, b) => {
-        let aVal = keyFn(a);
-        let bVal = keyFn(b);
-        
-        // Handle null/undefined - treat as lowest values
-        if (aVal === null || aVal === undefined) aVal = ascending ? -Infinity : Infinity;
-        if (bVal === null || bVal === undefined) bVal = ascending ? -Infinity : Infinity;
-        
-        if (aVal < bVal) return ascending ? -1 : 1;
-        if (aVal > bVal) return ascending ? 1 : -1;
-        return 0;
-    });
-    return sorted;
+function _compareValues(a, b, ascending) {
+    var aMissing = a === null || a === undefined;
+    var bMissing = b === null || b === undefined;
+
+    if (aMissing && bMissing) return 0;
+    if (aMissing) return 1;   // missing last
+    if (bMissing) return -1;
+
+    if (a < b) return ascending ? -1 : 1;
+    if (a > b) return ascending ? 1 : -1;
+    return 0;
 }
 
 /**
- * Sorts an array by multiple key functions
- * @param {Array} arr - Input array
- * @param {Array} sortConfigs - Array of { keyFn, ascending } objects
- * @returns {Array} New sorted array
+ * Non-mutating sort by key function.
+ */
+function sortBy(arr, keyFn, ascending) {
+    ascending = ascending !== false;
+    if (!Array.isArray(arr)) return [];
+    if (typeof keyFn !== 'function') return arr.slice();
+    var copy = arr.slice();
+    copy.sort(function(a, b) {
+        return _compareValues(keyFn(a), keyFn(b), ascending);
+    });
+    return copy;
+}
+
+/**
+ * Non-mutating multi-key sort.
+ * @param {Array} arr
+ * @param {Array<{ keyFn: Function, ascending?: boolean }>} sortConfigs
  */
 function sortByMultiple(arr, sortConfigs) {
-    if (!Array.isArray(arr) || !sortConfigs || sortConfigs.length === 0) return [...arr];
-    
-    const sorted = [...arr];
-    sorted.sort((a, b) => {
-        for (const config of sortConfigs) {
-            const { keyFn, ascending = true } = config;
-            let aVal = keyFn(a);
-            let bVal = keyFn(b);
-            
-            // Handle null/undefined
-            if (aVal === null || aVal === undefined) aVal = ascending ? -Infinity : Infinity;
-            if (bVal === null || bVal === undefined) bVal = ascending ? -Infinity : Infinity;
-            
-            if (aVal < bVal) return ascending ? -1 : 1;
-            if (aVal > bVal) return ascending ? 1 : -1;
+    if (!Array.isArray(arr)) return [];
+    if (!Array.isArray(sortConfigs) || sortConfigs.length === 0) return arr.slice();
+
+    var copy = arr.slice();
+    copy.sort(function(a, b) {
+        for (var i = 0; i < sortConfigs.length; i++) {
+            var cfg = sortConfigs[i];
+            var asc = cfg.ascending !== false;
+            var keyFn = cfg.keyFn;
+            if (typeof keyFn !== 'function') continue;
+            var cmp = _compareValues(keyFn(a), keyFn(b), asc);
+            if (cmp !== 0) return cmp;
         }
         return 0;
     });
-    return sorted;
+    return copy;
 }
 
 /**
- * Chunks an array into smaller arrays of specified size
- * @param {Array} arr - Input array
- * @param {number} size - Chunk size
- * @returns {Array} Array of chunks
+ * Splits an array into chunks of `size`.
  */
 function chunk(arr, size) {
-    if (!Array.isArray(arr) || size < 1) return [];
-    
-    const result = [];
-    for (let i = 0; i < arr.length; i += size) {
+    if (!Array.isArray(arr)) return [];
+    if (typeof size !== 'number' || !Number.isInteger(size) || size < 1) return [];
+    var result = [];
+    for (var i = 0; i < arr.length; i += size) {
         result.push(arr.slice(i, i + size));
     }
     return result;
 }
 
 /**
- * Flattens a nested array by one level
- * @param {Array} arr - Input array
- * @returns {Array} Flattened array
+ * Flattens a nested array by one level.
  */
 function flatten(arr) {
     if (!Array.isArray(arr)) return [];
-    return arr.reduce((result, item) => {
-        if (Array.isArray(item)) {
-            result.push(...item);
+    var result = [];
+    for (var i = 0; i < arr.length; i++) {
+        if (Array.isArray(arr[i])) {
+            for (var j = 0; j < arr[i].length; j++) result.push(arr[i][j]);
         } else {
-            result.push(item);
+            result.push(arr[i]);
         }
-        return result;
-    }, []);
+    }
+    return result;
 }
 
 /**
- * Flattens a nested array completely (all levels)
- * @param {Array} arr - Input array
- * @returns {Array} Fully flattened array
+ * Flattens a nested array completely.
  */
 function flattenDeep(arr) {
     if (!Array.isArray(arr)) return [];
-    return arr.reduce((result, item) => {
-        if (Array.isArray(item)) {
-            result.push(...flattenDeep(item));
-        } else {
+    var result = [];
+    (function walk(list) {
+        for (var i = 0; i < list.length; i++) {
+            if (Array.isArray(list[i])) walk(list[i]);
+            else result.push(list[i]);
+        }
+    })(arr);
+    return result;
+}
+
+/**
+ * Returns the intersection of the given arrays (unique values).
+ * 
+ * The comment previously claimed Set optimization but used `includes`.
+ * This version actually uses Sets.
+ */
+function intersection() {
+    var arrays = Array.prototype.slice.call(arguments);
+    if (arrays.length === 0) return [];
+
+    // Filter out non-arrays
+    var valid = [];
+    for (var i = 0; i < arrays.length; i++) {
+        if (Array.isArray(arrays[i])) valid.push(arrays[i]);
+    }
+    if (valid.length === 0) return [];
+
+    // Find the smallest array for the initial Set
+    var smallest = valid[0];
+    for (var j = 1; j < valid.length; j++) {
+        if (valid[j].length < smallest.length) smallest = valid[j];
+    }
+
+    // Build Sets for the others
+    var otherSets = [];
+    for (var k = 0; k < valid.length; k++) {
+        if (valid[k] !== smallest) {
+            otherSets.push(new Set(valid[k]));
+        }
+    }
+
+    var seen = new Set();
+    var result = [];
+    for (var m = 0; m < smallest.length; m++) {
+        var item = smallest[m];
+        if (seen.has(item)) continue;
+        var inAll = true;
+        for (var n = 0; n < otherSets.length; n++) {
+            if (!otherSets[n].has(item)) { inAll = false; break; }
+        }
+        if (inAll) {
+            seen.add(item);
             result.push(item);
         }
-        return result;
-    }, []);
+    }
+    return result;
 }
 
 /**
- * Finds the intersection of multiple arrays (optimized for large arrays)
- * @param {...Array} arrays - Arrays to intersect
- * @returns {Array} Array of common elements
- */
-function intersection(...arrays) {
-    if (arrays.length === 0) return [];
-    
-    const first = arrays[0];
-    if (!Array.isArray(first)) return [];
-    
-    // Use Set for O(1) lookups on the smallest array for optimization
-    const smallestIndex = arrays.reduce((minIdx, arr, idx) => 
-        arr.length < arrays[minIdx].length ? idx : minIdx, 0);
-    
-    const smallest = arrays[smallestIndex];
-    const others = arrays.filter((_, i) => i !== smallestIndex);
-    
-    return smallest.filter(item => 
-        others.every(arr => Array.isArray(arr) && arr.includes(item))
-    );
-}
-
-/**
- * Converts an array of objects to a Map keyed by a specified property
- * @param {Array} arr - Input array
- * @param {string} keyProp - Property name to use as key
- * @returns {Map} Map of key -> object
+ * Converts an array of objects to a Map keyed by a property.
  */
 function arrayToMap(arr, keyProp) {
-    const map = new Map();
+    var map = new Map();
     if (!Array.isArray(arr)) return map;
-    for (const item of arr) {
+    for (var i = 0; i < arr.length; i++) {
+        var item = arr[i];
         if (item && item[keyProp] !== undefined) {
             map.set(item[keyProp], item);
         }
@@ -433,15 +443,14 @@ function arrayToMap(arr, keyProp) {
 }
 
 /**
- * Converts an array of objects to an object keyed by a specified property
- * @param {Array} arr - Input array
- * @param {string} keyProp - Property name to use as key
- * @returns {Object} Object of key -> object
+ * Converts an array of objects to an object keyed by a property.
+ * Uses Object.create(null) to avoid prototype pollution.
  */
 function arrayToObject(arr, keyProp) {
-    const result = {};
-    if (!Array.isArray(arr)) return result;
-    for (const item of arr) {
+    if (!Array.isArray(arr)) return Object.create(null);
+    var result = Object.create(null);
+    for (var i = 0; i < arr.length; i++) {
+        var item = arr[i];
         if (item && item[keyProp] !== undefined) {
             result[item[keyProp]] = item;
         }
@@ -454,108 +463,115 @@ function arrayToObject(arr, keyProp) {
 // =============================================================================
 
 /**
- * Picks specific keys from an object
- * @param {Object} obj - Source object
- * @param {Array} keys - Keys to pick
- * @returns {Object} New object with only picked keys
+ * Picks specific keys from an object.
  */
 function pick(obj, keys) {
-    if (!obj || typeof obj !== 'object') return {};
-    if (!Array.isArray(keys)) return {};
-    
-    const result = {};
-    for (const key of keys) {
-        if (obj.hasOwnProperty(key)) {
-            result[key] = obj[key];
+    if (!obj || typeof obj !== 'object' || !Array.isArray(keys)) return {};
+    var result = {};
+    for (var i = 0; i < keys.length; i++) {
+        var k = keys[i];
+        if (Object.prototype.hasOwnProperty.call(obj, k)) {
+            result[k] = obj[k];
         }
     }
     return result;
 }
 
 /**
- * Omits specific keys from an object
- * @param {Object} obj - Source object
- * @param {Array} keys - Keys to omit
- * @returns {Object} New object without omitted keys
+ * Omits specific keys from an object.
  */
 function omit(obj, keys) {
     if (!obj || typeof obj !== 'object') return {};
-    if (!Array.isArray(keys)) return { ...obj };
-    
-    const keysSet = new Set(keys);
-    const result = {};
-    for (const key in obj) {
-        if (obj.hasOwnProperty(key) && !keysSet.has(key)) {
-            result[key] = obj[key];
-        }
+    if (!Array.isArray(keys)) {
+        // Return a shallow copy
+        var copy = {};
+        var allKeys = Object.keys(obj);
+        for (var i = 0; i < allKeys.length; i++) copy[allKeys[i]] = obj[allKeys[i]];
+        return copy;
+    }
+    var keysSet = new Set(keys);
+    var result = {};
+    var objKeys = Object.keys(obj);
+    for (var j = 0; j < objKeys.length; j++) {
+        var k = objKeys[j];
+        if (!keysSet.has(k)) result[k] = obj[k];
     }
     return result;
 }
 
 /**
- * Shallow merges multiple objects (last object wins conflicts)
- * @param {...Object} objects - Objects to merge
- * @returns {Object} Merged object
+ * Shallow merges multiple objects (last wins).
  */
-function shallowMerge(...objects) {
-    const result = {};
-    for (const obj of objects) {
-        if (obj && typeof obj === 'object') {
-            for (const key in obj) {
-                if (obj.hasOwnProperty(key)) {
-                    result[key] = obj[key];
-                }
-            }
-        }
-    }
-    return result;
-}
-
-/**
- * Alias for shallowMerge (backward compatibility)
- * @deprecated Use shallowMerge instead
- */
-function merge(...objects) {
-    return shallowMerge(...objects);
-}
-
-/**
- * Deep merges multiple objects (recursively merges nested objects)
- * @param {...Object} objects - Objects to merge
- * @returns {Object} Deep merged object
- */
-function deepMerge(...objects) {
-    if (objects.length === 0) return {};
-    
-    const result = deepClone(objects[0]);
-    
-    for (let i = 1; i < objects.length; i++) {
-        const obj = objects[i];
+function shallowMerge() {
+    var result = {};
+    for (var i = 0; i < arguments.length; i++) {
+        var obj = arguments[i];
         if (!obj || typeof obj !== 'object') continue;
-        
-        for (const key in obj) {
-            if (obj.hasOwnProperty(key)) {
-                const resultVal = result[key];
-                const objVal = obj[key];
-                
-                if (resultVal && typeof resultVal === 'object' && 
-                    objVal && typeof objVal === 'object' &&
-                    !Array.isArray(resultVal) && !Array.isArray(objVal)) {
-                    result[key] = deepMerge(resultVal, objVal);
-                } else {
-                    result[key] = deepClone(objVal);
-                }
-            }
+        var keys = Object.keys(obj);
+        for (var j = 0; j < keys.length; j++) {
+            result[keys[j]] = obj[keys[j]];
         }
     }
-    
     return result;
 }
 
 /**
- * Checks if an object is empty (no enumerable own properties)
- * @param {Object} obj - Object to check
- * @returns {boolean}
+ * Alias for shallowMerge. Deprecated — prefer shallowMerge for clarity.
+ * @deprecated
+ */
+function merge() {
+    return shallowMerge.apply(null, arguments);
+}
+
+/**
+ * Returns true if value is a plain object (not array, Date, Map, Set,
+ * RegExp, etc.).
+ * @private
+ */
+function _isPlainObject(value) {
+    if (value === null || typeof value !== 'object') return false;
+    if (Array.isArray(value)) return false;
+    if (value instanceof Date) return false;
+    if (value instanceof RegExp) return false;
+    if (value instanceof Map) return false;
+    if (value instanceof Set) return false;
+    return true;
+}
+
+/**
+ * Deep merges multiple objects. Recurses only into plain objects;
+ * arrays and other values are replaced (cloned).
+ */
+function deepMerge() {
+    var args = Array.prototype.slice.call(arguments);
+    if (args.length === 0) return {};
+    if (!_isPlainObject(args[0])) {
+        return deepClone(args[0]);
+    }
+
+    var result = deepClone(args[0]);
+
+    for (var i = 1; i < args.length; i++) {
+        var obj = args[i];
+        if (!_isPlainObject(obj)) continue;
+        var keys = Object.keys(obj);
+        for (var j = 0; j < keys.length; j++) {
+            var k = keys[j];
+            var rv = result[k];
+            var ov = obj[k];
+            if (_isPlainObject(rv) && _isPlainObject(ov)) {
+                result[k] = deepMerge(rv, ov);
+            } else {
+                result[k] = deepClone(ov);
+            }
+        }
+    }
+    return result;
+}
+
+/**
+ * Returns true if obj has no enumerable own properties.
+ * Returns true for null/undefined as well (they have no properties).
  */
 function isEmptyObject(obj) {
     if (!obj || typeof obj !== 'object') return true;
@@ -567,10 +583,8 @@ function isEmptyObject(obj) {
 // =============================================================================
 
 /**
- * Capitalizes the first letter of a string (does NOT lowercase the rest)
- * For title case with lowercase rest, use titleCase()
- * @param {string} str - Input string
- * @returns {string} Capitalized string
+ * Capitalizes the first letter; leaves the rest untouched.
+ * For "capitalize first and lowercase rest," use titleCase.
  */
 function capitalize(str) {
     if (!str || typeof str !== 'string') return '';
@@ -578,24 +592,24 @@ function capitalize(str) {
 }
 
 /**
- * Converts a string to title case (each word capitalized, rest lowercased)
- * @param {string} str - Input string
- * @returns {string} Title case string
+ * Title case: first letter of each space-separated word capitalized,
+ * remaining letters lowercased.
+ * Handles Unicode letters.
  */
 function titleCase(str) {
     if (!str || typeof str !== 'string') return '';
     return str
         .toLowerCase()
         .split(' ')
-        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .map(function(word) {
+            return word.charAt(0).toUpperCase() + word.slice(1);
+        })
         .join(' ');
 }
 
 /**
- * Converts a string to kebab-case
- * Keeps Unicode letters, removes other special characters
- * @param {string} str - Input string
- * @returns {string} Kebab-cased string
+ * Converts to kebab-case. Preserves Unicode letters and numbers.
+ * Non-alphanumeric characters become hyphens.
  */
 function toKebabCase(str) {
     if (!str || typeof str !== 'string') return '';
@@ -603,15 +617,13 @@ function toKebabCase(str) {
         .toLowerCase()
         .trim()
         .replace(/\s+/g, '-')
-        .replace(/[^\p{L}\p{N}-]/gu, '')
-        .replace(/-+/g, '-');
+        .replace(/[^\p{L}\p{N}-]/gu, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '');
 }
 
 /**
- * Converts a string to snake_case
- * Keeps Unicode letters, removes other special characters
- * @param {string} str - Input string
- * @returns {string} Snake-cased string
+ * Converts to snake_case. Preserves Unicode letters and numbers.
  */
 function toSnakeCase(str) {
     if (!str || typeof str !== 'string') return '';
@@ -619,38 +631,19 @@ function toSnakeCase(str) {
         .toLowerCase()
         .trim()
         .replace(/\s+/g, '_')
-        .replace(/[^\p{L}\p{N}_]/gu, '')
-        .replace(/_+/g, '_');
+        .replace(/[^\p{L}\p{N}_]/gu, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_|_$/g, '');
 }
 
 // =============================================================================
-// 6. NOTE: STRING TRUNCATION
-// =============================================================================
-
-/**
- * String truncation has been moved to formatting.js as truncateString()
- * truncateString handles Unicode characters properly using Array.from()
- * 
- * @deprecated Use window.truncateString() from formatting.js instead
- * 
- * Example:
- *   // Old (removed):
- *   truncate(str, 50);
- *   
- *   // New:
- *   truncateString(str, 50);
- *   // or
- *   window.truncateString(str, 50);
- */
-
-// =============================================================================
-// 7. EXPORTS (Global Availability)
+// 6. EXPORTS
 // =============================================================================
 
 // Deep cloning
 window.deepClone = deepClone;
 window.safeDeepClone = safeDeepClone;
-window.quickClone = quickClone;
+window.quickClone = quickClone; // deprecated
 
 // Function utilities
 window.debounce = debounce;
@@ -673,7 +666,7 @@ window.arrayToObject = arrayToObject;
 // Object helpers
 window.pick = pick;
 window.omit = omit;
-window.merge = shallowMerge;
+window.merge = merge;           // deprecated alias
 window.shallowMerge = shallowMerge;
 window.deepMerge = deepMerge;
 window.isEmptyObject = isEmptyObject;

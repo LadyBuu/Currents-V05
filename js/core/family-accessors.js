@@ -11,6 +11,13 @@
  *   - accessors.js (getCharacterById, getCharacters)
  *   - time.js (calculateAge, getCurrentYearSafe)
  * 
+ * SEMANTIC RULES:
+ *   - Missing/invalid character → null or []
+ *   - Pre-birth / impossible chronology → null
+ *   - Deceased filtered only when explicitly requested
+ *   - Adopted filtered only when explicitly excluded
+ *   - Sibling sort: unknown birth years last
+ * 
  * ICON POLICY: No emojis. No icons.
  * 
  * =============================================================================
@@ -20,47 +27,70 @@
     'use strict';
 
     // =========================================================================
-    // 1. RECURSION GUARD
-    // =========================================================================
-
-    var _processing = false;
-
-    // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
+    // 1. DEPENDENCY WRAPPERS
     // =========================================================================
 
     function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(id);
+        if (typeof window.getCharacterById !== 'function') {
+            throw new Error('family-accessors: getCharacterById is required. Ensure accessors.js is loaded.');
         }
-        return null;
+        return window.getCharacterById(id);
     }
 
     function _getCharacters() {
-        if (typeof window.getCharacters === 'function') {
-            return window.getCharacters();
+        if (typeof window.getCharacters !== 'function') {
+            throw new Error('family-accessors: getCharacters is required. Ensure accessors.js is loaded.');
         }
-        return [];
+        return window.getCharacters();
     }
 
     function _getCurrentYear() {
         if (typeof window.getCurrentYearSafe === 'function') {
             return window.getCurrentYearSafe();
         }
-        if (typeof window.getCurrentYear === 'function') {
-            return window.getCurrentYear();
-        }
-        return 1250;
+        throw new Error('family-accessors: getCurrentYearSafe is required. Ensure time.js is loaded.');
     }
 
     function _calculateAge(birthYear, isDeceased, deathYear) {
         if (typeof window.calculateAge === 'function') {
             return window.calculateAge(birthYear, isDeceased, deathYear);
         }
-        var currentYear = _getCurrentYear();
-        if (!birthYear) return 0;
-        if (isDeceased && deathYear) return Math.max(0, deathYear - birthYear);
-        return Math.max(0, currentYear - birthYear);
+        throw new Error('family-accessors: calculateAge is required. Ensure time.js is loaded.');
+    }
+
+    // =========================================================================
+    // 2. INTERNAL HELPERS
+    // =========================================================================
+
+    /**
+     * Sort comparator for entities with birthYear. Unknown birth years sort last.
+     * @private
+     */
+    function _compareBirthYear(a, b) {
+        var aYear = a && a.birthYear;
+        var bYear = b && b.birthYear;
+        if (aYear == null && bYear == null) return 0;
+        if (aYear == null) return 1;
+        if (bYear == null) return -1;
+        return aYear - bYear;
+    }
+
+    /**
+     * Deduplicate an array of characters by ID, preserving first occurrence.
+     * @private
+     */
+    function _dedupeById(list) {
+        var seen = {};
+        var out = [];
+        for (var i = 0; i < list.length; i++) {
+            var item = list[i];
+            if (!item) continue;
+            var id = item.id || item.character && item.character.id;
+            if (!id || seen[id]) continue;
+            seen[id] = true;
+            out.push(item);
+        }
+        return out;
     }
 
     // =========================================================================
@@ -68,426 +98,308 @@
     // =========================================================================
 
     /**
-     * Gets the father of a character
-     * @param {string} characterId - Character ID
-     * @returns {Object|null} Father character or null
+     * Gets the father of a character.
+     * @param {string} characterId
+     * @returns {Object|null}
      */
     function getFather(characterId) {
-        if (_processing) return null;
-        _processing = true;
-
-        try {
-            var character = _getCharacterById(characterId);
-            if (!character) return null;
-            if (!character.fatherId) return null;
-            return _getCharacterById(character.fatherId);
-        } finally {
-            _processing = false;
-        }
+        var character = _getCharacterById(characterId);
+        if (!character || !character.fatherId) return null;
+        return _getCharacterById(character.fatherId);
     }
 
     /**
-     * Gets the mother of a character
-     * @param {string} characterId - Character ID
-     * @returns {Object|null} Mother character or null
+     * Gets the mother of a character.
+     * @param {string} characterId
+     * @returns {Object|null}
      */
     function getMother(characterId) {
-        if (_processing) return null;
-        _processing = true;
-
-        try {
-            var character = _getCharacterById(characterId);
-            if (!character) return null;
-            if (!character.motherId) return null;
-            return _getCharacterById(character.motherId);
-        } finally {
-            _processing = false;
-        }
+        var character = _getCharacterById(characterId);
+        if (!character || !character.motherId) return null;
+        return _getCharacterById(character.motherId);
     }
 
     /**
-     * Gets both parents of a character
-     * @param {string} characterId - Character ID
-     * @returns {Object} { father, mother }
+     * Gets both parents of a character.
+     * @param {string} characterId
+     * @returns {{father: Object|null, mother: Object|null}}
      */
     function getParents(characterId) {
-        if (_processing) return { father: null, mother: null };
-        _processing = true;
-
-        try {
-            var character = _getCharacterById(characterId);
-            if (!character) return { father: null, mother: null };
-
-            return {
-                father: character.fatherId ? _getCharacterById(character.fatherId) : null,
-                mother: character.motherId ? _getCharacterById(character.motherId) : null
-            };
-        } finally {
-            _processing = false;
-        }
+        var character = _getCharacterById(characterId);
+        if (!character) return { father: null, mother: null };
+        return {
+            father: character.fatherId ? _getCharacterById(character.fatherId) : null,
+            mother: character.motherId ? _getCharacterById(character.motherId) : null
+        };
     }
 
     /**
-     * Gets all biological parents of a character (including adoptive if flagged)
-     * @param {string} characterId - Character ID
-     * @param {boolean} includeAdoptive - Include adoptive parents (default: false)
-     * @returns {Array} Array of parent objects with type info
+     * Gets all parents of a character (biological + optionally adoptive).
+     * @param {string} characterId
+     * @param {boolean} includeAdoptive - default false
+     * @returns {Array} Array of { character, type, biological, ... }
      */
     function getAllParents(characterId, includeAdoptive) {
-        if (_processing) return [];
-        _processing = true;
+        includeAdoptive = includeAdoptive === true;
+        var character = _getCharacterById(characterId);
+        if (!character) return [];
 
-        try {
-            includeAdoptive = includeAdoptive || false;
-            var character = _getCharacterById(characterId);
-            if (!character) return [];
+        var parents = [];
 
-            var parents = [];
-
-            if (character.fatherId) {
-                var father = _getCharacterById(character.fatherId);
-                if (father) {
-                    parents.push({ character: father, type: 'father', biological: true });
-                }
-            }
-
-            if (character.motherId) {
-                var mother = _getCharacterById(character.motherId);
-                if (mother) {
-                    parents.push({ character: mother, type: 'mother', biological: true });
-                }
-            }
-
-            // Add adoptive parents from adoptedParents array
-            if (includeAdoptive && character.adoptedParents) {
-                for (var i = 0; i < character.adoptedParents.length; i++) {
-                    var ap = character.adoptedParents[i];
-                    if (ap.status === 'ended') continue;
-                    var parent = _getCharacterById(ap.parentId);
-                    if (parent) {
-                        var type = ap.parentType || (parent.gender === 'male' ? 'father' : 'mother');
-                        parents.push({
-                            character: parent,
-                            type: type,
-                            biological: false,
-                            adoptionType: ap.type || 'legal',
-                            adoptionYear: ap.year
-                        });
-                    }
-                }
-            }
-
-            return parents;
-        } finally {
-            _processing = false;
+        if (character.fatherId) {
+            var father = _getCharacterById(character.fatherId);
+            if (father) parents.push({ character: father, type: 'father', biological: true });
         }
+        if (character.motherId) {
+            var mother = _getCharacterById(character.motherId);
+            if (mother) parents.push({ character: mother, type: 'mother', biological: true });
+        }
+
+        if (includeAdoptive && character.adoptedParents) {
+            for (var i = 0; i < character.adoptedParents.length; i++) {
+                var ap = character.adoptedParents[i];
+                if (ap.status === 'ended') continue;
+                var parent = _getCharacterById(ap.parentId);
+                if (!parent) continue;
+                var type = ap.parentType || (parent.gender === 'male' ? 'father' : 'mother');
+                parents.push({
+                    character: parent,
+                    type: type,
+                    biological: false,
+                    adoptionType: ap.type || 'legal',
+                    adoptionYear: ap.year
+                });
+            }
+        }
+
+        return parents;
     }
 
     /**
-     * Checks if a character has parents
-     * @param {string} characterId - Character ID
-     * @param {boolean} includeAdoptive - Include adoptive parents (default: false)
+     * Checks if a character has parents.
+     * @param {string} characterId
+     * @param {boolean} includeAdoptive - default false
      * @returns {boolean}
      */
     function hasParents(characterId, includeAdoptive) {
-        if (_processing) return false;
-        _processing = true;
+        includeAdoptive = includeAdoptive === true;
+        var character = _getCharacterById(characterId);
+        if (!character) return false;
 
-        try {
-            var character = _getCharacterById(characterId);
-            if (!character) return false;
+        if (character.fatherId || character.motherId) return true;
 
-            if (character.fatherId || character.motherId) return true;
-
-            if (includeAdoptive && character.adoptedParents) {
-                for (var i = 0; i < character.adoptedParents.length; i++) {
-                    if (character.adoptedParents[i].status !== 'ended') {
-                        return true;
-                    }
-                }
+        if (includeAdoptive && character.adoptedParents) {
+            for (var i = 0; i < character.adoptedParents.length; i++) {
+                if (character.adoptedParents[i].status !== 'ended') return true;
             }
-
-            return false;
-        } finally {
-            _processing = false;
         }
+        return false;
     }
 
     /**
-     * Checks if a character is an orphan (no living parents)
-     * @param {string} characterId - Character ID
-     * @param {boolean} includeAdoptive - Include adoptive parents (default: false)
+     * Checks if a character is an orphan (no living parents).
+     * @param {string} characterId
+     * @param {boolean} includeAdoptive - default false
      * @returns {boolean}
      */
     function isOrphan(characterId, includeAdoptive) {
-        if (_processing) return true;
-        _processing = true;
-
-        try {
-            var parents = getAllParents(characterId, includeAdoptive);
-            for (var i = 0; i < parents.length; i++) {
-                var parent = parents[i].character;
-                if (parent && !parent.isDeceased) {
-                    return false;
-                }
-            }
-            return true;
-        } finally {
-            _processing = false;
+        var parents = getAllParents(characterId, includeAdoptive === true);
+        for (var i = 0; i < parents.length; i++) {
+            var parent = parents[i].character;
+            if (parent && !parent.isDeceased) return false;
         }
+        return true;
     }
 
     // =========================================================================
-    // 4. CHILDREN ACCESSORS
+    // 4. CHILD ACCESSORS
     // =========================================================================
 
     /**
-     * Gets all biological children of a character
-     * @param {string} characterId - Character ID
-     * @param {boolean} includeDeceased - Include deceased children (default: false)
-     * @returns {Array} Array of child characters
+     * Gets all biological children of a character.
+     * @param {string} characterId
+     * @param {boolean} includeDeceased - default false
+     * @returns {Array}
      */
     function getBiologicalChildren(characterId, includeDeceased) {
-        if (_processing) return [];
-        _processing = true;
+        includeDeceased = includeDeceased === true;
+        var character = _getCharacterById(characterId);
+        if (!character) return [];
 
-        try {
-            includeDeceased = includeDeceased || false;
-            var character = _getCharacterById(characterId);
-            if (!character) return [];
-
-            var allChars = _getCharacters();
-            var children = [];
-
-            for (var i = 0; i < allChars.length; i++) {
-                var child = allChars[i];
-                if (child.id === characterId) continue;
-                if (!includeDeceased && child.isDeceased) continue;
-
-                if (child.fatherId === characterId || child.motherId === characterId) {
-                    children.push(child);
-                }
+        var allChars = _getCharacters();
+        var children = [];
+        for (var i = 0; i < allChars.length; i++) {
+            var child = allChars[i];
+            if (child.id === characterId) continue;
+            if (!includeDeceased && child.isDeceased) continue;
+            if (child.fatherId === characterId || child.motherId === characterId) {
+                children.push(child);
             }
-
-            return children;
-        } finally {
-            _processing = false;
         }
+        return children;
     }
 
     /**
-     * Gets all adopted children of a character
-     * @param {string} characterId - Character ID
-     * @param {boolean} includeDeceased - Include deceased children (default: false)
-     * @returns {Array} Array of child characters with adoption info
+     * Gets all adopted children of a character.
+     * @param {string} characterId
+     * @param {boolean} includeDeceased - default false
+     * @returns {Array} Array of { character, adoptionType, adoptionYear, notes }
      */
     function getAdoptedChildren(characterId, includeDeceased) {
-        if (_processing) return [];
-        _processing = true;
+        includeDeceased = includeDeceased === true;
+        var character = _getCharacterById(characterId);
+        if (!character) return [];
 
-        try {
-            includeDeceased = includeDeceased || false;
-            var character = _getCharacterById(characterId);
-            if (!character) return [];
+        var result = [];
+        if (!character.adoptedChildren) return result;
 
-            var result = [];
-
-            if (character.adoptedChildren) {
-                for (var i = 0; i < character.adoptedChildren.length; i++) {
-                    var ac = character.adoptedChildren[i];
-                    if (ac.status === 'ended') continue;
-                    var child = _getCharacterById(ac.childId);
-                    if (!child) continue;
-                    if (!includeDeceased && child.isDeceased) continue;
-                    result.push({
-                        character: child,
-                        adoptionType: ac.type || 'legal',
-                        adoptionYear: ac.year,
-                        notes: ac.notes || ''
-                    });
-                }
-            }
-
-            return result;
-        } finally {
-            _processing = false;
+        for (var i = 0; i < character.adoptedChildren.length; i++) {
+            var ac = character.adoptedChildren[i];
+            if (ac.status === 'ended') continue;
+            var child = _getCharacterById(ac.childId);
+            if (!child) continue;
+            if (!includeDeceased && child.isDeceased) continue;
+            result.push({
+                character: child,
+                adoptionType: ac.type || 'legal',
+                adoptionYear: ac.year,
+                notes: ac.notes || ''
+            });
         }
+        return result;
     }
 
     /**
-     * Gets all children (biological + adopted) of a character
-     * @param {string} characterId - Character ID
-     * @param {boolean} includeDeceased - Include deceased children (default: false)
-     * @returns {Array} Array of child objects with type info
+     * Gets all children (biological + adopted) of a character.
+     * @param {string} characterId
+     * @param {boolean} includeDeceased - default false
+     * @returns {Array} Array of { character, type, birthYear, ... }
      */
     function getAllChildren(characterId, includeDeceased) {
-        if (_processing) return [];
-        _processing = true;
+        includeDeceased = includeDeceased === true;
+        var character = _getCharacterById(characterId);
+        if (!character) return [];
 
-        try {
-            includeDeceased = includeDeceased || false;
-            var character = _getCharacterById(characterId);
-            if (!character) return [];
+        var result = [];
+        var seenIds = {};
 
-            var result = [];
-            var seenIds = {};
-
-            var biological = getBiologicalChildren(characterId, includeDeceased);
-            for (var i = 0; i < biological.length; i++) {
-                var child = biological[i];
-                if (!seenIds[child.id]) {
-                    seenIds[child.id] = true;
-                    result.push({
-                        character: child,
-                        type: 'biological',
-                        birthYear: child.birthYear
-                    });
-                }
-            }
-
-            var adopted = getAdoptedChildren(characterId, includeDeceased);
-            for (var i = 0; i < adopted.length; i++) {
-                var child = adopted[i];
-                if (!seenIds[child.character.id]) {
-                    seenIds[child.character.id] = true;
-                    result.push({
-                        character: child.character,
-                        type: 'adopted',
-                        adoptionType: child.adoptionType,
-                        adoptionYear: child.adoptionYear,
-                        birthYear: child.character.birthYear
-                    });
-                }
-            }
-
-            // Sort by birth year (eldest first)
-            result.sort(function(a, b) {
-                return (a.birthYear || 0) - (b.birthYear || 0);
+        var biological = getBiologicalChildren(characterId, includeDeceased);
+        for (var i = 0; i < biological.length; i++) {
+            var b = biological[i];
+            if (seenIds[b.id]) continue;
+            seenIds[b.id] = true;
+            result.push({
+                character: b,
+                type: 'biological',
+                birthYear: b.birthYear
             });
-
-            return result;
-        } finally {
-            _processing = false;
         }
+
+        var adopted = getAdoptedChildren(characterId, includeDeceased);
+        for (var j = 0; j < adopted.length; j++) {
+            var a = adopted[j];
+            if (seenIds[a.character.id]) continue;
+            seenIds[a.character.id] = true;
+            result.push({
+                character: a.character,
+                type: 'adopted',
+                adoptionType: a.adoptionType,
+                adoptionYear: a.adoptionYear,
+                birthYear: a.character.birthYear
+            });
+        }
+
+        result.sort(function(x, y) {
+            return _compareBirthYear(x.character, y.character);
+        });
+
+        return result;
     }
 
     /**
-     * Gets living children count for a character
-     * @param {string} characterId - Character ID
-     * @param {boolean} includeAdopted - Include adopted children (default: true)
+     * Gets living children count.
+     * @param {string} characterId
+     * @param {boolean} includeAdopted - default true
      * @returns {number}
      */
     function getLivingChildrenCount(characterId, includeAdopted) {
-        if (_processing) return 0;
-        _processing = true;
-
-        try {
-            includeAdopted = includeAdopted !== false;
-            var all = getAllChildren(characterId, false);
-            var count = 0;
-            for (var i = 0; i < all.length; i++) {
-                if (!all[i].character.isDeceased) {
-                    count++;
-                }
-            }
-            return count;
-        } finally {
-            _processing = false;
+        includeAdopted = includeAdopted !== false;
+        var all = getAllChildren(characterId, false);
+        var count = 0;
+        for (var i = 0; i < all.length; i++) {
+            if (!includeAdopted && all[i].type === 'adopted') continue;
+            if (!all[i].character.isDeceased) count++;
         }
+        return count;
     }
 
     /**
-     * Gets total children count for a character
-     * @param {string} characterId - Character ID
-     * @param {boolean} includeAdopted - Include adopted children (default: true)
-     * @param {boolean} includeDeceased - Include deceased children (default: true)
+     * Gets total children count.
+     * @param {string} characterId
+     * @param {boolean} includeAdopted - default true
+     * @param {boolean} includeDeceased - default true
      * @returns {number}
      */
     function getTotalChildrenCount(characterId, includeAdopted, includeDeceased) {
-        if (_processing) return 0;
-        _processing = true;
-
-        try {
-            includeAdopted = includeAdopted !== false;
-            includeDeceased = includeDeceased !== false;
-            var all = getAllChildren(characterId, includeDeceased);
-            if (!includeAdopted) {
-                var count = 0;
-                for (var i = 0; i < all.length; i++) {
-                    if (all[i].type === 'biological') {
-                        count++;
-                    }
-                }
-                return count;
-            }
-            return all.length;
-        } finally {
-            _processing = false;
+        includeAdopted = includeAdopted !== false;
+        includeDeceased = includeDeceased !== false;
+        var all = getAllChildren(characterId, includeDeceased);
+        if (includeAdopted) return all.length;
+        var count = 0;
+        for (var i = 0; i < all.length; i++) {
+            if (all[i].type === 'biological') count++;
         }
+        return count;
     }
 
     /**
-     * Checks if a character has children
-     * @param {string} characterId - Character ID
-     * @param {boolean} includeAdopted - Include adopted children (default: true)
-     * @param {boolean} includeDeceased - Include deceased children (default: false)
+     * Checks if a character has children.
+     * @param {string} characterId
+     * @param {boolean} includeAdopted - default true
+     * @param {boolean} includeDeceased - default false
      * @returns {boolean}
      */
     function hasChildren(characterId, includeAdopted, includeDeceased) {
-        if (_processing) return false;
-        _processing = true;
-
-        try {
-            return getTotalChildrenCount(characterId, includeAdopted, includeDeceased) > 0;
-        } finally {
-            _processing = false;
-        }
+        return getTotalChildrenCount(characterId, includeAdopted, includeDeceased) > 0;
     }
 
     /**
-     * Gets the eldest child of a character
-     * @param {string} characterId - Character ID
-     * @param {boolean} includeAdopted - Include adopted children (default: true)
-     * @param {boolean} includeDeceased - Include deceased children (default: false)
-     * @returns {Object|null} Child character or null
+     * Gets the eldest child.
+     * @param {string} characterId
+     * @param {boolean} includeAdopted - default true
+     * @param {boolean} includeDeceased - default false
+     * @returns {Object|null}
      */
     function getEldestChild(characterId, includeAdopted, includeDeceased) {
-        if (_processing) return null;
-        _processing = true;
-
-        try {
-            var children = getAllChildren(characterId, includeDeceased);
-            if (!includeAdopted) {
-                children = children.filter(function(c) { return c.type === 'biological'; });
-            }
-            if (children.length === 0) return null;
-            return children[0].character;
-        } finally {
-            _processing = false;
+        includeAdopted = includeAdopted !== false;
+        var children = getAllChildren(characterId, includeDeceased === true);
+        if (!includeAdopted) {
+            children = children.filter(function(c) { return c.type === 'biological'; });
         }
+        if (children.length === 0) return null;
+        // Already sorted by birthYear ascending, unknown last
+        var withYear = children.filter(function(c) { return c.character.birthYear != null; });
+        if (withYear.length > 0) return withYear[0].character;
+        return children[0].character;
     }
 
     /**
-     * Gets the youngest child of a character
-     * @param {string} characterId - Character ID
-     * @param {boolean} includeAdopted - Include adopted children (default: true)
-     * @param {boolean} includeDeceased - Include deceased children (default: false)
-     * @returns {Object|null} Child character or null
+     * Gets the youngest child.
+     * @param {string} characterId
+     * @param {boolean} includeAdopted - default true
+     * @param {boolean} includeDeceased - default false
+     * @returns {Object|null}
      */
     function getYoungestChild(characterId, includeAdopted, includeDeceased) {
-        if (_processing) return null;
-        _processing = true;
-
-        try {
-            var children = getAllChildren(characterId, includeDeceased);
-            if (!includeAdopted) {
-                children = children.filter(function(c) { return c.type === 'biological'; });
-            }
-            if (children.length === 0) return null;
-            return children[children.length - 1].character;
-        } finally {
-            _processing = false;
+        includeAdopted = includeAdopted !== false;
+        var children = getAllChildren(characterId, includeDeceased === true);
+        if (!includeAdopted) {
+            children = children.filter(function(c) { return c.type === 'biological'; });
         }
+        if (children.length === 0) return null;
+        var withYear = children.filter(function(c) { return c.character.birthYear != null; });
+        if (withYear.length > 0) return withYear[withYear.length - 1].character;
+        return children[children.length - 1].character;
     }
 
     // =========================================================================
@@ -495,215 +407,171 @@
     // =========================================================================
 
     /**
-     * Gets all siblings of a character (sharing at least one parent)
-     * @param {string} characterId - Character ID
-     * @param {boolean} includeHalfSiblings - Include half-siblings (default: true)
-     * @param {boolean} includeDeceased - Include deceased siblings (default: false)
-     * @param {boolean} includeAdopted - Include adopted siblings (default: true)
-     * @returns {Array} Array of sibling characters with relationship info
+     * Gets all siblings of a character.
+     * @param {string} characterId
+     * @param {boolean} includeHalfSiblings - default true
+     * @param {boolean} includeDeceased - default false
+     * @param {boolean} includeAdopted - default true
+     * @returns {Array} Array of { character, type, sameFather, sameMother, ... }
      */
     function getSiblings(characterId, includeHalfSiblings, includeDeceased, includeAdopted) {
-        if (_processing) return [];
-        _processing = true;
+        includeHalfSiblings = includeHalfSiblings !== false;
+        includeDeceased = includeDeceased === true;
+        includeAdopted = includeAdopted !== false;
 
-        try {
-            includeHalfSiblings = includeHalfSiblings !== false;
-            includeDeceased = includeDeceased || false;
-            includeAdopted = includeAdopted !== false;
+        var character = _getCharacterById(characterId);
+        if (!character) return [];
 
-            var character = _getCharacterById(characterId);
-            if (!character) return [];
+        var allChars = _getCharacters();
+        var siblings = [];
+        var seenIds = {};
 
-            var allChars = _getCharacters();
-            var siblings = [];
-            var seenIds = {};
+        // Full siblings
+        for (var i = 0; i < allChars.length; i++) {
+            var s = allChars[i];
+            if (s.id === characterId) continue;
+            if (!includeDeceased && s.isDeceased) continue;
 
-            // Get full siblings (same father AND mother)
-            for (var i = 0; i < allChars.length; i++) {
-                var sibling = allChars[i];
-                if (sibling.id === characterId) continue;
-                if (!includeDeceased && sibling.isDeceased) continue;
+            var sameFather = character.fatherId && s.fatherId && character.fatherId === s.fatherId;
+            var sameMother = character.motherId && s.motherId && character.motherId === s.motherId;
 
-                var sameFather = character.fatherId && sibling.fatherId && character.fatherId === sibling.fatherId;
-                var sameMother = character.motherId && sibling.motherId && character.motherId === sibling.motherId;
-
-                if (sameFather && sameMother) {
-                    if (!seenIds[sibling.id]) {
-                        seenIds[sibling.id] = true;
-                        siblings.push({
-                            character: sibling,
-                            type: 'full',
-                            sameFather: true,
-                            sameMother: true
-                        });
-                    }
+            if (sameFather && sameMother) {
+                if (!seenIds[s.id]) {
+                    seenIds[s.id] = true;
+                    siblings.push({
+                        character: s,
+                        type: 'full',
+                        sameFather: true,
+                        sameMother: true
+                    });
                 }
             }
-
-            // Get half-siblings (share one parent)
-            if (includeHalfSiblings) {
-                for (var i = 0; i < allChars.length; i++) {
-                    var sibling = allChars[i];
-                    if (sibling.id === characterId) continue;
-                    if (seenIds[sibling.id]) continue;
-                    if (!includeDeceased && sibling.isDeceased) continue;
-
-                    var sameFatherOnly = character.fatherId && sibling.fatherId && character.fatherId === sibling.fatherId;
-                    var sameMotherOnly = character.motherId && sibling.motherId && character.motherId === sibling.motherId;
-
-                    if (sameFatherOnly || sameMotherOnly) {
-                        seenIds[sibling.id] = true;
-                        siblings.push({
-                            character: sibling,
-                            type: 'half',
-                            sameFather: sameFatherOnly,
-                            sameMother: sameMotherOnly
-                        });
-                    }
-                }
-            }
-
-            // Get adopted siblings (share adoptive parent)
-            if (includeAdopted) {
-                var adoptiveParents = getAllParents(characterId, true);
-                for (var i = 0; i < adoptiveParents.length; i++) {
-                    var parent = adoptiveParents[i];
-                    if (!parent.biological) {
-                        var parentChars = getAllChildren(parent.character.id, includeDeceased);
-                        for (var j = 0; j < parentChars.length; j++) {
-                            var sibling = parentChars[j];
-                            if (sibling.character.id === characterId) continue;
-                            if (seenIds[sibling.character.id]) continue;
-                            if (!includeDeceased && sibling.character.isDeceased) continue;
-                            if (sibling.type === 'adopted') {
-                                seenIds[sibling.character.id] = true;
-                                siblings.push({
-                                    character: sibling.character,
-                                    type: 'adopted',
-                                    sameFather: false,
-                                    sameMother: false,
-                                    adoptionType: sibling.adoptionType || 'legal'
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Sort by birth year
-            siblings.sort(function(a, b) {
-                return (a.character.birthYear || 0) - (b.character.birthYear || 0);
-            });
-
-            return siblings;
-        } finally {
-            _processing = false;
         }
+
+        // Half siblings
+        if (includeHalfSiblings) {
+            for (var j = 0; j < allChars.length; j++) {
+                var h = allChars[j];
+                if (h.id === characterId) continue;
+                if (seenIds[h.id]) continue;
+                if (!includeDeceased && h.isDeceased) continue;
+
+                var sharedFather = character.fatherId && h.fatherId && character.fatherId === h.fatherId;
+                var sharedMother = character.motherId && h.motherId && character.motherId === h.motherId;
+
+                if (sharedFather || sharedMother) {
+                    seenIds[h.id] = true;
+                    siblings.push({
+                        character: h,
+                        type: 'half',
+                        sameFather: !!sharedFather,
+                        sameMother: !!sharedMother
+                    });
+                }
+            }
+        }
+
+        // Adopted siblings (share an adoptive parent)
+        if (includeAdopted) {
+            var adoptiveParents = getAllParents(characterId, true).filter(function(p) {
+                return !p.biological;
+            });
+            for (var k = 0; k < adoptiveParents.length; k++) {
+                var ap = adoptiveParents[k];
+                var apChildren = getAllChildren(ap.character.id, includeDeceased);
+                for (var m = 0; m < apChildren.length; m++) {
+                    var sib = apChildren[m];
+                    if (sib.character.id === characterId) continue;
+                    if (seenIds[sib.character.id]) continue;
+                    if (sib.type !== 'adopted') continue;
+                    if (!includeDeceased && sib.character.isDeceased) continue;
+                    seenIds[sib.character.id] = true;
+                    siblings.push({
+                        character: sib.character,
+                        type: 'adopted',
+                        sameFather: false,
+                        sameMother: false,
+                        adoptionType: sib.adoptionType || 'legal'
+                    });
+                }
+            }
+        }
+
+        siblings.sort(function(x, y) {
+            return _compareBirthYear(x.character, y.character);
+        });
+
+        return siblings;
     }
 
     /**
-     * Gets full siblings of a character (same father AND mother)
-     * @param {string} characterId - Character ID
-     * @param {boolean} includeDeceased - Include deceased siblings (default: false)
-     * @returns {Array} Array of sibling characters
+     * Gets full siblings (same father AND mother).
+     * @param {string} characterId
+     * @param {boolean} includeDeceased - default false
+     * @returns {Array}
      */
     function getFullSiblings(characterId, includeDeceased) {
-        if (_processing) return [];
-        _processing = true;
-
-        try {
-            var siblings = getSiblings(characterId, false, includeDeceased, false);
-            return siblings.map(function(s) { return s.character; });
-        } finally {
-            _processing = false;
-        }
+        return getSiblings(characterId, false, includeDeceased === true, false)
+            .map(function(s) { return s.character; });
     }
 
     /**
-     * Gets half-siblings of a character (share one parent)
-     * @param {string} characterId - Character ID
-     * @param {boolean} includeDeceased - Include deceased siblings (default: false)
-     * @returns {Array} Array of sibling characters
+     * Gets half-siblings (share exactly one parent).
+     * @param {string} characterId
+     * @param {boolean} includeDeceased - default false
+     * @returns {Array}
      */
     function getHalfSiblings(characterId, includeDeceased) {
-        if (_processing) return [];
-        _processing = true;
-
-        try {
-            var siblings = getSiblings(characterId, true, includeDeceased, false);
-            return siblings
-                .filter(function(s) { return s.type === 'half'; })
-                .map(function(s) { return s.character; });
-        } finally {
-            _processing = false;
-        }
+        return getSiblings(characterId, true, includeDeceased === true, false)
+            .filter(function(s) { return s.type === 'half'; })
+            .map(function(s) { return s.character; });
     }
 
     /**
-     * Gets the eldest sibling of a character
-     * @param {string} characterId - Character ID
-     * @param {boolean} includeHalfSiblings - Include half-siblings (default: false)
-     * @param {boolean} includeDeceased - Include deceased siblings (default: false)
-     * @returns {Object|null} Sibling character or null
+     * Gets the eldest sibling.
+     * @param {string} characterId
+     * @param {boolean} includeHalfSiblings - default false
+     * @param {boolean} includeDeceased - default false
+     * @returns {Object|null}
      */
     function getEldestSibling(characterId, includeHalfSiblings, includeDeceased) {
-        if (_processing) return null;
-        _processing = true;
-
-        try {
-            var siblings = getSiblings(characterId, includeHalfSiblings, includeDeceased, false);
-            if (siblings.length === 0) return null;
-            return siblings[0].character;
-        } finally {
-            _processing = false;
-        }
+        var siblings = getSiblings(characterId, includeHalfSiblings === true, includeDeceased === true, false);
+        if (siblings.length === 0) return null;
+        var withYear = siblings.filter(function(s) { return s.character.birthYear != null; });
+        if (withYear.length > 0) return withYear[0].character;
+        return siblings[0].character;
     }
 
     /**
-     * Gets the youngest sibling of a character
-     * @param {string} characterId - Character ID
-     * @param {boolean} includeHalfSiblings - Include half-siblings (default: false)
-     * @param {boolean} includeDeceased - Include deceased siblings (default: false)
-     * @returns {Object|null} Sibling character or null
+     * Gets the youngest sibling.
+     * @param {string} characterId
+     * @param {boolean} includeHalfSiblings - default false
+     * @param {boolean} includeDeceased - default false
+     * @returns {Object|null}
      */
     function getYoungestSibling(characterId, includeHalfSiblings, includeDeceased) {
-        if (_processing) return null;
-        _processing = true;
-
-        try {
-            var siblings = getSiblings(characterId, includeHalfSiblings, includeDeceased, false);
-            if (siblings.length === 0) return null;
-            return siblings[siblings.length - 1].character;
-        } finally {
-            _processing = false;
-        }
+        var siblings = getSiblings(characterId, includeHalfSiblings === true, includeDeceased === true, false);
+        if (siblings.length === 0) return null;
+        var withYear = siblings.filter(function(s) { return s.character.birthYear != null; });
+        if (withYear.length > 0) return withYear[withYear.length - 1].character;
+        return siblings[siblings.length - 1].character;
     }
 
     /**
-     * Checks if two characters are siblings
-     * @param {string} charId1 - First character ID
-     * @param {string} charId2 - Second character ID
-     * @param {boolean} includeHalfSiblings - Include half-siblings (default: true)
-     * @param {boolean} includeAdopted - Include adopted siblings (default: true)
+     * Checks if two characters are siblings.
+     * @param {string} charId1
+     * @param {string} charId2
+     * @param {boolean} includeHalfSiblings - default true
+     * @param {boolean} includeAdopted - default true
      * @returns {boolean}
      */
     function areSiblings(charId1, charId2, includeHalfSiblings, includeAdopted) {
-        if (_processing) return false;
-        _processing = true;
-
-        try {
-            if (charId1 === charId2) return false;
-
-            var siblings = getSiblings(charId1, includeHalfSiblings, true, includeAdopted);
-            for (var i = 0; i < siblings.length; i++) {
-                if (siblings[i].character.id === charId2) {
-                    return true;
-                }
-            }
-            return false;
-        } finally {
-            _processing = false;
+        if (!charId1 || !charId2 || charId1 === charId2) return false;
+        var siblings = getSiblings(charId1, includeHalfSiblings !== false, true, includeAdopted !== false);
+        for (var i = 0; i < siblings.length; i++) {
+            if (siblings[i].character.id === charId2) return true;
         }
+        return false;
     }
 
     // =========================================================================
@@ -711,99 +579,66 @@
     // =========================================================================
 
     /**
-     * Gets grandparents of a character
-     * @param {string} characterId - Character ID
-     * @param {number} generation - 1 = grandparents, 2 = great-grandparents, etc.
-     * @param {boolean} includeAdoptive - Include adoptive grandparents (default: false)
-     * @returns {Array} Array of grandparent characters
+     * Gets grandparents of a character.
+     * Note: generation parameter is accepted for API compatibility but
+     * currently only generation 1 (grandparents) is fully supported.
+     * 
+     * @param {string} characterId
+     * @param {number} generation - 0 = parents, 1 = grandparents (default 1)
+     * @param {boolean} includeAdoptive - default false
+     * @returns {Array}
      */
     function getGrandparents(characterId, generation, includeAdoptive) {
-        if (_processing) return [];
-        _processing = true;
+        generation = (generation === undefined || generation === null) ? 1 : generation;
+        includeAdoptive = includeAdoptive === true;
 
-        try {
-            generation = generation || 1;
-            includeAdoptive = includeAdoptive || false;
-
-            if (generation === 0) {
-                var parents = getParents(characterId);
-                var result = [];
-                if (parents.father) result.push(parents.father);
-                if (parents.mother) result.push(parents.mother);
-                return result;
-            }
-
+        if (generation === 0) {
             var parents = getAllParents(characterId, includeAdoptive);
-            var grandparents = [];
-
-            for (var i = 0; i < parents.length; i++) {
-                var parent = parents[i].character;
-                if (parent) {
-                    var parentParents = getAllParents(parent.id, includeAdoptive);
-                    for (var j = 0; j < parentParents.length; j++) {
-                        grandparents.push(parentParents[j].character);
-                    }
-                }
-            }
-
-            // Remove duplicates
-            var seenIds = {};
-            var uniqueGrandparents = [];
-            for (var i = 0; i < grandparents.length; i++) {
-                var gp = grandparents[i];
-                if (gp && !seenIds[gp.id]) {
-                    seenIds[gp.id] = true;
-                    uniqueGrandparents.push(gp);
-                }
-            }
-
-            return uniqueGrandparents;
-        } finally {
-            _processing = false;
+            return parents.map(function(p) { return p.character; });
         }
+
+        if (generation !== 1) {
+            // Only generation 1 is implemented. Higher generations return [].
+            return [];
+        }
+
+        var parents = getAllParents(characterId, includeAdoptive);
+        var grandparents = [];
+        for (var i = 0; i < parents.length; i++) {
+            var parent = parents[i].character;
+            if (!parent) continue;
+            var parentParents = getAllParents(parent.id, includeAdoptive);
+            for (var j = 0; j < parentParents.length; j++) {
+                grandparents.push(parentParents[j].character);
+            }
+        }
+        return _dedupeById(grandparents);
     }
 
     /**
-     * Gets grandchildren of a character
-     * @param {string} characterId - Character ID
-     * @param {boolean} includeDeceased - Include deceased grandchildren (default: false)
-     * @param {boolean} includeAdopted - Include adopted grandchildren (default: true)
-     * @returns {Array} Array of grandchild characters
+     * Gets grandchildren of a character.
+     * @param {string} characterId
+     * @param {boolean} includeDeceased - default false
+     * @param {boolean} includeAdopted - default true
+     * @returns {Array}
      */
     function getGrandchildren(characterId, includeDeceased, includeAdopted) {
-        if (_processing) return [];
-        _processing = true;
+        includeDeceased = includeDeceased === true;
+        includeAdopted = includeAdopted !== false;
 
-        try {
-            includeDeceased = includeDeceased || false;
-            includeAdopted = includeAdopted !== false;
-
-            var children = getAllChildren(characterId, includeDeceased);
-            var grandchildren = [];
-
-            for (var i = 0; i < children.length; i++) {
-                var child = children[i].character;
-                var childChildren = getAllChildren(child.id, includeDeceased);
-                for (var j = 0; j < childChildren.length; j++) {
-                    grandchildren.push(childChildren[j].character);
-                }
+        var children = getAllChildren(characterId, includeDeceased);
+        var grandchildren = [];
+        for (var i = 0; i < children.length; i++) {
+            var childEntry = children[i];
+            if (!includeAdopted && childEntry.type === 'adopted') continue;
+            var childChildren = getAllChildren(childEntry.character.id, includeDeceased);
+            for (var j = 0; j < childChildren.length; j++) {
+                var gcEntry = childChildren[j];
+                if (!includeAdopted && gcEntry.type === 'adopted') continue;
+                grandchildren.push(gcEntry.character);
             }
-
-            // Remove duplicates
-            var seenIds = {};
-            var uniqueGrandchildren = [];
-            for (var i = 0; i < grandchildren.length; i++) {
-                var gc = grandchildren[i];
-                if (gc && !seenIds[gc.id]) {
-                    seenIds[gc.id] = true;
-                    uniqueGrandchildren.push(gc);
-                }
-            }
-
-            return uniqueGrandchildren;
-        } finally {
-            _processing = false;
         }
+        return _dedupeById(grandchildren);
     }
 
     // =========================================================================
@@ -811,160 +646,97 @@
     // =========================================================================
 
     /**
-     * Gets aunts and uncles of a character
-     * @param {string} characterId - Character ID
-     * @param {boolean} includeDeceased - Include deceased relatives (default: false)
-     * @returns {Array} Array of aunt/uncle characters with relationship info
+     * Gets aunts and uncles of a character.
+     * @param {string} characterId
+     * @param {boolean} includeDeceased - default false
+     * @returns {Array} Array of { character, relation, type }
      */
     function getAuntsAndUncles(characterId, includeDeceased) {
-        if (_processing) return [];
-        _processing = true;
+        includeDeceased = includeDeceased === true;
+        var parents = getParents(characterId);
+        var result = [];
 
-        try {
-            includeDeceased = includeDeceased || false;
-            var parents = getParents(characterId);
-            var result = [];
-
-            if (parents.father) {
-                var fatherSiblings = getSiblings(parents.father.id, true, includeDeceased);
-                for (var i = 0; i < fatherSiblings.length; i++) {
-                    result.push({
-                        character: fatherSiblings[i].character,
-                        relation: 'paternal',
-                        type: fatherSiblings[i].character.gender === 'male' ? 'uncle' : 'aunt'
-                    });
-                }
+        function collect(parentObj, relation) {
+            if (!parentObj) return;
+            var parentSiblings = getSiblings(parentObj.id, true, includeDeceased, false);
+            for (var i = 0; i < parentSiblings.length; i++) {
+                var sib = parentSiblings[i].character;
+                var isMale = sib.gender === 'male';
+                var isFemale = sib.gender === 'female';
+                var type = isMale ? 'uncle' : (isFemale ? 'aunt' : 'aunt-or-uncle');
+                result.push({
+                    character: sib,
+                    relation: relation,
+                    type: type
+                });
             }
-
-            if (parents.mother) {
-                var motherSiblings = getSiblings(parents.mother.id, true, includeDeceased);
-                for (var i = 0; i < motherSiblings.length; i++) {
-                    result.push({
-                        character: motherSiblings[i].character,
-                        relation: 'maternal',
-                        type: motherSiblings[i].character.gender === 'male' ? 'uncle' : 'aunt'
-                    });
-                }
-            }
-
-            // Remove duplicates
-            var seenIds = {};
-            var uniqueResult = [];
-            for (var i = 0; i < result.length; i++) {
-                var item = result[i];
-                if (item.character && !seenIds[item.character.id]) {
-                    seenIds[item.character.id] = true;
-                    uniqueResult.push(item);
-                }
-            }
-
-            return uniqueResult;
-        } finally {
-            _processing = false;
         }
+
+        collect(parents.father, 'paternal');
+        collect(parents.mother, 'maternal');
+
+        return _dedupeById(result.map(function(r) {
+            return { id: r.character.id, character: r.character, relation: r.relation, type: r.type };
+        }));
     }
 
     /**
-     * Gets cousins of a character
-     * @param {string} characterId - Character ID
-     * @param {boolean} includeDeceased - Include deceased cousins (default: false)
-     * @param {number} degree - 1 = first cousins, 2 = second cousins, etc.
-     * @returns {Array} Array of cousin characters
+     * Gets cousins of a character.
+     * @param {string} characterId
+     * @param {boolean} includeDeceased - default false
+     * @param {number} degree - default 1
+     * @returns {Array}
      */
     function getCousins(characterId, includeDeceased, degree) {
-        if (_processing) return [];
-        _processing = true;
+        includeDeceased = includeDeceased === true;
+        degree = (degree === undefined || degree === null) ? 1 : degree;
 
-        try {
-            includeDeceased = includeDeceased || false;
-            degree = degree || 1;
-
-            if (degree === 1) {
-                var auntsUncles = getAuntsAndUncles(characterId, includeDeceased);
-                var cousins = [];
-
-                for (var i = 0; i < auntsUncles.length; i++) {
-                    var uncleAunt = auntsUncles[i].character;
-                    var uncleAuntChildren = getAllChildren(uncleAunt.id, includeDeceased);
-                    for (var j = 0; j < uncleAuntChildren.length; j++) {
-                        if (uncleAuntChildren[j].character.id !== characterId) {
-                            cousins.push(uncleAuntChildren[j].character);
-                        }
-                    }
-                }
-
-                // Remove duplicates
-                var seenIds = {};
-                var uniqueCousins = [];
-                for (var i = 0; i < cousins.length; i++) {
-                    var cousin = cousins[i];
-                    if (cousin && !seenIds[cousin.id]) {
-                        seenIds[cousin.id] = true;
-                        uniqueCousins.push(cousin);
-                    }
-                }
-
-                return uniqueCousins;
-            }
-
-            // For higher degrees, recursively get cousins of cousins
-            var result = getCousins(characterId, includeDeceased, 1);
-            var currentDegree = 1;
-            var currentCousins = result;
-
-            while (currentDegree < degree) {
-                var nextCousins = [];
-                for (var i = 0; i < currentCousins.length; i++) {
-                    var cousinChildren = getCousins(currentCousins[i].id, includeDeceased, 1);
-                    for (var j = 0; j < cousinChildren.length; j++) {
-                        nextCousins.push(cousinChildren[j]);
-                    }
-                }
-                currentCousins = nextCousins;
-                currentDegree++;
-            }
-
-            return currentCousins;
-        } finally {
-            _processing = false;
+        if (degree !== 1) {
+            // Only first cousins implemented; higher degrees would require graph walking
+            return [];
         }
+
+        var auntsUncles = getAuntsAndUncles(characterId, includeDeceased);
+        var cousins = [];
+        for (var i = 0; i < auntsUncles.length; i++) {
+            var au = auntsUncles[i].character;
+            var auChildren = getAllChildren(au.id, includeDeceased);
+            for (var j = 0; j < auChildren.length; j++) {
+                var c = auChildren[j].character;
+                if (c.id !== characterId) cousins.push(c);
+            }
+        }
+        return _dedupeById(cousins);
     }
 
     /**
-     * Gets nieces and nephews of a character
-     * @param {string} characterId - Character ID
-     * @param {boolean} includeDeceased - Include deceased relatives (default: false)
-     * @returns {Array} Array of niece/nephew characters with relationship info
+     * Gets nieces and nephews of a character.
+     * @param {string} characterId
+     * @param {boolean} includeDeceased - default false
+     * @returns {Array} Array of { character, through, type }
      */
     function getNiecesAndNephews(characterId, includeDeceased) {
-        if (_processing) return [];
-        _processing = true;
+        includeDeceased = includeDeceased === true;
+        var siblings = getSiblings(characterId, true, includeDeceased, false);
+        var result = [];
 
-        try {
-            includeDeceased = includeDeceased || false;
-            var siblings = getSiblings(characterId, true, includeDeceased);
-            var result = [];
-
-            for (var i = 0; i < siblings.length; i++) {
-                var sibling = siblings[i].character;
-                var siblingChildren = getAllChildren(sibling.id, includeDeceased);
-                for (var j = 0; j < siblingChildren.length; j++) {
-                    var child = siblingChildren[j].character;
-                    if (child) {
-                        result.push({
-                            character: child,
-                            relation: sibling.gender === 'male' ? 'paternal' : 'maternal',
-                            type: child.gender === 'male' ? 'nephew' : 'niece',
-                            through: sibling
-                        });
-                    }
-                }
+        for (var i = 0; i < siblings.length; i++) {
+            var sib = siblings[i].character;
+            var sibChildren = getAllChildren(sib.id, includeDeceased);
+            for (var j = 0; j < sibChildren.length; j++) {
+                var child = sibChildren[j].character;
+                if (!child) continue;
+                var isMale = child.gender === 'male';
+                var isFemale = child.gender === 'female';
+                var type = isMale ? 'nephew' : (isFemale ? 'niece' : 'nibling');
+                result.push({
+                    character: child,
+                    through: sib,
+                    type: type
+                });
             }
-
-            return result;
-        } finally {
-            _processing = false;
         }
+        return result;
     }
 
     // =========================================================================
@@ -972,97 +744,66 @@
     // =========================================================================
 
     /**
-     * Gets spouse(s) of a character
-     * @param {string} characterId - Character ID
-     * @param {boolean} activeOnly - Only active relationships (default: true)
-     * @returns {Array} Array of spouse characters with relationship info
+     * Gets spouse(s) of a character.
+     * @param {string} characterId
+     * @param {boolean} activeOnly - default true
+     * @returns {Array} Array of { character, relationship, status, startYear, endYear }
      */
     function getSpouses(characterId, activeOnly) {
-        if (_processing) return [];
-        _processing = true;
+        activeOnly = activeOnly !== false;
+        var character = _getCharacterById(characterId);
+        if (!character) return [];
+        if (!character.relationships) return [];
 
-        try {
-            activeOnly = activeOnly !== false;
-            var character = _getCharacterById(characterId);
-            if (!character) return [];
+        var spouses = [];
+        for (var i = 0; i < character.relationships.length; i++) {
+            var rel = character.relationships[i];
+            if (activeOnly && rel.status !== 'ongoing' && rel.status !== 'active') continue;
 
-            var spouses = [];
+            var relType = rel.type || (rel.details && rel.details.type);
+            var isMarriage = relType === 'marriage'
+                || relType === 'committed'
+                || relType === 'romance';
+            if (!isMarriage) continue;
 
-            if (character.relationships) {
-                for (var i = 0; i < character.relationships.length; i++) {
-                    var rel = character.relationships[i];
-                    if (activeOnly && rel.status !== 'ongoing' && rel.status !== 'active') continue;
+            var spouseId = rel.participantB || rel.partnerId;
+            if (spouseId === characterId) spouseId = rel.participantA;
+            var spouse = _getCharacterById(spouseId);
+            if (!spouse) continue;
 
-                    var isMarriage = rel.type === 'marriage' || rel.type === 'committed' || rel.type === 'romance';
-                    if (!isMarriage) continue;
-
-                    var spouseId = rel.participantB || rel.partnerId;
-                    if (spouseId === characterId) {
-                        spouseId = rel.participantA;
-                    }
-                    var spouse = _getCharacterById(spouseId);
-                    if (spouse) {
-                        spouses.push({
-                            character: spouse,
-                            relationship: rel,
-                            status: rel.status,
-                            startYear: rel.startYear || rel.details?.startYear,
-                            endYear: rel.endYear || rel.details?.endYear
-                        });
-                    }
-                }
-            }
-
-            return spouses;
-        } finally {
-            _processing = false;
+            spouses.push({
+                character: spouse,
+                relationship: rel,
+                status: rel.status,
+                startYear: rel.startYear || (rel.details && rel.details.startYear),
+                endYear: rel.endYear || (rel.details && rel.details.endYear)
+            });
         }
+        return spouses;
     }
 
     /**
-     * Gets the current spouse of a character (first active spouse)
-     * @param {string} characterId - Character ID
-     * @returns {Object|null} Spouse character or null
+     * Gets the current spouse (first active).
+     * @param {string} characterId
+     * @returns {Object|null}
      */
     function getCurrentSpouse(characterId) {
-        if (_processing) return null;
-        _processing = true;
-
-        try {
-            var spouses = getSpouses(characterId, true);
-            if (spouses.length === 0) return null;
-            return spouses[0].character;
-        } finally {
-            _processing = false;
-        }
+        var spouses = getSpouses(characterId, true);
+        if (spouses.length === 0) return null;
+        return spouses[0].character;
     }
 
     /**
-     * Gets siblings-in-law of a character
-     * @param {string} characterId - Character ID
-     * @param {boolean} includeDeceased - Include deceased relatives (default: false)
-     * @returns {Array} Array of sibling-in-law characters
+     * Gets siblings-in-law of a character (siblings of current spouse).
+     * @param {string} characterId
+     * @param {boolean} includeDeceased - default false
+     * @returns {Array}
      */
     function getSiblingsInLaw(characterId, includeDeceased) {
-        if (_processing) return [];
-        _processing = true;
-
-        try {
-            includeDeceased = includeDeceased || false;
-            var spouse = getCurrentSpouse(characterId);
-            if (!spouse) return [];
-
-            var spousesSiblings = getSiblings(spouse.id, true, includeDeceased);
-            var result = [];
-
-            for (var i = 0; i < spousesSiblings.length; i++) {
-                result.push(spousesSiblings[i].character);
-            }
-
-            return result;
-        } finally {
-            _processing = false;
-        }
+        var spouse = getCurrentSpouse(characterId);
+        if (!spouse) return [];
+        return getSiblings(spouse.id, true, includeDeceased === true, false)
+            .map(function(s) { return s.character; });
     }
 
     // =========================================================================
@@ -1070,363 +811,267 @@
     // =========================================================================
 
     /**
-     * Gets the household of a character
-     * @param {string} characterId - Character ID
-     * @returns {Object|null} Household object or null
+     * Gets the household of a character.
+     * @param {string} characterId
+     * @returns {Object|null}
      */
     function getCharacterHousehold(characterId) {
-        if (_processing) return null;
-        _processing = true;
+        var character = _getCharacterById(characterId);
+        if (!character) return null;
+        var householdId = character.household || character.householdId;
+        if (!householdId) return null;
 
-        try {
-            var character = _getCharacterById(characterId);
-            if (!character || !character.household) return null;
-
-            if (typeof window.getHousehold === 'function') {
-                return window.getHousehold(character.household);
-            }
-
-            // Fallback: try to find in masterData
-            var allHouseholds = [];
-            if (typeof window.getHouseholds === 'function') {
-                allHouseholds = window.getHouseholds();
-            } else if (window.masterData && window.masterData.data && window.masterData.data.households) {
-                allHouseholds = window.masterData.data.households;
-            }
-
-            for (var i = 0; i < allHouseholds.length; i++) {
-                if (allHouseholds[i].id === character.household) {
-                    return allHouseholds[i];
-                }
-            }
-
-            return null;
-        } finally {
-            _processing = false;
+        if (typeof window.getHouseholdById === 'function') {
+            return window.getHouseholdById(householdId);
         }
+        if (typeof window.getHousehold === 'function') {
+            return window.getHousehold(householdId);
+        }
+        return null;
     }
 
     /**
-     * Gets all family members in a character's household
-     * @param {string} characterId - Character ID
-     * @param {boolean} includeNonFamily - Include non-family members (default: false)
-     * @returns {Array} Array of household member characters
+     * Gets family members in a character's household.
+     * @param {string} characterId
+     * @param {boolean} includeNonFamily - default false
+     * @returns {Array} Array of { character, role, isHead, type, joinedYear }
      */
     function getHouseholdFamilyMembers(characterId, includeNonFamily) {
-        if (_processing) return [];
-        _processing = true;
+        includeNonFamily = includeNonFamily === true;
+        var household = getCharacterHousehold(characterId);
+        if (!household || !household.members) return [];
 
-        try {
-            includeNonFamily = includeNonFamily || false;
-            var household = getCharacterHousehold(characterId);
-            if (!household || !household.members) return [];
+        var members = [];
+        for (var i = 0; i < household.members.length; i++) {
+            var member = household.members[i];
+            var char = _getCharacterById(member.characterId);
+            if (!char) continue;
 
-            var members = [];
+            var isFamily = member.type === 'family'
+                || member.type === 'child'
+                || member.type === 'parent'
+                || member.type === 'spouse';
+            if (!isFamily && !includeNonFamily) continue;
 
-            for (var i = 0; i < household.members.length; i++) {
-                var member = household.members[i];
-                var character = _getCharacterById(member.characterId);
-                if (!character) continue;
-
-                var isFamily = false;
-                if (member.type === 'family' || member.type === 'child' || member.type === 'parent') {
-                    isFamily = true;
-                }
-
-                if (isFamily || includeNonFamily) {
-                    members.push({
-                        character: character,
-                        role: member.role || 'member',
-                        isHead: member.isHead || false,
-                        type: member.type || 'family',
-                        joinedYear: member.joinedYear
-                    });
-                }
-            }
-
-            return members;
-        } finally {
-            _processing = false;
+            members.push({
+                character: char,
+                role: member.role || 'member',
+                isHead: member.isHead === true,
+                type: member.type || 'family',
+                joinedYear: member.joinedYear
+            });
         }
+        return members;
     }
 
     /**
-     * Gets the head of a character's household
-     * @param {string} characterId - Character ID
-     * @returns {Object|null} Household head character or null
+     * Gets the head of a character's household.
+     * @param {string} characterId
+     * @returns {Object|null}
      */
     function getHouseholdHead(characterId) {
-        if (_processing) return null;
-        _processing = true;
-
-        try {
-            var household = getCharacterHousehold(characterId);
-            if (!household || !household.members) return null;
-
-            for (var i = 0; i < household.members.length; i++) {
-                if (household.members[i].isHead) {
-                    return _getCharacterById(household.members[i].characterId);
-                }
+        var household = getCharacterHousehold(characterId);
+        if (!household || !household.members) return null;
+        for (var i = 0; i < household.members.length; i++) {
+            if (household.members[i].isHead) {
+                return _getCharacterById(household.members[i].characterId);
             }
-
-            return null;
-        } finally {
-            _processing = false;
         }
+        return null;
     }
 
     // =========================================================================
-    // 10. CONSANGUINITY ACCESSORS
+    // 10. RELATIONSHIP DESCRIPTION
     // =========================================================================
 
     /**
-     * Gets the consanguinity relationship between two characters
-     * @param {string} charId1 - First character ID
-     * @param {string} charId2 - Second character ID
-     * @returns {Object} { degree: string, closeness: number } or null
+     * Gets a structured relationship descriptor between two characters.
+     * Returns { degree, closeness } or null.
+     * 
+     * Degrees: Self, Parent, Child, Sibling, Grandparent, Grandchild,
+     *          Uncle/Aunt, Nephew/Niece, Cousin, Spouse, Unrelated
+     * Closeness: 0 = self, 1 = immediate (parent/child/spouse), etc.
+     * 
+     * @param {string} charId1
+     * @param {string} charId2
+     * @returns {Object|null}
      */
-    function getConsanguinity(charId1, charId2) {
-        if (_processing) return null;
-        _processing = true;
+    function getKinship(charId1, charId2) {
+        if (!charId1 || !charId2) return null;
+        if (charId1 === charId2) return { degree: 'Self', closeness: 0 };
 
-        try {
-            if (charId1 === charId2) {
-                return { degree: 'Self', closeness: 0 };
-            }
+        var char1 = _getCharacterById(charId1);
+        var char2 = _getCharacterById(charId2);
+        if (!char1 || !char2) return null;
 
-            var char1 = _getCharacterById(charId1);
-            var char2 = _getCharacterById(charId2);
-            if (!char1 || !char2) return null;
-
-            // Check parent-child
-            if (char1.fatherId === charId2 || char1.motherId === charId2) {
-                return { degree: 'Parent', closeness: 1 };
-            }
-            if (char2.fatherId === charId1 || char2.motherId === charId1) {
-                return { degree: 'Child', closeness: 1 };
-            }
-
-            // Check siblings
-            if (areSiblings(charId1, charId2, true, true)) {
-                return { degree: 'Sibling', closeness: 2 };
-            }
-
-            // Check grandparents
-            var grandparents1 = getGrandparents(charId1, 1);
-            for (var i = 0; i < grandparents1.length; i++) {
-                if (grandparents1[i].id === charId2) {
-                    return { degree: 'Grandparent', closeness: 2 };
-                }
-            }
-
-            var grandparents2 = getGrandparents(charId2, 1);
-            for (var i = 0; i < grandparents2.length; i++) {
-                if (grandparents2[i].id === charId1) {
-                    return { degree: 'Grandchild', closeness: 2 };
-                }
-            }
-
-            // Check aunts/uncles
-            var auntsUncles = getAuntsAndUncles(charId1);
-            for (var i = 0; i < auntsUncles.length; i++) {
-                if (auntsUncles[i].character.id === charId2) {
-                    return { degree: auntsUncles[i].type === 'uncle' ? 'Uncle' : 'Aunt', closeness: 3 };
-                }
-            }
-
-            // Check nieces/nephews
-            var niecesNephews = getNiecesAndNephews(charId1);
-            for (var i = 0; i < niecesNephews.length; i++) {
-                if (niecesNephews[i].character.id === charId2) {
-                    return { degree: niecesNephews[i].type === 'nephew' ? 'Nephew' : 'Niece', closeness: 3 };
-                }
-            }
-
-            // Check cousins (first cousins)
-            var cousins = getCousins(charId1);
-            for (var i = 0; i < cousins.length; i++) {
-                if (cousins[i].id === charId2) {
-                    return { degree: 'Cousin', closeness: 4 };
-                }
-            }
-
-            // Check in-laws
-            var spouse = getCurrentSpouse(charId1);
-            if (spouse && spouse.id === charId2) {
-                return { degree: 'Spouse', closeness: 1 };
-            }
-
-            return { degree: 'Unrelated', closeness: 99 };
-        } finally {
-            _processing = false;
+        // Parent / child
+        if (char1.fatherId === charId2 || char1.motherId === charId2) {
+            return { degree: 'Parent', closeness: 1 };
         }
+        if (char2.fatherId === charId1 || char2.motherId === charId1) {
+            return { degree: 'Child', closeness: 1 };
+        }
+
+        // Spouse
+        var spouse = getCurrentSpouse(charId1);
+        if (spouse && spouse.id === charId2) {
+            return { degree: 'Spouse', closeness: 1 };
+        }
+
+        // Sibling
+        if (areSiblings(charId1, charId2, true, true)) {
+            return { degree: 'Sibling', closeness: 2 };
+        }
+
+        // Grandparent
+        var gps1 = getGrandparents(charId1, 1);
+        for (var i = 0; i < gps1.length; i++) {
+            if (gps1[i].id === charId2) return { degree: 'Grandparent', closeness: 2 };
+        }
+
+        // Grandchild
+        var gcs1 = getGrandchildren(charId1);
+        for (var j = 0; j < gcs1.length; j++) {
+            if (gcs1[j].id === charId2) return { degree: 'Grandchild', closeness: 2 };
+        }
+
+        // Aunt/Uncle
+        var auntsUncles = getAuntsAndUncles(charId1);
+        for (var k = 0; k < auntsUncles.length; k++) {
+            if (auntsUncles[k].character.id === charId2) {
+                var type = auntsUncles[k].type;
+                var label = type === 'uncle' ? 'Uncle' : (type === 'aunt' ? 'Aunt' : 'UncleOrAunt');
+                return { degree: label, closeness: 3 };
+            }
+        }
+
+        // Niece/Nephew
+        var niecesNephews = getNiecesAndNephews(charId1);
+        for (var m = 0; m < niecesNephews.length; m++) {
+            if (niecesNephews[m].character.id === charId2) {
+                var nt = niecesNephews[m].type;
+                var nlabel = nt === 'nephew' ? 'Nephew' : (nt === 'niece' ? 'Niece' : 'Nibling');
+                return { degree: nlabel, closeness: 3 };
+            }
+        }
+
+        // Cousin (first only)
+        var cousins = getCousins(charId1, false, 1);
+        for (var n = 0; n < cousins.length; n++) {
+            if (cousins[n].id === charId2) return { degree: 'Cousin', closeness: 4 };
+        }
+
+        return { degree: 'Unrelated', closeness: 99 };
     }
 
     /**
-     * Gets a human-readable relationship description
-     * @param {string} charId1 - First character ID
-     * @param {string} charId2 - Second character ID
-     * @returns {string} Relationship description
+     * Gets a human-readable relationship description.
+     * NOTE: This is presentation and may eventually move to formatting.js.
+     * @param {string} charId1
+     * @param {string} charId2
+     * @returns {string}
      */
     function getRelationshipDescription(charId1, charId2) {
-        if (_processing) return 'Unknown';
-        _processing = true;
+        var k = getKinship(charId1, charId2);
+        if (!k) return 'Unknown';
 
-        try {
-            var consanguinity = getConsanguinity(charId1, charId2);
-            if (!consanguinity) return 'Unknown';
+        var degree = k.degree;
+        var other = _getCharacterById(charId2);
 
-            var degree = consanguinity.degree;
-
-            // Add gender-specific details
-            if (degree === 'Parent') {
-                var char2 = _getCharacterById(charId2);
-                if (char2) {
-                    var parents = getParents(charId1);
-                    if (parents.father && parents.father.id === charId2) return 'Father';
-                    if (parents.mother && parents.mother.id === charId2) return 'Mother';
+        switch (degree) {
+            case 'Parent':
+                if (other) {
+                    var p = getParents(charId1);
+                    if (p.father && p.father.id === charId2) return 'Father';
+                    if (p.mother && p.mother.id === charId2) return 'Mother';
                 }
-            }
+                return 'Parent';
 
-            if (degree === 'Child') {
-                var char1 = _getCharacterById(charId1);
-                if (char1) {
-                    var children = getAllChildren(charId2);
-                    for (var i = 0; i < children.length; i++) {
-                        if (children[i].character.id === charId1) {
-                            if (children[i].type === 'adopted') return 'Adopted Child';
-                            if (charId2.gender === 'male') return 'Son';
-                            if (charId2.gender === 'female') return 'Daughter';
-                            return 'Child';
-                        }
+            case 'Child': {
+                var children = getAllChildren(charId2);
+                for (var i = 0; i < children.length; i++) {
+                    if (children[i].character.id === charId1) {
+                        if (children[i].type === 'adopted') return 'Adopted Child';
+                        return 'Child';
                     }
                 }
+                return 'Child';
             }
 
-            if (degree === 'Grandparent') {
-                var char2 = _getCharacterById(charId2);
-                if (char2) {
-                    var grandparents = getGrandparents(charId1, 1);
-                    for (var i = 0; i < grandparents.length; i++) {
-                        if (grandparents[i].id === charId2) {
-                            if (char2.gender === 'male') return 'Grandfather';
-                            if (char2.gender === 'female') return 'Grandmother';
-                            return 'Grandparent';
-                        }
+            case 'Spouse':
+                if (other) {
+                    if (other.gender === 'male') return 'Husband';
+                    if (other.gender === 'female') return 'Wife';
+                }
+                return 'Spouse';
+
+            case 'Sibling': {
+                var sibList = getSiblings(charId1, true, true, true);
+                for (var j = 0; j < sibList.length; j++) {
+                    if (sibList[j].character.id === charId2) {
+                        var t = sibList[j].type;
+                        if (t === 'half') return 'Half-Sibling';
+                        if (t === 'adopted') return 'Adopted Sibling';
+                        return 'Sibling';
                     }
                 }
+                return 'Sibling';
             }
 
-            if (degree === 'Grandchild') {
-                var char1 = _getCharacterById(charId1);
-                if (char1) {
-                    var grandchildren = getGrandchildren(charId2);
-                    for (var i = 0; i < grandchildren.length; i++) {
-                        if (grandchildren[i].id === charId1) {
-                            if (char1.gender === 'male') return 'Grandson';
-                            if (char1.gender === 'female') return 'Granddaughter';
-                            return 'Grandchild';
-                        }
+            case 'Grandparent':
+                if (other) {
+                    if (other.gender === 'male') return 'Grandfather';
+                    if (other.gender === 'female') return 'Grandmother';
+                }
+                return 'Grandparent';
+
+            case 'Grandchild':
+                if (other) {
+                    if (other.gender === 'male') return 'Grandson';
+                    if (other.gender === 'female') return 'Granddaughter';
+                }
+                return 'Grandchild';
+
+            case 'Uncle':
+            case 'Aunt': {
+                var au = getAuntsAndUncles(charId1);
+                for (var k2 = 0; k2 < au.length; k2++) {
+                    if (au[k2].character.id === charId2) {
+                        var prefix = au[k2].relation === 'paternal' ? 'Paternal ' : 'Maternal ';
+                        return prefix + degree;
                     }
                 }
+                return degree;
             }
 
-            if (degree === 'Sibling') {
-                var char2 = _getCharacterById(charId2);
-                if (char2) {
-                    var siblings = getSiblings(charId1, true, true);
-                    for (var i = 0; i < siblings.length; i++) {
-                        if (siblings[i].character.id === charId2) {
-                            if (siblings[i].type === 'half') {
-                                return 'Half-' + (char2.gender === 'male' ? 'Brother' : 'Sister');
-                            }
-                            if (siblings[i].type === 'adopted') {
-                                return 'Adopted ' + (char2.gender === 'male' ? 'Brother' : 'Sister');
-                            }
-                            return char2.gender === 'male' ? 'Brother' : 'Sister';
-                        }
+            case 'Nephew':
+            case 'Niece': {
+                var nn = getNiecesAndNephews(charId1);
+                for (var k3 = 0; k3 < nn.length; k3++) {
+                    if (nn[k3].character.id === charId2) {
+                        return nn[k3].type === 'nephew' ? 'Nephew' : 'Niece';
                     }
                 }
+                return degree;
             }
 
-            if (degree === 'Uncle' || degree === 'Aunt') {
-                var char2 = _getCharacterById(charId2);
-                if (char2) {
-                    var auntsUncles = getAuntsAndUncles(charId1);
-                    for (var i = 0; i < auntsUncles.length; i++) {
-                        if (auntsUncles[i].character.id === charId2) {
-                            var prefix = auntsUncles[i].relation === 'paternal' ? 'Paternal ' : 'Maternal ';
-                            return prefix + degree;
-                        }
-                    }
-                }
-            }
+            case 'Cousin':
+                return 'Cousin';
 
-            if (degree === 'Nephew' || degree === 'Nieace') {
-                var char2 = _getCharacterById(charId2);
-                if (char2) {
-                    var niecesNephews = getNiecesAndNephews(charId1);
-                    for (var i = 0; i < niecesNephews.length; i++) {
-                        if (niecesNephews[i].character.id === charId2) {
-                            var prefix = niecesNephews[i].relation === 'paternal' ? 'Paternal ' : 'Maternal ';
-                            return prefix + degree;
-                        }
-                    }
-                }
-            }
-
-            if (degree === 'Cousin') {
-                var char2 = _getCharacterById(charId2);
-                if (char2) {
-                    var grandparents1 = getGrandparents(charId1, 1);
-                    var grandparents2 = getGrandparents(charId2, 1);
-
-                    for (var i = 0; i < grandparents1.length; i++) {
-                        for (var j = 0; j < grandparents2.length; j++) {
-                            if (grandparents1[i].id === grandparents2[j].id) {
-                                var prefix = grandparents1[i].gender === 'male' ? 'Paternal ' : 'Maternal ';
-                                return prefix + 'Cousin';
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (degree === 'Spouse') {
-                var spouse = getCurrentSpouse(charId1);
-                if (spouse && spouse.id === charId2) {
-                    var char2 = _getCharacterById(charId2);
-                    if (char2) {
-                        if (char2.gender === 'male') return 'Husband';
-                        if (char2.gender === 'female') return 'Wife';
-                        return 'Spouse';
-                    }
-                }
-            }
-
-            return degree;
-        } finally {
-            _processing = false;
+            default:
+                return degree;
         }
     }
 
     /**
-     * Gets the consanguinity degree (closeness) between two characters
-     * @param {string} charId1 - First character ID
-     * @param {string} charId2 - Second character ID
-     * @returns {number} Closeness degree (0 = self, 1 = parent/child/spouse, 2 = sibling, etc.)
+     * Gets the closeness score for two characters.
+     * @param {string} charId1
+     * @param {string} charId2
+     * @returns {number} Closeness (0 = self, 99 = unrelated)
      */
     function getConsanguinityDegree(charId1, charId2) {
-        if (_processing) return 99;
-        _processing = true;
-
-        try {
-            var consanguinity = getConsanguinity(charId1, charId2);
-            if (!consanguinity) return 99;
-            return consanguinity.closeness;
-        } finally {
-            _processing = false;
-        }
+        var k = getKinship(charId1, charId2);
+        return k ? k.closeness : 99;
     }
 
     // =========================================================================
@@ -1434,70 +1079,60 @@
     // =========================================================================
 
     /**
-     * Gets family statistics for a character
-     * @param {string} characterId - Character ID
-     * @returns {Object} Family statistics
+     * Gets family statistics for a character.
+     * @param {string} characterId
+     * @returns {Object|null}
      */
     function getFamilyStatistics(characterId) {
-        if (_processing) return null;
-        _processing = true;
+        var character = _getCharacterById(characterId);
+        if (!character) return null;
 
-        try {
-            var character = _getCharacterById(characterId);
-            if (!character) return null;
+        var parents = getParents(characterId);
+        var children = getAllChildren(characterId, true);
+        var siblings = getSiblings(characterId, true, true, true);
+        var grandchildren = getGrandchildren(characterId, true);
+        var spouses = getSpouses(characterId, true);
 
-            var parents = getParents(characterId);
-            var children = getAllChildren(characterId, true);
-            var siblings = getSiblings(characterId, true, true);
-            var grandchildren = getGrandchildren(characterId, true);
+        var livingChildren = children.filter(function(c) { return !c.character.isDeceased; });
+        var livingSiblings = siblings.filter(function(s) { return !s.character.isDeceased; });
+        var livingGrandchildren = grandchildren.filter(function(g) { return !g.isDeceased; });
 
-            var livingChildren = children.filter(function(c) { return !c.character.isDeceased; });
-            var livingSiblings = siblings.filter(function(s) { return !s.character.isDeceased; });
-            var livingGrandchildren = grandchildren.filter(function(g) { return !g.isDeceased; });
-
-            var spouses = getSpouses(characterId, true);
-            var currentSpouse = spouses.length > 0 ? spouses[0].character : null;
-
-            return {
-                character: character,
-                parents: {
-                    father: parents.father,
-                    mother: parents.mother,
-                    hasParents: parents.father !== null || parents.mother !== null
-                },
-                children: {
-                    total: children.length,
-                    living: livingChildren.length,
-                    biological: children.filter(function(c) { return c.type === 'biological'; }).length,
-                    adopted: children.filter(function(c) { return c.type === 'adopted'; }).length,
-                    eldest: getEldestChild(characterId, true, true),
-                    youngest: getYoungestChild(characterId, true, true)
-                },
-                siblings: {
-                    total: siblings.length,
-                    living: livingSiblings.length,
-                    full: siblings.filter(function(s) { return s.type === 'full'; }).length,
-                    half: siblings.filter(function(s) { return s.type === 'half'; }).length,
-                    adopted: siblings.filter(function(s) { return s.type === 'adopted'; }).length,
-                    eldest: getEldestSibling(characterId, true, true),
-                    youngest: getYoungestSibling(characterId, true, true)
-                },
-                grandchildren: {
-                    total: grandchildren.length,
-                    living: livingGrandchildren.length
-                },
-                spouse: currentSpouse ? {
-                    character: currentSpouse,
-                    marriageYear: spouses[0]?.startYear || null
-                } : null,
-                household: getCharacterHousehold(characterId),
-                isOrphan: isOrphan(characterId, true),
-                hasChildren: hasChildren(characterId, true, false),
-                totalFamilyMembers: 1 + children.length + siblings.length + grandchildren.length
-            };
-        } finally {
-            _processing = false;
-        }
+        return {
+            character: character,
+            parents: {
+                father: parents.father,
+                mother: parents.mother,
+                hasParents: parents.father !== null || parents.mother !== null
+            },
+            children: {
+                total: children.length,
+                living: livingChildren.length,
+                biological: children.filter(function(c) { return c.type === 'biological'; }).length,
+                adopted: children.filter(function(c) { return c.type === 'adopted'; }).length,
+                eldest: getEldestChild(characterId, true, true),
+                youngest: getYoungestChild(characterId, true, true)
+            },
+            siblings: {
+                total: siblings.length,
+                living: livingSiblings.length,
+                full: siblings.filter(function(s) { return s.type === 'full'; }).length,
+                half: siblings.filter(function(s) { return s.type === 'half'; }).length,
+                adopted: siblings.filter(function(s) { return s.type === 'adopted'; }).length,
+                eldest: getEldestSibling(characterId, true, true),
+                youngest: getYoungestSibling(characterId, true, true)
+            },
+            grandchildren: {
+                total: grandchildren.length,
+                living: livingGrandchildren.length
+            },
+            spouse: spouses.length > 0 ? {
+                character: spouses[0].character,
+                marriageYear: spouses[0].startYear || null
+            } : null,
+            household: getCharacterHousehold(characterId),
+            isOrphan: isOrphan(characterId, true),
+            hasChildren: hasChildren(characterId, true, false)
+        };
     }
 
     // =========================================================================
@@ -1505,7 +1140,7 @@
     // =========================================================================
 
     window.FamilyAccessors = {
-        // Parent accessors
+        // Parents
         getFather: getFather,
         getMother: getMother,
         getParents: getParents,
@@ -1513,7 +1148,7 @@
         hasParents: hasParents,
         isOrphan: isOrphan,
 
-        // Child accessors
+        // Children
         getBiologicalChildren: getBiologicalChildren,
         getAdoptedChildren: getAdoptedChildren,
         getAllChildren: getAllChildren,
@@ -1523,7 +1158,7 @@
         getEldestChild: getEldestChild,
         getYoungestChild: getYoungestChild,
 
-        // Sibling accessors
+        // Siblings
         getSiblings: getSiblings,
         getFullSiblings: getFullSiblings,
         getHalfSiblings: getHalfSiblings,
@@ -1531,7 +1166,7 @@
         getYoungestSibling: getYoungestSibling,
         areSiblings: areSiblings,
 
-        // Grandparent accessors
+        // Grandparents
         getGrandparents: getGrandparents,
         getGrandchildren: getGrandchildren,
 
@@ -1540,18 +1175,18 @@
         getCousins: getCousins,
         getNiecesAndNephews: getNiecesAndNephews,
 
-        // In-law accessors
+        // In-law
         getSpouses: getSpouses,
         getCurrentSpouse: getCurrentSpouse,
         getSiblingsInLaw: getSiblingsInLaw,
 
-        // Household accessors
+        // Household
         getCharacterHousehold: getCharacterHousehold,
         getHouseholdFamilyMembers: getHouseholdFamilyMembers,
         getHouseholdHead: getHouseholdHead,
 
-        // Consanguinity
-        getConsanguinity: getConsanguinity,
+        // Relationship descriptors
+        getKinship: getKinship,
         getRelationshipDescription: getRelationshipDescription,
         getConsanguinityDegree: getConsanguinityDegree,
 
@@ -1559,7 +1194,7 @@
         getFamilyStatistics: getFamilyStatistics
     };
 
-    // Legacy aliases for backward compatibility
+    // Backward compatibility aliases
     window.getFather = getFather;
     window.getMother = getMother;
     window.getParents = getParents;
@@ -1571,6 +1206,9 @@
     window.getCharacterHousehold = getCharacterHousehold;
     window.getRelationshipDescription = getRelationshipDescription;
     window.getConsanguinityDegree = getConsanguinityDegree;
+
+    // Deprecated alias — was named getConsanguinity, now getKinship
+    window.getConsanguinity = getKinship;
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.FamilyAccessors;

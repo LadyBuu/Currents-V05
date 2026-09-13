@@ -6,42 +6,47 @@
  * LOCATION: js/core/formatting.js
  * 
  * This is the SINGLE SOURCE OF TRUTH for:
- * - HTML escaping
- * - String formatting
- * - Text manipulation
- * - Year formatting
- * - Name formatting
- * - Title formatting
- * - Dynasty/lineage labels
- * - Relationship formatting
- * - Location hierarchy formatting
- * - Age formatting
- * - Date range formatting
- * - List formatting
- * - Gender formatting
- * - String utilities
- * - Additional utilities
+ *   - HTML escaping
+ *   - Year formatting
+ *   - Name formatting (given resolved data)
+ *   - Title formatting
+ *   - Dynasty/lineage labels
+ *   - Age formatting (given a computed age)
+ *   - Date range formatting
+ *   - List formatting
+ *   - Population/number formatting
+ *   - String utilities
  * 
- * All other modules should use these functions via window object.
+ * SCOPE RULE:
+ *   Formatting functions take ALREADY-RESOLVED data. They do not:
+ *   - call accessors
+ *   - traverse hierarchies
+ *   - compute ages from birth years
+ *   - resolve IDs to entities
+ *   - decide which icon to show
+ * 
+ * The caller resolves. The formatter formats.
+ * 
+ * DEPENDENCIES: None. Pure string manipulation.
+ * 
+ * ICON POLICY: No emojis. No icons. Return plain text.
+ * The caller composes icons around the returned string.
  * 
  * =============================================================================
  */
 
 // =============================================================================
-// 1. HTML ESCAPING - PRIMARY DEFINITION
+// 1. HTML ESCAPING — CANONICAL
 // =============================================================================
 
 /**
- * Escapes HTML special characters to prevent XSS attacks
- * This is the CANONICAL version - all modules should use this
- * 
- * @param {*} str - Input string (converted to string if not already)
- * @returns {string} HTML-escaped string
+ * Escapes HTML special characters to prevent XSS.
+ * @param {*} str - Any value; coerced to string
+ * @returns {string}
  */
 function escapeHtml(str) {
     if (str === null || str === undefined) return '';
-    const stringVal = String(str);
-    return stringVal
+    return String(str)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
@@ -50,55 +55,21 @@ function escapeHtml(str) {
 }
 
 /**
- * Alias for escapeHtml - for internal use and backward compatibility
+ * Alias for escapeHtml — kept for internal use.
+ * @deprecated Use escapeHtml directly.
  */
 function _escapeHtml(str) {
     return escapeHtml(str);
 }
 
 /**
- * Escapes HTML but preserves line breaks (converts \n to <br>)
- * @param {string} str - Input string
- * @returns {string} HTML-escaped string with line breaks
+ * Escapes HTML and converts \n to <br>.
+ * @param {string} str
+ * @returns {string}
  */
 function escapeHtmlWithBreaks(str) {
     if (!str) return '';
     return escapeHtml(str).replace(/\n/g, '<br>');
-}
-
-/**
- * Checks if a string contains SVG markup
- * @param {string} str - String to check
- * @returns {boolean} True if string contains SVG
- */
-function containsSvg(str) {
-    if (!str) return false;
-    return str.includes('<svg') && str.includes('</svg>');
-}
-
-/**
- * Safely escapes HTML except for SVG content
- * @param {string} str - String to escape
- * @returns {string} Escaped string with SVG preserved
- */
-function escapeHtmlPreserveSvg(str) {
-    if (!str) return '';
-    
-    if (containsSvg(str)) {
-        const parts = str.split(/(<svg[^>]*>.*?<\/svg>)/gi);
-        let result = '';
-        for (let i = 0; i < parts.length; i++) {
-            const part = parts[i];
-            if (containsSvg(part)) {
-                result += part;
-            } else {
-                result += escapeHtml(part);
-            }
-        }
-        return result;
-    }
-    
-    return escapeHtml(str);
 }
 
 // =============================================================================
@@ -106,46 +77,46 @@ function escapeHtmlPreserveSvg(str) {
 // =============================================================================
 
 /**
- * Formats a year for display
- * @param {number|null|undefined} year - Year to format
- * @param {boolean} useAsteriskForZero - If true, use '*' for year 0 (default false)
- * @returns {string} Formatted year string or '?' if invalid
+ * Formats a year for display.
+ * Year 0 is rendered as '0' unless useAsteriskForZero is true.
+ * @param {number|null} year
+ * @param {boolean} useAsteriskForZero - default false
+ * @returns {string}
  */
-function formatYear(year, useAsteriskForZero = false) {
+function formatYear(year, useAsteriskForZero) {
+    useAsteriskForZero = useAsteriskForZero === true;
     if (year === null || year === undefined) return '?';
     if (typeof year !== 'number') return '?';
-    if (isNaN(year)) return '?';
-    
-    if (year === 0) {
-        return useAsteriskForZero ? '*' : '0';
-    }
-    if (year < 0) return `${Math.abs(year)} BC`;
-    return year.toString();
+    if (!Number.isFinite(year)) return '?';
+    if (!Number.isInteger(year)) return '?';
+    if (year === 0) return useAsteriskForZero ? '*' : '0';
+    if (year < 0) return Math.abs(year) + ' BC';
+    return String(year);
 }
 
 /**
- * Formats a year range
- * @param {number|null} startYear - Start year
- * @param {number|null} endYear - End year
- * @param {string} separator - Separator (default: '–')
- * @returns {string} Formatted year range
+ * Formats a year range.
+ * @param {number|null} startYear
+ * @param {number|null} endYear
+ * @param {string} separator - default '–'
+ * @returns {string}
  */
-function formatYearRange(startYear, endYear, separator = '–') {
-    const start = formatYear(startYear);
-    const end = formatYear(endYear);
-    
+function formatYearRange(startYear, endYear, separator) {
+    separator = separator || '–';
+    var start = formatYear(startYear);
+    var end = formatYear(endYear);
+
     if (start === '?' && end === '?') return 'Unknown';
-    if (start === '?') return `Until ${end}`;
-    if (end === '?') return `From ${start}`;
-    
-    const isStartBC = startYear < 0;
-    const isEndBC = endYear < 0;
-    
+    if (start === '?') return 'Until ' + end;
+    if (end === '?') return 'From ' + start;
+
+    var isStartBC = typeof startYear === 'number' && startYear < 0;
+    var isEndBC = typeof endYear === 'number' && endYear < 0;
+
     if (isStartBC && isEndBC && startYear !== endYear) {
-        return `${Math.abs(startYear)}–${Math.abs(endYear)} BC`;
+        return Math.abs(startYear) + separator + Math.abs(endYear) + ' BC';
     }
-    
-    return `${start} ${separator} ${end}`;
+    return start + ' ' + separator + ' ' + end;
 }
 
 // =============================================================================
@@ -153,64 +124,51 @@ function formatYearRange(startYear, endYear, separator = '–') {
 // =============================================================================
 
 /**
- * Formats a character's full name
- * @param {Object|string} char - Character object or character ID string
- * @param {Function} getCharacterById - Optional resolver function (for ID lookup)
- * @returns {string} Formatted full name
+ * Formats a character's full name.
+ * Caller passes the character object; formatter does not resolve IDs.
+ * @param {Object|null} char - Character object
+ * @returns {string}
  */
-function formatCharacterName(char, getCharacterById = null) {
-    if (typeof char === 'string' && getCharacterById) {
-        char = getCharacterById(char);
-    }
+function formatCharacterName(char) {
     if (!char || typeof char !== 'object') return 'Unknown';
-    const name = char.name || '?';
-    const surname = char.surname || '';
-    if (surname) {
-        return `${name} ${surname}`;
-    }
-    return name;
+    var name = char.name || '?';
+    return char.surname ? name + ' ' + char.surname : name;
 }
 
 /**
- * Formats a character's name with rank prefix
- * @param {Object} char - Character object
- * @param {Function} getActiveRankDisplay - Rank display resolver
- * @returns {string} Formatted name with rank
+ * Formats a character name with a pre-resolved rank prefix.
+ * @param {Object} char
+ * @param {string|null} rankDisplay - Pre-formatted rank string (e.g. "King")
+ * @returns {string}
  */
-function formatCharacterNameWithRank(char, getActiveRankDisplay = null) {
+function formatCharacterNameWithRank(char, rankDisplay) {
     if (!char) return 'Unknown';
-    let rankPrefix = '';
-    if (getActiveRankDisplay) {
-        const rank = getActiveRankDisplay(char);
-        if (rank && rank.display) {
-            rankPrefix = `${rank.display} `;
-        }
-    }
-    return `${rankPrefix}${formatCharacterName(char)}`;
+    var name = formatCharacterName(char);
+    return rankDisplay ? rankDisplay + ' ' + name : name;
 }
 
 /**
- * Formats a character's name with gender symbol
- * @param {Object} char - Character object
- * @returns {string} Formatted name with gender symbol
+ * Formats a character name with a gender symbol.
+ * Symbol is passed in — formatter does not know about icons.
+ * @param {Object} char
+ * @param {string} symbol - e.g. '♂', '♀', '⚥'
+ * @returns {string}
  */
-function formatCharacterNameWithGender(char) {
+function formatCharacterNameWithGender(char, symbol) {
     if (!char) return 'Unknown';
-    const name = formatCharacterName(char);
-    const genderSymbol = getGenderSymbol(char.gender);
-    return `${genderSymbol} ${name}`;
+    var name = formatCharacterName(char);
+    return symbol ? symbol + ' ' + name : name;
 }
 
 /**
- * Formats a character's name with age
- * @param {Object} char - Character object
- * @param {number} age - Character age
- * @returns {string} Formatted name with age
+ * Formats a character name with a pre-computed age.
+ * @param {Object} char
+ * @param {number|null} age - Computed by caller (time.js)
+ * @returns {string}
  */
 function formatCharacterNameWithAge(char, age) {
-    const name = formatCharacterName(char);
-    const ageStr = formatAge(age);
-    return `${name} (${ageStr})`;
+    var name = formatCharacterName(char);
+    return name + ' (' + formatAge(age) + ')';
 }
 
 // =============================================================================
@@ -218,45 +176,57 @@ function formatCharacterNameWithAge(char, age) {
 // =============================================================================
 
 /**
- * Formats a title (rank + name combination)
- * @param {Object} rank - Rank object with symbol and name
- * @param {string|number} number - Optional rank number
- * @returns {string} Formatted title
+ * Roman numerals for numbers 1..20. Shared by formatTitle and formatSuccessionNumber.
+ * @private
  */
-function formatTitle(rank, number = null) {
-    if (!rank) return '';
-    const symbol = rank.symbol || '';
-    const name = rank.name || '';
-    let numberStr = '';
-    if (number) {
-        if (typeof number === 'number' && number >= 1 && number <= 10) {
-            const romanNumerals = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
-            numberStr = ` ${romanNumerals[number]}`;
-        } else {
-            numberStr = ` ${number}`;
-        }
-    }
-    return `${symbol} ${name}${numberStr}`.trim();
+var _ROMAN_NUMERALS = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
+                       'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX'];
+
+/**
+ * Formats a number as a Roman numeral for succession (up to XX).
+ * Returns the number as a string beyond the supported range.
+ * @param {number} number
+ * @returns {string}
+ */
+function formatRomanNumeral(number) {
+    if (typeof number !== 'number' || !Number.isFinite(number)) return '';
+    if (!Number.isInteger(number) || number < 1) return '';
+    if (number <= 20) return _ROMAN_NUMERALS[number];
+    return String(number);
 }
 
 /**
- * Formats a character's full title (all ranks)
- * @param {Object} char - Character object
- * @param {Array} rankAssignments - Character's rank assignments
- * @param {Function} getRankById - Rank resolver
- * @returns {string} Comma-separated list of ranks
+ * Formats a title from a rank and optional ordinal.
+ * Symbol is passed in (already chosen by the caller); formatter only composes.
+ * @param {Object} rank - { name }
+ * @param {string|null} symbol - Pre-resolved symbol
+ * @param {number|null} number - Ordinal
+ * @returns {string}
  */
-function formatCharacterTitles(char, rankAssignments, getRankById) {
-    if (!rankAssignments || rankAssignments.length === 0) return '';
-    const titles = [];
-    for (const assignment of rankAssignments) {
-        if (assignment.isDeprecated) continue;
-        const rank = getRankById(assignment.rankId);
-        if (rank) {
-            titles.push(formatTitle(rank, assignment.number));
-        }
+function formatTitle(rank, symbol, number) {
+    if (!rank) return '';
+    var parts = [];
+    if (symbol) parts.push(symbol);
+    if (rank.name) parts.push(rank.name);
+    if (number !== null && number !== undefined && number >= 1) {
+        parts.push(formatRomanNumeral(number));
     }
-    return titles.join(', ');
+    return parts.join(' ');
+}
+
+/**
+ * Formats a comma-separated list of pre-resolved titles.
+ * Caller resolves rank objects and ordinals before calling.
+ * @param {Array<{name: string, symbol: string|null, number: number|null}>} titles
+ * @returns {string}
+ */
+function formatCharacterTitles(titles) {
+    if (!Array.isArray(titles) || titles.length === 0) return '';
+    var out = [];
+    for (var i = 0; i < titles.length; i++) {
+        out.push(formatTitle(titles[i].rank, titles[i].symbol, titles[i].number));
+    }
+    return out.join(', ');
 }
 
 // =============================================================================
@@ -264,149 +234,136 @@ function formatCharacterTitles(char, rankAssignments, getRankById) {
 // =============================================================================
 
 /**
- * Formats a dynasty/house name
- * @param {string} houseName - House or dynasty name
- * @param {string} prefix - Prefix (default: 'House of ')
- * @returns {string} Formatted dynasty label
+ * Formats a dynasty/house name with prefix.
+ * @param {string} houseName
+ * @param {string} prefix - default 'House of '
+ * @returns {string}
  */
-function formatDynasty(houseName, prefix = 'House of ') {
+function formatDynasty(houseName, prefix) {
     if (!houseName) return '';
-    return `${prefix}${houseName}`;
+    prefix = prefix === undefined ? 'House of ' : prefix;
+    return prefix + houseName;
 }
 
 /**
- * Formats a succession number as Roman numeral
- * @param {number} number - Succession number
- * @returns {string} Roman numeral or empty string
+ * Formats a succession number as a Roman numeral.
+ * @param {number} number
+ * @returns {string}
  */
 function formatSuccessionNumber(number) {
-    if (!number || number < 1) return '';
-    const romanNumerals = {
-        1: 'I', 2: 'II', 3: 'III', 4: 'IV', 5: 'V',
-        6: 'VI', 7: 'VII', 8: 'VIII', 9: 'IX', 10: 'X',
-        11: 'XI', 12: 'XII', 13: 'XIII', 14: 'XIV', 15: 'XV',
-        16: 'XVI', 17: 'XVII', 18: 'XVIII', 19: 'XIX', 20: 'XX'
-    };
-    if (number <= 20) {
-        return romanNumerals[number];
-    }
-    return number.toString();
+    return formatRomanNumeral(number);
 }
 
 // =============================================================================
-// 6. RELATIONSHIP FORMATTING
+// 6. RELATIONSHIP LABELS
 // =============================================================================
 
 /**
- * Formats a relationship status
- * @param {string} status - Relationship status ('ongoing', 'ended', 'widowed')
- * @returns {string} Human-readable status
+ * Formats a relationship status. Returns plain text; the caller composes icons.
+ * @param {string} status
+ * @returns {string}
  */
 function formatRelationshipStatus(status) {
     switch (status) {
-        case 'ongoing': return '❤️ Ongoing';
-        case 'ended': return '💔 Ended';
-        case 'widowed': return '† Widowed';
+        case 'ongoing': return 'Ongoing';
+        case 'active': return 'Active';
+        case 'ended': return 'Ended';
+        case 'widowed': return 'Widowed';
+        case 'pending': return 'Pending';
+        case 'proposed': return 'Proposed';
+        case 'declined': return 'Declined';
         default: return status || 'Unknown';
     }
 }
 
 /**
- * Formats a relationship type
- * @param {string} type - Relationship type ('casual', 'serious', 'affair', 'betrothed', 'polygamous')
- * @returns {string} Human-readable type with emoji
+ * Formats a relationship type. Plain text.
+ * @param {string} type
+ * @returns {string}
  */
 function formatRelationshipType(type) {
     switch (type) {
-        case 'casual': return '💋 Casual';
-        case 'serious': return '💕 Serious';
-        case 'affair': return '🔒 Affair';
-        case 'betrothed': return '💍 Betrothed';
-        case 'polygamous': return '👥 Polygamous';
-        case 'marriage': return '💒 Married';
+        case 'casual': return 'Casual';
+        case 'serious': return 'Serious';
+        case 'affair': return 'Affair';
+        case 'betrothed': return 'Betrothed';
+        case 'polygamous': return 'Polygamous';
+        case 'marriage': return 'Marriage';
+        case 'committed': return 'Committed';
+        case 'romance': return 'Romance';
         default: return type || 'Unknown';
     }
 }
 
 /**
- * Formats a friendship relation
- * @param {Object} details - Friendship details
- * @param {number} currentYear - Current world year
- * @returns {string} Formatted friendship description
+ * Formats a friendship description from pre-parsed details.
+ * @param {Object} details - { startYear, notes }
+ * @param {number} currentYear
+ * @returns {string}
  */
 function formatFriendship(details, currentYear) {
     if (!details) return '';
-    const parts = [];
-    if (details.startYear) {
-        const yearsAgo = currentYear - details.startYear;
-        if (yearsAgo >= 0) {
-            parts.push(`Friends since ${details.startYear} (${yearsAgo} years)`);
+    var parts = [];
+    if (details.startYear != null) {
+        var years = currentYear - details.startYear;
+        if (years >= 0) {
+            parts.push('Friends since ' + details.startYear + ' (' + years + ' years)');
         } else {
-            parts.push(`Friends since ${details.startYear} (future)`);
+            parts.push('Friends since ' + details.startYear);
         }
     }
-    if (details.notes) {
-        parts.push(`📝 ${details.notes}`);
-    }
+    if (details.notes) parts.push(details.notes);
     return parts.join(' · ');
 }
 
 // =============================================================================
-// 7. LOCATION HIERARCHY FORMATTING
+// 7. LOCATION FORMATTING
 // =============================================================================
 
 /**
- * Formats a location's hierarchy as a breadcrumb
- * @param {Object} place - Place object
- * @param {Function} getPlaceById - Place resolver
- * @param {Function} getLocationTypeById - Location type resolver
- * @returns {string} Formatted hierarchy (e.g., "Kingdom → Duchy → County")
+ * Formats a pre-resolved hierarchy array as a breadcrumb.
+ * @param {Array<{displayName: string}>} hierarchy - Resolved place chain (root → leaf)
+ * @param {string} separator - default ' → '
+ * @returns {string}
  */
-function formatLocationHierarchy(place, getPlaceById, getLocationTypeById) {
-    if (!place) return '';
-    const hierarchy = [];
-    let current = place;
-    let safety = 0;
-    const maxDepth = 20;
-    while (current && safety < maxDepth) {
-        hierarchy.unshift(current.displayName);
-        if (!current.parentId) break;
-        current = getPlaceById(current.parentId);
-        if (!current) break;
-        safety++;
+function formatLocationHierarchy(hierarchy, separator) {
+    separator = separator || ' → ';
+    if (!Array.isArray(hierarchy) || hierarchy.length === 0) return '';
+    var names = [];
+    for (var i = 0; i < hierarchy.length; i++) {
+        if (hierarchy[i] && hierarchy[i].displayName) {
+            names.push(hierarchy[i].displayName);
+        }
     }
-    return hierarchy.join(' → ');
+    return names.join(separator);
 }
 
 /**
- * Formats a location type with priority
- * @param {Object} type - Location type object
- * @returns {string} Formatted location type
+ * Formats a location type with its priority level.
+ * @param {Object} type - { displayName, priority }
+ * @returns {string}
  */
 function formatLocationType(type) {
     if (!type) return 'Unknown';
-    return `${type.displayName} (Lvl ${type.priority})`;
+    var name = type.displayName || 'Unknown';
+    if (type.priority != null) return name + ' (Lvl ' + type.priority + ')';
+    return name;
 }
 
 /**
- * Formats a location's population count
- * @param {number} population - Population count
- * @returns {string} Formatted population (e.g., "1,234" or "1.2k")
+ * Formats a population count.
+ * @param {number} population
+ * @returns {string}
  */
 function formatPopulation(population) {
     if (population === undefined || population === null) return '?';
-    if (typeof population !== 'number') return '?';
+    if (typeof population !== 'number' || !Number.isFinite(population)) return '?';
     if (population < 0) return '?';
-    
-    if (population >= 1_000_000) {
-        return `${(population / 1_000_000).toFixed(1)}M`;
-    }
-    if (population >= 10_000) {
-        return `${Math.round(population / 1000)}k`;
-    }
+    if (population >= 1000000) return (population / 1000000).toFixed(1) + 'M';
+    if (population >= 10000) return Math.round(population / 1000) + 'k';
     if (population >= 1000) {
-        const formatted = (population / 1000).toFixed(1);
-        return `${formatted.replace(/\.0$/, '')}k`;
+        var k = (population / 1000).toFixed(1);
+        return k.replace(/\.0$/, '') + 'k';
     }
     return population.toLocaleString();
 }
@@ -416,54 +373,35 @@ function formatPopulation(population) {
 // =============================================================================
 
 /**
- * Formats an age with appropriate label
- * @param {number|null|undefined} age - Age in years
- * @returns {string} Formatted age (e.g., "25 years", "6 months", "2 days")
+ * Formats a pre-computed age.
+ * @param {number|null} age
+ * @returns {string}
  */
 function formatAge(age) {
-    if (age === null || age === undefined) return '?';
-    if (typeof age !== 'number' || isNaN(age)) return '?';
-    if (age < 0) return 'Unborn (invalid)';
+    if (age === null || age === undefined) return 'Unknown';
+    if (typeof age !== 'number' || !Number.isFinite(age)) return 'Unknown';
+    if (age < 0) return 'Unknown';
     if (age === 0) return '<1 year';
     if (age === 1) return '1 year';
-    if (age < 12) return `${age} years`;
-    return `${age} years`;
+    return age + ' years';
 }
 
 /**
- * Formats a character's age with birth/death context
- * @param {Object} char - Character object
- * @param {number} currentYear - Current world year
- * @returns {string} Formatted age string
- */
-function formatCharacterAge(char, currentYear) {
-    if (!char || !char.birthYear) return 'Age unknown';
-    if (char.isDeceased && char.deathYear) {
-        const age = char.deathYear - char.birthYear;
-        const ageStr = formatAge(age);
-        return `Died at ${ageStr} (${formatYear(char.birthYear)}–${formatYear(char.deathYear)})`;
-    }
-    const age = currentYear - char.birthYear;
-    const ageStr = formatAge(age);
-    return `${ageStr} (b. ${formatYear(char.birthYear)})`;
-}
-
-/**
- * Formats an age range
- * @param {number|null|undefined} minAge - Minimum age
- * @param {number|null|undefined} maxAge - Maximum age
- * @returns {string} Formatted age range
+ * Formats an age range.
+ * @param {number|null} minAge
+ * @param {number|null} maxAge
+ * @returns {string}
  */
 function formatAgeRange(minAge, maxAge) {
-    const hasMin = minAge !== undefined && minAge !== null;
-    const hasMax = maxAge !== undefined && maxAge !== null;
+    var hasMin = minAge !== undefined && minAge !== null;
+    var hasMax = maxAge !== undefined && maxAge !== null;
     if (!hasMin && !hasMax) return 'Any age';
     if (hasMin && hasMax) {
-        if (minAge === maxAge) return `${minAge} years`;
-        return `${minAge}–${maxAge} years`;
+        if (minAge === maxAge) return minAge + ' years';
+        return minAge + '–' + maxAge + ' years';
     }
-    if (hasMin) return `${minAge}+ years`;
-    return `Up to ${maxAge} years`;
+    if (hasMin) return minAge + '+ years';
+    return 'Up to ' + maxAge + ' years';
 }
 
 // =============================================================================
@@ -471,17 +409,16 @@ function formatAgeRange(minAge, maxAge) {
 // =============================================================================
 
 /**
- * Formats a date range for reign/tenure
- * @param {number|null} startYear - Start year
- * @param {number|null} endYear - End year
- * @param {boolean} isCurrent - Whether this is the current term
- * @returns {string} Formatted date range
+ * Formats a reign/tenure date range.
+ * @param {number|null} startYear
+ * @param {number|null} endYear
+ * @param {boolean} isCurrent
+ * @returns {string}
  */
-function formatDateRange(startYear, endYear, isCurrent = false) {
-    const start = formatYear(startYear);
-    if (isCurrent) {
-        return `${start} – Present`;
-    }
+function formatDateRange(startYear, endYear, isCurrent) {
+    isCurrent = isCurrent === true;
+    var start = formatYear(startYear);
+    if (isCurrent) return start + ' – Present';
     return formatYearRange(startYear, endYear);
 }
 
@@ -490,91 +427,83 @@ function formatDateRange(startYear, endYear, isCurrent = false) {
 // =============================================================================
 
 /**
- * Formats an array of strings as a human-readable list
- * @param {Array} items - Array of strings (not modified)
- * @param {string} conjunction - Conjunction ('and' or 'or')
- * @returns {string} Formatted list (e.g., "A, B, and C")
+ * Formats an array as a human-readable list.
+ * @param {Array<string>} items
+ * @param {string} conjunction - default 'and'
+ * @returns {string}
  */
-function formatList(items, conjunction = 'and') {
-    if (!items || items.length === 0) return '';
-    const itemsCopy = [...items];
-    if (itemsCopy.length === 1) return itemsCopy[0];
-    if (itemsCopy.length === 2) return `${itemsCopy[0]} ${conjunction} ${itemsCopy[1]}`;
-    const last = itemsCopy.pop();
-    return `${itemsCopy.join(', ')} ${conjunction} ${last}`;
+function formatList(items, conjunction) {
+    conjunction = conjunction || 'and';
+    if (!Array.isArray(items) || items.length === 0) return '';
+    if (items.length === 1) return String(items[0]);
+    if (items.length === 2) return items[0] + ' ' + conjunction + ' ' + items[1];
+    var copy = items.slice();
+    var last = copy.pop();
+    return copy.join(', ') + ' ' + conjunction + ' ' + last;
 }
 
 /**
- * Formats a count with a label (singular/plural)
- * @param {number} count - Count value
- * @param {string} singular - Singular label (e.g., "character")
- * @param {string} plural - Plural label (e.g., "characters")
- * @returns {string} Formatted count with label
+ * Formats a count with singular/plural label.
+ * @param {number} count
+ * @param {string} singular
+ * @param {string} plural
+ * @returns {string}
  */
 function formatCount(count, singular, plural) {
-    const label = count === 1 ? singular : plural;
-    return `${count} ${label}`;
+    var label = count === 1 ? singular : plural;
+    return count + ' ' + label;
 }
 
 // =============================================================================
-// 11. GENDER SYMBOLS
+// 11. GENDER LABELS (icons live in icons.js)
 // =============================================================================
 
 /**
- * Gets the symbol for a gender
- * @param {string} gender - 'male', 'female', or other
- * @returns {string} Gender symbol (♂, ♀, ⚥)
- */
-function getGenderSymbol(gender) {
-    switch (gender) {
-        case 'male': return '♂';
-        case 'female': return '♀';
-        default: return '⚥';
-    }
-}
-
-/**
- * Gets the full gender label
- * @param {string} gender - 'male', 'female', or other
- * @returns {string} Gender label
+ * Returns the label for a gender. No symbol — that's a UI concern.
+ * @param {string} gender
+ * @returns {string}
  */
 function getGenderLabel(gender) {
     switch (gender) {
         case 'male': return 'Male';
         case 'female': return 'Female';
+        case 'unknown': return 'Unknown';
         default: return 'Unknown';
     }
 }
 
 // =============================================================================
-// 12. STRING TRUNCATION
+// 12. STRING UTILITIES
 // =============================================================================
 
 /**
- * Truncates a string to a maximum length with ellipsis
- * Handles Unicode characters properly by using Array.from
- * @param {string} str - Input string
- * @param {number} maxLength - Maximum length before truncation
- * @param {string} ellipsis - Ellipsis character(s) (default: '…')
- * @returns {string} Truncated string
+ * Unicode-safe string truncation.
+ * @param {string} str
+ * @param {number} maxLength
+ * @param {string} ellipsis - default '…'
+ * @returns {string}
  */
-function truncateString(str, maxLength, ellipsis = '…') {
+function truncateString(str, maxLength, ellipsis) {
+    ellipsis = ellipsis === undefined ? '…' : ellipsis;
     if (!str) return '';
-    if (maxLength <= 0) return '';
-    const chars = Array.from(str);
-    const ellipsisChars = Array.from(ellipsis);
+    if (typeof maxLength !== 'number' || maxLength <= 0) return '';
+    var chars = Array.from(str);
     if (chars.length <= maxLength) return str;
-    const truncated = chars.slice(0, maxLength - ellipsisChars.length);
-    return truncated.join('') + ellipsis;
+    var ellipsisChars = Array.from(ellipsis);
+    if (ellipsisChars.length >= maxLength) {
+        return ellipsisChars.slice(0, maxLength).join('');
+    }
+    return chars.slice(0, maxLength - ellipsisChars.length).join('') + ellipsis;
 }
 
 /**
- * Truncates a location name for display in limited space
- * @param {string} locationName - Location name
- * @param {number} maxLength - Maximum length (default: 25)
- * @returns {string} Truncated location name
+ * Truncates a location name for display.
+ * @param {string} locationName
+ * @param {number} maxLength - default 25
+ * @returns {string}
  */
-function truncateLocation(locationName, maxLength = 25) {
+function truncateLocation(locationName, maxLength) {
+    maxLength = maxLength === undefined ? 25 : maxLength;
     return truncateString(locationName, maxLength);
 }
 
@@ -583,98 +512,95 @@ function truncateLocation(locationName, maxLength = 25) {
 // =============================================================================
 
 /**
- * Formats a percentage for display
- * @param {number} value - Value (0-1 or 0-100)
- * @param {boolean} isDecimal - If true, value is 0-1 (default true)
- * @param {number} decimals - Number of decimal places (default 1)
- * @returns {string} Formatted percentage
+ * Formats a percentage.
+ * @param {number} value
+ * @param {boolean} isDecimal - true if value is 0-1; default true
+ * @param {number} decimals - default 1
+ * @returns {string}
  */
-function formatPercentage(value, isDecimal = true, decimals = 1) {
+function formatPercentage(value, isDecimal, decimals) {
+    isDecimal = isDecimal !== false;
+    decimals = decimals === undefined ? 1 : decimals;
     if (value === null || value === undefined) return '?';
-    if (typeof value !== 'number') return '?';
-    let percent = isDecimal ? value * 100 : value;
-    percent = Math.min(100, Math.max(0, percent));
-    return `${percent.toFixed(decimals)}%`;
+    if (typeof value !== 'number' || !Number.isFinite(value)) return '?';
+    var percent = isDecimal ? value * 100 : value;
+    return percent.toFixed(decimals) + '%';
 }
 
 /**
- * Formats a duration in years for display
- * @param {number} years - Number of years
- * @returns {string} Formatted duration
+ * Formats a duration in years.
+ * @param {number} years
+ * @returns {string}
  */
 function formatDuration(years) {
     if (years === null || years === undefined) return '?';
+    if (typeof years !== 'number' || !Number.isFinite(years)) return '?';
     if (years < 0) return 'Invalid';
     if (years === 0) return '<1 year';
     if (years === 1) return '1 year';
-    if (years < 12) return `${years} years`;
-    const decades = Math.floor(years / 10);
-    const remainder = years % 10;
-    if (remainder === 0) {
-        return `${decades} decades`;
-    }
-    return `${decades}.${remainder} decades`;
+    if (years < 12) return years + ' years';
+    var decades = Math.floor(years / 10);
+    var remainder = years % 10;
+    if (remainder === 0) return decades + (decades === 1 ? ' decade' : ' decades');
+    return (years / 10).toFixed(1) + ' decades';
 }
 
 // =============================================================================
-// 14. EXPORTS (Global Availability)
+// 14. EXPORTS
 // =============================================================================
 
-// HTML escaping - PRIMARY EXPORTS
+// HTML escaping
 window.escapeHtml = escapeHtml;
 window._escapeHtml = _escapeHtml;
 window.escapeHtmlWithBreaks = escapeHtmlWithBreaks;
-window.containsSvg = containsSvg;
-window.escapeHtmlPreserveSvg = escapeHtmlPreserveSvg;
 
-// Year formatting
+// Years
 window.formatYear = formatYear;
 window.formatYearRange = formatYearRange;
 
-// Name formatting
+// Names
 window.formatCharacterName = formatCharacterName;
 window.formatCharacterNameWithRank = formatCharacterNameWithRank;
 window.formatCharacterNameWithGender = formatCharacterNameWithGender;
 window.formatCharacterNameWithAge = formatCharacterNameWithAge;
 
-// Title formatting
+// Titles
+window.formatRomanNumeral = formatRomanNumeral;
 window.formatTitle = formatTitle;
 window.formatCharacterTitles = formatCharacterTitles;
-
-// Dynasty/lineage
-window.formatDynasty = formatDynasty;
 window.formatSuccessionNumber = formatSuccessionNumber;
 
-// Relationship formatting
+// Dynasty
+window.formatDynasty = formatDynasty;
+
+// Relationships
 window.formatRelationshipStatus = formatRelationshipStatus;
 window.formatRelationshipType = formatRelationshipType;
 window.formatFriendship = formatFriendship;
 
-// Location formatting
+// Locations
 window.formatLocationHierarchy = formatLocationHierarchy;
 window.formatLocationType = formatLocationType;
 window.formatPopulation = formatPopulation;
 
-// Age formatting
+// Age
 window.formatAge = formatAge;
-window.formatCharacterAge = formatCharacterAge;
 window.formatAgeRange = formatAgeRange;
 
-// Date range formatting
+// Date range
 window.formatDateRange = formatDateRange;
 
-// List formatting
+// Lists
 window.formatList = formatList;
 window.formatCount = formatCount;
 
-// Gender formatting
-window.getGenderSymbol = getGenderSymbol;
+// Gender label (no symbol)
 window.getGenderLabel = getGenderLabel;
 
-// String utilities
+// Strings
 window.truncateString = truncateString;
 window.truncateLocation = truncateLocation;
 
-// Additional utilities
+// Misc
 window.formatPercentage = formatPercentage;
 window.formatDuration = formatDuration;

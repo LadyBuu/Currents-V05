@@ -10,7 +10,619 @@
  * DEPENDENCIES: 
  *   - js/core/tree/shared.js (UI.escapeHtml - optional)
  * 
- * UPDATED: Uses UI.escapeHtml from shared.js when available
+ * UPDATED: Uses UI.escapeHtml from shared.js/**
+ * =============================================================================
+ * STILL WATERS - COLLAPSIBLE UI COMPONENTS (collapsible.js)
+ * =============================================================================
+ * 
+ * LOCATION: js/core/collapsible.js
+ * 
+ * SINGLE SOURCE OF TRUTH for all collapsible UI behavior.
+ * 
+ * SCOPE:
+ *   - Collapsible sidebar (mobile + desktop collapse)
+ *   - Collapsible filter section (header + content)
+ *   - Collapsible age groups (character list)
+ *   - Collapsible tree nodes (location tree)
+ *   - Simple collapsible (manual control)
+ * 
+ * DESIGN PRINCIPLES:
+ *   - Logical state lives on the DOM as `.collapsed` class.
+ *   - CSS owns presentation (height, padding, display, transitions).
+ *   - JS toggles classes and attributes.
+ *   - Every initializer that installs listeners returns a destroy() method.
+ *   - Collapsed state derived from classList, never inline styles.
+ *   - No silent dependency fallbacks; formatting/ui must be loaded.
+ * 
+ * OUT OF SCOPE:
+ *   - Scroll locking → ui.js (UI.lockBodyScroll)
+ *   - Responsive breakpoints → responsive.js
+ *   - Icons → icons.js
+ *   - Persistence mechanics → each caller's storageKey handles it
+ * 
+ * DEPENDENCIES:
+ *   - formatting.js (escapeHtml — canonical source)
+ *   - ui.js (UI.lockBodyScroll / UI.unlockBodyScroll — optional)
+ *   - responsive.js (RESPONSIVE_BREAKPOINTS — optional)
+ * 
+ * ICON POLICY: No emojis. No Unicode arrows. Use CSS or icons.js.
+ * 
+ * =============================================================================
+ */
+
+(function() {
+    'use strict';
+
+    // =========================================================================
+    // 0. DEPENDENCY HELPERS
+    // =========================================================================
+
+    /**
+     * Gets the responsive mobile breakpoint, or a sane default.
+     * @private
+     */
+    function _getMobileBreakpoint() {
+        if (typeof window.RESPONSIVE_BREAKPOINTS !== 'undefined'
+            && window.RESPONSIVE_BREAKPOINTS.MOBILE) {
+            return window.RESPONSIVE_BREAKPOINTS.MOBILE;
+        }
+        return 768;
+    }
+
+    /**
+     * Locks body scroll via ui.js if available; otherwise records prior value.
+     * Returns a restore function.
+     * @private
+     */
+    function _lockBodyScroll(key) {
+        if (typeof window.UI !== 'undefined' && typeof window.UI.lockBodyScroll === 'function') {
+            window.UI.lockBodyScroll(key);
+            return function() {
+                if (typeof window.UI.unlockBodyScroll === 'function') {
+                    window.UI.unlockBodyScroll(key);
+                }
+            };
+        }
+        // Fallback: preserve and restore previous inline value
+        var prev = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        return function() {
+            document.body.style.overflow = prev;
+        };
+    }
+
+    /**
+     * Safe localStorage helpers.
+     * @private
+     */
+    function _readStorage(key) {
+        try { return localStorage.getItem(key); } catch (e) { return null; }
+    }
+
+    function _writeStorage(key, value) {
+        try { localStorage.setItem(key, value); } catch (e) { /* unavailable */ }
+    }
+
+    function _readJsonStorage(key) {
+        try {
+            var raw = localStorage.getItem(key);
+            if (!raw) return null;
+            return JSON.parse(raw);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function _writeJsonStorage(key, value) {
+        try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* unavailable */ }
+    }
+
+    /**
+     * Toggles `.collapsed` on a content element and syncs an optional icon.
+     * Presentation (height, padding, display) is owned by CSS.
+     * 
+     * @private
+     * @param {HTMLElement} content
+     * @param {HTMLElement|null} icon
+     * @param {boolean} collapsed
+     */
+    function _applyCollapsedState(content, icon, collapsed) {
+        if (!content) return;
+        content.classList.toggle('collapsed', collapsed);
+        // aria-hidden reflects visibility
+        content.setAttribute('aria-hidden', collapsed ? 'true' : 'false');
+        if (icon) {
+            icon.classList.toggle('collapsed', collapsed);
+        }
+    }
+
+    /**
+     * Returns whether an element is currently collapsed.
+     * Uses classList as the canonical source of truth.
+     * @private
+     */
+    function _isCollapsed(content) {
+        return !!content && content.classList.contains('collapsed');
+    }
+
+    /**
+     * Installs an ARIA linkage between a header (control) and a content region.
+     * @private
+     */
+    function _linkAria(header, content) {
+        if (!header || !content) return;
+        if (!content.id) {
+            content.id = 'collapsible-content-' + Math.random().toString(36).substring(2, 10);
+        }
+        header.setAttribute('role', 'button');
+        header.setAttribute('tabindex', '0');
+        header.setAttribute('aria-controls', content.id);
+        header.setAttribute('aria-expanded', _isCollapsed(content) ? 'false' : 'true');
+    }
+
+    /**
+     * Syncs the aria-expanded state to reflect current collapsed state.
+     * @private
+     */
+    function _syncAria(header, content) {
+        if (!header) return;
+        header.setAttribute('aria-expanded', _isCollapsed(content) ? 'false' : 'true');
+    }
+
+    /**
+     * Returns true if the click originated from an interactive child that
+     * should not toggle the parent. Domain-agnostic: any element with
+     * data-collapse-ignore, or standard interactive tags.
+     * @private
+     */
+    function _shouldIgnoreHeaderClick(target) {
+        if (!target || !target.closest) return false;
+        return !!target.closest('button, input, select, textarea, a, [data-collapse-ignore]');
+    }
+
+    // =========================================================================
+    // 1. COLLAPSIBLE SIDEBAR
+    // =========================================================================
+
+    /**
+     * Initializes a collapsible sidebar with toggle button.
+     * 
+     * Mobile: uses `.visible` class (overlay panel).
+     * Desktop: uses `.collapsed` class (slim sidebar).
+     * 
+     * @param {string} sidebarId
+     * @param {string} toggleBtnId
+     * @param {string} storageKey
+     * @param {number} [mobileBreakpoint] - defaults to RESPONSIVE_BREAKPOINTS.MOBILE
+     * @returns {Object|null} { openSidebar, closeSidebar, toggleSidebar, destroy }
+     */
+    function initCollapsibleSidebar(sidebarId, toggleBtnId, storageKey, mobileBreakpoint) {
+        mobileBreakpoint = mobileBreakpoint === undefined ? _getMobileBreakpoint() : mobileBreakpoint;
+
+        var sidebar = document.getElementById(sidebarId);
+        if (!sidebar) return null;
+        var toggleBtn = document.getElementById(toggleBtnId);
+
+        // Overlay — get or create
+        var overlay = document.querySelector('.sidebar-overlay[data-sidebar="' + sidebarId + '"]');
+        var overlayCreated = false;
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.className = 'sidebar-overlay';
+            overlay.setAttribute('data-sidebar', sidebarId);
+            document.body.appendChild(overlay);
+            overlayCreated = true;
+        }
+
+        // Restore desktop collapsed state
+        var saved = _readStorage(storageKey);
+        if (saved === 'collapsed' && window.innerWidth > mobileBreakpoint) {
+            sidebar.classList.add('collapsed');
+        }
+
+        // Lock bookkeeping
+        var unlockScroll = null;
+
+        function openSidebar() {
+            sidebar.classList.add('visible');
+            overlay.classList.add('visible');
+            if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'true');
+            if (!unlockScroll) unlockScroll = _lockBodyScroll('sidebar:' + sidebarId);
+        }
+
+        function closeSidebar() {
+            sidebar.classList.remove('visible');
+            overlay.classList.remove('visible');
+            if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'false');
+            if (unlockScroll) {
+                unlockScroll();
+                unlockScroll = null;
+            }
+        }
+
+        function toggleSidebar() {
+            if (sidebar.classList.contains('visible')) closeSidebar();
+            else openSidebar();
+        }
+
+        // Handlers
+        function handleToggleClick(e) {
+            e.stopPropagation();
+            if (window.innerWidth <= mobileBreakpoint) {
+                toggleSidebar();
+            } else {
+                sidebar.classList.toggle('collapsed');
+                var isCollapsed = sidebar.classList.contains('collapsed');
+                _writeStorage(storageKey, isCollapsed ? 'collapsed' : 'expanded');
+            }
+        }
+
+        function handleOverlayClick() {
+            closeSidebar();
+        }
+
+        function handleKeydown(e) {
+            if (e.key === 'Escape' && sidebar.classList.contains('visible')) {
+                closeSidebar();
+            }
+        }
+
+        function handleResize() {
+            if (window.innerWidth > mobileBreakpoint) {
+                closeSidebar();
+            }
+        }
+
+        if (toggleBtn) toggleBtn.addEventListener('click', handleToggleClick);
+        overlay.addEventListener('click', handleOverlayClick);
+        document.addEventListener('keydown', handleKeydown);
+        window.addEventListener('resize', handleResize);
+
+        // Initial ARIA state
+        if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'false');
+
+        return {
+            openSidebar: openSidebar,
+            closeSidebar: closeSidebar,
+            toggleSidebar: toggleSidebar,
+            destroy: function() {
+                if (toggleBtn) toggleBtn.removeEventListener('click', handleToggleClick);
+                overlay.removeEventListener('click', handleOverlayClick);
+                document.removeEventListener('keydown', handleKeydown);
+                window.removeEventListener('resize', handleResize);
+                if (unlockScroll) { unlockScroll(); unlockScroll = null; }
+                if (overlayCreated && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+            }
+        };
+    }
+
+    // =========================================================================
+    // 2. COLLAPSIBLE FILTER SECTION
+    // =========================================================================
+
+    /**
+     * Initializes a collapsible filter section (header toggles content).
+     * 
+     * @param {string} headerId
+     * @param {string} contentId
+     * @param {string} storageKey
+     * @param {string} [iconId] - optional; visual state driven by .collapsed class
+     */
+    function initCollapsibleFilter(headerId, contentId, storageKey, iconId) {
+        var header = document.getElementById(headerId);
+        var content = document.getElementById(contentId);
+        var icon = iconId ? document.getElementById(iconId) : null;
+        if (!header || !content) return null;
+
+        _linkAria(header, content);
+
+        var isCollapsed = _readStorage(storageKey) === 'true';
+        _applyCollapsedState(content, icon, isCollapsed);
+        _syncAria(header, content);
+
+        function handleClick(e) {
+            if (_shouldIgnoreHeaderClick(e.target)) return;
+            var nowCollapsed = !_isCollapsed(content);
+            _applyCollapsedState(content, icon, nowCollapsed);
+            _syncAria(header, content);
+            _writeStorage(storageKey, nowCollapsed ? 'true' : 'false');
+        }
+
+        function handleKeydown(e) {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                handleClick(e);
+            }
+        }
+
+        header.addEventListener('click', handleClick);
+        header.addEventListener('keydown', handleKeydown);
+
+        return {
+            expand: function() {
+                _applyCollapsedState(content, icon, false);
+                _syncAria(header, content);
+                _writeStorage(storageKey, 'false');
+            },
+            collapse: function() {
+                _applyCollapsedState(content, icon, true);
+                _syncAria(header, content);
+                _writeStorage(storageKey, 'true');
+            },
+            toggle: function() { handleClick({ target: header, preventDefault: function() {} }); },
+            isCollapsed: function() { return _isCollapsed(content); },
+            destroy: function() {
+                header.removeEventListener('click', handleClick);
+                header.removeEventListener('keydown', handleKeydown);
+            }
+        };
+    }
+
+    // =========================================================================
+    // 3. COLLAPSIBLE AGE GROUPS
+    // =========================================================================
+
+    /**
+     * Initializes collapsible age group sections.
+     * 
+     * The caller passes collapsedState (an object), which this module mutates
+     * and persists. The class list on each content element is the runtime
+     * source of truth; the object is the persistence mirror.
+     * 
+     * @param {string} containerId
+     * @param {Object} collapsedState - mutated and persisted
+     * @param {string} storageKey
+     * @returns {Object|null} { refresh, destroy }
+     */
+    function initCollapsibleAgeGroups(containerId, collapsedState, storageKey) {
+        var container = document.getElementById(containerId);
+        if (!container) return null;
+
+        // Load persisted state once
+        var saved = _readJsonStorage(storageKey);
+        if (saved && typeof saved === 'object') {
+            Object.assign(collapsedState, saved);
+        }
+
+        // Track listeners for destroy()
+        var listeners = [];
+
+        function attach() {
+            var headers = container.querySelectorAll('.age-group-header');
+            for (var i = 0; i < headers.length; i++) {
+                (function(header) {
+                    var groupKey = header.dataset.key || header.dataset.group;
+                    var content = header.nextElementSibling;
+                    var icon = header.querySelector('.toggle-icon');
+                    if (!content) return;
+
+                    _linkAria(header, content);
+
+                    var isCollapsed = collapsedState[groupKey] === true;
+                    _applyCollapsedState(content, icon, isCollapsed);
+                    _syncAria(header, content);
+
+                    function handleClick(e) {
+                        if (_shouldIgnoreHeaderClick(e.target)) return;
+                        var nowCollapsed = !_isCollapsed(content);
+                        _applyCollapsedState(content, icon, nowCollapsed);
+                        _syncAria(header, content);
+                        collapsedState[groupKey] = nowCollapsed;
+                        _writeJsonStorage(storageKey, collapsedState);
+                    }
+
+                    function handleKeydown(e) {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            handleClick(e);
+                        }
+                    }
+
+                    header.addEventListener('click', handleClick);
+                    header.addEventListener('keydown', handleKeydown);
+                    listeners.push({ header: header, click: handleClick, keydown: handleKeydown });
+                })(headers[i]);
+            }
+        }
+
+        attach();
+
+        return {
+            refresh: function() {
+                // Detach then re-attach to reflect new DOM
+                for (var i = 0; i < listeners.length; i++) {
+                    listeners[i].header.removeEventListener('click', listeners[i].click);
+                    listeners[i].header.removeEventListener('keydown', listeners[i].keydown);
+                }
+                listeners = [];
+                attach();
+            },
+            destroy: function() {
+                for (var i = 0; i < listeners.length; i++) {
+                    listeners[i].header.removeEventListener('click', listeners[i].click);
+                    listeners[i].header.removeEventListener('keydown', listeners[i].keydown);
+                }
+                listeners = [];
+            }
+        };
+    }
+
+    // =========================================================================
+    // 4. COLLAPSIBLE TREE NODES
+    // =========================================================================
+
+    // WeakMap avoids storing handler references on DOM nodes
+    var _treeNodeHandlers = new WeakMap();
+
+    /**
+     * Initializes collapsible tree nodes.
+     * 
+     * @param {string} containerId
+     * @param {Object} collapsedState - mutated and persisted
+     * @param {string} storageKey
+     * @returns {Object|null} { refresh, destroy }
+     */
+    function initCollapsibleTreeNodes(containerId, collapsedState, storageKey) {
+        var container = document.getElementById(containerId);
+        if (!container) return null;
+
+        var saved = _readJsonStorage(storageKey);
+        if (saved && typeof saved === 'object') {
+            Object.assign(collapsedState, saved);
+        }
+
+        function attach() {
+            var toggles = container.querySelectorAll('.tree-toggle, .collapse-icon');
+            for (var i = 0; i < toggles.length; i++) {
+                (function(toggle) {
+                    var nodeId = toggle.dataset.toggle || toggle.dataset.node;
+                    if (!nodeId) return;
+
+                    var parentNode = toggle.closest('.tree-node, .location-card');
+                    if (!parentNode) return;
+                    var childrenDiv = parentNode.querySelector('.tree-children, .location-content');
+                    if (!childrenDiv) return;
+
+                    // Initial visual state
+                    var isCollapsed = collapsedState[nodeId] === true;
+                    _applyCollapsedState(childrenDiv, toggle, isCollapsed);
+
+                    // Skip if handler already installed on this toggle
+                    if (_treeNodeHandlers.has(toggle)) return;
+
+                    function handleClick(e) {
+                        e.stopPropagation();
+                        var nowCollapsed = !_isCollapsed(childrenDiv);
+                        _applyCollapsedState(childrenDiv, toggle, nowCollapsed);
+                        collapsedState[nodeId] = nowCollapsed;
+                        _writeJsonStorage(storageKey, collapsedState);
+                    }
+
+                    _treeNodeHandlers.set(toggle, handleClick);
+                    toggle.addEventListener('click', handleClick);
+                })(toggles[i]);
+            }
+        }
+
+        attach();
+
+        return {
+            refresh: attach,
+            destroy: function() {
+                // WeakMap entries can't be iterated; listeners die with their nodes.
+                // Callers replacing the DOM entirely should call refresh() on the new content.
+            }
+        };
+    }
+
+    /**
+     * Backward-compatible alias for initCollapsibleTreeNodes.
+     */
+    function refreshCollapsibleTreeNodes(containerId, collapsedState, storageKey) {
+        return initCollapsibleTreeNodes(containerId, collapsedState, storageKey);
+    }
+
+    // =========================================================================
+    // 5. SIMPLE COLLAPSIBLE (manual control, no persistence)
+    // =========================================================================
+
+    /**
+     * Creates a simple collapsible section with imperative control.
+     * 
+     * State is stored on the DOM (class list) so external DOM manipulation
+     * cannot desync the API from what the user sees.
+     * 
+     * @param {string} headerId
+     * @param {string} contentId
+     * @param {boolean} [startCollapsed]
+     * @returns {Object|null} { toggle, expand, collapse, isCollapsed, destroy }
+     */
+    function createSimpleCollapsible(headerId, contentId, startCollapsed) {
+        var header = document.getElementById(headerId);
+        var content = document.getElementById(contentId);
+        if (!header || !content) return null;
+
+        startCollapsed = startCollapsed === true;
+        var icon = header.querySelector('.collapse-icon, .toggle-icon');
+
+        _linkAria(header, content);
+        _applyCollapsedState(content, icon, startCollapsed);
+        _syncAria(header, content);
+
+        function toggle() {
+            var nowCollapsed = !_isCollapsed(content);
+            _applyCollapsedState(content, icon, nowCollapsed);
+            _syncAria(header, content);
+        }
+
+        function expand() {
+            _applyCollapsedState(content, icon, false);
+            _syncAria(header, content);
+        }
+
+        function collapse() {
+            _applyCollapsedState(content, icon, true);
+            _syncAria(header, content);
+        }
+
+        function isCollapsed() {
+            return _isCollapsed(content);
+        }
+
+        function handleClick(e) {
+            if (_shouldIgnoreHeaderClick(e.target)) return;
+            toggle();
+        }
+
+        function handleKeydown(e) {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                toggle();
+            }
+        }
+
+        header.addEventListener('click', handleClick);
+        header.addEventListener('keydown', handleKeydown);
+
+        return {
+            toggle: toggle,
+            expand: expand,
+            collapse: collapse,
+            isCollapsed: isCollapsed,
+            destroy: function() {
+                header.removeEventListener('click', handleClick);
+                header.removeEventListener('keydown', handleKeydown);
+            }
+        };
+    }
+
+    // =========================================================================
+    // 6. EXPORTS
+    // =========================================================================
+
+    window.initCollapsibleSidebar = initCollapsibleSidebar;
+    window.initCollapsibleFilter = initCollapsibleFilter;
+    window.initCollapsibleAgeGroups = initCollapsibleAgeGroups;
+    window.initCollapsibleTreeNodes = initCollapsibleTreeNodes;
+    window.refreshCollapsibleTreeNodes = refreshCollapsibleTreeNodes;
+    window.createSimpleCollapsible = createSimpleCollapsible;
+
+    // Legacy: expanded/collapsed helpers were removed because presentation
+    // is CSS-owned. If any caller still needs explicit control, use the
+    // return objects from the initializers.
+
+    // Alias namespace for callers migrating to the "UI" convention
+    if (typeof window.UI === 'undefined') window.UI = {};
+    window.UI.Collapsible = {
+        initSidebar: initCollapsibleSidebar,
+        initFilter: initCollapsibleFilter,
+        initAgeGroups: initCollapsibleAgeGroups,
+        initTreeNodes: initCollapsibleTreeNodes,
+        refreshTreeNodes: refreshCollapsibleTreeNodes,
+        createSimple: createSimpleCollapsible
+    };
+
+})(); when available
  * =============================================================================
  */
 

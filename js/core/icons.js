@@ -3,12 +3,28 @@
  * STILL WATERS - CUSTOM ICONS (js/core/icons.js)
  * =============================================================================
  * 
- * All icons are custom SVG paths rendered as inline SVGs.
- * Usage: Icons.ICON_NAME
+ * LOCATION: js/core/icons.js
  * 
- * To use in HTML: <span class="icon">${Icons.CIRCLE}</span>
+ * All icons are custom SVG paths rendered as inline SVG markup.
  * 
- * FIXED: Wrapped in IIFE to prevent redeclaration errors
+ * USAGE:
+ *   <span class="icon">${Icons.CIRCLE}</span>
+ * 
+ * CONTRACT:
+ *   - Icons.X returns TRUSTED inline SVG markup.
+ *   - Do NOT concatenate untrusted strings into an icon.
+ *   - Do NOT use these to render user-supplied SVG.
+ *   - The markup is safe to insert via innerHTML because it contains only
+ *     static application-authored SVG.
+ * 
+ * SEMANTIC MAPPING:
+ *   The `getXxxIcon(...)` helpers map domain values to icons.
+ *   They are value→asset lookups, not domain logic.
+ *   All fallbacks route through Icons.CIRCLE for consistency.
+ * 
+ * DEPENDENCIES: None.
+ * 
+ * ICON POLICY: This file is the SINGLE SOURCE for SVG assets.
  * 
  * =============================================================================
  */
@@ -16,32 +32,38 @@
 (function() {
   'use strict';
 
-  // =========================================================================
-  // HELPER FUNCTIONS
-  // =========================================================================
+  // ===========================================================================
+  // 1. INTERNAL HELPERS
+  // ===========================================================================
 
+  /**
+   * Wraps SVG path content in a standard icon element.
+   * Presentation is owned by CSS via `.icon-svg`.
+   * 
+   * @private
+   * @param {string} path - SVG path content
+   * @param {string} [viewBox] - Defaults to '0 0 20 20'
+   * @param {string} [size] - Defaults to '1em'
+   */
   function _createIcon(path, viewBox, size) {
-    viewBox = viewBox || '0 0 20 20';
-    size = size || '1em';
-    return '<svg viewBox="' + viewBox + '" width="' + size + '" height="' + size + '" style="display:inline-block;fill:currentColor;stroke:currentColor;vertical-align:middle;">' + path + '</svg>';
+    if (viewBox === undefined || viewBox === null) viewBox = '0 0 20 20';
+    if (size === undefined || size === null) size = '1em';
+    return '<svg class="icon-svg" viewBox="' + viewBox + '" width="' + size + '" height="' + size + '" aria-hidden="true" focusable="false">' + path + '</svg>';
   }
 
   function _createIconMulti(paths, viewBox, size) {
-    viewBox = viewBox || '0 0 20 20';
-    size = size || '1em';
-    return '<svg viewBox="' + viewBox + '" width="' + size + '" height="' + size + '" style="display:inline-block;fill:currentColor;stroke:currentColor;vertical-align:middle;">' + paths.join('') + '</svg>';
+    if (viewBox === undefined || viewBox === null) viewBox = '0 0 20 20';
+    if (size === undefined || size === null) size = '1em';
+    return '<svg class="icon-svg" viewBox="' + viewBox + '" width="' + size + '" height="' + size + '" aria-hidden="true" focusable="false">' + paths.join('') + '</svg>';
   }
 
-  // =========================================================================
-  // ICON DEFINITIONS
-  // =========================================================================
+  // ===========================================================================
+  // 2. ICON DEFINITIONS
+  // ===========================================================================
 
   var Icons = {};
 
-  // =========================================================================
-  // BASIC SHAPES
-  // =========================================================================
-
+  // ===== BASIC SHAPES =====
   Icons.CIRCLE = _createIcon('<circle cx="10" cy="10" r="5.71" fill="currentColor"/>');
   Icons.CIRCLE_OUTLINE = _createIcon('<circle cx="10" cy="10" r="5.71" fill="none" stroke="currentColor" stroke-width="1"/>');
   Icons.CIRCLE_HALF_LEFT = _createIcon('<path d="M10,4.29c-3.15,0-5.71,2.56-5.71,5.71s2.56,5.71,5.71,5.71V4.29Z" fill="currentColor"/>');
@@ -53,19 +75,13 @@
     '<circle cx="10" cy="10" r="2.5" fill="none" stroke="currentColor" stroke-width="1"/>'
   ]);
 
-  // =========================================================================
-  // SQUARE VARIANTS
-  // =========================================================================
-
+  // ===== SQUARE VARIANTS =====
   Icons.SQUARE = _createIcon('<rect x="4.29" y="4.29" width="11.42" height="11.42" fill="currentColor"/>');
   Icons.SQUARE_OUTLINE = _createIcon('<rect x="4.29" y="4.29" width="11.42" height="11.42" fill="none" stroke="currentColor" stroke-width="1"/>');
   Icons.DIAMOND = _createIcon('<rect x="4.29" y="4.29" width="11.42" height="11.42" fill="currentColor" transform="rotate(45, 10, 10)"/>');
   Icons.DIAMOND_OUTLINE = _createIcon('<rect x="4.29" y="4.29" width="11.42" height="11.42" fill="none" stroke="currentColor" stroke-width="1" transform="rotate(45, 10, 10)"/>');
 
-  // =========================================================================
-  // CROSS / X VARIANTS
-  // =========================================================================
-
+  // ===== CROSS / X =====
   Icons.X = _createIconMulti([
     '<line x1="4.6" y1="4.6" x2="15.4" y2="15.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
     '<line x1="15.4" y1="4.6" x2="4.6" y2="15.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'
@@ -79,20 +95,14 @@
     '<line x1="2.45" y1="10" x2="17.55" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'
   ]);
 
-  // =========================================================================
-  // CHECK / TICK VARIANTS
-  // =========================================================================
-
+  // ===== CHECK / TICK =====
   Icons.CHECK = _createIconMulti([
     '<polyline points="4.66,4.66 15.34,15.34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
     '<polyline points="4.66,15.34 15.34,4.66" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'
   ]);
   Icons.CHECK_SIMPLE = _createIcon('<polyline points="2.45,10 8.2,15.75 17.55,4.25" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>');
 
-  // =========================================================================
-  // ARROW VARIANTS
-  // =========================================================================
-
+  // ===== ARROWS =====
   Icons.ARROW_UP = _createIcon('<polyline points="10,2.45 4.29,8.16 10,13.87" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>');
   Icons.ARROW_DOWN = _createIcon('<polyline points="10,17.55 15.71,11.84 10,6.13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>');
   Icons.ARROW_LEFT = _createIcon('<polyline points="2.45,10 8.16,4.29 13.87,10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>');
@@ -102,17 +112,11 @@
     '<polyline points="17.55,10 11.84,15.71 6.13,10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'
   ]);
 
-  // =========================================================================
-  // HEART VARIANTS
-  // =========================================================================
-
+  // ===== HEART =====
   Icons.HEART = _createIcon('<path d="M10,17.55C2.86,12.86,2.45,5.45,4.45,3.45c1.73-1.73,4.55-1.2,5.55,0.55,1-1.75,3.82-2.28,5.55-0.55,2,2,1.59,9.41-5.55,14.1Z" fill="currentColor"/>');
   Icons.HEART_OUTLINE = _createIcon('<path d="M10,17.55C2.86,12.86,2.45,5.45,4.45,3.45c1.73-1.73,4.55-1.2,5.55,0.55,1-1.75,3.82-2.28,5.55-0.55,2,2,1.59,9.41-5.55,14.1Z" fill="none" stroke="currentColor" stroke-width="1.5"/>');
 
-  // =========================================================================
-  // GENDER SYMBOLS
-  // =========================================================================
-
+  // ===== GENDER =====
   Icons.MALE = _createIconMulti([
     '<circle cx="10" cy="10" r="5.71" fill="none" stroke="currentColor" stroke-width="1"/>',
     '<line x1="14.76" y1="5.24" x2="17.07" y2="2.93" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
@@ -129,10 +133,7 @@
     '<line x1="10" y1="4.29" x2="10" y2="15.71" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>'
   ]);
 
-  // =========================================================================
-  // SPECIAL ICONS
-  // =========================================================================
-
+  // ===== SPECIAL =====
   Icons.LOCATION = _createIconMulti([
     '<path d="M10,2.86 L4.29,9.29 L4.29,16.43 L15.71,16.43 L15.71,9.29 Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>',
     '<circle cx="10" cy="8.57" r="2.14" fill="none" stroke="currentColor" stroke-width="1"/>'
@@ -171,10 +172,7 @@
   Icons.TRIANGLE_UP = _createIcon('<polygon points="10,2.45 2.45,17.55 17.55,17.55" fill="currentColor" stroke-linejoin="round"/>');
   Icons.TRIANGLE_DOWN = _createIcon('<polygon points="10,17.55 17.55,2.45 2.45,2.45" fill="currentColor" stroke-linejoin="round"/>');
 
-  // =========================================================================
-  // SPECIAL UI ICONS
-  // =========================================================================
-
+  // ===== UI =====
   Icons.PLUS = _createIconMulti([
     '<line x1="10" y1="4.29" x2="10" y2="15.71" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
     '<line x1="4.29" y1="10" x2="15.71" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'
@@ -217,10 +215,7 @@
     '<polygon points="4.29,12.86 4.29,17.55 15.71,17.55 15.71,12.86 10,8.16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>'
   ]);
 
-  // =========================================================================
-  // RELATIONSHIP ICONS
-  // =========================================================================
-
+  // ===== RELATIONSHIP =====
   Icons.MARRIAGE = _createIconMulti([
     '<circle cx="10" cy="10" r="5.71" fill="none" stroke="currentColor" stroke-width="1"/>',
     '<line x1="10" y1="4.29" x2="10" y2="15.71" stroke="currentColor" stroke-width="1"/>',
@@ -237,10 +232,7 @@
     '<path d="M7,12.5c0,1.1,1.34,2,3,2s3-0.9,3-2" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>'
   ]);
 
-  // =========================================================================
-  // STATUS ICONS
-  // =========================================================================
-
+  // ===== STATUS =====
   Icons.STATUS_ACTIVE = _createIconMulti([
     '<circle cx="10" cy="10" r="5.71" fill="none" stroke="currentColor" stroke-width="1"/>',
     '<polyline points="6.13,10 8.8,12.67 13.87,7.33" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'
@@ -267,10 +259,7 @@
     '<line x1="6.13" y1="13.87" x2="13.87" y2="6.13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'
   ]);
 
-  // =========================================================================
-  // LOCATION TYPE ICONS
-  // =========================================================================
-
+  // ===== LOCATION TYPES =====
   Icons.LOCATION_COUNTRY = _createIconMulti([
     '<circle cx="10" cy="10" r="5.71" fill="none" stroke="currentColor" stroke-width="1"/>',
     '<circle cx="10" cy="10" r="2.14" fill="none" stroke="currentColor" stroke-width="1"/>',
@@ -293,10 +282,7 @@
     '<rect x="7.14" y="7.14" width="5.71" height="5.71" fill="none" stroke="currentColor" stroke-width="1"/>'
   ]);
 
-  // =========================================================================
-  // ADOPTION / GUARDIANSHIP
-  // =========================================================================
-
+  // ===== ADOPTION =====
   Icons.ADOPTION_LEGAL = _createIconMulti([
     '<circle cx="10" cy="10" r="5.71" fill="none" stroke="currentColor" stroke-width="1"/>',
     '<polyline points="6.13,10 8.8,12.67 13.87,7.33" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'
@@ -310,10 +296,7 @@
     '<line x1="6" y1="10" x2="14" y2="10" stroke="currentColor" stroke-width="0.5"/>'
   ]);
 
-  // =========================================================================
-  // DASHBOARD TOOL ICONS
-  // =========================================================================
-
+  // ===== DASHBOARD TOOLS =====
   Icons.CHARACTER = _createIconMulti([
     '<circle cx="10" cy="7" r="3.5" fill="none" stroke="currentColor" stroke-width="1.5"/>',
     '<path d="M4,18c0-3.31,2.69-6,6-6s6,2.69,6,6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
@@ -417,10 +400,7 @@
     '<circle cx="10" cy="10" r="0.8" fill="currentColor"/>'
   ]);
 
-  // =========================================================================
-  // RANK SYSTEM ICONS
-  // =========================================================================
-
+  // ===== RANK SYSTEM =====
   Icons.SOVEREIGN = _createIconMulti([
     '<path d="M3,16 L17,16" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
     '<path d="M5,16 L3,8 L7.5,11 L10,5 L12.5,11 L17,8 L15,16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>',
@@ -563,28 +543,31 @@
     '<circle cx="16" cy="16" r="1.2" fill="currentColor" opacity="0.5"/>'
   ]);
 
-  // =========================================================================
-  // HELPER FUNCTIONS
-  // =========================================================================
+  // ===========================================================================
+  // 3. SEMANTIC HELPERS (value → icon)
+  // ===========================================================================
+  // These are pure value→asset lookups. They do not do domain logic.
+  // All unknown values fall back to Icons.CIRCLE for consistency.
 
   function getIcon(name, fallback) {
-    fallback = fallback || Icons.CIRCLE;
-    return Icons[name] || fallback;
+    if (name && Icons[name]) return Icons[name];
+    if (fallback && Icons[fallback]) return Icons[fallback];
+    return Icons.CIRCLE;
   }
 
   function getLocationTypeIcon(priority) {
-    var icons = {
+    var map = {
       1: Icons.LOCATION_COUNTRY,
       2: Icons.LOCATION_REGION,
       3: Icons.LOCATION_COUNTY,
       4: Icons.LOCATION_TOWN,
       5: Icons.LOCATION_LOCALITY
     };
-    return icons[priority] || Icons.LOCATION_LOCALITY;
+    return map[priority] || Icons.LOCATION_LOCALITY;
   }
 
   function getRelationshipStatusIcon(status) {
-    var icons = {
+    var map = {
       'ongoing': Icons.STATUS_ACTIVE,
       'active': Icons.STATUS_ACTIVE,
       'ended': Icons.STATUS_ENDED,
@@ -593,41 +576,41 @@
       'proposed': Icons.STATUS_PROPOSED,
       'declined': Icons.STATUS_DECLINED
     };
-    return icons[status] || Icons.CIRCLE;
+    return map[status] || Icons.CIRCLE;
   }
 
   function getGenderIcon(gender) {
-    var icons = {
+    var map = {
       'male': Icons.MALE,
       'female': Icons.FEMALE,
       'unknown': Icons.GENDER_NEUTRAL,
       'other': Icons.GENDER_NEUTRAL
     };
-    return icons[gender] || Icons.GENDER_NEUTRAL;
+    return map[gender] || Icons.GENDER_NEUTRAL;
   }
 
   function getAdoptionTypeIcon(type) {
-    var icons = {
+    var map = {
       'legal': Icons.ADOPTION_LEGAL,
       'guardianship': Icons.GUARDIANSHIP,
       'foster': Icons.FOSTER
     };
-    return icons[type] || Icons.CIRCLE;
+    return map[type] || Icons.CIRCLE;
   }
 
   function getRankLevelIcon(priority) {
-    var icons = {
+    var map = {
       1: Icons.SOVEREIGN,
       2: Icons.HIGH_NOBLE,
       3: Icons.NOBLE,
       4: Icons.GENTRY,
       5: Icons.COMMONER
     };
-    return icons[priority] || Icons.RANK_SYMBOL;
+    return map[priority] || Icons.RANK_SYMBOL;
   }
 
   function getRankActionIcon(action) {
-    var icons = {
+    var map = {
       'inheritance': Icons.INHERITANCE,
       'numbered': Icons.NUMBERED_RANK,
       'gender': Icons.GENDER_RESTRICTION,
@@ -643,11 +626,11 @@
       'symbols': Icons.SYMBOL_PICKER,
       'level': Icons.LEVEL_BADGE
     };
-    return icons[action] || Icons.RANK_SYMBOL;
+    return map[action] || Icons.RANK_SYMBOL;
   }
 
   function getDashboardToolIcon(tool) {
-    var icons = {
+    var map = {
       'character': Icons.CHARACTER,
       'census': Icons.CENSUS,
       'household': Icons.HOUSEHOLD,
@@ -664,18 +647,17 @@
       'import': Icons.BULK_IMPORT,
       'diagnostics': Icons.DIAGNOSTICS
     };
-    return icons[tool] || Icons.CIRCLE;
+    return map[tool] || Icons.CIRCLE;
   }
 
-  // =========================================================================
-  // EXPORTS - Only set if not already set
-  // =========================================================================
+  // ===========================================================================
+  // 4. EXPORTS
+  // ===========================================================================
 
-  // Only set window.Icons if it's not already defined
+  // Attach to window.Icons; merge if it already exists.
   if (typeof window.Icons === 'undefined') {
     window.Icons = Icons;
   } else {
-    // Merge with existing
     for (var key in Icons) {
       if (Icons.hasOwnProperty(key) && !window.Icons[key]) {
         window.Icons[key] = Icons[key];
@@ -683,7 +665,7 @@
     }
   }
 
-  // Always set helper functions
+  // Semantic helpers
   window.getIcon = getIcon;
   window.getLocationTypeIcon = getLocationTypeIcon;
   window.getRelationshipStatusIcon = getRelationshipStatusIcon;
@@ -693,6 +675,7 @@
   window.getRankActionIcon = getRankActionIcon;
   window.getDashboardToolIcon = getDashboardToolIcon;
 
+  // CommonJS for tests
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
       Icons: Icons,
@@ -707,6 +690,8 @@
     };
   }
 
-  console.log('✅ icons.js loaded - ' + Object.keys(Icons).length + ' custom SVG icons available');
+  if (typeof console !== 'undefined' && console.log) {
+    console.log('icons.js loaded - ' + Object.keys(Icons).length + ' custom SVG icons available');
+  }
 
-})(); // End IIFE
+})();

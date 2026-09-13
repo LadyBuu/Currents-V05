@@ -1,15 +1,36 @@
 /**
  * =============================================================================
- * QUERY HELPERS - Core query utilities (js/core/query-helpers.js)
+ * STILL WATERS - QUERY HELPERS (js/core/query-helpers.js)
  * =============================================================================
  * 
- * This file provides basic query utilities using ONLY core dependencies.
- * NO dependencies on system files (relationship-registry, etc.)
+ * LOCATION: js/core/query-helpers.js
+ * 
+ * SCOPE:
+ *   Cross-domain structural queries over canonical core data. These functions:
+ *   - operate only on character, parent, and location STRUCTURE
+ *   - do not depend on system modules (relationships, world, education, etc.)
+ *   - do not format, resolve display names, or interpret domain semantics
+ *   - do not fall back to alternate implementations
+ * 
+ * OUT OF SCOPE (belongs elsewhere):
+ *   - Current location resolution → world.js (getCurrentLocationId)
+ *   - Relationship status → relationship domain
+ *   - Location hierarchy display → formatting.js (with resolved hierarchy)
+ *   - Current-year fallback → time.js (getCurrentYearSafe)
+ *   - Age calculation → time.js (calculateAge)
+ *   - Family graph accessors → family-accessors.js
  * 
  * DEPENDENCIES:
- *   - accessors.js (core)
- *   - time.js (core)
- *   - constants.js (core)
+ *   - accessors.js (getCharacterById, getCharacters, getPlaceById, getPlaces)
+ *   - time.js (calculateAge, getCurrentYearSafe)
+ *   - constants.js (AGE_GROUPS, AGE_GROUPS_MAP)
+ * 
+ * SEMANTIC RULES:
+ *   - Return null for missing/invalid input; never fabricate.
+ *   - No `||` defaults that could destroy 0 or ''.
+ *   - Missing dependencies fail loudly.
+ * 
+ * ICON POLICY: No emojis. No icons.
  * 
  * =============================================================================
  */
@@ -18,194 +39,152 @@
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY WRAPPERS - Core only
+    // 1. DEPENDENCY GUARDS
     // =========================================================================
 
-    function _getCharacterById(id) {
-        return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
-    }
-
-    function _getCharacters() {
-        return typeof window.getCharacters === 'function' ? window.getCharacters() : [];
-    }
-
-    function _getPlaceById(id) {
-        return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
-    }
-
-    function _getPlaces() {
-        return typeof window.getPlaces === 'function' ? window.getPlaces() : [];
-    }
-
-    function _getCurrentYear() {
-        if (typeof window.getCurrentYearSafe === 'function') return window.getCurrentYearSafe();
-        if (typeof window.getCurrentYear === 'function') return window.getCurrentYear();
-        return 1250;
-    }
-
-    function _calculateAge(birthYear, isDeceased, deathYear) {
-        if (typeof window.calculateAge === 'function') {
-            return window.calculateAge(birthYear, isDeceased, deathYear);
+    function _requireAccessors() {
+        if (typeof window.getCharacterById !== 'function'
+            || typeof window.getCharacters !== 'function'
+            || typeof window.getPlaceById !== 'function'
+            || typeof window.getPlaces !== 'function') {
+            throw new Error('query-helpers.js: accessors.js is required.');
         }
-        var currentYear = _getCurrentYear();
-        if (!birthYear) return 0;
-        if (isDeceased && deathYear) return Math.max(0, deathYear - birthYear);
-        return Math.max(0, currentYear - birthYear);
     }
 
-    function _getAgeGroups() {
-        return window.AGE_GROUPS || ['0-10', '11-20', '21-30', '31-40', '41-50', '51-60', '61-70', '71-80', '81-90', '91+'];
-    }
-
-    function _getAgeGroupLabel(group) {
-        if (window.AGE_GROUPS_MAP && window.AGE_GROUPS_MAP[group]) {
-            return window.AGE_GROUPS_MAP[group].label;
+    function _requireTime() {
+        if (typeof window.calculateAge !== 'function'
+            || typeof window.getCurrentYearSafe !== 'function') {
+            throw new Error('query-helpers.js: time.js is required.');
         }
-        return group + ' years';
     }
 
     // =========================================================================
-    // 2. CHARACTER STATUS - Pure core logic (no relationship system)
+    // 2. CHARACTER ROLES (structural only — no formatting)
     // =========================================================================
 
     /**
-     * Gets character status using ONLY character data (no relationship system)
-     * This is a core-level query that doesn't depend on system files.
+     * Gets the raw profession records of a character.
+     * Does not normalize to names — returns the underlying records.
+     * 
+     * @param {Object} char
+     * @returns {Array} Array of profession records
      */
-    function getCharacterStatusBasic(char) {
-        if (!char) return 'single';
-        if (char.isDeceased) return 'deceased';
-
-        // Check relationships array directly (this is on the character object)
-        if (char.relationships && char.relationships.length > 0) {
-            var hasActivePartner = false;
-            var hasWidowed = false;
-
-            for (var i = 0; i < char.relationships.length; i++) {
-                var rel = char.relationships[i];
-                var relType = rel.type || (rel.details && rel.details.type);
-                
-                if (relType === 'committed' || relType === 'marriage' || relType === 'romance' || relType === 'casual_dating') {
-                    if (rel.status === 'ongoing' || rel.status === 'active') {
-                        hasActivePartner = true;
-                    } else if (rel.status === 'widowed') {
-                        hasWidowed = true;
-                    }
-                }
-            }
-
-            if (hasActivePartner) return 'partnered';
-            if (hasWidowed) return 'widowed';
-        }
-
-        return 'single';
+    function getCharacterProfessionRecords(char) {
+        if (!char || !Array.isArray(char.professions)) return [];
+        return char.professions;
     }
 
     // =========================================================================
-    // 3. CHARACTER ROLES - Core only
+    // 3. PARENT / CHILD STRUCTURAL QUERIES
     // =========================================================================
 
-    function getCharacterRoles(char) {
-        if (!char || !char.professions) return [];
-        var roles = [];
-        for (var i = 0; i < char.professions.length; i++) {
-            var prof = char.professions[i];
-            if (typeof prof === 'string') {
-                roles.push(prof);
-            } else if (prof && typeof prof === 'object') {
-                roles.push(prof.name || prof.id || '');
-            }
-        }
-        return roles;
-    }
-
-    // =========================================================================
-    // 4. CHARACTER LOCATION - Core only
-    // =========================================================================
-
-    function getCharacterLocationId(char) {
-        if (!char) return null;
-        if (char.currentLocationId) return char.currentLocationId;
-        if (char.currentLocation) return char.currentLocation;
-
-        if (char.moves && char.moves.length > 0) {
-            var sorted = char.moves.slice().sort(function(a, b) {
-                return (b.year || 0) - (a.year || 0);
-            });
-            if (sorted[0] && sorted[0].locationId) {
-                return sorted[0].locationId;
-            }
-        }
-
-        return char.birthplaceId || null;
-    }
-
-    function getCharacterLocationName(char) {
-        var locId = getCharacterLocationId(char);
-        if (!locId) return 'Unknown';
-        var place = _getPlaceById(locId);
-        return place ? place.displayName : 'Unknown';
-    }
-
-    // =========================================================================
-    // 5. PARENT/CHILD QUERIES - Core only (no relationship system)
-    // =========================================================================
-
+    /**
+     * Gets father and mother objects.
+     * @param {Object} char
+     * @returns {{father: Object|null, mother: Object|null}}
+     */
     function getCharacterParents(char) {
         if (!char) return { father: null, mother: null };
         return {
-            father: char.fatherId ? _getCharacterById(char.fatherId) : null,
-            mother: char.motherId ? _getCharacterById(char.motherId) : null
+            father: char.fatherId ? window.getCharacterById(char.fatherId) : null,
+            mother: char.motherId ? window.getCharacterById(char.motherId) : null
         };
     }
 
+    /**
+     * Gets biological children of a character.
+     * Note: For richer family queries, use family-accessors.js.
+     * This is a lean, self-contained scan.
+     * 
+     * @param {Object} char
+     * @returns {Array}
+     */
     function getCharacterChildren(char) {
         if (!char) return [];
-        var allChars = _getCharacters();
-        var children = [];
-        for (var i = 0; i < allChars.length; i++) {
-            var c = allChars[i];
+        var all = window.getCharacters();
+        var result = [];
+        for (var i = 0; i < all.length; i++) {
+            var c = all[i];
             if (c.motherId === char.id || c.fatherId === char.id) {
-                children.push(c);
+                result.push(c);
             }
         }
-        return children;
+        return result;
     }
 
+    /**
+     * Checks if a character has biological children.
+     * Short-circuits as soon as one is found.
+     * @param {Object} char
+     * @returns {boolean}
+     */
     function getCharacterHasChildren(char) {
-        return getCharacterChildren(char).length > 0;
+        if (!char) return false;
+        var all = window.getCharacters();
+        for (var i = 0; i < all.length; i++) {
+            var c = all[i];
+            if (c.motherId === char.id || c.fatherId === char.id) return true;
+        }
+        return false;
     }
 
+    /**
+     * Checks if a character has a father or mother.
+     * @param {Object} char
+     * @returns {boolean}
+     */
     function getCharacterHasParents(char) {
-        var parents = getCharacterParents(char);
-        return !!(parents.father || parents.mother);
+        if (!char) return false;
+        return !!(char.fatherId || char.motherId);
     }
 
     // =========================================================================
-    // 6. AGE GROUP - Core only
+    // 4. AGE GROUP
     // =========================================================================
 
+    /**
+     * Gets the age group key for a given age.
+     * Returns null for invalid age.
+     * 
+     * @param {number} age
+     * @returns {string|null}
+     */
     function getAgeGroupForAge(age) {
-        var groups = _getAgeGroups();
+        if (typeof age !== 'number' || !Number.isFinite(age) || age < 0) return null;
+        var groups = window.AGE_GROUPS;
+        if (!Array.isArray(groups) || groups.length === 0) return null;
         for (var i = 0; i < groups.length; i++) {
             var parts = groups[i].split('-');
-            var min = parseInt(parts[0]);
-            var max = parts[1] === '+' ? Infinity : parseInt(parts[1]);
-            if (age >= min && age <= max) {
-                return groups[i];
-            }
+            var min = parseInt(parts[0], 10);
+            var max = parts[1] === '+' ? Infinity : parseInt(parts[1], 10);
+            if (age >= min && age <= max) return groups[i];
         }
         return groups[groups.length - 1];
     }
 
+    /**
+     * Gets the human label for an age group.
+     * @param {string} group
+     * @returns {string}
+     */
     function getAgeGroupLabel(group) {
-        return _getAgeGroupLabel(group);
+        if (!group) return '';
+        var map = window.AGE_GROUPS_MAP;
+        if (map && map[group] && map[group].label) return map[group].label;
+        return group + ' years';
     }
 
     // =========================================================================
-    // 7. LOCATION HIERARCHY - Core only
+    // 5. LOCATION HIERARCHY (structural only — no formatting)
     // =========================================================================
 
+    /**
+     * Gets the parent chain for a place, ordered root → leaf.
+     * Includes the place itself as the last element.
+     * 
+     * @param {Object} place
+     * @returns {Array}
+     */
     function getLocationHierarchy(place) {
         if (!place) return [];
         var hierarchy = [];
@@ -214,114 +193,39 @@
         while (current && safety < 20) {
             hierarchy.unshift(current);
             if (!current.parentId) break;
-            current = _getPlaceById(current.parentId);
+            current = window.getPlaceById(current.parentId);
             safety++;
         }
         return hierarchy;
     }
 
-    function getLocationHierarchyDisplay(place) {
-        var hierarchy = getLocationHierarchy(place);
-        return hierarchy.map(function(p) { return p.displayName; }).join(' → ');
-    }
-
-    function getAllLocationsHierarchical() {
-        var places = _getPlaces();
-        var locationMap = {};
-
-        for (var i = 0; i < places.length; i++) {
-            var place = places[i];
-            if (place.variableKey !== undefined && place.variableKey !== '') {
-                locationMap[place.id] = {
-                    id: place.id,
-                    name: place.displayName || place.name || 'Unknown',
-                    parentId: place.parentId || null,
-                    children: []
-                };
-            }
-        }
-
-        var roots = [];
-        for (var id in locationMap) {
-            if (locationMap.hasOwnProperty(id)) {
-                var node = locationMap[id];
-                if (node.parentId && locationMap[node.parentId]) {
-                    locationMap[node.parentId].children.push(node);
-                } else {
-                    roots.push(node);
-                }
-            }
-        }
-
-        function sortNodes(nodes) {
-            nodes.sort(function(a, b) { return a.name.localeCompare(b.name); });
-            for (var i = 0; i < nodes.length; i++) {
-                if (nodes[i].children && nodes[i].children.length > 0) {
-                    sortNodes(nodes[i].children);
-                }
-            }
-        }
-        sortNodes(roots);
-
-        function flattenNodes(nodes, depth) {
-            depth = depth || 0;
-            var flat = [];
-            var indent = '';
-            for (var j = 0; j < depth; j++) {
-                indent += '  ';
-            }
-            for (var i = 0; i < nodes.length; i++) {
-                var node = nodes[i];
-                flat.push({
-                    id: node.id,
-                    name: node.name,
-                    displayName: indent + node.name,
-                    depth: depth
-                });
-                if (node.children && node.children.length > 0) {
-                    var childFlat = flattenNodes(node.children, depth + 1);
-                    flat = flat.concat(childFlat);
-                }
-            }
-            return flat;
-        }
-
-        return flattenNodes(roots);
-    }
-
     // =========================================================================
-    // 8. EXPORTS
+    // 6. EXPORTS
     // =========================================================================
 
     window.QueryHelpers = {
-        getCharacterStatusBasic: getCharacterStatusBasic,
-        getCharacterRoles: getCharacterRoles,
-        getCharacterLocationId: getCharacterLocationId,
-        getCharacterLocationName: getCharacterLocationName,
+        // Character structure
+        getCharacterProfessionRecords: getCharacterProfessionRecords,
         getCharacterParents: getCharacterParents,
         getCharacterChildren: getCharacterChildren,
         getCharacterHasChildren: getCharacterHasChildren,
         getCharacterHasParents: getCharacterHasParents,
+
+        // Age group
         getAgeGroupForAge: getAgeGroupForAge,
         getAgeGroupLabel: getAgeGroupLabel,
-        getLocationHierarchy: getLocationHierarchy,
-        getLocationHierarchyDisplay: getLocationHierarchyDisplay,
-        getAllLocationsHierarchical: getAllLocationsHierarchical,
-        // Core accessors passed through
-        getCharacterById: _getCharacterById,
-        getCharacters: _getCharacters,
-        getPlaceById: _getPlaceById,
-        getPlaces: _getPlaces,
-        getCurrentYear: _getCurrentYear,
-        calculateAge: _calculateAge
+
+        // Location structure
+        getLocationHierarchy: getLocationHierarchy
     };
 
-    // Backward compatibility aliases
-    window._getCharacterById = _getCharacterById;
-    window._getCharacters = _getCharacters;
-    window._getPlaceById = _getPlaceById;
-    window._getPlaces = _getPlaces;
-    window._getCurrentYear = _getCurrentYear;
-    window._calculateAge = _calculateAge;
+    // Backward-compatible globals for these specific structural queries
+    window.getCharacterParents = getCharacterParents;
+    window.getCharacterChildren = getCharacterChildren;
+    window.getCharacterHasChildren = getCharacterHasChildren;
+    window.getCharacterHasParents = getCharacterHasParents;
+    window.getAgeGroupForAge = getAgeGroupForAge;
+    window.getAgeGroupLabel = getAgeGroupLabel;
+    window.getLocationHierarchy = getLocationHierarchy;
 
 })();

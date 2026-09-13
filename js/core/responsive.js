@@ -1,493 +1,433 @@
 /**
  * =============================================================================
- * RESPONSIVE UI UTILITIES (responsive.js)
+ * STILL WATERS - RESPONSIVE UI (responsive.js)
  * =============================================================================
  * 
- * LOCATION: js/core/ui/responsive.js
+ * LOCATION: js/core/responsive.js
  * 
- * This file contains ALL responsive/mobile utility functions including:
- * - Viewport detection (mobile vs desktop)
- * - Responsive body class management
- * - Responsive grid initialization
- * - Mobile menu handling
- * - Touch-friendly adjustments
+ * SINGLE SOURCE OF TRUTH for viewport detection, responsive body classes,
+ * responsive grid helpers, and mobile menu handling.
  * 
- * DEPENDENCIES: 
- *   - js/core/collections.js (debounce function)
+ * SCOPE:
+ *   - Viewport detection (mobile / tablet / desktop)
+ *   - Responsive body classes
+ *   - Responsive grid helper
+ *   - Mobile menu (with overlay, escape, resize cleanup)
+ *   - Swipe gesture handling
  * 
- * =============================================================================
- * EXPORTED FUNCTIONS (on window):
- * =============================================================================
+ * OUT OF SCOPE:
+ *   - Touch sizing → CSS `@media (pointer: coarse)`
+ *   - Presentation → CSS
+ *   - Domain-specific responsive logic → the domain module
  * 
- * Constants:
- *   - RESPONSIVE_BREAKPOINTS - Object { MOBILE: 768, TABLET: 1024, DESKTOP: 1200 }
+ * DEPENDENCIES:
+ *   - collections.js (debounce) — REQUIRED, not optional
  * 
- * Viewport Detection:
- *   - isMobileViewport(breakpoint) - Checks if viewport is mobile (≤ breakpoint, default 768)
- *   - isTableViewport(mobileBreakpoint, tabletBreakpoint) - Checks if viewport is tablet (768-1024)
- *   - isDesktopViewport(tabletBreakpoint) - Checks if viewport is desktop (>1024)
- *   - getViewportCategory() - Returns 'mobile', 'tablet', or 'desktop'
- * 
- * Body Class Management:
- *   - initResponsiveBody(breakpoint, tabletBreakpoint) - Adds responsive classes to body
- *     Classes: 'mobile-view', 'tablet-view', 'desktop-view'
- * 
- * Responsive Grid:
- *   - initResponsiveGrid(containerId, desktopCols, tabletCols, mobileCols, options)
- *     Creates grid that changes columns based on screen size
- *     Options: { gap, minItemWidth, maxWidth }
- *     Returns { refresh } method
- * 
- * Mobile Menu:
- *   - initMobileMenu(menuBtnId, menuContainerId, storageKey, breakpoint)
- *     Initializes hamburger menu with overlay and escape key support
- *     Returns { open, close, toggle, isOpen } methods
- * 
- * Touch-Friendly Adjustments:
- *   - initTouchFriendly() - Adds 'touch-friendly' class to body on mobile
- *   - initSwipeable(elementId, callbacks) - Makes element swipeable
- *     Callbacks: { onSwipeLeft, onSwipeRight, onSwipeUp, onSwipeDown }
- * 
- * Utility:
- *   - refreshResponsiveComponents() - Manually refreshes all responsive components
- * 
- * =============================================================================
- * BREAKPOINT REFERENCE:
- * =============================================================================
- * 
- * Category  | Breakpoint | Range
- * ----------|------------|----------------
- * Mobile    | 768px      | ≤ 768px
- * Tablet    | 1024px     | 769px - 1024px
- * Desktop   | >1024px    | >1024px
- * 
- * =============================================================================
- * CSS CLASSES (for styling):
- * =============================================================================
- * 
- * Body Classes:
- *   .mobile-view - When viewport is mobile
- *   .tablet-view - When viewport is tablet
- *   .desktop-view - When viewport is desktop
- *   .touch-friendly - When on mobile (increases touch target sizes)
- * 
- * Menu Classes:
- *   .mobile-visible - Added to menu container when open
- *   .mobile-menu-overlay - Overlay behind mobile menu
- * 
- * =============================================================================
- * USAGE EXAMPLES:
- * =============================================================================
- * 
- * // Initialize all responsive features
- * initResponsiveBody();
- * initTouchFriendly();
- * 
- * // Responsive grid
- * const grid = initResponsiveGrid('charactersGrid', 3, 2, 1, {
- *   gap: '16px',
- *   minItemWidth: 250
- * });
- * 
- * // Mobile menu
- * const menu = initMobileMenu('hamburgerBtn', 'mainNav', 'menu_state');
- * menu.open();
- * 
- * // Swipeable panel
- * initSwipeable('carousel', {
- *   onSwipeLeft: () => nextSlide(),
- *   onSwipeRight: () => prevSlide()
- * });
- * 
- * // Viewport detection
- * if (isMobileViewport()) {
- *   console.log('Mobile layout');
- * }
- * const category = getViewportCategory(); // 'mobile', 'tablet', 'desktop'
+ * ICON POLICY: No emojis. No icons.
  * 
  * =============================================================================
  */
 
-// =============================================================================
-// 1. DEPENDENCY WRAPPERS
-// =============================================================================
+(function() {
+    'use strict';
 
-/**
- * Safe wrapper for debounce - uses collections.js version
- * @param {Function} func - Function to debounce
- * @param {number} wait - Wait time in ms
- * @returns {Function} Debounced function
- */
-function _getDebounce() {
-    if (typeof window.debounce === 'function') {
-        return window.debounce;
+    // =========================================================================
+    // 0. DEPENDENCY GUARD
+    // =========================================================================
+
+    if (typeof window.debounce !== 'function') {
+        throw new Error('responsive.js: collections.js must load first (debounce missing).');
     }
-    // Minimal fallback if collections.js not loaded
-    return function(func, wait) {
-        let timeout;
-        return function executedFunction(...args) {
-            const later = () => {
-                clearTimeout(timeout);
-                func.apply(this, args);
-            };
-            clearTimeout(timeout);
-            timeout = setTimeout(later, wait);
-        };
+
+    var debounce = window.debounce;
+
+    // =========================================================================
+    // 1. BREAKPOINTS
+    // =========================================================================
+
+    /**
+     * Canonical breakpoints. Any responsive logic anywhere must read from here.
+     * 
+     * Category | Width
+     * ---------|--------------
+     * Mobile   | <= MOBILE
+     * Tablet   | MOBILE < w <= TABLET
+     * Desktop  | > TABLET
+     */
+    var RESPONSIVE_BREAKPOINTS = Object.freeze({
+        MOBILE: 768,
+        TABLET: 1024
+    });
+
+    // =========================================================================
+    // 2. VIEWPORT DETECTION
+    // =========================================================================
+
+    /**
+     * True if current width is at or below the mobile breakpoint.
+     */
+    function isMobileViewport(breakpoint) {
+        breakpoint = breakpoint === undefined ? RESPONSIVE_BREAKPOINTS.MOBILE : breakpoint;
+        return window.innerWidth <= breakpoint;
+    }
+
+    /**
+     * True if current width is between mobile and tablet breakpoints.
+     */
+    function isTabletViewport(mobileBreakpoint, tabletBreakpoint) {
+        mobileBreakpoint = mobileBreakpoint === undefined ? RESPONSIVE_BREAKPOINTS.MOBILE : mobileBreakpoint;
+        tabletBreakpoint = tabletBreakpoint === undefined ? RESPONSIVE_BREAKPOINTS.TABLET : tabletBreakpoint;
+        var w = window.innerWidth;
+        return w > mobileBreakpoint && w <= tabletBreakpoint;
+    }
+
+    /**
+     * True if current width is above the tablet breakpoint.
+     */
+    function isDesktopViewport(tabletBreakpoint) {
+        tabletBreakpoint = tabletBreakpoint === undefined ? RESPONSIVE_BREAKPOINTS.TABLET : tabletBreakpoint;
+        return window.innerWidth > tabletBreakpoint;
+    }
+
+    /**
+     * Returns 'mobile', 'tablet', or 'desktop'.
+     */
+    function getViewportCategory() {
+        if (isMobileViewport()) return 'mobile';
+        if (isTabletViewport()) return 'tablet';
+        return 'desktop';
+    }
+
+    // =========================================================================
+    // 3. BODY CLASS MANAGEMENT
+    // =========================================================================
+
+    // Track handlers across calls so destroy() works
+    var _bodyClassState = {
+        handler: null,
+        breakpoint: RESPONSIVE_BREAKPOINTS.MOBILE,
+        tabletBreakpoint: RESPONSIVE_BREAKPOINTS.TABLET
     };
-}
 
-// =============================================================================
-// 2. VIEWPORT DETECTION
-// =============================================================================
-
-/**
- * Default breakpoint constants
- */
-const RESPONSIVE_BREAKPOINTS = {
-    MOBILE: 768,      // Mobile devices (phones)
-    TABLET: 1024,     // Tablet devices
-    DESKTOP: 1200     // Desktop screens
-};
-
-/**
- * Checks if the current viewport is mobile (width <= breakpoint)
- * @param {number} breakpoint - Breakpoint in pixels (default 768)
- * @returns {boolean} True if mobile
- */
-function isMobileViewport(breakpoint = RESPONSIVE_BREAKPOINTS.MOBILE) {
-    return window.innerWidth <= breakpoint;
-}
-
-/**
- * Checks if the current viewport is tablet (between mobile and tablet breakpoint)
- * @param {number} mobileBreakpoint - Mobile breakpoint (default 768)
- * @param {number} tabletBreakpoint - Tablet breakpoint (default 1024)
- * @returns {boolean} True if tablet
- */
-function isTableViewport(mobileBreakpoint = RESPONSIVE_BREAKPOINTS.MOBILE, tabletBreakpoint = RESPONSIVE_BREAKPOINTS.TABLET) {
-    const width = window.innerWidth;
-    return width > mobileBreakpoint && width <= tabletBreakpoint;
-}
-
-/**
- * Checks if the current viewport is desktop (width > tablet breakpoint)
- * @param {number} tabletBreakpoint - Tablet breakpoint (default 1024)
- * @returns {boolean} True if desktop
- */
-function isDesktopViewport(tabletBreakpoint = RESPONSIVE_BREAKPOINTS.TABLET) {
-    return window.innerWidth > tabletBreakpoint;
-}
-
-/**
- * Gets the current viewport category
- * @returns {string} 'mobile', 'tablet', or 'desktop'
- */
-function getViewportCategory() {
-    if (isMobileViewport()) return 'mobile';
-    if (isTableViewport()) return 'tablet';
-    return 'desktop';
-}
-
-// =============================================================================
-// 3. RESPONSIVE BODY CLASS MANAGEMENT
-// =============================================================================
-
-/**
- * Adds responsive classes to body based on viewport
- * body classes: 'mobile-view', 'tablet-view', 'desktop-view'
- * 
- * @param {number} breakpoint - Breakpoint in pixels (default 768)
- * @param {number} tabletBreakpoint - Tablet breakpoint (default 1024)
- */
-function initResponsiveBody(breakpoint = RESPONSIVE_BREAKPOINTS.MOBILE, tabletBreakpoint = RESPONSIVE_BREAKPOINTS.TABLET) {
-    const debounce = _getDebounce();
-    
-    function updateBodyClass() {
-        const width = window.innerWidth;
-        
-        document.body.classList.remove('mobile-view', 'tablet-view', 'desktop-view');
-        
-        if (width <= breakpoint) {
-            document.body.classList.add('mobile-view');
-        } else if (width <= tabletBreakpoint) {
-            document.body.classList.add('tablet-view');
-        } else {
-            document.body.classList.add('desktop-view');
-        }
+    /**
+     * Applies responsive body classes based on current viewport.
+     * @private
+     */
+    function _updateResponsiveBodyClass(breakpoint, tabletBreakpoint) {
+        var w = window.innerWidth;
+        var body = document.body;
+        body.classList.remove('mobile-view', 'tablet-view', 'desktop-view');
+        if (w <= breakpoint) body.classList.add('mobile-view');
+        else if (w <= tabletBreakpoint) body.classList.add('tablet-view');
+        else body.classList.add('desktop-view');
     }
-    
-    updateBodyClass();
-    window.addEventListener('resize', debounce(updateBodyClass, 150));
-}
 
-// =============================================================================
-// 4. RESPONSIVE GRID
-// =============================================================================
+    /**
+     * Initializes responsive body classes.
+     * Returns { refresh, destroy }.
+     */
+    function initResponsiveBody(breakpoint, tabletBreakpoint) {
+        breakpoint = breakpoint === undefined ? RESPONSIVE_BREAKPOINTS.MOBILE : breakpoint;
+        tabletBreakpoint = tabletBreakpoint === undefined ? RESPONSIVE_BREAKPOINTS.TABLET : tabletBreakpoint;
 
-/**
- * Creates a responsive grid that changes columns based on screen size
- * 
- * @param {string} containerId - Container element ID
- * @param {number} desktopCols - Number of columns on desktop
- * @param {number} tabletCols - Number of columns on tablet
- * @param {number} mobileCols - Number of columns on mobile
- * @param {Object} options - Additional grid options
- * @returns {Object} { refresh } method
- */
-function initResponsiveGrid(containerId, desktopCols = 3, tabletCols = 2, mobileCols = 1, options = {}) {
-    const container = document.getElementById(containerId);
-    if (!container) return null;
-    
-    const debounce = _getDebounce();
-    
-    const {
-        gap = '16px',
-        minItemWidth = null,
-        maxWidth = null
-    } = options;
-    
-    function updateGrid() {
-        const width = window.innerWidth;
-        let cols = desktopCols;
-        
-        if (width <= RESPONSIVE_BREAKPOINTS.MOBILE) {
-            cols = mobileCols;
-        } else if (width <= RESPONSIVE_BREAKPOINTS.TABLET) {
-            cols = tabletCols;
+        // If already initialized, tear down first
+        if (_bodyClassState.handler) {
+            window.removeEventListener('resize', _bodyClassState.handler);
+            _bodyClassState.handler = null;
         }
-        
-        if (minItemWidth && container.parentElement) {
-            const containerWidth = container.parentElement.clientWidth;
-            const calculatedCols = Math.floor(containerWidth / minItemWidth);
-            cols = Math.max(mobileCols, Math.min(desktopCols, calculatedCols));
-        }
-        
-        container.style.display = 'grid';
-        container.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-        container.style.gap = gap;
-        
-        if (maxWidth) {
-            container.style.maxWidth = maxWidth;
-            container.style.margin = '0 auto';
-        }
-    }
-    
-    updateGrid();
-    window.addEventListener('resize', debounce(updateGrid, 150));
-    
-    return { refresh: updateGrid };
-}
 
-// =============================================================================
-// 5. MOBILE MENU HANDLING
-// =============================================================================
+        _bodyClassState.breakpoint = breakpoint;
+        _bodyClassState.tabletBreakpoint = tabletBreakpoint;
 
-/**
- * Initializes a mobile menu with hamburger button
- * 
- * @param {string} menuBtnId - Menu button ID (hamburger)
- * @param {string} menuContainerId - Menu container ID (the nav/sidebar)
- * @param {string} storageKey - localStorage key for state (optional)
- * @param {number} breakpoint - Breakpoint where menu becomes mobile (default 768)
- * @returns {Object} { open, close, toggle, isOpen } methods
- */
-function initMobileMenu(menuBtnId, menuContainerId, storageKey = null, breakpoint = RESPONSIVE_BREAKPOINTS.MOBILE) {
-    const menuBtn = document.getElementById(menuBtnId);
-    const menuContainer = document.getElementById(menuContainerId);
-    
-    if (!menuBtn || !menuContainer) return null;
-    
-    let isMenuOpen = false;
-    
-    let overlay = document.querySelector(`.mobile-menu-overlay[data-menu="${menuContainerId}"]`);
-    if (!overlay) {
-        overlay = document.createElement('div');
-        overlay.className = 'mobile-menu-overlay';
-        overlay.setAttribute('data-menu', menuContainerId);
-        overlay.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:997; display:none;';
-        document.body.appendChild(overlay);
+        _updateResponsiveBodyClass(breakpoint, tabletBreakpoint);
+
+        var handler = debounce(function() {
+            _updateResponsiveBodyClass(breakpoint, tabletBreakpoint);
+        }, 150);
+        _bodyClassState.handler = handler;
+        window.addEventListener('resize', handler);
+
+        return {
+            refresh: function() {
+                _updateResponsiveBodyClass(breakpoint, tabletBreakpoint);
+            },
+            destroy: function() {
+                if (_bodyClassState.handler === handler) {
+                    window.removeEventListener('resize', handler);
+                    _bodyClassState.handler = null;
+                }
+            }
+        };
     }
-    
-    function open() {
-        menuContainer.classList.add('mobile-visible');
-        overlay.style.display = 'block';
-        document.body.style.overflow = 'hidden';
-        isMenuOpen = true;
-        menuBtn.setAttribute('aria-expanded', 'true');
-        if (storageKey) localStorage.setItem(storageKey, 'open');
+
+    // =========================================================================
+    // 4. RESPONSIVE GRID
+    // =========================================================================
+
+    /**
+     * Creates a responsive grid.
+     * 
+     * The `minItemWidth` option, if provided, acts as a CAP on the number of
+     * columns. It never increases the count beyond what the breakpoint
+     * specifies — that prevents the "tablet suddenly has 4 columns" problem.
+     * 
+     * @param {string} containerId
+     * @param {number} desktopCols
+     * @param {number} tabletCols
+     * @param {number} mobileCols
+     * @param {Object} [options] - { gap, minItemWidth, maxWidth }
+     * @returns {Object|null} { refresh, destroy }
+     */
+    function initResponsiveGrid(containerId, desktopCols, tabletCols, mobileCols, options) {
+        var container = document.getElementById(containerId);
+        if (!container) return null;
+
+        options = options || {};
+        var gap = options.gap === undefined ? '16px' : options.gap;
+        var minItemWidth = options.minItemWidth === undefined ? null : options.minItemWidth;
+        var maxWidth = options.maxWidth === undefined ? null : options.maxWidth;
+
+        desktopCols = desktopCols === undefined ? 3 : desktopCols;
+        tabletCols = tabletCols === undefined ? 2 : tabletCols;
+        mobileCols = mobileCols === undefined ? 1 : mobileCols;
+
+        function update() {
+            var w = window.innerWidth;
+            var cols;
+            if (w <= RESPONSIVE_BREAKPOINTS.MOBILE) cols = mobileCols;
+            else if (w <= RESPONSIVE_BREAKPOINTS.TABLET) cols = tabletCols;
+            else cols = desktopCols;
+
+            if (minItemWidth && container.parentElement) {
+                var parentWidth = container.parentElement.clientWidth;
+                var computedMax = Math.floor(parentWidth / minItemWidth);
+                if (computedMax > 0 && computedMax < cols) cols = computedMax;
+            }
+
+            cols = Math.max(1, cols);
+
+            container.style.display = 'grid';
+            container.style.gridTemplateColumns = 'repeat(' + cols + ', 1fr)';
+            container.style.gap = gap;
+            if (maxWidth) {
+                container.style.maxWidth = maxWidth;
+                container.style.margin = '0 auto';
+            }
+        }
+
+        update();
+        var handler = debounce(update, 150);
+        window.addEventListener('resize', handler);
+
+        return {
+            refresh: update,
+            destroy: function() {
+                window.removeEventListener('resize', handler);
+            }
+        };
     }
-    
-    function close() {
-        menuContainer.classList.remove('mobile-visible');
-        overlay.style.display = 'none';
-        document.body.style.overflow = '';
-        isMenuOpen = false;
+
+    // =========================================================================
+    // 5. MOBILE MENU
+    // =========================================================================
+
+    /**
+     * Initializes a mobile menu with hamburger button.
+     * 
+     * @param {string} menuBtnId
+     * @param {string} menuContainerId
+     * @param {string} [storageKey]
+     * @param {number} [breakpoint]
+     * @returns {Object|null} { open, close, toggle, isOpen, destroy }
+     */
+    function initMobileMenu(menuBtnId, menuContainerId, storageKey, breakpoint) {
+        breakpoint = breakpoint === undefined ? RESPONSIVE_BREAKPOINTS.MOBILE : breakpoint;
+
+        var menuBtn = document.getElementById(menuBtnId);
+        var menuContainer = document.getElementById(menuContainerId);
+        if (!menuBtn || !menuContainer) return null;
+
+        var isMenuOpen = false;
+        var unlockScroll = null;
+
+        // Overlay — get or create
+        var overlay = document.querySelector('.mobile-menu-overlay[data-menu="' + menuContainerId + '"]');
+        var overlayCreated = false;
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.className = 'mobile-menu-overlay';
+            overlay.setAttribute('data-menu', menuContainerId);
+            document.body.appendChild(overlay);
+            overlayCreated = true;
+        }
+
+        // Restore state — but only if we're actually in mobile viewport
+        if (storageKey) {
+            var saved = null;
+            try { saved = localStorage.getItem(storageKey); } catch (e) { /* unavailable */ }
+            if (saved === 'open' && window.innerWidth <= breakpoint) {
+                open();
+            }
+        }
+
+        function lockScroll() {
+            if (unlockScroll) return;
+            if (typeof window.UI !== 'undefined' && typeof window.UI.lockBodyScroll === 'function') {
+                window.UI.lockBodyScroll('mobile-menu:' + menuContainerId);
+                unlockScroll = function() {
+                    if (typeof window.UI.unlockBodyScroll === 'function') {
+                        window.UI.unlockBodyScroll('mobile-menu:' + menuContainerId);
+                    }
+                };
+            } else {
+                var prev = document.body.style.overflow;
+                document.body.style.overflow = 'hidden';
+                unlockScroll = function() { document.body.style.overflow = prev; };
+            }
+        }
+
+        function unlock() {
+            if (unlockScroll) { unlockScroll(); unlockScroll = null; }
+        }
+
+        function open() {
+            menuContainer.classList.add('mobile-visible');
+            overlay.classList.add('visible');
+            document.body.classList.add('mobile-menu-open');
+            isMenuOpen = true;
+            menuBtn.setAttribute('aria-expanded', 'true');
+            lockScroll();
+            if (storageKey) {
+                try { localStorage.setItem(storageKey, 'open'); } catch (e) { /* unavailable */ }
+            }
+        }
+
+        function close() {
+            menuContainer.classList.remove('mobile-visible');
+            overlay.classList.remove('visible');
+            document.body.classList.remove('mobile-menu-open');
+            isMenuOpen = false;
+            menuBtn.setAttribute('aria-expanded', 'false');
+            unlock();
+            if (storageKey) {
+                try { localStorage.setItem(storageKey, 'closed'); } catch (e) { /* unavailable */ }
+            }
+        }
+
+        function toggle() {
+            if (isMenuOpen) close();
+            else open();
+        }
+
+        function handleBtnClick(e) {
+            e.stopPropagation();
+            if (window.innerWidth <= breakpoint) toggle();
+        }
+
+        function handleOverlayClick() { close(); }
+
+        function handleKeydown(e) {
+            if (e.key === 'Escape' && isMenuOpen) close();
+        }
+
+        function handleResize() {
+            if (window.innerWidth > breakpoint && isMenuOpen) close();
+        }
+
         menuBtn.setAttribute('aria-expanded', 'false');
-        if (storageKey) localStorage.setItem(storageKey, 'closed');
-    }
-    
-    function toggle() {
-        if (isMenuOpen) {
-            close();
-        } else {
-            open();
-        }
-    }
-    
-    if (storageKey) {
-        const saved = localStorage.getItem(storageKey);
-        if (saved === 'open') open();
-    }
-    
-    menuBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (window.innerWidth <= breakpoint) {
-            toggle();
-        }
-    });
-    
-    overlay.addEventListener('click', close);
-    
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && isMenuOpen) close();
-    });
-    
-    window.addEventListener('resize', () => {
-        if (window.innerWidth > breakpoint) {
-            close();
-        }
-    });
-    
-    return { open, close, toggle, isOpen: () => isMenuOpen };
-}
+        menuBtn.setAttribute('aria-controls', menuContainerId);
 
-// =============================================================================
-// 6. TOUCH-FRIENDLY ADJUSTMENTS
-// =============================================================================
+        menuBtn.addEventListener('click', handleBtnClick);
+        overlay.addEventListener('click', handleOverlayClick);
+        document.addEventListener('keydown', handleKeydown);
+        window.addEventListener('resize', handleResize);
 
-/**
- * Increases touch target sizes for mobile devices
- * Adds class 'touch-friendly' to body on mobile
- */
-function initTouchFriendly() {
-    const debounce = _getDebounce();
-    
-    function updateTouchClass() {
-        if (isMobileViewport()) {
-            document.body.classList.add('touch-friendly');
-        } else {
-            document.body.classList.remove('touch-friendly');
-        }
-    }
-    
-    updateTouchClass();
-    window.addEventListener('resize', debounce(updateTouchClass, 150));
-}
-
-/**
- * Makes an element swipeable (for mobile carousels/panels)
- * 
- * @param {string} elementId - Element ID to make swipeable
- * @param {Object} callbacks - { onSwipeLeft, onSwipeRight, onSwipeUp, onSwipeDown }
- */
-function initSwipeable(elementId, callbacks = {}) {
-    const element = document.getElementById(elementId);
-    if (!element) return;
-    
-    let touchStartX = 0;
-    let touchStartY = 0;
-    let touchEndX = 0;
-    let touchEndY = 0;
-    
-    const minSwipeDistance = 50;
-    
-    element.addEventListener('touchstart', (e) => {
-        touchStartX = e.changedTouches[0].screenX;
-        touchStartY = e.changedTouches[0].screenY;
-    }, false);
-    
-    element.addEventListener('touchend', (e) => {
-        touchEndX = e.changedTouches[0].screenX;
-        touchEndY = e.changedTouches[0].screenY;
-        handleSwipe();
-    }, false);
-    
-    function handleSwipe() {
-        const deltaX = touchEndX - touchStartX;
-        const deltaY = touchEndY - touchStartY;
-        
-        if (Math.abs(deltaX) < minSwipeDistance && Math.abs(deltaY) < minSwipeDistance) return;
-        
-        if (Math.abs(deltaX) > Math.abs(deltaY)) {
-            if (deltaX > 0 && callbacks.onSwipeRight) {
-                callbacks.onSwipeRight();
-            } else if (deltaX < 0 && callbacks.onSwipeLeft) {
-                callbacks.onSwipeLeft();
+        return {
+            open: open,
+            close: close,
+            toggle: toggle,
+            isOpen: function() { return isMenuOpen; },
+            destroy: function() {
+                menuBtn.removeEventListener('click', handleBtnClick);
+                overlay.removeEventListener('click', handleOverlayClick);
+                document.removeEventListener('keydown', handleKeydown);
+                window.removeEventListener('resize', handleResize);
+                unlock();
+                if (overlayCreated && overlay.parentNode) overlay.parentNode.removeChild(overlay);
             }
-        } else {
-            if (deltaY > 0 && callbacks.onSwipeDown) {
-                callbacks.onSwipeDown();
-            } else if (deltaY < 0 && callbacks.onSwipeUp) {
-                callbacks.onSwipeUp();
+        };
+    }
+
+    // =========================================================================
+    // 6. SWIPE GESTURES
+    // =========================================================================
+
+    /**
+     * Makes an element respond to touch swipe gestures.
+     * 
+     * @param {string} elementId
+     * @param {Object} [options] - { onSwipeLeft, onSwipeRight, onSwipeUp, onSwipeDown, minDistance }
+     * @returns {Object|null} { destroy }
+     */
+    function initSwipeable(elementId, options) {
+        var el = document.getElementById(elementId);
+        if (!el) return null;
+
+        options = options || {};
+        var minDistance = options.minDistance === undefined ? 50 : options.minDistance;
+
+        var startX = 0, startY = 0, endX = 0, endY = 0;
+
+        function handleTouchStart(e) {
+            if (!e.changedTouches || e.changedTouches.length === 0) return;
+            startX = e.changedTouches[0].clientX;
+            startY = e.changedTouches[0].clientY;
+        }
+
+        function handleTouchEnd(e) {
+            if (!e.changedTouches || e.changedTouches.length === 0) return;
+            endX = e.changedTouches[0].clientX;
+            endY = e.changedTouches[0].clientY;
+            var deltaX = endX - startX;
+            var deltaY = endY - startY;
+            if (Math.abs(deltaX) < minDistance && Math.abs(deltaY) < minDistance) return;
+            if (Math.abs(deltaX) > Math.abs(deltaY)) {
+                if (deltaX > 0 && typeof options.onSwipeRight === 'function') options.onSwipeRight();
+                else if (deltaX < 0 && typeof options.onSwipeLeft === 'function') options.onSwipeLeft();
+            } else {
+                if (deltaY > 0 && typeof options.onSwipeDown === 'function') options.onSwipeDown();
+                else if (deltaY < 0 && typeof options.onSwipeUp === 'function') options.onSwipeUp();
             }
         }
+
+        el.addEventListener('touchstart', handleTouchStart, { passive: true });
+        el.addEventListener('touchend', handleTouchEnd, { passive: true });
+
+        return {
+            destroy: function() {
+                el.removeEventListener('touchstart', handleTouchStart);
+                el.removeEventListener('touchend', handleTouchEnd);
+            }
+        };
     }
-}
 
-// =============================================================================
-// 7. UTILITY FUNCTION (for manual refresh)
-// =============================================================================
+    // =========================================================================
+    // 7. EXPORTS
+    // =========================================================================
 
-/**
- * Manually refresh all responsive components
- * Call this after dynamic content changes
- */
-function refreshResponsiveComponents() {
-    // Re-trigger body class update
-    const width = window.innerWidth;
-    document.body.classList.remove('mobile-view', 'tablet-view', 'desktop-view');
-    
-    if (width <= RESPONSIVE_BREAKPOINTS.MOBILE) {
-        document.body.classList.add('mobile-view');
-    } else if (width <= RESPONSIVE_BREAKPOINTS.TABLET) {
-        document.body.classList.add('tablet-view');
-    } else {
-        document.body.classList.add('desktop-view');
-    }
-    
-    // Re-trigger touch-friendly class
-    if (isMobileViewport()) {
-        document.body.classList.add('touch-friendly');
-    } else {
-        document.body.classList.remove('touch-friendly');
-    }
-}
+    window.RESPONSIVE_BREAKPOINTS = RESPONSIVE_BREAKPOINTS;
 
-// =============================================================================
-// 8. EXPORTS
-// =============================================================================
+    window.isMobileViewport = isMobileViewport;
+    window.isTabletViewport = isTabletViewport;
+    window.isDesktopViewport = isDesktopViewport;
+    window.getViewportCategory = getViewportCategory;
 
-// Breakpoints
-window.RESPONSIVE_BREAKPOINTS = RESPONSIVE_BREAKPOINTS;
+    // Deprecated alias — typo'd name. Kept temporarily for backward compat.
+    window.isTableViewport = isTabletViewport;
 
-// Viewport detection
-window.isMobileViewport = isMobileViewport;
-window.isTableViewport = isTableViewport;
-window.isDesktopViewport = isDesktopViewport;
-window.getViewportCategory = getViewportCategory;
+    window.initResponsiveBody = initResponsiveBody;
+    window.initResponsiveGrid = initResponsiveGrid;
+    window.initMobileMenu = initMobileMenu;
+    window.initSwipeable = initSwipeable;
 
-// Body class management
-window.initResponsiveBody = initResponsiveBody;
-
-// Responsive grid
-window.initResponsiveGrid = initResponsiveGrid;
-
-// Mobile menu
-window.initMobileMenu = initMobileMenu;
-
-// Touch-friendly
-window.initTouchFriendly = initTouchFriendly;
-window.initSwipeable = initSwipeable;
-
-// Utility
-window.refreshResponsiveComponents = refreshResponsiveComponents;
+})();

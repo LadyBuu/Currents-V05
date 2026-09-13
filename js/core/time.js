@@ -26,7 +26,16 @@
  *   - getReignLength() - Length of reign/tenure in years
  *   - formatLifespan() - Formats lifespan for display
  * 
- * DEPENDENCIES: None (pure time calculations)
+ * DEPENDENCIES: 
+ *   - Reads window.masterData.data.currentYear as the ONLY impure operation.
+ *     All other calculations are pure.
+ * 
+ * SEMANTIC RULES:
+ *   - Years are integers. Fractional years are invalid.
+ *   - Year 0 is valid.
+ *   - `0` = valid zero result (newborn, zero-duration, etc.)
+ *   - `null` = impossible chronology or invalid input
+ *   - A pre-birth age is null, NOT 0.
  * 
  * ICON POLICY: No emojis. No icons.
  * 
@@ -51,15 +60,31 @@ var TIME_CONSTANTS = {
 };
 
 // =============================================================================
-// 2. HELPER FUNCTIONS
+// 2. INTERNAL HELPERS
 // =============================================================================
 
+/**
+ * Validates that a value is a legitimate world year.
+ * Requires: finite, integer, within MIN_YEAR..MAX_YEAR.
+ * Year 0 is valid. Negative years are valid.
+ * @private
+ */
 function _isValidYearValue(year) {
     if (year === undefined || year === null) return false;
     if (typeof year !== 'number') return false;
-    if (isNaN(year)) return false;
+    if (!Number.isFinite(year)) return false;
+    if (!Number.isInteger(year)) return false;
     if (year < TIME_CONSTANTS.MIN_YEAR || year > TIME_CONSTANTS.MAX_YEAR) return false;
     return true;
+}
+
+/**
+ * Normalizes an optional integer parameter against a default.
+ * Uses explicit undefined/null check so that 0 is preserved.
+ * @private
+ */
+function _defaultIfMissing(value, defaultValue) {
+    return (value === undefined || value === null) ? defaultValue : value;
 }
 
 // =============================================================================
@@ -67,22 +92,22 @@ function _isValidYearValue(year) {
 // =============================================================================
 
 /**
- * Gets the current world year with fallback (safe version)
- * IMPORTANT: Does NOT call window.getCurrentYear to avoid circular dependency.
+ * Gets the current world year with fallback (safe version).
  * 
- * @param {Function} getCurrentYearFn - Optional resolver function
- * @returns {number} Current year
+ * IMPORTANT: Does NOT call window.getCurrentYear to avoid circular dependency.
+ * Reads masterData.data.currentYear directly. Validates it before use.
+ * 
+ * @param {Function} getCurrentYearFn - Optional resolver function (bypasses masterData read)
+ * @returns {number} Current year (integer, always valid)
  */
 function getCurrentYearSafe(getCurrentYearFn) {
-    getCurrentYearFn = getCurrentYearFn || null;
-    if (getCurrentYearFn && typeof getCurrentYearFn === 'function') {
-        return getCurrentYearFn();
+    if (typeof getCurrentYearFn === 'function') {
+        var resolved = getCurrentYearFn();
+        if (_isValidYearValue(resolved)) return resolved;
     }
     if (typeof window !== 'undefined' && window.masterData && window.masterData.data) {
         var year = window.masterData.data.currentYear;
-        if (typeof year === 'number' && !isNaN(year)) {
-            return year;
-        }
+        if (_isValidYearValue(year)) return year;
     }
     return TIME_CONSTANTS.DEFAULT_YEAR;
 }
@@ -92,18 +117,22 @@ function getCurrentYearSafe(getCurrentYearFn) {
 // =============================================================================
 
 /**
- * Calculates a character's current age
+ * Calculates a character's current age.
+ * 
+ * Returns null for impossible chronology (birth year after the reference year).
+ * Returns 0 for newborns (birth year equals reference year).
+ * 
  * @param {number|null} birthYear - Character's birth year
  * @param {boolean} isDeceased - Whether character is deceased
  * @param {number|null} deathYear - Character's death year (if deceased)
- * @param {number} currentYear - Current world year
+ * @param {number} currentYear - Current world year (optional)
  * @param {Function} getCurrentYearFn - Optional resolver function
- * @returns {number|null} Age in years or null if invalid
+ * @returns {number|null} Age in years, or null if invalid/impossible
  */
 function calculateAge(birthYear, isDeceased, deathYear, currentYear, getCurrentYearFn) {
-    isDeceased = isDeceased || false;
-    deathYear = deathYear || null;
-    currentYear = currentYear || null;
+    isDeceased = isDeceased === true;
+    deathYear = (deathYear === undefined) ? null : deathYear;
+    currentYear = (currentYear === undefined) ? null : currentYear;
     getCurrentYearFn = getCurrentYearFn || null;
     
     if (!_isValidYearValue(birthYear)) {
@@ -112,32 +141,33 @@ function calculateAge(birthYear, isDeceased, deathYear, currentYear, getCurrentY
     
     if (isDeceased) {
         if (_isValidYearValue(deathYear)) {
-            var age = deathYear - birthYear;
-            if (age < 0) return null;
-            return age;
+            var deathAge = deathYear - birthYear;
+            if (deathAge < 0) return null;
+            return deathAge;
         }
+        // Deceased but no valid death year — cannot determine age
         return null;
     }
     
-    var year;
+    var referenceYear;
     if (_isValidYearValue(currentYear)) {
-        year = currentYear;
-    } else if (getCurrentYearFn) {
-        year = getCurrentYearFn();
+        referenceYear = currentYear;
+    } else if (typeof getCurrentYearFn === 'function') {
+        referenceYear = getCurrentYearSafe(getCurrentYearFn);
     } else {
-        year = getCurrentYearSafe();
+        referenceYear = getCurrentYearSafe();
     }
     
-    var age = year - birthYear;
-    if (age < 0) return 0;
+    var age = referenceYear - birthYear;
+    if (age < 0) return null;
     return age;
 }
 
 /**
- * Calculates the absolute difference between two years
- * @param {number|null} startYear - Starting year
- * @param {number|null} endYear - Ending year
- * @returns {number|null} Absolute year difference
+ * Calculates the absolute difference between two years.
+ * @param {number|null} startYear
+ * @param {number|null} endYear
+ * @returns {number|null} Absolute year difference, or null if either is invalid
  */
 function getYearDifference(startYear, endYear) {
     if (!_isValidYearValue(startYear) || !_isValidYearValue(endYear)) {
@@ -147,26 +177,25 @@ function getYearDifference(startYear, endYear) {
 }
 
 /**
- * Calculates a character's age at a specific historical event year
+ * Calculates a character's age at a specific historical event year.
+ * Returns null if the event occurred before the character's birth.
+ * 
  * @param {Object|null} char - Character object (must have birthYear)
  * @param {number} eventYear - Year the event occurred
  * @param {boolean} useDeathCap - If true, caps age at death year
- * @returns {number|null} Age at event
+ * @returns {number|null} Age at event, or null if impossible
  */
 function getAgeAtEvent(char, eventYear, useDeathCap) {
     useDeathCap = useDeathCap !== false;
-    if (!char || !_isValidYearValue(char.birthYear)) {
-        return null;
-    }
-    if (!_isValidYearValue(eventYear)) {
-        return null;
-    }
+    if (!char || !_isValidYearValue(char.birthYear)) return null;
+    if (!_isValidYearValue(eventYear)) return null;
     
     var age = eventYear - char.birthYear;
-    if (age < 0) return 0;
+    if (age < 0) return null;
     
     if (useDeathCap && char.isDeceased && _isValidYearValue(char.deathYear)) {
         var ageAtDeath = char.deathYear - char.birthYear;
+        if (ageAtDeath < 0) return null;
         age = Math.min(age, ageAtDeath);
     }
     
@@ -178,40 +207,43 @@ function getAgeAtEvent(char, eventYear, useDeathCap) {
 // =============================================================================
 
 /**
- * Checks if a character is a minor (under age of majority)
- * @param {number|null} age - Character's age
- * @param {number} ageOfMajority - Age of majority (default 18)
+ * Checks if a character is a minor (under age of majority).
+ * @param {number|null} age
+ * @param {number} ageOfMajority
  * @returns {boolean}
  */
 function isMinor(age, ageOfMajority) {
-    ageOfMajority = ageOfMajority || TIME_CONSTANTS.DEFAULT_AGE_OF_MAJORITY;
+    ageOfMajority = _defaultIfMissing(ageOfMajority, TIME_CONSTANTS.DEFAULT_AGE_OF_MAJORITY);
     if (age === null || age === undefined) return false;
+    if (typeof age !== 'number' || isNaN(age)) return false;
     return age < ageOfMajority;
 }
 
 /**
- * Checks if a character is an adult (age of majority or older)
- * @param {number|null} age - Character's age
- * @param {number} ageOfMajority - Age of majority (default 18)
+ * Checks if a character is an adult (age of majority or older).
+ * @param {number|null} age
+ * @param {number} ageOfMajority
  * @returns {boolean}
  */
 function isAdult(age, ageOfMajority) {
-    ageOfMajority = ageOfMajority || TIME_CONSTANTS.DEFAULT_AGE_OF_MAJORITY;
+    ageOfMajority = _defaultIfMissing(ageOfMajority, TIME_CONSTANTS.DEFAULT_AGE_OF_MAJORITY);
     if (age === null || age === undefined) return false;
+    if (typeof age !== 'number' || isNaN(age)) return false;
     return age >= ageOfMajority;
 }
 
 /**
- * Checks if a character is of childbearing age
- * @param {number|null} age - Character's age
- * @param {number} minFertileAge - Minimum fertile age (default 14)
- * @param {number} maxFertileAge - Maximum fertile age (default 47)
+ * Checks if a character is of childbearing age.
+ * @param {number|null} age
+ * @param {number} minFertileAge
+ * @param {number} maxFertileAge
  * @returns {boolean}
  */
 function isFertileAge(age, minFertileAge, maxFertileAge) {
-    minFertileAge = minFertileAge || TIME_CONSTANTS.DEFAULT_MIN_FERTILE_AGE;
-    maxFertileAge = maxFertileAge || TIME_CONSTANTS.DEFAULT_MAX_FERTILE_AGE;
+    minFertileAge = _defaultIfMissing(minFertileAge, TIME_CONSTANTS.DEFAULT_MIN_FERTILE_AGE);
+    maxFertileAge = _defaultIfMissing(maxFertileAge, TIME_CONSTANTS.DEFAULT_MAX_FERTILE_AGE);
     if (age === null || age === undefined) return false;
+    if (typeof age !== 'number' || isNaN(age)) return false;
     var min = Math.max(0, minFertileAge);
     var max = Math.max(min, maxFertileAge);
     return age >= min && age <= max;
@@ -222,10 +254,10 @@ function isFertileAge(age, minFertileAge, maxFertileAge) {
 // =============================================================================
 
 /**
- * Determines if a year falls within a given range (inclusive)
- * @param {number} year - Year to check
- * @param {number} startYear - Range start (inclusive)
- * @param {number} endYear - Range end (inclusive)
+ * Determines if a year falls within a given range (inclusive).
+ * @param {number} year
+ * @param {number} startYear
+ * @param {number} endYear
  * @returns {boolean}
  */
 function isYearInRange(year, startYear, endYear) {
@@ -236,7 +268,7 @@ function isYearInRange(year, startYear, endYear) {
 }
 
 /**
- * Gets the overlap between two time ranges
+ * Gets the overlap between two time ranges.
  * @param {Object} range1 - { start: number, end: number }
  * @param {Object} range2 - { start: number, end: number }
  * @returns {Object|null} Overlap range or null
@@ -255,7 +287,7 @@ function getTimeRangeOverlap(range1, range2) {
 }
 
 /**
- * Checks if two time ranges overlap
+ * Checks if two time ranges overlap.
  * @param {Object} range1 - { start: number, end: number }
  * @param {Object} range2 - { start: number, end: number }
  * @returns {boolean}
@@ -269,29 +301,33 @@ function doTimeRangesOverlap(range1, range2) {
 // =============================================================================
 
 /**
- * Calculates typical generation gap (parent-child age difference)
- * @param {number} parentBirthYear - Parent's birth year
- * @param {number} childBirthYear - Child's birth year
- * @returns {number|null} Generation gap in years
+ * Calculates generation gap (parent-to-child age difference).
+ * Returns null if child was born before parent — impossible chronology.
+ * 
+ * @param {number} parentBirthYear
+ * @param {number} childBirthYear
+ * @returns {number|null} Generation gap in years, or null if impossible
  */
 function getGenerationGap(parentBirthYear, childBirthYear) {
     if (!_isValidYearValue(parentBirthYear) || !_isValidYearValue(childBirthYear)) {
         return null;
     }
-    return Math.abs(childBirthYear - parentBirthYear);
+    if (childBirthYear < parentBirthYear) return null;
+    return childBirthYear - parentBirthYear;
 }
 
 /**
- * Checks if a parent could plausibly have a child at that age
- * @param {number} parentAgeAtChildBirth - Parent's age when child was born
- * @param {number} minParentAge - Minimum plausible parent age (default 12)
- * @param {number} maxParentAge - Maximum plausible parent age (default 70)
+ * Checks if a parent could plausibly have a child at that age.
+ * @param {number} parentAgeAtChildBirth
+ * @param {number} minParentAge
+ * @param {number} maxParentAge
  * @returns {boolean}
  */
 function isPlausibleParentAge(parentAgeAtChildBirth, minParentAge, maxParentAge) {
-    minParentAge = minParentAge || TIME_CONSTANTS.DEFAULT_MIN_PARENT_AGE;
-    maxParentAge = maxParentAge || TIME_CONSTANTS.DEFAULT_MAX_PARENT_AGE;
+    minParentAge = _defaultIfMissing(minParentAge, TIME_CONSTANTS.DEFAULT_MIN_PARENT_AGE);
+    maxParentAge = _defaultIfMissing(maxParentAge, TIME_CONSTANTS.DEFAULT_MAX_PARENT_AGE);
     if (parentAgeAtChildBirth === null || parentAgeAtChildBirth === undefined) return false;
+    if (typeof parentAgeAtChildBirth !== 'number' || isNaN(parentAgeAtChildBirth)) return false;
     var min = Math.max(0, minParentAge);
     var max = Math.max(min, maxParentAge);
     return parentAgeAtChildBirth >= min && parentAgeAtChildBirth <= max;
@@ -302,23 +338,26 @@ function isPlausibleParentAge(parentAgeAtChildBirth, minParentAge, maxParentAge)
 // =============================================================================
 
 /**
- * Calculates pregnancy duration and birth year
- * @param {number} conceptionYear - Year of conception
- * @param {number} conceptionMonth - Month of conception (1-12, default 6)
+ * Calculates pregnancy duration and birth year.
+ * Normalizes conceptionMonth to 1..12 regardless of year validity.
+ * 
+ * @param {number} conceptionYear
+ * @param {number} conceptionMonth - 1..12, defaults to 6
  * @returns {Object} { birthYear, gestationMonths, conceptionMonth, birthMonth }
  */
 function calculatePregnancyDuration(conceptionYear, conceptionMonth) {
-    conceptionMonth = conceptionMonth || 6;
+    conceptionMonth = _defaultIfMissing(conceptionMonth, 6);
+    var conceptionMonthValid = Math.min(12, Math.max(1, conceptionMonth));
+    
     if (!_isValidYearValue(conceptionYear)) {
-        return { 
-            birthYear: null, 
-            gestationMonths: TIME_CONSTANTS.PREGNANCY_MONTHS, 
-            conceptionMonth: conceptionMonth,
+        return {
+            birthYear: null,
+            gestationMonths: TIME_CONSTANTS.PREGNANCY_MONTHS,
+            conceptionMonth: conceptionMonthValid,
             birthMonth: null
         };
     }
     
-    var conceptionMonthValid = Math.min(12, Math.max(1, conceptionMonth || 6));
     var birthMonthRaw = conceptionMonthValid + TIME_CONSTANTS.PREGNANCY_MONTHS;
     var birthYear = conceptionYear;
     var birthMonth = birthMonthRaw;
@@ -337,9 +376,12 @@ function calculatePregnancyDuration(conceptionYear, conceptionMonth) {
 }
 
 /**
- * Calculates approximate conception year from birth year
- * @param {number} birthYear - Birth year
- * @returns {number|null} Approximate conception year
+ * Approximate conception year from birth year.
+ * Assumes birthYear - 1 given that this is a year-resolution world.
+ * Returns null if birthYear is invalid.
+ * 
+ * @param {number} birthYear
+ * @returns {number|null}
  */
 function getConceptionYear(birthYear) {
     if (!_isValidYearValue(birthYear)) return null;
@@ -351,58 +393,62 @@ function getConceptionYear(birthYear) {
 // =============================================================================
 
 /**
- * Calculates age of succession (when a character inherits)
- * @param {number} birthYear - Character's birth year
- * @param {number} predecessorDeathYear - Year the predecessor died
- * @returns {number|null} Age at succession
+ * Calculates age of succession (when a character inherits).
+ * Returns null if the successor was born after the predecessor died.
+ * 
+ * @param {number} birthYear
+ * @param {number} predecessorDeathYear
+ * @returns {number|null}
  */
 function getAgeAtSuccession(birthYear, predecessorDeathYear) {
     if (!_isValidYearValue(birthYear) || !_isValidYearValue(predecessorDeathYear)) {
         return null;
     }
     var age = predecessorDeathYear - birthYear;
-    return Math.max(0, age);
+    if (age < 0) return null;
+    return age;
 }
 
 /**
- * Calculates the length of a reign/tenure
- * @param {number} startYear - Start year of reign
- * @param {number|null} endYear - End year of reign (null for current)
- * @param {number} currentYear - Current world year
- * @param {Function} getCurrentYearFn - Optional resolver function
- * @returns {number} Length in years
+ * Calculates the length of a reign/tenure.
+ * Returns null if the end year precedes the start year.
+ * Returns 0 for a legitimate same-year reign.
+ * 
+ * @param {number} startYear
+ * @param {number|null} endYear - null for current reign
+ * @param {number} currentYear - optional
+ * @param {Function} getCurrentYearFn - optional
+ * @returns {number|null}
  */
 function getReignLength(startYear, endYear, currentYear, getCurrentYearFn) {
-    endYear = endYear || null;
-    currentYear = currentYear || null;
+    endYear = (endYear === undefined) ? null : endYear;
+    currentYear = (currentYear === undefined) ? null : currentYear;
     getCurrentYearFn = getCurrentYearFn || null;
     
-    if (!_isValidYearValue(startYear)) return 0;
+    if (!_isValidYearValue(startYear)) return null;
     
     var actualEndYear;
     if (_isValidYearValue(endYear)) {
         actualEndYear = endYear;
     } else if (_isValidYearValue(currentYear)) {
         actualEndYear = currentYear;
-    } else if (getCurrentYearFn) {
-        actualEndYear = getCurrentYearFn();
+    } else if (typeof getCurrentYearFn === 'function') {
+        actualEndYear = getCurrentYearSafe(getCurrentYearFn);
     } else {
         actualEndYear = getCurrentYearSafe();
     }
     
-    if (actualEndYear < startYear) return 0;
+    if (actualEndYear < startYear) return null;
     return actualEndYear - startYear;
 }
 
 // =============================================================================
-// 10. LIFESPAN FORMATTING - PRIMARY DEFINITION
+// 10. LIFESPAN FORMATTING (DEPRECATED — move to formatting.js)
 // =============================================================================
 
 /**
- * Formats a character's lifespan for display
- * @param {Object} char - Character object with birthYear, deathYear, isDeceased
- * @param {string} format - 'full', 'short', or 'birth-only' (default 'full')
- * @returns {string} Formatted lifespan
+ * @deprecated Use formatLifespan from formatting.js instead.
+ * Kept temporarily for backward compatibility during migration.
  */
 function formatLifespan(char, format) {
     format = format || 'full';
@@ -432,9 +478,13 @@ function formatLifespan(char, format) {
 }
 
 // =============================================================================
-// 11. CONVENIENCE WRAPPER (deprecated - kept for backward compatibility)
+// 11. DEPRECATED WRAPPER
 // =============================================================================
 
+/**
+ * @deprecated Use getCurrentYearSafe instead.
+ * Kept for backward compatibility with modules that still call window._getCurrentYear().
+ */
 function _getCurrentYear(getCurrentYearFn) {
     return getCurrentYearSafe(getCurrentYearFn);
 }
@@ -476,7 +526,7 @@ window.getConceptionYear = getConceptionYear;
 window.getAgeAtSuccession = getAgeAtSuccession;
 window.getReignLength = getReignLength;
 
-// Lifespan formatting
+// Lifespan formatting (deprecated)
 window.formatLifespan = formatLifespan;
 
 // Backward compatibility (deprecated)

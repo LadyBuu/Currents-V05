@@ -6,58 +6,34 @@
  * LOCATION: js/core/ids.js
  * 
  * This file contains ONLY ID generation functions.
- * NOT included: persistence, state, validation, calculations.
  * 
- * PURPOSE: Generate unique identifiers for all entities (characters, places,
- *          ranks, roles, households, relationships, events, etc.)
+ * SCOPE:
+ *   - Generating unique-enough identifiers for all entities
+ *   - Parsing IDs into components (prefix, timestamp, random)
+ *   - Syntactic format validation for newly-generated IDs
  * 
- * DEPENDENCIES: 
- *   - js/core/randomness.js (optional - for seeded random generation)
+ * OUT OF SCOPE:
+ *   - Uniqueness enforcement against the database (mutation layer's job)
+ *   - Persistence
+ *   - Validation of arbitrary existing IDs (see validation.js)
  * 
- * NOTE: ID FORMAT vs VALIDATION
- *   - This file generates IDs in format: [prefix_]timestamp_random
- *   - validation.js uses a simpler regex [a-zA-Z0-9_-]+ for EXISTING data
- *   - This is intentional: new IDs follow strict format, old IDs may not
- * =============================================================================
- * EXPORTED FUNCTIONS (on window):
- * =============================================================================
+ * SEMANTIC RULES:
+ *   - IDs use INDEPENDENT entropy, not the simulation RNG stream.
+ *     This means adding `generateEventId()` calls anywhere does not affect
+ *     deterministic simulations that use `window.random()`.
+ *   - The format is: [prefix_]timestamp_randomString (e.g., "char_1703123456789_a3f8k2n9")
+ *   - Random parts use lowercase alphanumeric only.
+ *   - Session collision cache is not global uniqueness. See note below.
  * 
- * Constants:
- *   - ID_PREFIXES - Object with prefix constants for each entity type
- *   - ID_CONFIG - Object with configuration (DEFAULT_RANDOM_LENGTH: 8, SHORT_RANDOM_LENGTH: 4, etc.)
+ * NOTE ON UNIQUENESS:
+ *   This module guarantees "extremely unlikely to collide." It does NOT
+ *   guarantee uniqueness against persisted data. When IDs must be
+ *   unique against the current masterData (e.g., importing a character),
+ *   the mutation layer is responsible for checking.
  * 
- * Core ID Generation:
- *   - generateId(prefix, randomLength) - Generates timestamp_random ID (format: [prefix_]timestamp_random)
- *   - generateShortId(prefix, length) - Generates short random ID (higher collision probability)
- *   - generateLongId(prefix) - Generates long ID with extra entropy
+ * DEPENDENCIES: None. Does not require randomness.js.
  * 
- * Entity-Specific ID Generators:
- *   - generateCharacterId() - Generates character ID (char_ prefix)
- *   - generatePlaceId() - Generates place ID (place_ prefix)
- *   - generateRankId() - Generates rank ID (rank_ prefix)
- *   - generateRoleId() - Generates role ID (role_ prefix)
- *   - generateHouseholdId() - Generates household ID (house_ prefix)
- *   - generateRelationshipId() - Generates relationship ID (rel_ prefix)
- *   - generateEventId() - Generates event ID (event_ prefix)
- * 
- * Batch ID Generation:
- *   - generateBatchIds(count, prefix, generatorFn) - Generates multiple IDs at once
- *   - generateBatchCharacterIds(count) - Generates multiple character IDs
- * 
- * ID Validation (Strict Format - for NEW IDs):
- *   - isValidId(id, expectedPrefix) - Validates strict format (prefix_timestamp_random)
- *   - isCharacterId(id) - Checks if ID is a valid character ID
- *   - isPlaceId(id) - Checks if ID is a valid place ID
- *   - isRankId(id) - Checks if ID is a valid rank ID
- * 
- * ID Parsing:
- *   - parseId(id) - Parses ID into { prefix, timestamp, random }
- *   - getIdTimestamp(id) - Extracts timestamp from ID
- *   - getIdPrefix(id) - Extracts prefix from ID
- * 
- * Cache Management (for testing):
- *   - clearGeneratedIds() - Clears the generated IDs cache
- *   - removeGeneratedId(id) - Removes a specific ID from cache
+ * ICON POLICY: No emojis. No icons.
  * 
  * =============================================================================
  */
@@ -66,11 +42,7 @@
 // 1. CONSTANTS
 // =============================================================================
 
-/**
- * ID prefix constants for different entity types
- * Using prefixes makes IDs self-documenting and easier to debug
- */
-const ID_PREFIXES = {
+var ID_PREFIXES = Object.freeze({
     CHARACTER: 'char',
     PLACE: 'place',
     RANK: 'rank',
@@ -89,47 +61,89 @@ const ID_PREFIXES = {
     FRIENDSHIP: 'friend',
     ADOPTION: 'adopt',
     APPRENTICESHIP: 'apprentice'
-};
+});
 
-/**
- * Default ID configuration
- */
-const ID_CONFIG = {
+var ID_CONFIG = Object.freeze({
     DEFAULT_RANDOM_LENGTH: 8,
     SHORT_RANDOM_LENGTH: 4,
     LONG_RANDOM_LENGTH: 12,
     MAX_ID_LENGTH: 100,
     MIN_RANDOM_LENGTH: 4,
-    SEPARATOR: '_'
-};
+    SEPARATOR: '_',
+    RANDOM_ALPHABET: 'abcdefghijklmnopqrstuvwxyz0123456789'
+});
 
-// Set of generated IDs in the current session (for collision detection)
-const _generatedIds = new Set();
+// Session-scoped collision registry. This tracks IDs generated in this
+// session so we can retry on the extremely-unlikely collision. It does NOT
+// know about IDs stored in masterData — that's the mutation layer's concern.
+var _sessionGeneratedIds = new Set();
 
 // =============================================================================
-// 2. CORE ID GENERATION (Randomness Helpers)
+// 2. INTERNAL HELPERS
 // =============================================================================
 
 /**
- * Generates a random alphanumeric string of specified length
- * Uses seeded RNG from randomness.js if available, otherwise Math.random
- * @param {number} length - Length of random string (default 8)
- * @returns {string} Random string
+ * Generates a random string of the given length using independent entropy.
+ * 
+ * Uses crypto.getRandomValues when available; falls back to Math.random.
+ * Does NOT consume the simulation RNG stream.
+ * 
+ * @private
+ * @param {number} length
+ * @returns {string}
  */
-function _randomString(length = ID_CONFIG.DEFAULT_RANDOM_LENGTH) {
-    // Try to use seeded RNG from randomness.js if available
-    if (typeof window.random !== 'undefined') {
-        // Use the seeded RNG for deterministic simulation
-        let result = '';
-        const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-        for (let i = 0; i < length; i++) {
-            const index = Math.floor(window.random() * chars.length);
-            result += chars[index];
+function _randomString(length) {
+    if (typeof length !== 'number' || length <= 0 || !Number.isInteger(length)) {
+        length = ID_CONFIG.DEFAULT_RANDOM_LENGTH;
+    }
+
+    var alphabet = ID_CONFIG.RANDOM_ALPHABET;
+    var alphabetLength = alphabet.length;
+    var result = '';
+
+    // Prefer crypto for stronger entropy. This avoids consuming
+    // window.random() so deterministic simulations stay reproducible.
+    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+        var bytes = new Uint8Array(length);
+        crypto.getRandomValues(bytes);
+        for (var i = 0; i < length; i++) {
+            result += alphabet[bytes[i] % alphabetLength];
         }
         return result;
     }
-    // Fallback to Math.random (non-deterministic)
-    return Math.random().toString(36).substring(2, 2 + length);
+
+    // Fallback: build the string in a loop so length is always respected.
+    // This is what the old implementation got wrong (single random() call
+    // produced fewer than `length` characters).
+    for (var j = 0; j < length; j++) {
+        result += alphabet[Math.floor(Math.random() * alphabetLength)];
+    }
+    return result;
+}
+
+/**
+ * Validates a prefix (or returns null if invalid).
+ * @private
+ */
+function _normalizePrefix(prefix) {
+    if (prefix === undefined || prefix === null) return null;
+    if (typeof prefix !== 'string') return null;
+    if (prefix.length === 0) return null;
+    // Must be alphanumeric + underscore, no leading/trailing underscore
+    if (!/^[a-z][a-z0-9_]*$/i.test(prefix)) return null;
+    return prefix;
+}
+
+/**
+ * Validates a random-part length.
+ * @private
+ */
+function _normalizeLength(length, fallback) {
+    if (typeof length !== 'number' || !Number.isFinite(length)) return fallback;
+    if (!Number.isInteger(length)) return fallback;
+    if (length < ID_CONFIG.MIN_RANDOM_LENGTH) return fallback;
+    if (length > 64) return 64; // hard ceiling
+    return length;
 }
 
 // =============================================================================
@@ -137,306 +151,287 @@ function _randomString(length = ID_CONFIG.DEFAULT_RANDOM_LENGTH) {
 // =============================================================================
 
 /**
- * Generates a unique ID using timestamp + random string
- * Format: timestamp_randomString (e.g., "1703123456789_abc123def")
+ * Generates a unique-enough ID.
+ * Format: [prefix_]timestamp_randomString
  * 
- * The combination of timestamp and random string ensures uniqueness even
- * when multiple IDs are generated in the same millisecond.
+ * Collision handling: if the generated ID collides with another ID generated
+ * in this session (extremely rare), a new ID is generated iteratively with
+ * progressively longer random parts. No recursion.
  * 
- * @param {string} prefix - Optional prefix for the ID (e.g., 'char', 'place')
- * @param {number} randomLength - Length of random part (default 8)
- * @returns {string} Unique identifier
+ * @param {string} [prefix]
+ * @param {number} [randomLength]
+ * @returns {string}
  */
-function generateId(prefix = null, randomLength = ID_CONFIG.DEFAULT_RANDOM_LENGTH) {
-    const timestamp = Date.now();
-    const randomStr = _randomString(randomLength);
-    let id = `${timestamp}${ID_CONFIG.SEPARATOR}${randomStr}`;
-    
-    if (prefix) {
-        id = `${prefix}${ID_CONFIG.SEPARATOR}${id}`;
+function generateId(prefix, randomLength) {
+    var p = _normalizePrefix(prefix);
+    var len = _normalizeLength(randomLength, ID_CONFIG.DEFAULT_RANDOM_LENGTH);
+
+    var attempt = 0;
+    while (attempt < 10) {
+        var timestamp = Date.now();
+        var rand = _randomString(len + attempt);
+        var id = p
+            ? p + ID_CONFIG.SEPARATOR + timestamp + ID_CONFIG.SEPARATOR + rand
+            : String(timestamp) + ID_CONFIG.SEPARATOR + rand;
+
+        if (!_sessionGeneratedIds.has(id)) {
+            _sessionGeneratedIds.add(id);
+            return id;
+        }
+        attempt++;
     }
-    
-    // Collision detection (extremely rare but possible)
-    if (_generatedIds.has(id)) {
-        // Recursively try again with longer random string
-        return generateId(prefix, randomLength + 1);
-    }
-    
-    _generatedIds.add(id);
-    return id;
+
+    // Pathological fallback: extremely long random part
+    var finalTimestamp = Date.now();
+    var finalRand = _randomString(32);
+    var finalId = p
+        ? p + ID_CONFIG.SEPARATOR + finalTimestamp + ID_CONFIG.SEPARATOR + finalRand
+        : String(finalTimestamp) + ID_CONFIG.SEPARATOR + finalRand;
+    _sessionGeneratedIds.add(finalId);
+    return finalId;
 }
 
 /**
- * Generates a short ID (for debugging or non-critical use)
- * Format: randomString (e.g., "abc123de")
- * NOTE: Short IDs have higher collision probability - use only when acceptable
+ * Generates a short ID for non-critical use.
+ * Format: [prefix_]randomString
+ * NOTE: Short IDs have higher collision probability against persisted data.
+ * Use only when the ID is not required to be globally unique.
  * 
- * @param {string} prefix - Optional prefix
- * @param {number} length - Length of random part (default 6)
- * @returns {string} Short unique identifier
+ * @param {string} [prefix]
+ * @param {number} [length]
+ * @returns {string}
  */
-function generateShortId(prefix = null, length = ID_CONFIG.SHORT_RANDOM_LENGTH) {
-    const randomStr = _randomString(length);
-    let id = randomStr;
-    
-    if (prefix) {
-        id = `${prefix}${ID_CONFIG.SEPARATOR}${id}`;
+function generateShortId(prefix, length) {
+    var p = _normalizePrefix(prefix);
+    var len = _normalizeLength(length, ID_CONFIG.SHORT_RANDOM_LENGTH);
+
+    var attempt = 0;
+    while (attempt < 10) {
+        var rand = _randomString(len + attempt);
+        var id = p ? p + ID_CONFIG.SEPARATOR + rand : rand;
+        if (!_sessionGeneratedIds.has(id)) {
+            _sessionGeneratedIds.add(id);
+            return id;
+        }
+        attempt++;
     }
-    
-    // Check for collision
-    if (_generatedIds.has(id)) {
-        return generateShortId(prefix, length + 1);
-    }
-    
-    _generatedIds.add(id);
-    return id;
+    var fallback = (p ? p + ID_CONFIG.SEPARATOR : '') + _randomString(16);
+    _sessionGeneratedIds.add(fallback);
+    return fallback;
 }
 
 /**
- * Generates a long ID with extra entropy
- * @param {string} prefix - Optional prefix
- * @returns {string} Long unique identifier
+ * Generates a long ID with extra entropy.
+ * @param {string} [prefix]
+ * @returns {string}
  */
-function generateLongId(prefix = null) {
+function generateLongId(prefix) {
     return generateId(prefix, ID_CONFIG.LONG_RANDOM_LENGTH);
 }
 
 // =============================================================================
-// 4. ENTITY-SPECIFIC ID GENERATORS
+// 4. ENTITY-SPECIFIC GENERATORS
 // =============================================================================
 
-/**
- * Generates a character ID
- * @returns {string} Character ID
- */
 function generateCharacterId() {
     return generateId(ID_PREFIXES.CHARACTER);
 }
 
-/**
- * Generates a place ID
- * @returns {string} Place ID
- */
 function generatePlaceId() {
     return generateId(ID_PREFIXES.PLACE);
 }
 
-/**
- * Generates a rank ID
- * @returns {string} Rank ID
- */
 function generateRankId() {
     return generateId(ID_PREFIXES.RANK);
 }
 
-/**
- * Generates a role ID
- * @returns {string} Role ID
- */
 function generateRoleId() {
     return generateId(ID_PREFIXES.ROLE);
 }
 
-/**
- * Generates a household ID
- * @returns {string} Household ID
- */
 function generateHouseholdId() {
     return generateId(ID_PREFIXES.HOUSEHOLD);
 }
 
-/**
- * Generates a relationship ID
- * @returns {string} Relationship ID
- */
 function generateRelationshipId() {
     return generateId(ID_PREFIXES.RELATIONSHIP);
 }
 
-/**
- * Generates an event ID
- * @returns {string} Event ID
- */
 function generateEventId() {
     return generateId(ID_PREFIXES.EVENT);
 }
 
+function generateProfessionId() {
+    return generateId(ID_PREFIXES.PROFESSION);
+}
+
+function generateMoveId() {
+    return generateId(ID_PREFIXES.MOVE);
+}
+
 // =============================================================================
-// 5. BATCH ID GENERATION
+// 5. BATCH GENERATION
 // =============================================================================
 
 /**
- * Generates multiple IDs at once
- * @param {number} count - Number of IDs to generate
- * @param {string} prefix - Optional prefix
- * @param {Function} generatorFn - Generator function to use (default generateId)
- * @returns {Array} Array of generated IDs
+ * Generates multiple IDs.
+ * 
+ * @param {number} count - must be a positive integer
+ * @param {Function} generatorFn - one of the entity-specific generators,
+ *   or a function accepting no arguments that returns a string
+ * @returns {string[]}
+ * @throws {Error} if count is invalid
  */
-function generateBatchIds(count, prefix = null, generatorFn = generateId) {
-    if (count <= 0) return [];
-    const ids = [];
-    for (let i = 0; i < count; i++) {
-        ids.push(generatorFn(prefix));
+function generateBatchIds(count, generatorFn) {
+    if (typeof count !== 'number' || !Number.isInteger(count) || count < 0) {
+        throw new Error('generateBatchIds: count must be a non-negative integer');
+    }
+    if (count === 0) return [];
+    if (count > 10000) {
+        throw new Error('generateBatchIds: count exceeds maximum (10000)');
+    }
+    if (typeof generatorFn !== 'function') {
+        generatorFn = generateId;
+    }
+
+    var ids = [];
+    for (var i = 0; i < count; i++) {
+        ids.push(generatorFn());
     }
     return ids;
 }
 
 /**
- * Generates multiple character IDs at once
- * @param {number} count - Number of character IDs to generate
- * @returns {Array} Array of character IDs
+ * Generates multiple character IDs.
+ * @param {number} count
+ * @returns {string[]}
  */
 function generateBatchCharacterIds(count) {
-    return generateBatchIds(count, ID_PREFIXES.CHARACTER, generateCharacterId);
+    return generateBatchIds(count, generateCharacterId);
 }
 
 // =============================================================================
-// 6. ID VALIDATION (For NEW IDs - strict format)
+// 6. PARSING
 // =============================================================================
 
 /**
- * Validates if a string matches the expected ID format for NEWLY GENERATED IDs
- * NOTE: This validates the STRICT format used by ids.js.
- * For validating existing data (which may have old formats), use validation.js
+ * Parses an ID into its components.
+ * Returns null if the ID is malformed.
  * 
- * @param {string} id - ID to validate
- * @param {string} expectedPrefix - Optional expected prefix
- * @returns {boolean} True if ID format is valid
+ * @param {string} id
+ * @returns {{ prefix: string|null, timestamp: number, random: string }|null}
  */
-function isValidId(id, expectedPrefix = null) {
-    if (!id || typeof id !== 'string') return false;
-    if (id.length > ID_CONFIG.MAX_ID_LENGTH) return false;
-    
-    let pattern;
-    if (expectedPrefix) {
-        // Pattern: prefix_timestamp_random (e.g., char_1703123456789_abc123)
-        pattern = new RegExp(`^${expectedPrefix}${ID_CONFIG.SEPARATOR}\\d+${ID_CONFIG.SEPARATOR}[a-z0-9]{${ID_CONFIG.MIN_RANDOM_LENGTH},}$`);
-    } else {
-        // Pattern: optional prefix_timestamp_random
-        pattern = new RegExp(`^(?:[a-z]+${ID_CONFIG.SEPARATOR})?\\d+${ID_CONFIG.SEPARATOR}[a-z0-9]{${ID_CONFIG.MIN_RANDOM_LENGTH},}$`);
+function parseId(id) {
+    if (!id || typeof id !== 'string') return null;
+    var parts = id.split(ID_CONFIG.SEPARATOR);
+
+    if (parts.length === 2) {
+        var ts = parseInt(parts[0], 10);
+        if (!Number.isFinite(ts) || ts <= 0) return null;
+        if (!parts[1]) return null;
+        return { prefix: null, timestamp: ts, random: parts[1] };
     }
-    
-    return pattern.test(id);
+
+    if (parts.length === 3) {
+        var ts2 = parseInt(parts[1], 10);
+        if (!Number.isFinite(ts2) || ts2 <= 0) return null;
+        if (!parts[0] || !parts[2]) return null;
+        return { prefix: parts[0], timestamp: ts2, random: parts[2] };
+    }
+
+    // Prefixes may contain underscores (e.g., "rank_assign_timestamp_rand"
+    // would parse as 4 parts). Our current prefixes are underscore-free
+    // so we reject anything else. If prefixes with underscores are added
+    // later, this function must be updated.
+    return null;
 }
 
+function getIdTimestamp(id) {
+    var parsed = parseId(id);
+    return parsed ? parsed.timestamp : null;
+}
+
+function getIdPrefix(id) {
+    var parsed = parseId(id);
+    return parsed ? parsed.prefix : null;
+}
+
+// =============================================================================
+// 7. FORMAT VALIDATION
+// =============================================================================
+
 /**
- * Checks if an ID is a character ID (strict format)
- * @param {string} id - ID to check
+ * Returns true if the ID matches the strict format produced by
+ * generateId/generateShortId. This is a SYNTACTIC check, not a
+ * uniqueness check.
+ * 
+ * @param {string} id
+ * @param {string} [expectedPrefix]
  * @returns {boolean}
  */
+function isValidId(id, expectedPrefix) {
+    if (!id || typeof id !== 'string') return false;
+    if (id.length > ID_CONFIG.MAX_ID_LENGTH) return false;
+
+    var parsed = parseId(id);
+    if (!parsed) return false;
+
+    if (expectedPrefix !== undefined && expectedPrefix !== null) {
+        if (parsed.prefix !== expectedPrefix) return false;
+    }
+
+    // Random part must be at least MIN_RANDOM_LENGTH and only lowercase
+    // alphanumeric.
+    if (parsed.random.length < ID_CONFIG.MIN_RANDOM_LENGTH) return false;
+    if (!/^[a-z0-9]+$/.test(parsed.random)) return false;
+
+    return true;
+}
+
 function isCharacterId(id) {
     return isValidId(id, ID_PREFIXES.CHARACTER);
 }
 
-/**
- * Checks if an ID is a place ID (strict format)
- * @param {string} id - ID to check
- * @returns {boolean}
- */
 function isPlaceId(id) {
     return isValidId(id, ID_PREFIXES.PLACE);
 }
 
-/**
- * Checks if an ID is a rank ID (strict format)
- * @param {string} id - ID to check
- * @returns {boolean}
- */
 function isRankId(id) {
     return isValidId(id, ID_PREFIXES.RANK);
 }
 
 // =============================================================================
-// 7. ID PARSING
+// 8. SESSION CACHE MANAGEMENT (for testing)
 // =============================================================================
 
 /**
- * Parses an ID into its components
- * @param {string} id - ID to parse
- * @returns {Object|null} { prefix: string|null, timestamp: number, random: string }
- */
-function parseId(id) {
-    if (!id || typeof id !== 'string') return null;
-    
-    const parts = id.split(ID_CONFIG.SEPARATOR);
-    
-    if (parts.length === 2) {
-        // Format: timestamp_random
-        const timestamp = parseInt(parts[0], 10);
-        if (isNaN(timestamp)) return null;
-        return {
-            prefix: null,
-            timestamp: timestamp,
-            random: parts[1]
-        };
-    } else if (parts.length === 3) {
-        // Format: prefix_timestamp_random
-        const timestamp = parseInt(parts[1], 10);
-        if (isNaN(timestamp)) return null;
-        return {
-            prefix: parts[0],
-            timestamp: timestamp,
-            random: parts[2]
-        };
-    }
-    
-    return null;
-}
-
-/**
- * Extracts the timestamp from an ID
- * @param {string} id - ID to parse
- * @returns {number|null} Timestamp or null if invalid
- */
-function getIdTimestamp(id) {
-    const parsed = parseId(id);
-    return parsed ? parsed.timestamp : null;
-}
-
-/**
- * Extracts the prefix from an ID
- * @param {string} id - ID to parse
- * @returns {string|null} Prefix or null
- */
-function getIdPrefix(id) {
-    const parsed = parseId(id);
-    return parsed ? parsed.prefix : null;
-}
-
-// =============================================================================
-// 8. ID CLEARING (for testing)
-// =============================================================================
-
-/**
- * Clears the generated IDs cache
- * Used primarily for testing to reset the collision detection state
+ * Clears the session collision registry. Primarily for tests.
  */
 function clearGeneratedIds() {
-    _generatedIds.clear();
+    _sessionGeneratedIds.clear();
 }
 
 /**
- * Removes a specific ID from the cache (if it was generated in error)
- * @param {string} id - ID to remove
+ * Removes a specific ID from the session cache. For tests that need to
+ * simulate a collision.
  */
 function removeGeneratedId(id) {
-    _generatedIds.delete(id);
+    _sessionGeneratedIds.delete(id);
 }
 
 // =============================================================================
-// 9. EXPORTS (Global Availability)
+// 9. EXPORTS
 // =============================================================================
 
-// Constants
-window.ID_PREFIXES = Object.freeze({ ...ID_PREFIXES });
-window.ID_CONFIG = Object.freeze({ ...ID_CONFIG });
+window.ID_PREFIXES = ID_PREFIXES;
+window.ID_CONFIG = ID_CONFIG;
 
-// Core generation
+// Core
 window.generateId = generateId;
 window.generateShortId = generateShortId;
 window.generateLongId = generateLongId;
 
-// Entity-specific generators
+// Entity-specific
 window.generateCharacterId = generateCharacterId;
 window.generatePlaceId = generatePlaceId;
 window.generateRankId = generateRankId;
@@ -444,22 +439,24 @@ window.generateRoleId = generateRoleId;
 window.generateHouseholdId = generateHouseholdId;
 window.generateRelationshipId = generateRelationshipId;
 window.generateEventId = generateEventId;
+window.generateProfessionId = generateProfessionId;
+window.generateMoveId = generateMoveId;
 
-// Batch generation
+// Batch
 window.generateBatchIds = generateBatchIds;
 window.generateBatchCharacterIds = generateBatchCharacterIds;
-
-// Validation (strict format for new IDs)
-window.isValidId = isValidId;
-window.isCharacterId = isCharacterId;
-window.isPlaceId = isPlaceId;
-window.isRankId = isRankId;
 
 // Parsing
 window.parseId = parseId;
 window.getIdTimestamp = getIdTimestamp;
 window.getIdPrefix = getIdPrefix;
 
-// Cache management
+// Validation
+window.isValidId = isValidId;
+window.isCharacterId = isCharacterId;
+window.isPlaceId = isPlaceId;
+window.isRankId = isRankId;
+
+// Cache (testing)
 window.clearGeneratedIds = clearGeneratedIds;
 window.removeGeneratedId = removeGeneratedId;

@@ -5,160 +5,166 @@
  * 
  * LOCATION: js/core/exportUtils.js
  * 
- * This file contains data export functions for CSV and JSON.
+ * SCOPE:
+ *   - Generic CSV serialization → file download
+ *   - Generic JSON serialization → file download
  * 
- * DEPENDENCIES:
- *   - js/core/ui/ui.js (showToast - optional, uses safe fallback)
- *   - js/core/time.js (calculateAge - optional)
- *   - js/core/accessors.js (getActiveRankDisplay - optional)
- *   - js/core/world.js (getCurrentLocation - optional)
+ * OUT OF SCOPE:
+ *   - Character-specific projection (see character-export.js)
+ *   - UI toasts (caller decides)
+ *   - Domain access (character, rank, location) — the character exporter
+ *     resolves those; this file is agnostic.
  * 
- * =============================================================================
- * EXPORTED FUNCTIONS (on window):
- * =============================================================================
+ * SEMANTIC RULES:
+ *   - Serialization errors throw. Callers decide how to surface them.
+ *   - No `showToast?.()` or other silent-failure patterns.
+ *   - CSV escaping handles quotes per RFC 4180 by doubling them.
+ *   - Filenames are sanitized to prevent path traversal.
  * 
- * CSV Export:
- *   - exportToCSV(data, filename, headers) - Exports array of objects as CSV file
- *     - data: Array of objects to export
- *     - filename: Filename without extension (default 'export')
- *     - headers: Optional custom headers array (default: Object.keys(data[0]))
+ * DEPENDENCIES: None. Pure serialization.
  * 
- * JSON Export:
- *   - exportToJSON(data, filename) - Exports object/array as JSON file
- *     - data: Data to export (object or array)
- *     - filename: Filename without extension (default 'export')
- * 
- * Character-Specific Exports:
- *   - exportCharactersToCSV(characters, filename) - Exports character array to CSV
- *     - Columns: Name, Surname, Gender, BirthYear, Age, Status, Rank, Location, Household, Notes
- *     - Uses optional helpers if available (calculateAge, getActiveRankDisplay, getCurrentLocation)
- * 
- *   - exportMasterData() - Exports complete masterData to JSON
- *     - Filename: stillwaters_master_YYYY-MM-DDThh-mm-ss.json
- *     - Shows error toast if masterData not available
- * 
- * =============================================================================
- * USAGE EXAMPLES:
- * =============================================================================
- * 
- * // Export any data to CSV
- * const characters = getCharacters();
- * exportToCSV(characters, 'character_export', ['name', 'birthYear']);
- * 
- * // Export to JSON
- * const filteredData = applyFilters(allData);
- * exportToJSON(filteredData, 'filtered_results');
- * 
- * // Export characters with full details
- * exportCharactersToCSV(filteredCharacters, 'my_characters');
- * 
- * // Export complete master data
- * exportMasterData();
- * 
- * =============================================================================
- * DEPENDENCY NOTES:
- * =============================================================================
- * 
- * - showToast is called with optional chaining (?.) so no error if ui.js not loaded
- * - calculateAge, getActiveRankDisplay, getCurrentLocation used with optional chaining
- * - File download uses Blob and URL.createObjectURL for modern browser support
- * - Filename includes ISO timestamp to prevent collisions
- * - CSV escaping handles quotes by doubling them (RFC 4180)
+ * ICON POLICY: No emojis. No icons.
  * 
  * =============================================================================
  */
 
 // =============================================================================
-// 1. CSV EXPORT
+// 1. HELPERS
 // =============================================================================
 
 /**
- * Exports data as CSV and triggers download
- * @param {Array} data - Array of objects to export
- * @param {string} filename - Filename without extension
- * @param {Array} headers - Optional custom headers (default: Object.keys(data[0]))
+ * Generates a timestamp string suitable for filenames.
+ * Format: YYYY-MM-DDTHH-MM-SS
+ * @private
  */
-function exportToCSV(data, filename = 'export', headers = null) {
-    if (!data || data.length === 0) {
-        showToast?.('No data to export', 'error');
-        return;
-    }
-    
-    const actualHeaders = headers || Object.keys(data[0]);
-    const rows = data.map(row => actualHeaders.map(h => {
-        let val = row[h];
-        if (val === undefined || val === null) val = '';
-        return `"${String(val).replace(/"/g, '""')}"`;
-    }).join(','));
-    
-    const csvContent = [actualHeaders.join(','), ...rows].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+function _timestampForFilename() {
+    return new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+}
+
+/**
+ * Sanitizes a filename: removes path separators and control characters,
+ * truncates to a reasonable length.
+ * @private
+ */
+function _sanitizeFilename(name) {
+    if (!name || typeof name !== 'string') return 'export';
+    var clean = name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim();
+    if (clean.length === 0) clean = 'export';
+    if (clean.length > 100) clean = clean.slice(0, 100);
+    return clean;
+}
+
+/**
+ * Triggers a browser download for a Blob.
+ * @private
+ */
+function _downloadBlob(blob, filename) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
     a.href = url;
-    const dateStr = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
-    a.download = `${filename}_${dateStr}.csv`;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
-    showToast?.('CSV exported', 'success');
-}
-
-/**
- * Exports data as JSON and triggers download
- * @param {Object} data - Data to export (object or array)
- * @param {string} filename - Filename without extension
- */
-function exportToJSON(data, filename = 'export') {
-    const jsonStr = JSON.stringify(data, null, 2);
-    const blob = new Blob([jsonStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    const dateStr = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
-    a.download = `${filename}_${dateStr}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    showToast?.('JSON exported', 'success');
-}
-
-/**
- * Exports filtered characters to CSV
- * @param {Array} characters - Array of character objects
- * @param {string} filename - Optional filename
- */
-function exportCharactersToCSV(characters, filename = 'characters') {
-    const exportData = characters.map(c => ({
-        Name: c.name,
-        Surname: c.surname || '',
-        Gender: c.gender,
-        BirthYear: c.birthYear || '',
-        Age: calculateAge?.(c.birthYear, c.isDeceased, c.deathYear) || '',
-        Status: c.isDeceased ? 'Deceased' : 'Living',
-        Rank: getActiveRankDisplay?.(c)?.name || '',
-        Location: getCurrentLocation?.(c) || '',
-        Household: c.household || '',
-        Notes: c.notes || ''
-    }));
-    
-    exportToCSV(exportData, filename);
-}
-
-/**
- * Exports all master data to JSON
- */
-function exportMasterData() {
-    if (typeof masterData !== 'undefined' && masterData) {
-        exportToJSON(masterData, 'stillwaters_master');
-    } else {
-        showToast?.('No master data to export', 'error');
-    }
+    document.body.removeChild(a);
+    // Revoke after a tick to ensure the download has started
+    setTimeout(function() {
+        URL.revokeObjectURL(url);
+    }, 100);
 }
 
 // =============================================================================
-// 2. EXPORTS
+// 2. CSV EXPORT
+// =============================================================================
+
+/**
+ * Escapes a single CSV field. Quotes every field and doubles interior
+ * quotes per RFC 4180.
+ * @private
+ */
+function _csvEscape(value) {
+    if (value === undefined || value === null) return '""';
+    var str = String(value);
+    return '"' + str.replace(/"/g, '""') + '"';
+}
+
+/**
+ * Exports an array of objects as CSV and triggers download.
+ * 
+ * @param {Array<Object>} data
+ * @param {string} [filename] - without extension
+ * @param {string[]} [headers] - optional; defaults to keys of first row
+ * @throws {Error} if data is not an array or is empty
+ */
+function exportToCSV(data, filename, headers) {
+    if (!Array.isArray(data)) {
+        throw new Error('exportToCSV: data must be an array');
+    }
+    if (data.length === 0) {
+        throw new Error('exportToCSV: no data to export');
+    }
+
+    var actualHeaders = headers;
+    if (!Array.isArray(actualHeaders) || actualHeaders.length === 0) {
+        actualHeaders = Object.keys(data[0]);
+    }
+    if (actualHeaders.length === 0) {
+        throw new Error('exportToCSV: could not determine headers');
+    }
+
+    var lines = [];
+    lines.push(actualHeaders.map(_csvEscape).join(','));
+
+    for (var i = 0; i < data.length; i++) {
+        var row = data[i];
+        var cells = [];
+        for (var j = 0; j < actualHeaders.length; j++) {
+            var key = actualHeaders[j];
+            var val = row ? row[key] : '';
+            cells.push(_csvEscape(val));
+        }
+        lines.push(cells.join(','));
+    }
+
+    var csvContent = lines.join('\n');
+    var blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
+    var base = _sanitizeFilename(filename || 'export');
+    var ts = _timestampForFilename();
+    _downloadBlob(blob, base + '_' + ts + '.csv');
+}
+
+// =============================================================================
+// 3. JSON EXPORT
+// =============================================================================
+
+/**
+ * Exports an object or array as a pretty-printed JSON file.
+ * 
+ * @param {Object|Array} data
+ * @param {string} [filename] - without extension
+ * @throws {Error} if serialization fails (e.g., circular references)
+ */
+function exportToJSON(data, filename) {
+    if (data === undefined) {
+        throw new Error('exportToJSON: data is undefined');
+    }
+
+    var jsonStr;
+    try {
+        jsonStr = JSON.stringify(data, null, 2);
+    } catch (e) {
+        throw new Error('exportToJSON: failed to serialize data (' + e.message + ')');
+    }
+
+    var blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
+    var base = _sanitizeFilename(filename || 'export');
+    var ts = _timestampForFilename();
+    _downloadBlob(blob, base + '_' + ts + '.json');
+}
+
+// =============================================================================
+// 4. EXPORTS
 // =============================================================================
 
 window.exportToCSV = exportToCSV;
 window.exportToJSON = exportToJSON;
-window.exportCharactersToCSV = exportCharactersToCSV;
-window.exportMasterData = exportMasterData;
