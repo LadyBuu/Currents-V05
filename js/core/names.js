@@ -2,9 +2,9 @@
  * =============================================================================
  * STILL WATERS - NAMING SYSTEM (names.js)
  * =============================================================================
- * 
+ *
  * LOCATION: js/core/names.js
- * 
+ *
  * SCOPE:
  *   - Character name generation (given name + surname)
  *   - Character name rules queries (surname rules, epithets)
@@ -12,28 +12,45 @@
  *   - City/region/landmark name generation
  *   - Regnal numbering
  *   - Epithet generation
- * 
+ *
  * OUT OF SCOPE:
  *   - String case conversion (see formatting.js: capitalize, titleCase, etc.)
  *   - Name validation (see validation.js: validateName)
+ *   - Generic string normalization (see storage-schema.js)
  *   - Role categories (see role-queries.js)
- *   - Display formatting (see formatting.js)
- *   - Character CRUD/accessors (see character-queries.js)
- * 
+ *   - Character CRUD/accessors (see character-queries.js, accessors.js)
+ *
  * SEMANTIC RULES:
  *   - RNG comes from randomness.js. No fallback implementation.
  *   - Missing required dependencies throw.
- *   - Missing countryId (null/undefined) → null.
- *   - Valid country with no surname list → ''.
- *   - Invalid explicit inputs (bad ordinal, unknown epithet type, unknown
- *     landmark type) throw rather than silently defaulting.
- *   - `0` is preserved in all optional parameters.
- * 
+ *   - Explicit missing vs. invalid input:
+ *       missing input (null/undefined)        → domain's legitimate missing
+ *                                                value (null, '', or default
+ *                                                per the function's contract)
+ *       invalid input (wrong type, bad enum)  → throw
+ *   - Character-name country lookup: missing countryId → null.
+ *   - Place-name generation: missing countryId → generic fallback. This is
+ *     deliberate — place generators should produce a plausible name even
+ *     when no country-specific naming data is available. Character lookups
+ *     do NOT have this licence, because silently returning a name from the
+ *     wrong country would corrupt data.
+ *   - 0 is preserved in all optional parameters.
+ *   - Explicit missing checks only. Truthiness is not a domain predicate.
+ *
+ * NOTE ON DOMAIN CONSTANTS:
+ *   The syllable pools, dynasty prefixes, epithet lists, and probability
+ *   constants in this file are simulation policy, not generic RNG concerns.
+ *   They would eventually move into per-world configuration if Still
+ *   Waters supports multiple simulated worlds. For now they live here
+ *   because this module is their only consumer.
+ *
  * DEPENDENCIES (all REQUIRED):
  *   - randomness.js: pickRandom, random, randomBoolean
- * 
+ *   - accessors.js:  getNameLists, getCityNameParts, getCharacterById
+ *                    (loaded lazily by the functions that need them)
+ *
  * ICON POLICY: No emojis. No icons.
- * 
+ *
  * =============================================================================
  */
 
@@ -53,13 +70,18 @@
             }
         }
         if (missing.length > 0) {
-            throw new Error('names.js: missing required dependencies from randomness.js: ' + missing.join(', '));
+            throw new Error(
+                'names.js: missing required dependencies from randomness.js: ' +
+                missing.join(', ')
+            );
         }
     }
 
     function _requireAccessor(name, moduleHint) {
         if (typeof window[name] !== 'function') {
-            throw new Error('names.js: ' + name + ' is required (load ' + moduleHint + ' first).');
+            throw new Error(
+                'names.js: ' + name + ' is required (load ' + moduleHint + ' first).'
+            );
         }
     }
 
@@ -67,27 +89,56 @@
     // 1. INTERNAL HELPERS
     // =========================================================================
 
-    function _random() { return window.random(); }
-    function _pickRandom(arr) { return window.pickRandom(arr); }
-    function _randomBoolean(bias) { return window.randomBoolean(bias); }
+    function _random() {
+        _requireRandomness();
+        return window.random();
+    }
 
-    function _isMissing(v) { return v === null || v === undefined; }
+    function _pickRandom(arr) {
+        _requireRandomness();
+        return window.pickRandom(arr);
+    }
+
+    function _randomBoolean(bias) {
+        _requireRandomness();
+        return window.randomBoolean(bias);
+    }
+
+    function _isMissing(v) {
+        return v === null || v === undefined;
+    }
 
     /**
-     * Returns the canonical Roman numeral for n (1..10). Returns String(n)
-     * for values > 10. Returns null for invalid input.
+     * Returns the canonical Roman numeral for n (1..3999). Returns
+     * String(n) for values above the practical regnal range.
+     * Returns null for invalid input.
      * @private
      */
-    function _romanNumeral(n) {
+    var _ROMAN_TABLE = [
+        [1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'],
+        [100, 'C'], [90, 'XC'], [50, 'L'], [40, 'XL'],
+        [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']
+    ];
+
+    function _toRoman(n) {
         if (!Number.isInteger(n) || n < 1) return null;
-        var numerals = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
-        if (n <= 10) return numerals[n];
-        return String(n);
+        if (n > 3999) return String(n);
+        var result = '';
+        for (var i = 0; i < _ROMAN_TABLE.length; i++) {
+            var value = _ROMAN_TABLE[i][0];
+            var symbol = _ROMAN_TABLE[i][1];
+            while (n >= value) {
+                result += symbol;
+                n -= value;
+            }
+        }
+        return result;
     }
 
     /**
      * Parses a Roman numeral string to a number. Returns null if invalid.
      * Accepts strictly canonical forms (rejects "IIV", "IIX", "VX").
+     * Handles values up to 3999; longer numerals are rejected.
      * @private
      */
     function _parseRoman(str) {
@@ -107,11 +158,13 @@
         }
 
         // Round-trip check: only accept canonical forms
-        var canonical = _romanNumeral(total);
+        var canonical = _toRoman(total);
         if (canonical === null) return null;
         if (canonical !== upper) return null;
         return total;
     }
+
+    var _VALID_GENDERS = ['male', 'female', 'any'];
 
     // =========================================================================
     // 2. CHARACTER NAMES
@@ -124,16 +177,23 @@
 
     /**
      * Picks a random given name from a country's name lists.
-     * 
+     *
      * @param {string} countryId
      * @param {string} [gender] - 'male' | 'female' | 'any' (default 'any')
      * @returns {string|null} null if country missing or unknown
+     * @throws {Error} if gender is an explicit unknown value
      */
     function getRandomNameFromCountry(countryId, gender) {
         if (_isMissing(countryId)) return null;
         if (typeof countryId !== 'string' || countryId.length === 0) return null;
 
         gender = _isMissing(gender) ? 'any' : gender;
+        if (_VALID_GENDERS.indexOf(gender) === -1) {
+            throw new Error(
+                'getRandomNameFromCountry: unknown gender "' + gender + '". ' +
+                'Expected one of: ' + _VALID_GENDERS.join(', ')
+            );
+        }
 
         var lists = _getNameLists();
         var country = lists[countryId];
@@ -155,13 +215,13 @@
 
     /**
      * Picks a random surname from a country's name lists.
-     * 
+     *
      * Semantics:
      *   - missing countryId (null/undefined) → null
      *   - unknown countryId → null
      *   - valid country with no surnames → ''
      *   - valid country with surnames → string
-     * 
+     *
      * @param {string} countryId
      * @returns {string|null}
      */
@@ -182,8 +242,8 @@
     /**
      * Generates a full name from a country.
      * Returns null if given name cannot be generated.
-     * Surname field is null when the country is unknown; '' when there are
-     * no surnames for that country.
+     * Surname field is null when the country is unknown; '' when the
+     * country is valid but has no surname list.
      */
     function generateRandomFullName(countryId, gender) {
         var name = getRandomNameFromCountry(countryId, gender);
@@ -195,26 +255,47 @@
     // =========================================================================
     // 3. CHARACTER NAME RULE QUERIES
     // =========================================================================
+    //
+    // Missing character → null. Character exists but field is absent →
+    // the field's legitimate empty value ('' for epithet, 'country' for
+    // an unspecified surname source).
 
     function getCharacterSurnameRules(characterId) {
         _requireAccessor('getCharacterById', 'accessors.js');
         var c = window.getCharacterById(characterId);
         if (!c) return null;
-        return c.surnameRules || null;
+        if (_isMissing(c.surnameRules)) return null;
+        return c.surnameRules;
     }
 
+    /**
+     * Returns the character's epithet.
+     *
+     *   character missing        → null
+     *   character exists, no ep. → ''
+     *   character exists, value  → the epithet string
+     */
     function getCharacterEpithet(characterId) {
         _requireAccessor('getCharacterById', 'accessors.js');
         var c = window.getCharacterById(characterId);
-        if (!c) return '';
-        return c.epithet || '';
+        if (!c) return null;
+        if (_isMissing(c.epithet)) return '';
+        return c.epithet;
     }
 
+    /**
+     * Returns the character's surname source.
+     *
+     *   character missing             → null
+     *   character exists, no source   → 'country' (default rule)
+     *   character exists, value       → the source string
+     */
     function getCharacterSurnameSource(characterId) {
         _requireAccessor('getCharacterById', 'accessors.js');
         var c = window.getCharacterById(characterId);
-        if (!c) return 'country';
-        return c.surnameSource || 'country';
+        if (!c) return null;
+        if (_isMissing(c.surnameSource)) return 'country';
+        return c.surnameSource;
     }
 
     // =========================================================================
@@ -231,22 +312,63 @@
         'Brightwater', 'Darkholm', 'Eaglecrest', 'Falconreach', 'Ravenwood'
     ];
 
+    /**
+     * Generates a dynasty name.
+     *
+     * Supported types:
+     *   - 'location'  → { location } required
+     *   - 'founder'   → { founder } required
+     *   - 'adjective' → no options required
+     *   - 'default'   → no options required (also used when type omitted)
+     *
+     * Missing input (type omitted, options omitted) falls back to defaults.
+     * Invalid input (unknown type, wrong options shape, missing required
+     * option for the requested type) throws.
+     *
+     * @param {string} [type]
+     * @param {Object} [options]
+     * @returns {string}
+     */
     function generateDynastyName(type, options) {
-        type = _isMissing(type) ? 'default' : type;
-        options = options || {};
+        if (_isMissing(type)) type = 'default';
+        if (typeof type !== 'string') {
+            throw new Error('generateDynastyName: type must be a string');
+        }
+
+        if (_isMissing(options)) {
+            options = {};
+        } else if (typeof options !== 'object' || Array.isArray(options)) {
+            throw new Error('generateDynastyName: options must be an object');
+        }
 
         switch (type) {
             case 'location': {
                 var location = options.location;
-                if (_isMissing(location)) location = 'Greenfield';
-                if (typeof location !== 'string' || location.length === 0) return null;
+                if (_isMissing(location)) {
+                    throw new Error(
+                        'generateDynastyName: type "location" requires options.location'
+                    );
+                }
+                if (typeof location !== 'string' || location.length === 0) {
+                    throw new Error(
+                        'generateDynastyName: options.location must be a non-empty string'
+                    );
+                }
                 var suffix = _pickRandom(_LOCATION_SUFFIXES);
                 return location + suffix;
             }
             case 'founder': {
                 var founder = options.founder;
-                if (_isMissing(founder)) founder = 'Unknown';
-                if (typeof founder !== 'string' || founder.length === 0) return null;
+                if (_isMissing(founder)) {
+                    throw new Error(
+                        'generateDynastyName: type "founder" requires options.founder'
+                    );
+                }
+                if (typeof founder !== 'string' || founder.length === 0) {
+                    throw new Error(
+                        'generateDynastyName: options.founder must be a non-empty string'
+                    );
+                }
                 var prefix = _pickRandom(_DYNASTY_PREFIXES);
                 return prefix + ' ' + founder;
             }
@@ -255,14 +377,31 @@
                 var base = _pickRandom(_ADJECTIVE_BASE);
                 return adj + ' ' + base;
             }
-            default:
+            case 'default':
                 return _pickRandom(_DEFAULT_DYNASTIES);
+            default:
+                throw new Error('generateDynastyName: unknown type "' + type + '"');
         }
     }
 
+    /**
+     * Prepends "House of " to a dynasty name if it isn't already present.
+     *
+     * NOTE: this is a presentation helper. It is retained here because it
+     * carries dynasty-specific naming policy (the "House of" prefix is a
+     * domain convention, not a generic string operation). If a dynasty
+     * presentation module emerges, this function should move there.
+     *
+     * @param {string} dynastyName
+     * @param {boolean} [includeHousePrefix]
+     * @returns {string}
+     */
     function formatDynastyName(dynastyName, includeHousePrefix) {
         includeHousePrefix = includeHousePrefix !== false;
-        if (!dynastyName) return '';
+        if (_isMissing(dynastyName) || dynastyName === '') return '';
+        if (typeof dynastyName !== 'string') {
+            throw new Error('formatDynastyName: dynastyName must be a string');
+        }
         if (includeHousePrefix && dynastyName.indexOf('House of ') !== 0) {
             return 'House of ' + dynastyName;
         }
@@ -289,7 +428,7 @@
         desert: ['Desert', 'Waste', 'Sands', 'Dunes', 'Expanse', 'Barrens']
     };
 
-    // Probability constants
+    // Probability constants. Domain policy; see NOTE ON DOMAIN CONSTANTS above.
     var CITY_SUFFIX_CHANCE = 0.4;
     var CITY_PREFIX_CHANCE = 0.7;
     var CITY_EXTRA_SUFFIX_CHANCE = 0.3;
@@ -310,12 +449,32 @@
         return window.getCityNameParts();
     }
 
+    /**
+     * Generates a city name.
+     *
+     * Semantics:
+     *   - missing/invalid countryId → generic fallback
+     *   - valid countryId with country-specific naming data → country-flavoured
+     *   - valid countryId without matching data → generic fallback
+     *
+     * Place-name generators are deliberately permitted to produce a
+     * plausible name even when no country-specific data exists. This
+     * differs from character-name lookups, where returning a name from
+     * the wrong country would corrupt data.
+     *
+     * @param {string} [countryId]
+     * @returns {string}
+     */
     function generateCityName(countryId) {
-        var cityParts = _getCityNameParts();
+        var hasCountry = !_isMissing(countryId)
+            && typeof countryId === 'string'
+            && countryId.length > 0;
 
-        if (countryId && cityParts && cityParts[countryId]) {
+        if (hasCountry) {
+            var cityParts = _getCityNameParts();
             var parts = cityParts[countryId];
-            if (Array.isArray(parts.prefixes) && parts.prefixes.length
+            if (parts
+                && Array.isArray(parts.prefixes) && parts.prefixes.length
                 && Array.isArray(parts.roots) && parts.roots.length) {
                 var name = _pickRandom(parts.prefixes);
                 name += _pickRandom(parts.roots);
@@ -358,7 +517,7 @@
     /**
      * Generates a landmark name.
      * Unknown explicit types throw. Null/undefined defaults to 'mountain'.
-     * 
+     *
      * @param {string} [type]
      * @returns {string}
      * @throws {Error} for unknown landmark types
@@ -407,13 +566,17 @@
 
     /**
      * Formats a rank + ordinal.
-     * 
+     *
      * Semantics:
      *   - number null/undefined → no ordinal
      *   - number 0 or negative → no ordinal (ordinals start at 1)
      *   - number non-integer → throws
-     *   - number >= 1 → formatted (Roman for 1..10, Arabic otherwise)
-     * 
+     *   - number >= 1 → formatted (Roman for 1..3999, Arabic otherwise)
+     *
+     * Note: unlike formatRegnalName(), number 1 DOES produce an ordinal
+     * here ("King Henry I"), because titles conventionally number their
+     * first holder.
+     *
      * @param {Object} rank
      * @param {number} [number]
      * @param {boolean} [useRoman]
@@ -435,8 +598,8 @@
                 throw new Error('formatTitleName: number must be an integer');
             }
             if (number >= 1) {
-                if (useRoman && number <= 10) {
-                    numberStr = ' ' + _romanNumeral(number);
+                if (useRoman && number <= 3999) {
+                    numberStr = ' ' + _toRoman(number);
                 } else {
                     numberStr = ' ' + number;
                 }
@@ -477,30 +640,21 @@
     }
 
     // =========================================================================
-    // 7. NAME NORMALIZATION
-    // =========================================================================
-
-    /**
-     * Normalizes a name for storage/display.
-     * 
-     * Does NOT capitalize. Preserves casing because "McDonald" and "Mcdonald"
-     * are different names, and the computer does not know which is correct.
-     * 
-     * @param {string} name
-     * @returns {string} trimmed, single-spaced
-     */
-    function normalizeName(name) {
-        if (typeof name !== 'string') return '';
-        return name.trim().replace(/\s+/g, ' ');
-    }
-
-    // =========================================================================
-    // 8. REGNAL NAMING
+    // 7. REGNAL NAMING
     // =========================================================================
 
     /**
      * Formats a regnal name with an ordinal.
-     * 
+     *
+     * Semantics:
+     *   - number missing/null → return baseName unmodified
+     *   - number < 2 → return baseName unmodified (a first ruler is not
+     *     conventionally styled "Henry I")
+     *   - number non-integer → throws
+     *   - number >= 2 → formatted (Roman for 2..3999, Arabic otherwise)
+     *
+     * Contrast with formatTitleName(), which DOES produce an ordinal for 1.
+     *
      * @param {string} baseName
      * @param {number} [number]
      * @param {boolean} [useRoman]
@@ -521,17 +675,18 @@
         }
 
         if (number < 2) return baseName;
-        if (useRoman && number <= 10) {
-            return baseName + ' ' + _romanNumeral(number);
+        if (useRoman && number <= 3999) {
+            return baseName + ' ' + _toRoman(number);
         }
         return baseName + ' ' + number;
     }
 
     /**
      * Determines the next regnal number for a given name.
-     * 
-     * Accepts canonical Roman numerals only (rejects "IIV", "IIX", etc.).
-     * 
+     *
+     * Accepts canonical Roman numerals (I, II, III, IV, ..., up to MMMCMXCIX)
+     * and Arabic numerals. Rejects non-canonical forms ("IIV", "IIX", etc.).
+     *
      * @param {string} name
      * @param {string[]} previousRulers - e.g. ["Henry II", "Henry IV"]
      * @returns {number} next number (>= 1)
@@ -541,7 +696,11 @@
         if (!Array.isArray(previousRulers)) return 1;
 
         var escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        var pattern = new RegExp('^' + escaped + '\\s+(\\d+)$|^' + escaped + '\\s+([IVXLCDM]+)$', 'i');
+        var pattern = new RegExp(
+            '^' + escaped + '\\s+(\\d+)$' +
+            '|^' + escaped + '\\s+([IVXLCDM]+)$',
+            'i'
+        );
 
         var highest = 0;
         for (var i = 0; i < previousRulers.length; i++) {
@@ -552,7 +711,7 @@
 
             var value = 0;
             if (match[1]) {
-                value = parseInt(match[1], 10);
+                value = Number(match[1]);
                 if (!Number.isFinite(value)) continue;
             } else if (match[2]) {
                 value = _parseRoman(match[2]);
@@ -564,7 +723,7 @@
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 8. EXPORTS
     // =========================================================================
 
     // Character names
@@ -590,11 +749,13 @@
     window.formatTitleName = formatTitleName;
     window.generateEpithet = generateEpithet;
 
-    // Normalization
-    window.normalizeName = normalizeName;
-
     // Regnal
     window.formatRegnalName = formatRegnalName;
     window.getNextRegnalNumber = getNextRegnalNumber;
+
+    // NOTE: window.normalizeName was removed. Name normalization is a
+    // storage-boundary concern, not a naming-system operation. Migrate
+    // callers to storage-schema.js's normalizeNameForStorage (or the
+    // equivalent function in whatever normalization module owns it).
 
 })();

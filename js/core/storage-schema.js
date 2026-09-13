@@ -1,13 +1,177 @@
 // js/core/storage-schema.js
+/**
+ * =============================================================================
+ * STILL WATERS - STORAGE SCHEMA (storage-schema.js)
+ * =============================================================================
+ *
+ * LOCATION: js/core/storage-schema.js
+ *
+ * SCOPE:
+ *   - Canonical shape of the persisted masterData envelope
+ *   - Current-schema normalization: bring loaded data into the canonical
+ *     current shape without changing its meaning
+ *   - Default masterData factory
+ *
+ * OUT OF SCOPE:
+ *   - Migration between schema versions → database.js
+ *   - Persistence mechanics → storage.js / database.js
+ *   - Entity semantic validation → validation.js
+ *   - Entity domain meaning → domain modules
+ *
+ * SEMANTIC RULES:
+ *   - Required dependencies fail loudly. No silent fallbacks to magic
+ *     constants (e.g. year 1250).
+ *   - "Missing" and "present but invalid" are distinct cases:
+ *       missing (undefined/null)             → default value
+ *       present but wrong type / out of range → normalization error
+ *   - Explicit missing checks only. Truthiness is not a domain predicate.
+ *   - Object fields must be plain objects (not arrays, not class instances).
+ *   - Normalization MUTATES the supplied envelope's data in place. It does
+ *     not deep-clone. Callers who need a detached copy should clone before
+ *     calling.
+ *
+ * SCHEMA VERSIONING:
+ *   SCHEMA_VERSION identifies the shape of the persisted masterData
+ *   envelope produced by this module.
+ *
+ *   IMPORTANT: this is a distinct concern from any existing "data version"
+ *   tracked elsewhere (e.g. database.js). There must be exactly ONE
+ *   canonical current-schema version for the application. If this module
+ *   supersedes an older data-version scheme, the migration history must
+ *   move with it. If this module uses SCHEMA_VERSION only for its own
+ *   envelope format, that must be documented as a separate namespace from
+ *   the application's data version.
+ *
+ *   normalizeMasterData does NOT decide which version incoming data
+ *   belongs to. That is migration's job (database.js). This module assumes
+ *   the input is already at SCHEMA_VERSION, or is being brought to the
+ *   current shape by the storage load path.
+ *
+ * DEPENDENCIES (REQUIRED):
+ *   - time.js: TIME_CONSTANTS.DEFAULT_YEAR, MIN_YEAR, MAX_YEAR
+ *
+ * ICON POLICY: No emojis. No icons.
+ *
+ * =============================================================================
+ */
+
 (function() {
     'use strict';
 
+    // =========================================================================
+    // 0. DEPENDENCY GUARDS
+    // =========================================================================
+
+    function _requireTime() {
+        if (typeof window.TIME_CONSTANTS === 'undefined'
+            || typeof window.TIME_CONSTANTS.DEFAULT_YEAR !== 'number'
+            || typeof window.TIME_CONSTANTS.MIN_YEAR !== 'number'
+            || typeof window.TIME_CONSTANTS.MAX_YEAR !== 'number') {
+            throw new Error(
+                'storage-schema.js: time.js must load first ' +
+                '(TIME_CONSTANTS.DEFAULT_YEAR / MIN_YEAR / MAX_YEAR missing).'
+            );
+        }
+    }
+
+    // =========================================================================
+    // 1. CONSTANTS
+    // =========================================================================
+
+    // Envelope schema version. See SCHEMA VERSIONING in the file header for
+    // the relationship between this and any application data version.
     var SCHEMA_VERSION = 2;
 
+    // =========================================================================
+    // 2. INTERNAL HELPERS
+    // =========================================================================
+
+    function _isMissing(v) {
+        return v === undefined || v === null;
+    }
+
+    /**
+     * True if `value` is a plain object (prototype is Object.prototype or
+     * null). Arrays, Dates, class instances, and Map/Set are not plain
+     * objects.
+     * @private
+     */
+    function _isPlainObject(value) {
+        if (value === null || typeof value !== 'object') return false;
+        var proto = Object.getPrototypeOf(value);
+        return proto === Object.prototype || proto === null;
+    }
+
+    /**
+     * True if `year` is within TIME_CONSTANTS bounds and is an integer.
+     * Delegates to the canonical year definition owned by time.js. This
+     * module does not maintain a second definition of "valid year."
+     * @private
+     */
+    function _isValidWorldYear(year) {
+        if (typeof year !== 'number' || !Number.isFinite(year)) return false;
+        if (!Number.isInteger(year)) return false;
+        return year >= window.TIME_CONSTANTS.MIN_YEAR
+            && year <= window.TIME_CONSTANTS.MAX_YEAR;
+    }
+
+    /**
+     * Normalizes a top-level array field.
+     *
+     *   missing  → []
+     *   array    → returned as-is
+     *   present-but-not-array → replaced with [] and a warning is emitted
+     *
+     * The warning is the only signal we have that stored data was malformed.
+     * Callers who want to reject malformed data rather than repair it should
+     * validate the envelope before calling normalizeMasterData.
+     *
+     * @private
+     */
+    function _normalizeArrayField(value, fieldName) {
+        if (_isMissing(value)) return [];
+        if (Array.isArray(value)) return value;
+        console.warn(
+            'storage-schema.js: field "' + fieldName + '" is not an array ' +
+            '(got ' + typeof value + '); replacing with [].'
+        );
+        return [];
+    }
+
+    /**
+     * Normalizes a top-level object field.
+     *
+     *   missing  → {} (fresh)
+     *   plain obj → returned as-is
+     *   otherwise → replaced with {} and a warning is emitted
+     * @private
+     */
+    function _normalizeObjectField(value, fieldName) {
+        if (_isMissing(value)) return {};
+        if (_isPlainObject(value)) return value;
+        console.warn(
+            'storage-schema.js: field "' + fieldName + '" is not a plain object ' +
+            '(got ' + (Array.isArray(value) ? 'array' : typeof value) + '); replacing with {}.'
+        );
+        return {};
+    }
+
+    // =========================================================================
+    // 3. DEFAULT FACTORY
+    // =========================================================================
+
+    /**
+     * Creates a fresh default masterData envelope.
+     *
+     * This is the canonical current shape. Every field listed here must
+     * also appear in normalizeMasterData's array/object classification
+     * below; keeping those in sync is the caller's responsibility until a
+     * declarative schema descriptor is introduced.
+     *
+     * @returns {Object}
+     */
     function createDefaultMasterDataOverride() {
-        var defaultYear = (typeof window.TIME_CONSTANTS !== 'undefined')
-            ? window.TIME_CONSTANTS.DEFAULT_YEAR
-            : 1250;
+        _requireTime();
 
         return {
             schemaVersion: SCHEMA_VERSION,
@@ -27,7 +191,7 @@
                 rankInheritanceRules: {},
                 disasters: [],
                 eventLog: [],
-                currentYear: defaultYear,
+                currentYear: window.TIME_CONSTANTS.DEFAULT_YEAR,
                 educationalInstitutions: [],
                 educationalSubjects: {},
                 subjectProgress: {}
@@ -35,13 +199,33 @@
         };
     }
 
+    // =========================================================================
+    // 4. NORMALIZATION
+    // =========================================================================
+    //
+    // normalizeMasterData brings a loaded envelope into the canonical
+    // current shape. It does NOT migrate between schema versions; that is
+    // the migration layer's responsibility. It does NOT semantically
+    // validate entities; that is validation.js's responsibility.
+    //
+    // Missing fields are given defaults. Present-but-malformed fields are
+    // normalized to a safe shape and a warning is emitted, so corruption
+    // surfaces in logs rather than silently disappearing. Callers who want
+    // to reject malformed data must validate before calling this function.
+    //
+    // MUTATION: this function mutates entity objects inside the supplied
+    // envelope. It does not deep-clone.
+
     function normalizeMasterData(envelope) {
         if (!envelope || !envelope.data) return envelope;
+
+        _requireTime();
 
         var defaults = createDefaultMasterDataOverride().data;
         var source = envelope.data;
         var out = {};
 
+        // --- Array fields ---
         var arrayKeys = [
             'characters', 'places', 'ranks', 'roles', 'locationTypes',
             'governmentTypes', 'governments', 'households', 'residences',
@@ -49,53 +233,97 @@
         ];
         for (var i = 0; i < arrayKeys.length; i++) {
             var k = arrayKeys[i];
-            out[k] = Array.isArray(source[k]) ? source[k] : defaults[k];
+            out[k] = _normalizeArrayField(source[k], k);
         }
 
+        // --- Object fields ---
         var objectKeys = [
             'nameLists', 'cityNameParts', 'rankInheritanceRules',
             'educationalSubjects', 'subjectProgress'
         ];
         for (var j = 0; j < objectKeys.length; j++) {
             var ok = objectKeys[j];
-            out[ok] = (source[ok] && typeof source[ok] === 'object' && !Array.isArray(source[ok]))
-                ? source[ok]
-                : defaults[ok];
+            out[ok] = _normalizeObjectField(source[ok], ok);
         }
 
-        out.currentYear = (typeof source.currentYear === 'number'
-            && Number.isInteger(source.currentYear))
-            ? source.currentYear
-            : defaults.currentYear;
+        // --- Year ---
+        // Missing → default. Present-but-invalid → warn and default, so
+        // corruption is visible but the application still loads.
+        if (_isMissing(source.currentYear)) {
+            out.currentYear = defaults.currentYear;
+        } else if (_isValidWorldYear(source.currentYear)) {
+            out.currentYear = source.currentYear;
+        } else {
+            console.warn(
+                'storage-schema.js: currentYear "' + source.currentYear +
+                '" is not a valid world year; using default ' + defaults.currentYear + '.'
+            );
+            out.currentYear = defaults.currentYear;
+        }
 
-        // Field-level defaults per entity
+        // --- Entity field defaults (characters) ---
         for (var c = 0; c < out.characters.length; c++) {
             var char = out.characters[c];
-            if (!Array.isArray(char.relationships)) char.relationships = [];
-            if (!Array.isArray(char.friends)) char.friends = [];
-            if (!Array.isArray(char.moves)) char.moves = [];
-            if (!Array.isArray(char.professions)) char.professions = [];
-            if (!Array.isArray(char.adoptedParents)) char.adoptedParents = [];
-            if (!Array.isArray(char.rankAssignments)) char.rankAssignments = [];
+            if (!char || typeof char !== 'object') continue;
+
+            if (_isMissing(char.relationships) || !Array.isArray(char.relationships)) {
+                char.relationships = [];
+            }
+            if (_isMissing(char.friends) || !Array.isArray(char.friends)) {
+                char.friends = [];
+            }
+            if (_isMissing(char.moves) || !Array.isArray(char.moves)) {
+                char.moves = [];
+            }
+            if (_isMissing(char.professions) || !Array.isArray(char.professions)) {
+                char.professions = [];
+            }
+            if (_isMissing(char.adoptedParents) || !Array.isArray(char.adoptedParents)) {
+                char.adoptedParents = [];
+            }
+            if (_isMissing(char.rankAssignments) || !Array.isArray(char.rankAssignments)) {
+                char.rankAssignments = [];
+            }
+            if (_isMissing(char.apprentices)) {
+                char.apprentices = [];
+            } else if (!Array.isArray(char.apprentices)) {
+                char.apprentices = [];
+            }
+
             if (char.isDeceased === undefined) char.isDeceased = false;
-            if (!Array.isArray(char.apprentices)) char.apprentices = [];
-            if (char.masterId === undefined) char.masterId = null;
             if (char.isMaster === undefined) char.isMaster = false;
+            if (char.masterId === undefined) char.masterId = null;
             if (char.masterProfessionId === undefined) char.masterProfessionId = null;
-            if (!char.apprenticeshipDetails) char.apprenticeshipDetails = {};
-            if (!char.friendshipDetails) char.friendshipDetails = {};
-            if (!char.appearance) char.appearance = {};
+
+            if (!_isPlainObject(char.apprenticeshipDetails)) {
+                char.apprenticeshipDetails = {};
+            }
+            if (!_isPlainObject(char.friendshipDetails)) {
+                char.friendshipDetails = {};
+            }
+            if (!_isPlainObject(char.appearance)) {
+                char.appearance = {};
+            }
         }
 
+        // --- Entity field defaults (places) ---
         for (var p = 0; p < out.places.length; p++) {
             var place = out.places[p];
+            if (!place || typeof place !== 'object') continue;
+
             if (place.governmentTypeId === undefined) place.governmentTypeId = null;
             if (place.governmentStyle === undefined) place.governmentStyle = null;
-            if (!Array.isArray(place.leaderAssignments)) place.leaderAssignments = [];
+
+            if (_isMissing(place.leaderAssignments) || !Array.isArray(place.leaderAssignments)) {
+                place.leaderAssignments = [];
+            }
         }
 
+        // --- Entity field defaults (ranks) ---
         for (var r = 0; r < out.ranks.length; r++) {
             var rank = out.ranks[r];
+            if (!rank || typeof rank !== 'object') continue;
+
             if (rank.genderRestriction === undefined) rank.genderRestriction = 'either';
             if (rank.locationTypeId === undefined) rank.locationTypeId = null;
             if (rank.locationId === undefined) rank.locationId = null;
@@ -105,31 +333,66 @@
             if (rank.spouseInheritance === undefined) rank.spouseInheritance = null;
         }
 
+        // --- Entity field defaults (government types) ---
         for (var g = 0; g < out.governmentTypes.length; g++) {
             var govType = out.governmentTypes[g];
-            if (!Array.isArray(govType.allowedRankIds)) govType.allowedRankIds = [];
+            if (!govType || typeof govType !== 'object') continue;
+            if (_isMissing(govType.allowedRankIds) || !Array.isArray(govType.allowedRankIds)) {
+                govType.allowedRankIds = [];
+            }
         }
 
+        // --- Entity field defaults (households) ---
         for (var h = 0; h < out.households.length; h++) {
             var household = out.households[h];
-            if (!Array.isArray(household.departments)) household.departments = [];
-            if (!Array.isArray(household.members)) household.members = [];
+            if (!household || typeof household !== 'object') continue;
+            if (_isMissing(household.departments) || !Array.isArray(household.departments)) {
+                household.departments = [];
+            }
+            if (_isMissing(household.members) || !Array.isArray(household.members)) {
+                household.members = [];
+            }
         }
 
+        // --- Entity field defaults (roles) ---
         for (var ro = 0; ro < out.roles.length; ro++) {
             var role = out.roles[ro];
+            if (!role || typeof role !== 'object') continue;
             if (role.genderRestriction === undefined) role.genderRestriction = 'both';
-            if (!Array.isArray(role.specializations)) role.specializations = [];
+            if (_isMissing(role.specializations) || !Array.isArray(role.specializations)) {
+                role.specializations = [];
+            }
             if (role.notes === undefined) role.notes = '';
         }
 
+        // --- Envelope ---
+        // schemaVersion: this module does NOT decide which version the
+        // incoming data belongs to. If the envelope declares the current
+        // version, we preserve the declaration. If it declares anything
+        // else, that is a migration concern and we do not silently rewrite
+        // it to the current version.
+        //
+        // savedAt: preserved if present. NOT invented. Normalization is
+        // not the moment a save happened; fabricating a timestamp here
+        // would misrepresent the data's provenance.
         return {
-            schemaVersion: envelope.schemaVersion || SCHEMA_VERSION,
-            savedAt: envelope.savedAt || new Date().toISOString(),
+            schemaVersion: _isMissing(envelope.schemaVersion)
+                ? SCHEMA_VERSION
+                : envelope.schemaVersion,
+            savedAt: envelope.savedAt,
             data: out
         };
     }
 
+    // =========================================================================
+    // 5. EXPORTS
+    // =========================================================================
+
     window.createDefaultMasterDataOverride = createDefaultMasterDataOverride;
     window.normalizeMasterData = normalizeMasterData;
+
+    // SCHEMA_VERSION is exposed so callers (notably database.js) can reason
+    // about the current envelope shape without duplicating the constant.
+    window.STORAGE_SCHEMA_VERSION = SCHEMA_VERSION;
+
 })();

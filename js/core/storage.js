@@ -2,272 +2,329 @@
  * =============================================================================
  * STILL WATERS - PERSISTENCE / STORAGE MANAGEMENT (storage.js)
  * =============================================================================
- * 
+ *
  * LOCATION: js/core/storage.js
- * 
+ *
  * SINGLE SOURCE OF TRUTH for persistence.
- * 
+ *
  * SCOPE:
  *   - localStorage read/write
  *   - Cross-tab coordination
- *   - Default data factory (delegated to storage-schema.js if loaded)
- *   - Load/save/reload/reset
- * 
+ *   - Load/save/reload/reset orchestration
+ *   - Import (with validation before install)
+ *
  * OUT OF SCOPE:
- *   - Schema normalization and migration → storage-schema.js
+ *   - Schema shape and default data → storage-schema.js
+ *   - Migration between schema versions → database.js (or the schema module
+ *     if migration is co-located there)
  *   - Export/download → exportUtils.js
  *   - Cache invalidation → mutation boundaries
  *   - UI feedback → caller
- * 
+ *   - Cross-tab conflict prevention beyond "do not discard dirty state"
+ *
  * SEMANTIC RULES:
- *   - load: no entry → defaults; valid entry → load; corrupt entry → signal failure.
- *   - save: returns true only when localStorage.setItem succeeded.
- *   - import: does not report success if save failed.
- *   - reset: does not report success if save failed.
- *   - cross-tab: does not silently overwrite unsaved local changes.
- *   - TIME_CONSTANTS is a required dependency.
- * 
- * DEPENDENCIES:
- *   - time.js (TIME_CONSTANTS.DEFAULT_YEAR) — REQUIRED
- * 
+ *   - saveMasterData() returns true only if localStorage.setItem succeeded.
+ *     There is no debounced variant of this function; the debounced path is
+ *     scheduleSave(), which does not claim persistence.
+ *   - load: no entry → defaults; valid entry → load; corrupt entry → signal
+ *     failure without replacing window.masterData.
+ *   - import: does not report success if validation or save failed.
+ *   - reset: does not delete the storage key before attempting to save
+ *     defaults. A failed save leaves the previously persisted value intact.
+ *   - cross-tab: does not silently overwrite unsaved local changes, but
+ *     also does not prevent a later overwrite. See CROSS-TAB CONFLICT.
+ *
+ * CROSS-TAB CONFLICT:
+ *   The policy is: "do not automatically discard unsaved local changes."
+ *   It is NOT: "prevent two tabs from overwriting each other's data."
+ *   If tab A has dirty state and tab B writes storage, tab A will not
+ *   auto-reload, but when tab A later saves, it will overwrite tab B's
+ *   changes. Preventing that requires a revision/compare-before-write
+ *   strategy, which is out of scope for this module.
+ *
+ * SCHEMA OWNERSHIP:
+ *   storage.js owns BYTES. It does not own schema meaning.
+ *   The current schema version and default data factory come from
+ *   storage-schema.js, which is a required dependency.
+ *
+ * MIGRATION:
+ *   storage.js orchestrates the load → migrate → normalize → install
+ *   pipeline. Actual migration transformations live with the schema.
+ *   Assigning the current version label to a legacy envelope is NOT
+ *   migration; if the persisted data is at an older schema version,
+ *   storage.js must not pretend it is current.
+ *
+ * DEPENDENCIES (REQUIRED):
+ *   - time.js:          TIME_CONSTANTS (for schema defaults via storage-schema)
+ *   - storage-schema.js: createDefaultMasterDataOverride, normalizeMasterData,
+ *                        STORAGE_SCHEMA_VERSION
+ *
+ * OPTIONAL:
+ *   - validation.js: validateImportData (used by import; if absent, import
+ *                    rejects the file rather than installing unvalidated data)
+ *
  * ICON POLICY: No emojis. No icons.
- * 
+ *
  * =============================================================================
  */
 
-// =============================================================================
-// 0. DEPENDENCY GUARDS
-// =============================================================================
+(function() {
+    'use strict';
 
-function _requireTime() {
-    if (typeof window.TIME_CONSTANTS === 'undefined'
-        || typeof window.TIME_CONSTANTS.DEFAULT_YEAR !== 'number') {
-        throw new Error('storage.js: time.js must load first (TIME_CONSTANTS missing).');
+    // =========================================================================
+    // 0. DEPENDENCY GUARDS
+    // =========================================================================
+
+    function _requireTime() {
+        if (typeof window.TIME_CONSTANTS === 'undefined'
+            || typeof window.TIME_CONSTANTS.DEFAULT_YEAR !== 'number') {
+            throw new Error('storage.js: time.js must load first (TIME_CONSTANTS missing).');
+        }
     }
-}
 
-// =============================================================================
-// 1. CONFIG
-// =============================================================================
+    function _requireSchema() {
+        if (typeof window.createDefaultMasterDataOverride !== 'function') {
+            throw new Error(
+                'storage.js: storage-schema.js must load first ' +
+                '(createDefaultMasterDataOverride missing).'
+            );
+        }
+        if (typeof window.normalizeMasterData !== 'function') {
+            throw new Error(
+                'storage.js: storage-schema.js must load first ' +
+                '(normalizeMasterData missing).'
+            );
+        }
+        if (typeof window.STORAGE_SCHEMA_VERSION !== 'number') {
+            throw new Error(
+                'storage.js: storage-schema.js must load first ' +
+                '(STORAGE_SCHEMA_VERSION missing).'
+            );
+        }
+    }
 
-var STORAGE_CONFIG = Object.freeze({
-    STORAGE_KEY: 'stillwaters_master',
-    SCHEMA_VERSION: 2,
-    SAVE_DEBOUNCE_MS: 100,
-    CROSS_TAB_SYNC_MS: 100
-});
+    function _requireAll() {
+        _requireTime();
+        _requireSchema();
+    }
 
-// =============================================================================
-// 2. MODULE STATE
-// =============================================================================
+    // =========================================================================
+    // 1. CONFIG
+    // =========================================================================
 
-var _isLoading = false;
-var _isSaving = false;
-var _saveTimeout = null;
-var _forceReloading = false;
+    var STORAGE_CONFIG = Object.freeze({
+        STORAGE_KEY: 'stillwaters_master',
+        SAVE_DEBOUNCE_MS: 100,
+        CROSS_TAB_SYNC_MS: 100
+    });
 
-// Tracks whether the current in-memory data has unsaved changes.
-// Set true by mutation boundaries via markDirty(); cleared after save.
-var _isDirty = false;
+    // =========================================================================
+    // 2. MODULE STATE
+    // =========================================================================
 
-// Cross-tab coordination
-var _storageListenerAdded = false;
-var _syncTimeout = null;
-var _syncing = false;
+    var _isLoading = false;
+    var _isSaving = false;
+    var _saveTimeout = null;
+    var _forceReloading = false;
 
-// =============================================================================
-// 3. DEFAULT FACTORY
-// =============================================================================
+    // Tracks whether the current in-memory data has unsaved changes.
+    // Set true by mutation boundaries via markDataDirty(); cleared after a
+    // successful save.
+    var _isDirty = false;
 
-/**
- * Creates a fresh default masterData structure.
- * If storage-schema.js is loaded, delegates to it. Otherwise uses the
- * built-in fallback (which must match the schema).
- * 
- * @returns {Object}
- */
-function createDefaultMasterData() {
-    _requireTime();
+    // Cross-tab coordination
+    var _storageListenerAdded = false;
+    var _syncTimeout = null;
 
-    if (typeof window.createDefaultMasterDataOverride === 'function') {
+    // =========================================================================
+    // 3. DEFAULT FACTORY
+    // =========================================================================
+
+    /**
+     * Creates a fresh default masterData structure via the schema layer.
+     * storage.js does NOT define the shape itself.
+     *
+     * @returns {Object}
+     */
+    function createDefaultMasterData() {
+        _requireTime();
+        _requireSchema();
         return window.createDefaultMasterDataOverride();
     }
 
-    var defaultYear = window.TIME_CONSTANTS.DEFAULT_YEAR;
+    // =========================================================================
+    // 4. VALIDATION HELPERS
+    // =========================================================================
 
-    return {
-        schemaVersion: STORAGE_CONFIG.SCHEMA_VERSION,
-        savedAt: new Date().toISOString(),
-        data: {
-            characters: [],
-            places: [],
-            ranks: [],
-            roles: [],
-            locationTypes: [],
-            governmentTypes: [],
-            nameLists: {},
-            cityNameParts: {},
-            governments: [],
-            households: [],
-            residences: [],
-            rankInheritanceRules: {},
-            disasters: [],
-            eventLog: [],
-            currentYear: defaultYear,
-            educationalInstitutions: [],
-            educationalSubjects: {},
-            subjectProgress: {}
-        }
-    };
-}
+    /**
+     * Returns true if the given value looks like a masterData envelope.
+     * @private
+     */
+    function _isMasterDataEnvelope(value) {
+        if (!value || typeof value !== 'object') return false;
+        if (!value.data || typeof value.data !== 'object') return false;
+        if (Array.isArray(value.data)) return false;
+        return true;
+    }
 
-// =============================================================================
-// 4. VALIDATION
-// =============================================================================
+    /**
+     * Returns true if the given value looks like a bare data blob (no
+     * envelope wrapper). This is the historical "legacy" form: current
+     * shape, missing outer wrapper. It is NOT an older schema version.
+     * @private
+     */
+    function _isEnvelopeLessDataBlob(value) {
+        if (!value || typeof value !== 'object') return false;
+        return Array.isArray(value.characters) && Array.isArray(value.places);
+    }
 
-/**
- * Returns true if the given value looks like a masterData envelope.
- * @private
- */
-function _isMasterDataEnvelope(value) {
-    if (!value || typeof value !== 'object') return false;
-    if (!value.data || typeof value.data !== 'object') return false;
-    if (Array.isArray(value.data)) return false;
-    return true;
-}
+    // =========================================================================
+    // 5. LOAD
+    // =========================================================================
 
-/**
- * Returns true if the given value looks like a legacy masterData blob
- * (data envelope without schemaVersion / savedAt).
- * @private
- */
-function _isLegacyDataBlob(value) {
-    if (!value || typeof value !== 'object') return false;
-    return Array.isArray(value.characters) && Array.isArray(value.places);
-}
+    /**
+     * Loads masterData from localStorage.
+     *
+     * Outcomes:
+     *   { ok: true, source: 'defaults' }  — no storage entry; defaults installed
+     *   { ok: true, source: 'storage' }   — valid data loaded
+     *   { ok: false, error: 'corrupt' }   — persisted data could not be parsed
+     *   { ok: false, error: 'schema' }    — persisted data shape was not recognized
+     *   { ok: false, error: 'version' }   — persisted schema version is newer
+     *                                        than this build supports (migration
+     *                                        cannot safely go backwards)
+     *
+     * On failure, window.masterData is NOT replaced. The caller decides how
+     * to recover.
+     *
+     * @returns {{ ok: boolean, source?: string, error?: string }}
+     */
+    function loadMasterData() {
+        if (_isLoading) return { ok: false, error: 'in-progress' };
+        _isLoading = true;
 
-// =============================================================================
-// 5. LOAD
-// =============================================================================
-
-/**
- * Loads masterData from localStorage.
- * 
- * Outcomes:
- *   { ok: true, source: 'defaults' }  — no storage entry; defaults installed
- *   { ok: true, source: 'storage' }   — valid data loaded
- *   { ok: false, error: 'corrupt' }   — persisted data could not be parsed
- *   { ok: false, error: 'schema' }    — persisted data shape was not recognized
- * 
- * On failure, window.masterData is NOT replaced. The caller decides how to
- * recover (e.g., offer to reset, or show a recovery UI).
- * 
- * @returns {{ ok: boolean, source?: string, error?: string }}
- */
-function loadMasterData() {
-    if (_isLoading) return { ok: false, error: 'in-progress' };
-    _isLoading = true;
-
-    try {
-        var stored = localStorage.getItem(STORAGE_CONFIG.STORAGE_KEY);
-
-        if (stored === null) {
-            window.masterData = createDefaultMasterData();
-            _isDirty = false;
-            return { ok: true, source: 'defaults' };
-        }
-
-        var parsed;
         try {
-            parsed = JSON.parse(stored);
-        } catch (parseError) {
-            console.error('storage.js: persisted data is not valid JSON:', parseError);
-            return { ok: false, error: 'corrupt' };
-        }
+            var stored = localStorage.getItem(STORAGE_CONFIG.STORAGE_KEY);
 
-        // Accept both envelope and legacy blob forms
-        var envelope;
-        if (_isMasterDataEnvelope(parsed)) {
-            envelope = parsed;
-        } else if (_isLegacyDataBlob(parsed)) {
-            envelope = {
-                schemaVersion: STORAGE_CONFIG.SCHEMA_VERSION,
-                savedAt: new Date().toISOString(),
-                data: parsed
-            };
-        } else if (_isMasterDataEnvelope({ data: parsed })) {
-            envelope = {
-                schemaVersion: STORAGE_CONFIG.SCHEMA_VERSION,
-                savedAt: new Date().toISOString(),
-                data: parsed
-            };
-        } else {
-            console.error('storage.js: persisted data has unrecognized shape');
-            return { ok: false, error: 'schema' };
-        }
+            if (stored === null) {
+                window.masterData = createDefaultMasterData();
+                _isDirty = false;
+                return { ok: true, source: 'defaults' };
+            }
 
-        // Normalize via schema layer if available
-        if (typeof window.normalizeMasterData === 'function') {
+            var parsed;
+            try {
+                parsed = JSON.parse(stored);
+            } catch (parseError) {
+                console.error('storage.js: persisted data is not valid JSON:', parseError);
+                return { ok: false, error: 'corrupt' };
+            }
+
+            // Identify the incoming shape. The schemaVersion we record is
+            // whatever the envelope declares (or SCHEMA_VERSION for bare
+            // blobs that predate envelope wrapping at the current schema).
+            // We do NOT relabel data whose declared version differs from
+            // the current version; that is migration's job.
+            var envelope;
+            if (_isMasterDataEnvelope(parsed)) {
+                envelope = parsed;
+            } else if (_isEnvelopeLessDataBlob(parsed)) {
+                // Envelope-less blob. Assume current schema (no way to know
+                // otherwise); the schema layer will validate fields during
+                // normalization. If your persisted data ever went through a
+                // versioned schema, the version belongs in the envelope.
+                envelope = {
+                    schemaVersion: window.STORAGE_SCHEMA_VERSION,
+                    data: parsed
+                };
+            } else if (_isMasterDataEnvelope({ data: parsed })) {
+                envelope = {
+                    schemaVersion: window.STORAGE_SCHEMA_VERSION,
+                    data: parsed
+                };
+            } else {
+                console.error('storage.js: persisted data has unrecognized shape');
+                return { ok: false, error: 'schema' };
+            }
+
+            // Reject data from a newer schema than this build understands.
+            // Migration to an older build is a downgrade, which storage does
+            // not attempt.
+            if (typeof envelope.schemaVersion === 'number'
+                && envelope.schemaVersion > window.STORAGE_SCHEMA_VERSION) {
+                console.error(
+                    'storage.js: persisted schema version ' +
+                    envelope.schemaVersion + ' is newer than this build ' +
+                    '(' + window.STORAGE_SCHEMA_VERSION + ')'
+                );
+                return { ok: false, error: 'version' };
+            }
+
+            // Normalize via the schema layer.
             envelope = window.normalizeMasterData(envelope);
+
+            window.masterData = envelope;
+            _isDirty = false;
+            return { ok: true, source: 'storage' };
+        } catch (e) {
+            console.error('storage.js: load failed:', e);
+            return { ok: false, error: 'unknown' };
+        } finally {
+            _isLoading = false;
+        }
+    }
+
+    // =========================================================================
+    // 6. SAVE — SYNCHRONOUS, TRUTHFUL
+    // =========================================================================
+
+    /**
+     * Performs the synchronous write to localStorage.
+     *
+     * Called by saveMasterData() and by the flush path. Sets savedAt
+     * metadata; does NOT modify schemaVersion (that is schema layer's
+     * concern).
+     *
+     * @private
+     * @returns {{ ok: boolean, error?: Error }}
+     */
+    function _performSave() {
+        try {
+            if (!window.masterData || !window.masterData.data) {
+                return { ok: false, error: new Error('masterData not initialized') };
+            }
+
+            window.masterData.savedAt = new Date().toISOString();
+
+            localStorage.setItem(
+                STORAGE_CONFIG.STORAGE_KEY,
+                JSON.stringify(window.masterData)
+            );
+            return { ok: true };
+        } catch (e) {
+            return { ok: false, error: e };
+        }
+    }
+
+    /**
+     * Saves masterData to localStorage immediately.
+     *
+     * Returns true ONLY if the write to localStorage actually succeeded.
+     * This is the canonical persistence operation. There is no debounced
+     * variant of this function; if you want to defer, use scheduleSave()
+     * and call flushPendingSave() when you need a truthful answer.
+     *
+     * @returns {boolean}
+     */
+    function saveMasterData() {
+        if (_saveTimeout !== null) {
+            clearTimeout(_saveTimeout);
+            _saveTimeout = null;
         }
 
-        window.masterData = envelope;
-        _isDirty = false;
-        return { ok: true, source: 'storage' };
-    } catch (e) {
-        console.error('storage.js: load failed:', e);
-        return { ok: false, error: 'unknown' };
-    } finally {
-        _isLoading = false;
-    }
-}
-
-// =============================================================================
-// 6. SAVE
-// =============================================================================
-
-/**
- * Performs the synchronous write to localStorage.
- * @private
- * @returns {{ ok: boolean, error?: Error }}
- */
-function _performSave() {
-    try {
-        if (!window.masterData || !window.masterData.data) {
-            return { ok: false, error: new Error('masterData not initialized') };
-        }
-
-        window.masterData.schemaVersion = STORAGE_CONFIG.SCHEMA_VERSION;
-        window.masterData.savedAt = new Date().toISOString();
-
-        localStorage.setItem(
-            STORAGE_CONFIG.STORAGE_KEY,
-            JSON.stringify(window.masterData)
-        );
-        return { ok: true };
-    } catch (e) {
-        return { ok: false, error: e };
-    }
-}
-
-/**
- * Saves masterData to localStorage.
- * 
- * @param {boolean} [immediate] - if true, bypass debounce
- * @returns {boolean} true only if the save actually succeeded
- */
-function saveMasterData(immediate) {
-    immediate = immediate === true;
-
-    if (_saveTimeout !== null) {
-        clearTimeout(_saveTimeout);
-        _saveTimeout = null;
-    }
-
-    if (immediate) {
         if (_isSaving) {
-            // Should not happen with localStorage (synchronous), but guard
-            // against reentrancy.
+            // localStorage.setItem is synchronous, so this should be
+            // unreachable. Guard against reentrancy anyway.
             return false;
         }
         _isSaving = true;
@@ -282,231 +339,282 @@ function saveMasterData(immediate) {
         return false;
     }
 
-    // Debounced path — schedule one save
-    _saveTimeout = setTimeout(function() {
-        _saveTimeout = null;
-        saveMasterData(true);
-    }, STORAGE_CONFIG.SAVE_DEBOUNCE_MS);
-
-    return true;
-}
-
-/**
- * Marks the current in-memory data as having unsaved changes.
- * Called by mutation boundaries before scheduling a save.
- * 
- * Also useful for cross-tab conflict detection.
- */
-function markDataDirty() {
-    _isDirty = true;
-}
-
-/**
- * Returns true if there are unsaved changes.
- * @returns {boolean}
- */
-function hasUnsavedChanges() {
-    return _isDirty === true;
-}
-
-// =============================================================================
-// 7. RELOAD
-// =============================================================================
-
-/**
- * Reloads data from localStorage, discarding in-memory changes.
- * 
- * @param {boolean} [force] - if true, ignores unsaved-changes guard
- * @returns {{ ok: boolean, source?: string, error?: string }}
- */
-function reloadMasterData(force) {
-    if (_forceReloading) return { ok: false, error: 'in-progress' };
-    if (_isDirty && force !== true) {
-        return { ok: false, error: 'unsaved-changes' };
+    /**
+     * Schedules a debounced save. Does NOT claim the save succeeded.
+     * The eventual result is observable via hasUnsavedChanges().
+     */
+    function scheduleSave() {
+        if (_saveTimeout !== null) clearTimeout(_saveTimeout);
+        _saveTimeout = setTimeout(function() {
+            _saveTimeout = null;
+            saveMasterData();
+        }, STORAGE_CONFIG.SAVE_DEBOUNCE_MS);
     }
 
-    _forceReloading = true;
-    try {
-        return loadMasterData();
-    } finally {
-        _forceReloading = false;
+    /**
+     * Flushes any pending debounced save synchronously and reports whether
+     * it succeeded. If no save was pending, returns the current dirty
+     * state (true = persisted, false = unsaved changes remain).
+     *
+     * @returns {boolean}
+     */
+    function flushPendingSave() {
+        if (_saveTimeout === null) {
+            return !_isDirty;
+        }
+        return saveMasterData();
     }
-}
 
-/**
- * @deprecated Use reloadMasterData instead.
- */
-function forceReloadData() {
-    return reloadMasterData(true);
-}
+    /**
+     * Marks the current in-memory data as having unsaved changes.
+     * Called by mutation boundaries before scheduling a save.
+     */
+    function markDataDirty() {
+        _isDirty = true;
+    }
 
-// =============================================================================
-// 8. IMPORT
-// =============================================================================
+    /**
+     * Returns true if there are unsaved changes.
+     * @returns {boolean}
+     */
+    function hasUnsavedChanges() {
+        return _isDirty === true;
+    }
 
-/**
- * Opens a file picker, reads JSON, replaces masterData, saves.
- * Does NOT report success if the save failed.
- * 
- * @param {Function} [onComplete] - callback(result) where result is:
- *   { ok: true, charCount: number }
- *   { ok: false, error: string, message: string }
- */
-function importData(onComplete) {
-    onComplete = (typeof onComplete === 'function') ? onComplete : function() {};
+    // =========================================================================
+    // 7. RELOAD
+    // =========================================================================
 
-    var input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'application/json';
-
-    input.onchange = function(e) {
-        var file = e.target.files && e.target.files[0];
-        if (!file) {
-            onComplete({ ok: false, error: 'no-file', message: 'No file selected' });
-            return;
+    /**
+     * Reloads data from localStorage, discarding in-memory changes.
+     *
+     * @param {boolean} [force] - if true, ignores unsaved-changes guard
+     * @returns {{ ok: boolean, source?: string, error?: string }}
+     */
+    function reloadMasterData(force) {
+        if (_forceReloading) return { ok: false, error: 'in-progress' };
+        if (_isDirty && force !== true) {
+            return { ok: false, error: 'unsaved-changes' };
         }
 
-        var reader = new FileReader();
+        _forceReloading = true;
+        try {
+            return loadMasterData();
+        } finally {
+            _forceReloading = false;
+        }
+    }
 
-        reader.onload = function(ev) {
-            var parsed;
-            try {
-                parsed = JSON.parse(ev.target.result);
-            } catch (err) {
-                onComplete({ ok: false, error: 'invalid-json', message: err.message });
+    /**
+     * @deprecated Use reloadMasterData(true) instead.
+     */
+    function forceReloadData() {
+        return reloadMasterData(true);
+    }
+
+    // =========================================================================
+    // 8. IMPORT
+    // =========================================================================
+
+    /**
+     * Opens a file picker, reads JSON, validates, replaces masterData,
+     * saves.
+     *
+     * Pipeline:
+     *   parse → recognize format → normalize → validate → install → save
+     *
+     * Does NOT report success if validation or save failed. On save
+     * failure, the prior in-memory state is restored.
+     *
+     * @param {Function} [onComplete] - callback(result):
+     *   { ok: true, charCount }
+     *   { ok: false, error, message }
+     */
+    function importData(onComplete) {
+        onComplete = (typeof onComplete === 'function') ? onComplete : function() {};
+
+        var input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'application/json';
+
+        input.onchange = function(e) {
+            var file = e.target.files && e.target.files[0];
+            if (!file) {
+                onComplete({ ok: false, error: 'no-file', message: 'No file selected' });
                 return;
             }
 
-            // Determine source data shape
-            var sourceData = null;
-            if (parsed && parsed.type === 'master' && parsed.data) {
-                sourceData = parsed.data;
-            } else if (_isMasterDataEnvelope(parsed)) {
-                sourceData = parsed.data;
-            } else if (_isLegacyDataBlob(parsed)) {
-                sourceData = parsed;
-            }
+            var reader = new FileReader();
 
-            if (!sourceData || typeof sourceData !== 'object' || Array.isArray(sourceData)) {
-                onComplete({
-                    ok: false,
-                    error: 'unknown-format',
-                    message: 'Unrecognized import format'
-                });
-                return;
-            }
-
-            // Build envelope
-            var envelope = {
-                schemaVersion: STORAGE_CONFIG.SCHEMA_VERSION,
-                savedAt: new Date().toISOString(),
-                data: sourceData
+            reader.onload = function(ev) {
+                // Wrap the whole pipeline in an error boundary so
+                // onComplete is always called.
+                var result;
+                try {
+                    result = _processImport(ev.target.result);
+                } catch (err) {
+                    console.error('storage.js: import pipeline threw:', err);
+                    result = {
+                        ok: false,
+                        error: 'processing-failed',
+                        message: err && err.message ? err.message : String(err)
+                    };
+                }
+                onComplete(result);
             };
 
-            // Normalize via schema layer if available
-            if (typeof window.normalizeMasterData === 'function') {
-                envelope = window.normalizeMasterData(envelope);
-            }
-
-            // Capture prior state so we can restore on save failure
-            var prior = window.masterData;
-
-            // Install imported data, then attempt save
-            window.masterData = envelope;
-            _isDirty = true;
-
-            var saveOk = saveMasterData(true);
-
-            if (!saveOk) {
-                // Save failed — restore prior in-memory state so we don't
-                // claim success on data that won't persist.
-                window.masterData = prior;
-                _isDirty = false;
+            reader.onerror = function() {
                 onComplete({
                     ok: false,
-                    error: 'save-failed',
-                    message: 'Imported data could not be saved to storage'
+                    error: 'read-failed',
+                    message: 'Error reading file'
                 });
-                return;
-            }
+            };
 
-            var charCount = Array.isArray(envelope.data.characters)
-                ? envelope.data.characters.length
-                : 0;
-
-            onComplete({ ok: true, charCount: charCount });
+            reader.readAsText(file);
         };
 
-        reader.onerror = function() {
-            onComplete({
+        input.click();
+    }
+
+    /**
+     * @private
+     * The import pipeline: parse, recognize, normalize, validate, install, save.
+     * Returns a result object suitable for onComplete.
+     */
+    function _processImport(text) {
+        var parsed;
+        try {
+            parsed = JSON.parse(text);
+        } catch (err) {
+            return { ok: false, error: 'invalid-json', message: err.message };
+        }
+
+        // Recognize format.
+        var sourceData = null;
+        if (parsed && parsed.type === 'master' && parsed.data) {
+            sourceData = parsed.data;
+        } else if (_isMasterDataEnvelope(parsed)) {
+            sourceData = parsed.data;
+        } else if (_isEnvelopeLessDataBlob(parsed)) {
+            sourceData = parsed;
+        }
+
+        if (!sourceData || typeof sourceData !== 'object' || Array.isArray(sourceData)) {
+            return {
                 ok: false,
-                error: 'read-failed',
-                message: 'Error reading file'
-            });
+                error: 'unknown-format',
+                message: 'Unrecognized import format'
+            };
+        }
+
+        // Build envelope and normalize.
+        var envelope = {
+            schemaVersion: window.STORAGE_SCHEMA_VERSION,
+            savedAt: new Date().toISOString(),
+            data: sourceData
         };
+        envelope = window.normalizeMasterData(envelope);
 
-        reader.readAsText(file);
-    };
+        // Canonical validation before install.
+        // If validation.js isn't loaded, reject rather than installing
+        // unvalidated data.
+        if (typeof window.validateImportData === 'function') {
+            var validation = window.validateImportData(envelope);
+            if (!validation.isValid) {
+                return {
+                    ok: false,
+                    error: 'validation-failed',
+                    message: 'Import validation failed: ' +
+                        validation.errors.slice(0, 5).join('; ') +
+                        (validation.errors.length > 5 ? ' (and more)' : '')
+                };
+            }
+        } else {
+            return {
+                ok: false,
+                error: 'validator-missing',
+                message: 'validation.js must be loaded to import data'
+            };
+        }
 
-    input.click();
-}
-
-// =============================================================================
-// 9. RESET
-// =============================================================================
-
-/**
- * Resets all data to defaults and removes the localStorage entry.
- * Returns false if the save failed; the caller can show the appropriate UI.
- * 
- * @returns {{ ok: boolean, error?: string }}
- */
-function resetMasterData() {
-    try {
+        // Install candidate and attempt save.
         var prior = window.masterData;
-        window.masterData = createDefaultMasterData();
+        window.masterData = envelope;
         _isDirty = true;
 
-        // Remove persisted entry first
-        try {
-            localStorage.removeItem(STORAGE_CONFIG.STORAGE_KEY);
-        } catch (e) {
-            // Ignore — save below will attempt to write defaults
-        }
+        var saveOk = saveMasterData();
 
-        var saved = saveMasterData(true);
-        if (!saved) {
-            // Restore prior in-memory state to keep consistency
+        if (!saveOk) {
             window.masterData = prior;
             _isDirty = false;
-            return { ok: false, error: 'save-failed' };
+            return {
+                ok: false,
+                error: 'save-failed',
+                message: 'Imported data could not be saved to storage'
+            };
         }
-        return { ok: true };
-    } catch (e) {
-        console.error('storage.js: reset failed:', e);
-        return { ok: false, error: 'unknown' };
+
+        var charCount = Array.isArray(envelope.data.characters)
+            ? envelope.data.characters.length
+            : 0;
+
+        return { ok: true, charCount: charCount };
     }
-}
 
-// =============================================================================
-// 10. CROSS-TAB SYNC
-// =============================================================================
+    // =========================================================================
+    // 9. RESET
+    // =========================================================================
 
-function initCrossTabSync() {
-    if (_storageListenerAdded) return;
-    _storageListenerAdded = true;
+    /**
+     * Resets all data to defaults and persists.
+     *
+     * Does NOT delete the storage key before saving. A successful setItem
+     * of the default envelope replaces the existing value atomically. If
+     * the save fails, the previously persisted value remains intact and
+     * the prior in-memory state is restored.
+     *
+     * @returns {{ ok: boolean, error?: string }}
+     */
+    function resetMasterData() {
+        var prior = window.masterData;
 
-    window.addEventListener('storage', function(e) {
-        if (e.key !== STORAGE_CONFIG.STORAGE_KEY) return;
-        if (_syncing) return;
+        try {
+            window.masterData = createDefaultMasterData();
+            _isDirty = true;
 
-        _syncing = true;
-        if (_syncTimeout !== null) clearTimeout(_syncTimeout);
+            var saved = saveMasterData();
+            if (!saved) {
+                window.masterData = prior;
+                _isDirty = false;
+                return { ok: false, error: 'save-failed' };
+            }
+            return { ok: true };
+        } catch (e) {
+            console.error('storage.js: reset failed:', e);
+            window.masterData = prior;
+            _isDirty = false;
+            return { ok: false, error: 'unknown' };
+        }
+    }
 
-        _syncTimeout = setTimeout(function() {
-            _syncTimeout = null;
-            try {
-                // Do not clobber unsaved local changes
+    // =========================================================================
+    // 10. CROSS-TAB SYNC
+    // =========================================================================
+
+    function initCrossTabSync() {
+        if (_storageListenerAdded) return;
+        _storageListenerAdded = true;
+
+        window.addEventListener('storage', function(e) {
+            if (e.key !== STORAGE_CONFIG.STORAGE_KEY) return;
+
+            if (_syncTimeout !== null) clearTimeout(_syncTimeout);
+
+            _syncTimeout = setTimeout(function() {
+                _syncTimeout = null;
+
+                // Do not clobber unsaved local changes.
                 if (_isDirty) {
                     console.warn(
                         'storage.js: another tab updated storage while this tab ' +
@@ -526,47 +634,50 @@ function initCrossTabSync() {
                 } else {
                     console.warn('storage.js: cross-tab reload failed:', result.error);
                 }
-            } finally {
-                _syncing = false;
-            }
-        }, STORAGE_CONFIG.CROSS_TAB_SYNC_MS);
-    });
-}
-
-if (typeof window._crossTabSyncInitialized === 'undefined') {
-    window._crossTabSyncInitialized = true;
-    initCrossTabSync();
-}
-
-// =============================================================================
-// 11. AUTO-LOAD
-// =============================================================================
-
-if (typeof window._storageInitialized === 'undefined') {
-    window._storageInitialized = true;
-    try {
-        loadMasterData();
-    } catch (e) {
-        console.error('storage.js: initial load failed:', e);
+            }, STORAGE_CONFIG.CROSS_TAB_SYNC_MS);
+        });
     }
-}
 
-// =============================================================================
-// 12. EXPORTS
-// =============================================================================
+    // =========================================================================
+    // 11. INITIALIZATION
+    // =========================================================================
+    //
+    // Dependencies are required. If they aren't loaded, we throw. The
+    // bootstrap layer is responsible for ensuring script order; a missing
+    // dependency here is a load-order bug, not a recoverable condition.
 
-window.STORAGE_CONFIG = STORAGE_CONFIG;
+    function initialize() {
+        _requireAll();
+        loadMasterData();
+        initCrossTabSync();
+    }
 
-window.createDefaultMasterData = createDefaultMasterData;
+    // =========================================================================
+    // 12. EXPORTS
+    // =========================================================================
 
-window.loadMasterData = loadMasterData;
-window.reloadMasterData = reloadMasterData;
-window.forceReloadData = forceReloadData; // deprecated alias
-window.saveMasterData = saveMasterData;
-window.markDataDirty = markDataDirty;
-window.hasUnsavedChanges = hasUnsavedChanges;
-window.importData = importData;
-window.resetMasterData = resetMasterData;
+    window.STORAGE_CONFIG = STORAGE_CONFIG;
 
-// window.CONFIG was previously set as an alias. Removed.
-// Callers should use window.STORAGE_CONFIG if they need storage config.
+    window.createDefaultMasterData = createDefaultMasterData;
+
+    // Load / save
+    window.loadMasterData = loadMasterData;
+    window.reloadMasterData = reloadMasterData;
+    window.forceReloadData = forceReloadData; // deprecated alias
+    window.saveMasterData = saveMasterData;   // synchronous, truthful
+    window.scheduleSave = scheduleSave;       // debounced, non-claiming
+    window.flushPendingSave = flushPendingSave;
+
+    // Dirty state
+    window.markDataDirty = markDataDirty;
+    window.hasUnsavedChanges = hasUnsavedChanges;
+
+    // Import / reset
+    window.importData = importData;
+    window.resetMasterData = resetMasterData;
+
+    // Explicit initialization entry point. Callers (bootstrap) should
+    // invoke this after all dependencies are loaded.
+    window.initializeStorage = initialize;
+
+})();

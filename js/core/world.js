@@ -2,38 +2,66 @@
  * =============================================================================
  * STILL WATERS - WORLD SYSTEM (world.js) - PURE QUERY LAYER
  * =============================================================================
- * 
+ *
  * LOCATION: js/core/world.js
- * 
+ *
  * PURE read-only queries over canonical location data. Uses ONLY accessors.
- * 
+ *
  * SCOPE:
  *   - Location hierarchy queries (parents, children, ancestors)
  *   - Location type / priority resolution
+ *   - Location scope resolution (country, district)
  *   - Current-location resolution from character.moves
  *   - Character grouping by location (using stable IDs, not display strings)
- * 
+ *
  * OUT OF SCOPE:
  *   - Display strings ("Unknown", "Other Locations", breadcrumbs with arrows)
  *     → see formatting.js / location-presentation.js
  *   - Mutation of moves → character-commands / location-movement
  *   - Selected-location UI state → SettlementState / LocationState
- * 
+ *   - Cycle repair → integrity.js
+ *
  * SEMANTIC RULES:
- *   - Missing/invalid IDs return null.
+ *   - Missing/invalid IDs return null (singular) or [] (collection).
  *   - Priority 0 is valid.
  *   - Recursion is bounded by Set-based cycle detection, not magic depths.
+ *     A cycle cannot cause the starting place to appear in its own
+ *     descendant result.
  *   - Grouping keys are stable location IDs, not display strings.
  *   - Current-location resolution is deterministic; ties break by first
  *     record in the moves array.
- * 
+ *   - This module does NOT repair malformed hierarchies. Integrity reports
+ *     cycles; this module refuses to traverse them.
+ *
+ * DANGING LOCATION REFERENCES:
+ *   getCurrentLocationId() may return an ID that no longer resolves to a
+ *   place. This is intentional: the ID reflects what the character record
+ *   says, not what the world currently contains. getCurrentPlace() returns
+ *   null when the reference is dangling. Callers who need to distinguish
+ *   "no location recorded" from "recorded location missing" should use the
+ *   two functions separately.
+ *
+ *   An explicit character.currentLocationId override takes precedence even
+ *   when its target is missing. See getCurrentLocationId().
+ *
+ * HIERARCHY SCOPE vs PRIORITY:
+ *   Location types may declare a `locationScope` field ('country',
+ *   'region', 'district', 'locality', or similar) that denotes their
+ *   semantic position in a hierarchy. Separately, they may declare
+ *   `priority` for sort ordering. This module uses `locationScope` when it
+ *   needs semantic hierarchy levels and `priority` when it needs sort
+ *   order. Do not conflate the two.
+ *
+ *   Types without `locationScope` are treated as scope-less: they can
+ *   still be part of a hierarchy (via parentId), but they are not
+ *   recognized as a country, district, etc.
+ *
  * DEPENDENCIES (all REQUIRED):
  *   - accessors.js: getPlaces, getPlaceById, getLocationTypeById, getCharacters
- *   - time.js: isValidYear (for move year validation) — optional if you
- *     don't require strict year validation here
- * 
+ *   - time.js:      isValidYear
+ *
  * ICON POLICY: No emojis. No icons.
- * 
+ *
  * =============================================================================
  */
 
@@ -62,6 +90,19 @@
         }
     }
 
+    function _requireTime() {
+        if (typeof window.isValidYear !== 'function') {
+            throw new Error(
+                'world.js: time.js must load first (isValidYear missing).'
+            );
+        }
+    }
+
+    function _requireAll() {
+        _requireAccessors();
+        _requireTime();
+    }
+
     // =========================================================================
     // 1. INTERNAL WRAPPERS
     // =========================================================================
@@ -86,10 +127,17 @@
         return window.getCharacters();
     }
 
+    function _hasId(id) {
+        return typeof id === 'string' && id.length > 0;
+    }
+
+    function _isMissing(v) {
+        return v === undefined || v === null;
+    }
+
     /**
      * Returns a numeric priority for a location type, or null if the type
-     * is missing or has no valid priority.
-     * Preserves explicit 0.
+     * is missing or has no valid priority. Preserves explicit 0.
      * @private
      */
     function _typePriority(type) {
@@ -100,30 +148,32 @@
     }
 
     /**
-     * Sort comparator mapping null priorities to the end.
+     * Returns the semantic scope string for a location type, or null if
+     * the type has no declared scope.
      * @private
      */
-    function _compareByPriority(a, b) {
-        var pa = (a === null || a === undefined) ? Infinity : a;
-        var pb = (b === null || b === undefined) ? Infinity : b;
-        return pa - pb;
+    function _typeScope(type) {
+        if (!type) return null;
+        var scope = type.locationScope;
+        if (typeof scope === 'string' && scope.length > 0) return scope;
+        return null;
     }
 
     // =========================================================================
-    // 2. LOCATION TYPE / PRIORITY QUERIES
+    // 2. LOCATION TYPE QUERIES
     // =========================================================================
 
     /**
      * Gets the priority of a location type by ID.
-     * Returns null for missing type or missing priority.
-     * 
+     * Returns null for missing type or missing priority. Priority 0 is
+     * preserved as a valid value.
+     *
      * @param {string} typeId
      * @returns {number|null}
      */
     function getLocationTypePriority(typeId) {
-        if (typeof typeId !== 'string' || typeId.length === 0) return null;
-        var type = _getLocationTypeById(typeId);
-        return _typePriority(type);
+        if (!_hasId(typeId)) return null;
+        return _typePriority(_getLocationTypeById(typeId));
     }
 
     /**
@@ -135,53 +185,88 @@
         return getLocationTypePriority(place.typeId);
     }
 
+    /**
+     * Gets the semantic scope of a location type by ID.
+     * Returns null for missing type or missing scope.
+     *
+     * @param {string} typeId
+     * @returns {string|null}
+     */
+    function getLocationTypeScope(typeId) {
+        if (!_hasId(typeId)) return null;
+        return _typeScope(_getLocationTypeById(typeId));
+    }
+
+    /**
+     * Gets the scope of a place.
+     */
+    function getPlaceScope(place) {
+        if (!place) return null;
+        return getLocationTypeScope(place.typeId);
+    }
+
     // =========================================================================
     // 3. HIERARCHY QUERIES
     // =========================================================================
 
     /**
-     * Gets direct children of a place.
-     * If `recursive`, walks the full subtree using an iterative stack with
-     * a visited set (no magic depth limit).
-     * 
+     * Gets direct children of a place, or the full subtree if recursive.
+     *
+     * Cycle safety:
+     *   - The starting place never appears in its own result.
+     *   - Each descendant appears at most once.
+     *   - Corrupted cycles are not repaired; they simply stop contributing
+     *     new descendants once every reachable node has been visited.
+     *
      * @param {string} parentId
      * @param {boolean} [recursive]
      * @returns {Array}
      */
     function getChildPlaces(parentId, recursive) {
-        if (typeof parentId !== 'string' || parentId.length === 0) return [];
+        if (!_hasId(parentId)) return [];
         recursive = recursive === true;
 
         var places = _getPlaces();
-        var result = [];
 
         if (!recursive) {
+            var direct = [];
             for (var i = 0; i < places.length; i++) {
                 if (places[i].parentId === parentId) {
-                    result.push(places[i]);
+                    direct.push(places[i]);
                 }
             }
-            return result;
+            return direct;
         }
 
-        // Recursive: iterative traversal with cycle guard
+        // Recursive traversal. The starting place is pre-marked as
+        // "already accounted for" so a cycle cannot insert it into its
+        // own descendant list.
         var visited = new Set();
+        visited.add(parentId);
+
+        var resultIds = new Set();
+        var result = [];
         var stack = [parentId];
 
         while (stack.length > 0) {
             var currentId = stack.pop();
-            if (visited.has(currentId)) continue;
-            visited.add(currentId);
 
             for (var j = 0; j < places.length; j++) {
-                if (places[j].parentId === currentId) {
-                    result.push(places[j]);
-                    if (!visited.has(places[j].id)) {
-                        stack.push(places[j].id);
-                    }
+                var child = places[j];
+                if (child.parentId !== currentId) continue;
+                if (!_hasId(child.id)) continue;
+                if (resultIds.has(child.id)) continue;
+
+                resultIds.add(child.id);
+                result.push(child);
+
+                if (!visited.has(child.id)) {
+                    visited.add(child.id);
+                    stack.push(child.id);
                 }
             }
         }
+
         return result;
     }
 
@@ -194,7 +279,7 @@
         var result = [];
         for (var i = 0; i < places.length; i++) {
             var p = places[i];
-            if (p.parentId === null || p.parentId === undefined) {
+            if (_isMissing(p.parentId)) {
                 result.push(p);
             }
         }
@@ -202,7 +287,7 @@
     }
 
     /**
-     * Gets places by priority.
+     * Gets places whose location type has the given priority.
      * @param {number} priority
      * @returns {Array}
      */
@@ -218,6 +303,23 @@
         return result;
     }
 
+    /**
+     * Gets places whose location type has the given scope.
+     * @param {string} scope
+     * @returns {Array}
+     */
+    function getPlacesByScope(scope) {
+        if (typeof scope !== 'string' || scope.length === 0) return [];
+        var places = _getPlaces();
+        var result = [];
+        for (var i = 0; i < places.length; i++) {
+            if (getPlaceScope(places[i]) === scope) {
+                result.push(places[i]);
+            }
+        }
+        return result;
+    }
+
     // =========================================================================
     // 4. PATH QUERIES
     // =========================================================================
@@ -225,23 +327,29 @@
     /**
      * Gets the full parent chain for a place, ordered root → leaf.
      * Includes the place itself.
-     * 
-     * Cycle guard uses a Set; no arbitrary depth limit.
-     * 
+     *
+     * Returns [] when `place` is missing or has no valid ID.
+     *
+     * Cycle guard uses a Set; no arbitrary depth limit. If a cycle is
+     * encountered, the chain stops at the first repeated ID.
+     *
      * @param {Object} place
      * @returns {Array}
      */
     function getParentChain(place) {
-        if (!place) return [];
+        if (!place || !_hasId(place.id)) return [];
+
         var chain = [];
         var current = place;
         var seen = new Set();
 
         while (current) {
+            if (!_hasId(current.id)) break;
             if (seen.has(current.id)) break;
             seen.add(current.id);
             chain.unshift(current);
-            if (!current.parentId) break;
+
+            if (_isMissing(current.parentId)) break;
             current = _getPlaceById(current.parentId);
         }
         return chain;
@@ -251,55 +359,57 @@
      * True if `possibleAncestor` appears in the parent chain of `place`.
      */
     function isAncestorOf(possibleAncestor, place) {
-        if (!possibleAncestor || !place) return false;
+        if (!possibleAncestor || !_hasId(possibleAncestor.id)) return false;
+        if (!place || !_hasId(place.id)) return false;
         if (possibleAncestor.id === place.id) return false;
 
         var current = place;
         var seen = new Set();
-        while (current) {
+        while (current && _hasId(current.id)) {
             if (seen.has(current.id)) break;
             seen.add(current.id);
+
             if (current.parentId === possibleAncestor.id) return true;
+
+            if (_isMissing(current.parentId)) break;
             current = _getPlaceById(current.parentId);
         }
         return false;
     }
 
     /**
-     * Gets the country-level ancestor of a place.
-     * 
-     * Resolution:
-     *   1. Highest ancestor with location type priority === 1
-     *   2. Otherwise the topmost ancestor
-     * 
-     * Returns the place object or null. Presentation decides how to display
-     * a missing country.
-     * 
+     * Gets the country-level ancestor of a place, if any.
+     *
+     * Resolution: highest ancestor whose location type's scope is
+     * 'country'. Returns null when no such ancestor exists.
+     *
+     * This module does NOT substitute the root place for a missing
+     * country. Callers who want "country or topmost ancestor" should
+     * compose that themselves with getParentChain()[0].
+     *
      * @param {Object} place
      * @returns {Object|null}
      */
     function getLocationCountry(place) {
         if (!place) return null;
         var chain = getParentChain(place);
-        if (chain.length === 0) return null;
-
         for (var i = 0; i < chain.length; i++) {
-            if (getLocationTypePriority(chain[i].typeId) === 1) {
+            if (getPlaceScope(chain[i]) === 'country') {
                 return chain[i];
             }
         }
-        return chain[0];
+        return null;
     }
 
     /**
      * Gets the district-level ancestor of a place, if any.
-     * Returns the place object or null.
+     * Returns null when no such ancestor exists.
      */
     function getLocationDistrict(place) {
         if (!place) return null;
         var chain = getParentChain(place);
         for (var i = 0; i < chain.length; i++) {
-            if (getLocationTypePriority(chain[i].typeId) === 2) {
+            if (getPlaceScope(chain[i]) === 'district') {
                 return chain[i];
             }
         }
@@ -309,36 +419,38 @@
     // =========================================================================
     // 5. CURRENT-LOCATION RESOLUTION
     // =========================================================================
-    // 
-    // A character's current location is resolved in this order:
-    //   1. `character.currentLocationId` (explicit override)
-    //   2. Latest valid move in `character.moves` (highest year; ties break
+    //
+    // See DANGING LOCATION REFERENCES in the file header.
+    //
+    // A character's current location ID is resolved in this order:
+    //   1. character.currentLocationId (explicit override)
+    //   2. Latest valid move in character.moves (highest year; ties break
     //      by first-encountered in array order)
-    //   3. `character.birthplaceId` (documented fallback)
-    // 
-    // Moves with invalid years (non-integer, non-finite, out of range) are
-    // skipped. If all moves have invalid years, falls back to birthplace.
-    // 
-    // If you later add an explicit ordering field to moves, replace the
-    // tie-break rule accordingly.
-    // =========================================================================
+    //   3. character.birthplaceId
+    //
+    // Moves with invalid years are skipped. If all moves have invalid
+    // years, resolution falls back to birthplaceId.
+    //
+    // The returned ID may be dangling: it may not correspond to a place
+    // currently in the world. Use getCurrentPlace() to resolve.
 
     function _isValidMoveYear(year) {
-        if (typeof window.isValidYear === 'function') {
-            return window.isValidYear(year);
-        }
-        return typeof year === 'number' && Number.isFinite(year) && Number.isInteger(year);
+        _requireTime();
+        return window.isValidYear(year);
     }
 
     /**
-     * Gets the current location ID for a character.
+     * Gets the current location ID for a character. The ID may be dangling.
+     * Returns null when no location can be resolved from the character
+     * record.
+     *
      * @param {Object} character
      * @returns {string|null}
      */
     function getCurrentLocationId(character) {
         if (!character) return null;
 
-        if (typeof character.currentLocationId === 'string' && character.currentLocationId.length > 0) {
+        if (_hasId(character.currentLocationId)) {
             return character.currentLocationId;
         }
 
@@ -348,9 +460,7 @@
 
             for (var i = 0; i < character.moves.length; i++) {
                 var move = character.moves[i];
-                if (!move || typeof move.locationId !== 'string' || move.locationId.length === 0) {
-                    continue;
-                }
+                if (!move || !_hasId(move.locationId)) continue;
                 if (!_isValidMoveYear(move.year)) continue;
 
                 if (move.year > bestYear) {
@@ -363,7 +473,7 @@
             if (best) return best.locationId;
         }
 
-        if (typeof character.birthplaceId === 'string' && character.birthplaceId.length > 0) {
+        if (_hasId(character.birthplaceId)) {
             return character.birthplaceId;
         }
 
@@ -372,12 +482,9 @@
 
     /**
      * Gets the current location place object for a character.
-     * Returns null if no location can be resolved.
-     * 
-     * Callers who want a display name use:
-     *   var place = getCurrentPlace(character);
-     *   var label = place ? place.displayName : 'Unknown';
-     * 
+     * Returns null if no location can be resolved, or if the resolved
+     * ID is dangling.
+     *
      * @param {Object} character
      * @returns {Object|null}
      */
@@ -388,12 +495,15 @@
     }
 
     /**
-     * Gets a character's location path as an array of
-     * { id, name, priority, typeId }, ordered root → leaf.
-     * Returns [] if no location can be resolved.
-     * 
-     * `name` may be undefined if a place has no displayName. Callers who
-     * need a display label should compose one.
+     * Gets a character's location path as an array of stable structural
+     * fields, ordered root → leaf. Returns [] if no location can be
+     * resolved or the resolved reference is dangling.
+     *
+     * Each entry contains:
+     *   { id, typeId, priority, scope }
+     *
+     * The presentation layer is responsible for turning these into labels
+     * (display names, breadcrumbs, etc.).
      */
     function getCharacterLocationPath(character) {
         var place = getCurrentPlace(character);
@@ -405,9 +515,9 @@
             var p = chain[i];
             path.push({
                 id: p.id,
-                name: p.displayName,
+                typeId: p.typeId,
                 priority: getLocationTypePriority(p.typeId),
-                typeId: p.typeId
+                scope: getLocationTypeScope(p.typeId)
             });
         }
         return path;
@@ -415,25 +525,26 @@
 
     /**
      * Groups characters by the ID of their resolved current place.
-     * 
+     *
      * Returns an array of:
      *   {
-     *     locationId: string,
-     *     place: Object,
+     *     locationId: string|null,
+     *     place: Object|null,
      *     characters: Array
      *   }
-     * 
-     * Characters with no resolvable location are returned in a group with
-     * locationId === null and place === null.
-     * 
-     * The groups are ordered by location hierarchy path (root → leaf) using
-     * display names as a secondary sort within equal-priority groups.
-     * 
-     * Presentation callers who want "Kingdom → Duchy" strings should
-     * compose them from place objects themselves.
-     * 
+     *
+     * Characters with no resolvable location are returned in a single
+     * group with locationId === null and place === null.
+     *
+     * GROUPS ARE ORDERED BY:
+     *   1. Parent-chain length (shallow before deep)
+     *   2. Ancestor ID path, lexicographic (root → leaf, joined by '/')
+     *
+     * Stable IDs are used for ordering. Display names are not consulted;
+     * renaming a location does not change group order.
+     *
      * @param {boolean} [includeDeceased]
-     * @returns {Array<{ locationId: string|null, place: Object|null, characters: Array }>}
+     * @returns {Array}
      */
     function getCharactersGroupedByLocation(includeDeceased) {
         includeDeceased = includeDeceased === true;
@@ -467,17 +578,23 @@
             });
         });
 
-        // Sort groups by their parent-chain length (shallow first), then by
-        // displayName for determinism.
+        // Deterministic sort key: the joined ancestor ID path (root → leaf).
+        function pathKey(place) {
+            var chain = getParentChain(place);
+            var ids = [];
+            for (var k = 0; k < chain.length; k++) ids.push(chain[k].id);
+            return ids.join('/');
+        }
+
         groups.sort(function(a, b) {
             var chainA = getParentChain(a.place);
             var chainB = getParentChain(b.place);
             if (chainA.length !== chainB.length) {
                 return chainA.length - chainB.length;
             }
-            var na = (a.place.displayName || '');
-            var nb = (b.place.displayName || '');
-            return na.localeCompare(nb);
+            var ka = pathKey(a.place);
+            var kb = pathKey(b.place);
+            return ka < kb ? -1 : (ka > kb ? 1 : 0);
         });
 
         if (ungrouped.length > 0) {
@@ -497,10 +614,13 @@
 
     window.getLocationTypePriority = getLocationTypePriority;
     window.getPlacePriority = getPlacePriority;
+    window.getLocationTypeScope = getLocationTypeScope;
+    window.getPlaceScope = getPlaceScope;
 
     window.getChildPlaces = getChildPlaces;
     window.getTopLevelPlaces = getTopLevelPlaces;
     window.getPlacesByPriority = getPlacesByPriority;
+    window.getPlacesByScope = getPlacesByScope;
 
     window.getParentChain = getParentChain;
     window.isAncestorOf = isAncestorOf;

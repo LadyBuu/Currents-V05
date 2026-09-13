@@ -2,35 +2,49 @@
  * =============================================================================
  * STILL WATERS - COLLECTIONS & UTILITIES (collections.js)
  * =============================================================================
- * 
+ *
  * LOCATION: js/core/collections.js
- * 
+ *
  * SCOPE:
  *   - Deep cloning
  *   - Function utilities (debounce, throttle)
  *   - Array operations (unique, groupBy, sortBy, chunk, etc.)
  *   - Object operations (pick, omit, merge, deepMerge)
- * 
+ *
  * OUT OF SCOPE:
  *   - String formatting (see formatting.js): capitalize, titleCase,
  *     toKebabCase, toSnakeCase, truncateString
  *   - Domain logic
- * 
+ *
  * SEMANTIC RULES:
  *   - Functions are pure except debounce/throttle (which own timing state).
  *   - No `||` defaults that could destroy 0, '', or false.
- *   - `deepClone` handles circular references.
- *   - `deepMerge` rejects cyclic input rather than recursing forever.
- *   - `deepMerge` recurses only into plain objects.
+ *   - deepClone handles circular references. Objects outside the supported
+ *     types are cloned as enumerable plain data objects.
+ *   - deepMerge recurses only into plain objects. Arrays and other values
+ *     are replaced (cloned). Cyclic input anywhere in the input object
+ *     graph throws.
  *   - Object-prototype pollution via `__proto__`, `constructor`, `prototype`
  *     is prevented in all operations that build objects from dynamic keys.
  *   - Missing/invalid input returns a safe empty result, not a fabricated
  *     one. Function-argument errors throw.
- * 
+ *
+ * CLONE CONTRACT:
+ *   deepClone supports: primitives, Date, RegExp, Map, Set, Array, and
+ *   plain objects. Objects outside this set are treated as enumerable
+ *   data objects and cloned into plain objects. Prototype, property
+ *   descriptors, symbol keys, and non-enumerable properties are NOT
+ *   preserved.
+ *
+ * MERGE CONTRACT:
+ *   deepMerge accepts only acyclic input. It is not a graph-merging
+ *   utility. Merging cyclic data has unpleasant semantics, especially
+ *   when references cross between arguments, so cycles are rejected.
+ *
  * DEPENDENCIES: None.
- * 
+ *
  * ICON POLICY: No emojis. No icons.
- * 
+ *
  * =============================================================================
  */
 
@@ -63,13 +77,16 @@ function _isPlainObject(value) {
 
 /**
  * Deep clone of data structures.
- * 
+ *
  * Handles: primitives, Date, RegExp, Map, Set, Array, plain objects.
  * Circular references are preserved via a WeakMap.
- * 
- * Class instances are cloned as plain objects (their prototype is not
- * preserved). Keys that could cause prototype pollution are skipped.
- * 
+ *
+ * Objects outside the supported types are treated as enumerable data
+ * objects and cloned into plain objects. Prototype, property descriptors,
+ * symbol keys, and non-enumerable properties are not preserved.
+ *
+ * Keys that could cause prototype pollution are skipped.
+ *
  * @param {*} obj
  * @param {WeakMap} [seen] - internal, for cycle tracking
  * @returns {*}
@@ -130,11 +147,13 @@ function deepClone(obj, seen) {
 }
 
 /**
- * Prefers structuredClone when available; falls back to JSON round-trip.
- * Faster than deepClone for large acyclic data.
- * 
- * Does NOT preserve class instances, functions, or symbols.
- * 
+ * Clones using deepClone. Returns `fallback` if cloning throws.
+ *
+ * Semantics are identical to deepClone except for the error-handling
+ * behaviour. If callers need native structured-clone semantics (which
+ * preserve prototypes for class instances), call structuredClone directly
+ * and handle the throw.
+ *
  * @param {*} obj
  * @param {*} [fallback] - returned on failure (default null)
  * @returns {*}
@@ -142,16 +161,8 @@ function deepClone(obj, seen) {
 function safeDeepClone(obj, fallback) {
     if (fallback === undefined) fallback = null;
 
-    if (typeof structuredClone === 'function') {
-        try {
-            return structuredClone(obj);
-        } catch (e) {
-            // fall through
-        }
-    }
-
     try {
-        return JSON.parse(JSON.stringify(obj));
+        return deepClone(obj);
     } catch (e) {
         return fallback;
     }
@@ -170,11 +181,11 @@ function quickClone(obj) {
 
 /**
  * Debounce: delays execution until `wait` ms after the last call.
- * 
+ *
  * Returned function exposes:
  *   - .cancel() — discards the pending invocation
  *   - .flush()  — invokes immediately with the last received arguments
- * 
+ *
  * @param {Function} func
  * @param {number} wait
  * @returns {Function}
@@ -229,8 +240,11 @@ function debounce(func, wait) {
 
 /**
  * Debounce with immediate leading-edge execution.
- * Subsequent calls during the wait window are dropped.
- * 
+ *
+ * Semantics: execute on the leading edge, then suppress all calls until
+ * `wait` ms of quiet have elapsed. This is NOT lodash's debounce with
+ * leading + trailing options. Trailing calls are dropped.
+ *
  * @param {Function} func
  * @param {number} wait
  * @returns {Function}
@@ -267,9 +281,9 @@ function debounceLeading(func, wait) {
 /**
  * Throttle: leading-edge only. Executes at most once per `limit` ms.
  * Calls during the interval are dropped (no trailing call).
- * 
+ *
  * Returned function exposes .cancel().
- * 
+ *
  * @param {Function} func
  * @param {number} limit
  * @returns {Function}
@@ -354,7 +368,9 @@ function groupByObject(arr, keyFn) {
     for (var i = 0; i < arr.length; i++) {
         var k = String(keyFn(arr[i]));
         if (_isUnsafeObjectKey(k)) continue;
-        if (!result[k]) result[k] = [];
+        if (!Object.prototype.hasOwnProperty.call(result, k)) {
+            result[k] = [];
+        }
         result[k].push(arr[i]);
     }
     return result;
@@ -441,6 +457,12 @@ function flatten(arr) {
     return result;
 }
 
+/**
+ * Recursively flattens nested arrays into a single-level array.
+ *
+ * CONTRACT: expects an acyclic array. Circular input is invalid and will
+ * produce a stack overflow.
+ */
 function flattenDeep(arr) {
     if (!Array.isArray(arr)) return [];
     var result = [];
@@ -455,10 +477,10 @@ function flattenDeep(arr) {
 
 /**
  * Returns the unique intersection of the given arrays.
- * 
+ *
  * If any argument is not an array, returns [] (fails the operation rather
  * than silently ignoring the malformed argument).
- * 
+ *
  * @param {...Array} arrays
  * @returns {Array}
  */
@@ -502,6 +524,11 @@ function intersection() {
 
 /**
  * Converts an array of objects to a Map keyed by a property.
+ *
+ * Note: this is a generic utility; it accepts any value returned by
+ * `item[keyProp]`, including null. It is NOT the same contract as the
+ * canonical accessor ID map (see accessors.js), which only indexes
+ * non-empty string IDs.
  */
 function arrayToMap(arr, keyProp) {
     var map = new Map();
@@ -586,53 +613,106 @@ function shallowMerge() {
 }
 
 /**
- * @deprecated Alias for shallowMerge.
+ * @deprecated Alias for shallowMerge. Use shallowMerge directly.
  */
 function merge() {
     return shallowMerge.apply(null, arguments);
 }
 
 /**
- * Returns true if `value` appears anywhere in the seen set (cycle check).
+ * Asserts that `value` contains no cycles anywhere in its object graph.
+ *
+ * Traverses Array, Map, Set, and plain/non-plain objects (via their
+ * enumerable own properties). The `stack` parameter tracks the current
+ * recursion path; it is added to on descent and removed on return, so
+ * shared (non-cyclic) sub-objects across separate branches do not
+ * produce false positives.
+ *
  * @private
+ * @throws {Error} if a cycle is detected
  */
-function _wouldCreateCycle(value, seen) {
-    return value && typeof value === 'object' && seen.has(value);
+function _assertAcyclic(value, stack) {
+    if (value === null || typeof value !== 'object') return;
+
+    if (!stack) stack = new Set();
+
+    if (stack.has(value)) {
+        throw new Error('deepMerge: cyclic input detected');
+    }
+
+    stack.add(value);
+
+    if (Array.isArray(value)) {
+        for (var i = 0; i < value.length; i++) {
+            _assertAcyclic(value[i], stack);
+        }
+    } else if (value instanceof Map) {
+        value.forEach(function(v, k) {
+            _assertAcyclic(k, stack);
+            _assertAcyclic(v, stack);
+        });
+    } else if (value instanceof Set) {
+        value.forEach(function(v) {
+            _assertAcyclic(v, stack);
+        });
+    } else if (value instanceof Date || value instanceof RegExp) {
+        // Leaf types. No enumerable children to traverse.
+    } else {
+        var keys = Object.keys(value);
+        for (var j = 0; j < keys.length; j++) {
+            _assertAcyclic(value[keys[j]], stack);
+        }
+    }
+
+    stack.delete(value);
 }
 
 /**
- * Deep merge of objects. Recurses only into plain objects; arrays and other
- * values are replaced (cloned).
- * 
- * Rejects cyclic input by throwing (rather than recursing forever).
- * 
+ * Deep merge of plain objects. Recurses only into plain objects; arrays
+ * and other values are replaced (cloned from the later argument).
+ *
+ * CONTRACT: accepts only acyclic input. Cycles anywhere in any argument's
+ * object graph throw. This is checked before merging begins, so cycles
+ * that would be introduced by cloning a wholesale-replaced sub-object are
+ * also caught.
+ *
  * @param {...Object} objects
  * @returns {Object}
- * @throws {Error} if a cycle is detected in the input
+ * @throws {Error} if a cycle is detected in any input
  */
 function deepMerge() {
-    var seen = new WeakSet();
-    return _deepMergeRecursive(arguments, seen);
+    var args = arguments;
+
+    // Pre-validate all inputs for cycles. This catches cycles that the
+    // merge traversal itself would not encounter (e.g. a cyclic object
+    // that is wholesale-cloned into the result rather than recursed into).
+    for (var v = 0; v < args.length; v++) {
+        _assertAcyclic(args[v]);
+    }
+
+    var stack = new Set();
+    return _deepMergeRecursive(args, stack);
 }
 
-function _deepMergeRecursive(args, seen) {
+function _deepMergeRecursive(args, stack) {
     if (args.length === 0) return {};
     if (!_isPlainObject(args[0])) return deepClone(args[0]);
 
-    if (_wouldCreateCycle(args[0], seen)) {
+    if (stack.has(args[0])) {
         throw new Error('deepMerge: cyclic input detected');
     }
-    seen.add(args[0]);
+    stack.add(args[0]);
 
     var result = deepClone(args[0]);
 
     for (var i = 1; i < args.length; i++) {
         var obj = args[i];
         if (!_isPlainObject(obj)) continue;
-        if (_wouldCreateCycle(obj, seen)) {
+
+        if (stack.has(obj)) {
             throw new Error('deepMerge: cyclic input detected');
         }
-        seen.add(obj);
+        stack.add(obj);
 
         var keys = Object.keys(obj);
         for (var j = 0; j < keys.length; j++) {
@@ -641,12 +721,16 @@ function _deepMergeRecursive(args, seen) {
             var rv = result[k];
             var ov = obj[k];
             if (_isPlainObject(rv) && _isPlainObject(ov)) {
-                result[k] = _deepMergeRecursive([rv, ov], seen);
+                result[k] = _deepMergeRecursive([rv, ov], stack);
             } else {
                 result[k] = deepClone(ov);
             }
         }
+
+        stack.delete(obj);
     }
+
+    stack.delete(args[0]);
     return result;
 }
 
