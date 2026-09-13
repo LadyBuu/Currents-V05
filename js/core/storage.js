@@ -5,26 +5,30 @@
  * 
  * LOCATION: js/core/storage.js
  * 
+ * SINGLE SOURCE OF TRUTH for persistence.
+ * 
  * SCOPE:
- *   - localStorage persistence (load, save, export, import, reset)
- *   - Cross-tab synchronization
- *   - Default master data factory
+ *   - localStorage read/write
+ *   - Cross-tab coordination
+ *   - Default data factory (delegated to storage-schema.js if loaded)
+ *   - Load/save/reload/reset
  * 
  * OUT OF SCOPE:
- *   - Cache invalidation → mutation boundaries (see below)
- *   - Domain statistics → their domain modules
- *   - UI toasts → caller decides
- *   - Schema normalization → integrity.js (ensureDataIntegrity)
+ *   - Schema normalization and migration → storage-schema.js
+ *   - Export/download → exportUtils.js
+ *   - Cache invalidation → mutation boundaries
+ *   - UI feedback → caller
  * 
  * SEMANTIC RULES:
- *   - Year 0 is valid. Never coerce falsy years to a default.
- *   - Save operations queue: if a save is in progress and another is
- *     requested, the second save runs after the first completes.
- *   - Persistence does NOT invalidate caches. Mutation boundaries do that.
- *   - Errors are returned, not swallowed. Callers decide how to surface them.
+ *   - load: no entry → defaults; valid entry → load; corrupt entry → signal failure.
+ *   - save: returns true only when localStorage.setItem succeeded.
+ *   - import: does not report success if save failed.
+ *   - reset: does not report success if save failed.
+ *   - cross-tab: does not silently overwrite unsaved local changes.
+ *   - TIME_CONSTANTS is a required dependency.
  * 
  * DEPENDENCIES:
- *   - time.js (TIME_CONSTANTS.DEFAULT_YEAR) — optional; falls back to 1250
+ *   - time.js (TIME_CONSTANTS.DEFAULT_YEAR) — REQUIRED
  * 
  * ICON POLICY: No emojis. No icons.
  * 
@@ -32,37 +36,68 @@
  */
 
 // =============================================================================
-// 0. CONFIG
+// 0. DEPENDENCY GUARDS
 // =============================================================================
 
-var STORAGE_CONFIG = {
+function _requireTime() {
+    if (typeof window.TIME_CONSTANTS === 'undefined'
+        || typeof window.TIME_CONSTANTS.DEFAULT_YEAR !== 'number') {
+        throw new Error('storage.js: time.js must load first (TIME_CONSTANTS missing).');
+    }
+}
+
+// =============================================================================
+// 1. CONFIG
+// =============================================================================
+
+var STORAGE_CONFIG = Object.freeze({
     STORAGE_KEY: 'stillwaters_master',
-    DEFAULT_YEAR: 1250,
+    SCHEMA_VERSION: 2,
     SAVE_DEBOUNCE_MS: 100,
     CROSS_TAB_SYNC_MS: 100
-};
+});
 
 // =============================================================================
-// 1. MASTER DATA DEFAULT FACTORY
+// 2. MODULE STATE
+// =============================================================================
+
+var _isLoading = false;
+var _isSaving = false;
+var _saveTimeout = null;
+var _forceReloading = false;
+
+// Tracks whether the current in-memory data has unsaved changes.
+// Set true by mutation boundaries via markDirty(); cleared after save.
+var _isDirty = false;
+
+// Cross-tab coordination
+var _storageListenerAdded = false;
+var _syncTimeout = null;
+var _syncing = false;
+
+// =============================================================================
+// 3. DEFAULT FACTORY
 // =============================================================================
 
 /**
- * The single canonical factory for a fresh masterData object.
- * Used by initialization, load failure, reset, and import.
+ * Creates a fresh default masterData structure.
+ * If storage-schema.js is loaded, delegates to it. Otherwise uses the
+ * built-in fallback (which must match the schema).
  * 
- * All modules that need "an empty masterData" must call this.
- * Do NOT duplicate the shape anywhere else.
+ * @returns {Object}
  */
 function createDefaultMasterData() {
-    var defaultYear = 1250;
-    if (typeof window.TIME_CONSTANTS !== 'undefined'
-        && typeof window.TIME_CONSTANTS.DEFAULT_YEAR === 'number') {
-        defaultYear = window.TIME_CONSTANTS.DEFAULT_YEAR;
+    _requireTime();
+
+    if (typeof window.createDefaultMasterDataOverride === 'function') {
+        return window.createDefaultMasterDataOverride();
     }
 
+    var defaultYear = window.TIME_CONSTANTS.DEFAULT_YEAR;
+
     return {
-        version: "2.0",
-        lastUpdated: new Date().toISOString(),
+        schemaVersion: STORAGE_CONFIG.SCHEMA_VERSION,
+        savedAt: new Date().toISOString(),
         data: {
             characters: [],
             places: [],
@@ -87,78 +122,28 @@ function createDefaultMasterData() {
 }
 
 // =============================================================================
-// 2. INITIALIZE GLOBAL
-// =============================================================================
-
-if (typeof window.masterData === 'undefined') {
-    window.masterData = createDefaultMasterData();
-}
-
-// =============================================================================
-// 3. MODULE STATE
-// =============================================================================
-
-var _isLoading = false;
-var _isSaving = false;
-var _savePending = false;
-var _saveTimeout = null;
-var _storageListenerAdded = false;
-var _syncTimeout = null;
-var _syncing = false;
-var _forceReloading = false;
-
-// =============================================================================
-// 4. VALIDATION HELPERS
+// 4. VALIDATION
 // =============================================================================
 
 /**
- * Returns true if `year` is a plausible integer world year.
+ * Returns true if the given value looks like a masterData envelope.
  * @private
  */
-function _isValidYear(year) {
-    return typeof year === 'number'
-        && Number.isFinite(year)
-        && Number.isInteger(year);
+function _isMasterDataEnvelope(value) {
+    if (!value || typeof value !== 'object') return false;
+    if (!value.data || typeof value.data !== 'object') return false;
+    if (Array.isArray(value.data)) return false;
+    return true;
 }
 
 /**
- * Normalizes an imported data object to the canonical shape.
- * Missing top-level collections are filled with empty defaults.
- * Existing values (including year 0) are preserved.
+ * Returns true if the given value looks like a legacy masterData blob
+ * (data envelope without schemaVersion / savedAt).
  * @private
  */
-function _normalizeDataShape(input) {
-    var defaults = createDefaultMasterData().data;
-    var source = input || {};
-    var out = {};
-
-    var arrayKeys = [
-        'characters', 'places', 'ranks', 'roles', 'locationTypes',
-        'governmentTypes', 'governments', 'households', 'residences',
-        'disasters', 'eventLog', 'educationalInstitutions'
-    ];
-    for (var i = 0; i < arrayKeys.length; i++) {
-        var k = arrayKeys[i];
-        out[k] = Array.isArray(source[k]) ? source[k] : defaults[k];
-    }
-
-    var objectKeys = [
-        'nameLists', 'cityNameParts', 'rankInheritanceRules',
-        'educationalSubjects', 'subjectProgress'
-    ];
-    for (var j = 0; j < objectKeys.length; j++) {
-        var ok = objectKeys[j];
-        out[ok] = (source[ok] && typeof source[ok] === 'object' && !Array.isArray(source[ok]))
-            ? source[ok]
-            : defaults[ok];
-    }
-
-    // Year: preserve explicit integers, including 0. Reject invalid.
-    out.currentYear = _isValidYear(source.currentYear)
-        ? source.currentYear
-        : defaults.currentYear;
-
-    return out;
+function _isLegacyDataBlob(value) {
+    if (!value || typeof value !== 'object') return false;
+    return Array.isArray(value.characters) && Array.isArray(value.places);
 }
 
 // =============================================================================
@@ -167,67 +152,98 @@ function _normalizeDataShape(input) {
 
 /**
  * Loads masterData from localStorage.
- * Replaces window.masterData with the normalized shape.
- * Does NOT invalidate caches — the caller decides that.
  * 
- * @returns {boolean} true if data was loaded (or defaults applied)
+ * Outcomes:
+ *   { ok: true, source: 'defaults' }  — no storage entry; defaults installed
+ *   { ok: true, source: 'storage' }   — valid data loaded
+ *   { ok: false, error: 'corrupt' }   — persisted data could not be parsed
+ *   { ok: false, error: 'schema' }    — persisted data shape was not recognized
+ * 
+ * On failure, window.masterData is NOT replaced. The caller decides how to
+ * recover (e.g., offer to reset, or show a recovery UI).
+ * 
+ * @returns {{ ok: boolean, source?: string, error?: string }}
  */
 function loadMasterData() {
-    if (_isLoading) return false;
+    if (_isLoading) return { ok: false, error: 'in-progress' };
     _isLoading = true;
 
     try {
         var stored = localStorage.getItem(STORAGE_CONFIG.STORAGE_KEY);
-        if (!stored) {
+
+        if (stored === null) {
             window.masterData = createDefaultMasterData();
-            _isLoading = false;
-            return true;
+            _isDirty = false;
+            return { ok: true, source: 'defaults' };
         }
 
-        var parsed = JSON.parse(stored);
-        var sourceData = (parsed && parsed.data) ? parsed.data : parsed;
+        var parsed;
+        try {
+            parsed = JSON.parse(stored);
+        } catch (parseError) {
+            console.error('storage.js: persisted data is not valid JSON:', parseError);
+            return { ok: false, error: 'corrupt' };
+        }
 
-        window.masterData = {
-            version: (parsed && parsed.version) || "2.0",
-            lastUpdated: (parsed && parsed.lastUpdated) || new Date().toISOString(),
-            data: _normalizeDataShape(sourceData)
-        };
+        // Accept both envelope and legacy blob forms
+        var envelope;
+        if (_isMasterDataEnvelope(parsed)) {
+            envelope = parsed;
+        } else if (_isLegacyDataBlob(parsed)) {
+            envelope = {
+                schemaVersion: STORAGE_CONFIG.SCHEMA_VERSION,
+                savedAt: new Date().toISOString(),
+                data: parsed
+            };
+        } else if (_isMasterDataEnvelope({ data: parsed })) {
+            envelope = {
+                schemaVersion: STORAGE_CONFIG.SCHEMA_VERSION,
+                savedAt: new Date().toISOString(),
+                data: parsed
+            };
+        } else {
+            console.error('storage.js: persisted data has unrecognized shape');
+            return { ok: false, error: 'schema' };
+        }
 
-        _isLoading = false;
-        return true;
+        // Normalize via schema layer if available
+        if (typeof window.normalizeMasterData === 'function') {
+            envelope = window.normalizeMasterData(envelope);
+        }
+
+        window.masterData = envelope;
+        _isDirty = false;
+        return { ok: true, source: 'storage' };
     } catch (e) {
-        console.error('storage.js: loadMasterData failed:', e);
-        window.masterData = createDefaultMasterData();
+        console.error('storage.js: load failed:', e);
+        return { ok: false, error: 'unknown' };
+    } finally {
         _isLoading = false;
-        return false;
     }
 }
 
 // =============================================================================
-// 6. SAVE (with queueing)
+// 6. SAVE
 // =============================================================================
 
 /**
- * Performs the actual write to localStorage.
+ * Performs the synchronous write to localStorage.
  * @private
  * @returns {{ ok: boolean, error?: Error }}
  */
 function _performSave() {
     try {
-        // Ensure the currentYear default exists without overwriting 0
-        if (window.masterData && window.masterData.data) {
-            if (!_isValidYear(window.masterData.data.currentYear)) {
-                var defaultYear = 1250;
-                if (typeof window.TIME_CONSTANTS !== 'undefined'
-                    && typeof window.TIME_CONSTANTS.DEFAULT_YEAR === 'number') {
-                    defaultYear = window.TIME_CONSTANTS.DEFAULT_YEAR;
-                }
-                window.masterData.data.currentYear = defaultYear;
-            }
+        if (!window.masterData || !window.masterData.data) {
+            return { ok: false, error: new Error('masterData not initialized') };
         }
 
-        window.masterData.lastUpdated = new Date().toISOString();
-        localStorage.setItem(STORAGE_CONFIG.STORAGE_KEY, JSON.stringify(window.masterData));
+        window.masterData.schemaVersion = STORAGE_CONFIG.SCHEMA_VERSION;
+        window.masterData.savedAt = new Date().toISOString();
+
+        localStorage.setItem(
+            STORAGE_CONFIG.STORAGE_KEY,
+            JSON.stringify(window.masterData)
+        );
         return { ok: true };
     } catch (e) {
         return { ok: false, error: e };
@@ -237,45 +253,36 @@ function _performSave() {
 /**
  * Saves masterData to localStorage.
  * 
- * Queueing: if a save is in progress, subsequent calls mark the state dirty
- * and re-save when the current save finishes. No save is dropped.
- * 
- * @param {boolean} immediate - if true, bypass debounce (still respects queue)
- * @returns {boolean} true if save was scheduled or completed; false on error
+ * @param {boolean} [immediate] - if true, bypass debounce
+ * @returns {boolean} true only if the save actually succeeded
  */
 function saveMasterData(immediate) {
     immediate = immediate === true;
 
-    // Clear any pending debounce
-    if (_saveTimeout) {
+    if (_saveTimeout !== null) {
         clearTimeout(_saveTimeout);
         _saveTimeout = null;
     }
 
     if (immediate) {
         if (_isSaving) {
-            // A save is already running; mark and return
-            _savePending = true;
-            return true;
+            // Should not happen with localStorage (synchronous), but guard
+            // against reentrancy.
+            return false;
         }
         _isSaving = true;
         var result = _performSave();
         _isSaving = false;
 
-        if (_savePending) {
-            _savePending = false;
-            // Run again to capture changes made during the save
-            return saveMasterData(true) && result.ok;
+        if (result.ok) {
+            _isDirty = false;
+            return true;
         }
-
-        if (!result.ok) {
-            console.error('storage.js: saveMasterData failed:', result.error);
-            return false;
-        }
-        return true;
+        console.error('storage.js: save failed:', result.error);
+        return false;
     }
 
-    // Debounced path
+    // Debounced path — schedule one save
     _saveTimeout = setTimeout(function() {
         _saveTimeout = null;
         saveMasterData(true);
@@ -284,43 +291,53 @@ function saveMasterData(immediate) {
     return true;
 }
 
+/**
+ * Marks the current in-memory data as having unsaved changes.
+ * Called by mutation boundaries before scheduling a save.
+ * 
+ * Also useful for cross-tab conflict detection.
+ */
+function markDataDirty() {
+    _isDirty = true;
+}
+
+/**
+ * Returns true if there are unsaved changes.
+ * @returns {boolean}
+ */
+function hasUnsavedChanges() {
+    return _isDirty === true;
+}
+
 // =============================================================================
-// 7. EXPORT
+// 7. RELOAD
 // =============================================================================
 
 /**
- * Downloads the current masterData as a JSON file.
- * @returns {boolean} true on success, false on failure
+ * Reloads data from localStorage, discarding in-memory changes.
+ * 
+ * @param {boolean} [force] - if true, ignores unsaved-changes guard
+ * @returns {{ ok: boolean, source?: string, error?: string }}
  */
-function exportData() {
-    if (!window.masterData || !window.masterData.data) {
-        return false;
+function reloadMasterData(force) {
+    if (_forceReloading) return { ok: false, error: 'in-progress' };
+    if (_isDirty && force !== true) {
+        return { ok: false, error: 'unsaved-changes' };
     }
 
+    _forceReloading = true;
     try {
-        var exportObj = {
-            type: "master",
-            version: "2.0",
-            exportDate: new Date().toISOString(),
-            data: JSON.parse(JSON.stringify(window.masterData.data))
-        };
-
-        var dataStr = JSON.stringify(exportObj, null, 2);
-        var blob = new Blob([dataStr], { type: 'application/json' });
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href = url;
-        var dateStr = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
-        a.download = 'stillwaters_master_' + dateStr + '.json';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        return true;
-    } catch (e) {
-        console.error('storage.js: exportData failed:', e);
-        return false;
+        return loadMasterData();
+    } finally {
+        _forceReloading = false;
     }
+}
+
+/**
+ * @deprecated Use reloadMasterData instead.
+ */
+function forceReloadData() {
+    return reloadMasterData(true);
 }
 
 // =============================================================================
@@ -328,12 +345,16 @@ function exportData() {
 // =============================================================================
 
 /**
- * Opens a file picker, reads the file, normalizes the shape, replaces
- * window.masterData, and saves.
+ * Opens a file picker, reads JSON, replaces masterData, saves.
+ * Does NOT report success if the save failed.
  * 
- * @param {Function} [onComplete] - callback(success, error) after import
+ * @param {Function} [onComplete] - callback(result) where result is:
+ *   { ok: true, charCount: number }
+ *   { ok: false, error: string, message: string }
  */
 function importData(onComplete) {
+    onComplete = (typeof onComplete === 'function') ? onComplete : function() {};
+
     var input = document.createElement('input');
     input.type = 'file';
     input.accept = 'application/json';
@@ -341,51 +362,87 @@ function importData(onComplete) {
     input.onchange = function(e) {
         var file = e.target.files && e.target.files[0];
         if (!file) {
-            if (typeof onComplete === 'function') onComplete(false, new Error('No file selected'));
+            onComplete({ ok: false, error: 'no-file', message: 'No file selected' });
             return;
         }
 
         var reader = new FileReader();
 
         reader.onload = function(ev) {
+            var parsed;
             try {
-                var imported = JSON.parse(ev.target.result);
-                var sourceData;
-
-                if (imported && imported.type === "master" && imported.data) {
-                    sourceData = imported.data;
-                } else if (imported && imported.data && imported.data.characters) {
-                    sourceData = imported.data;
-                } else if (imported && imported.characters) {
-                    sourceData = imported;
-                } else {
-                    throw new Error('Unrecognized file format');
-                }
-
-                window.masterData = {
-                    version: "2.0",
-                    lastUpdated: new Date().toISOString(),
-                    data: _normalizeDataShape(sourceData)
-                };
-
-                saveMasterData(true);
-
-                if (typeof onComplete === 'function') {
-                    onComplete(true, null, window.masterData.data.characters.length);
-                }
+                parsed = JSON.parse(ev.target.result);
             } catch (err) {
-                if (typeof onComplete === 'function') {
-                    onComplete(false, err);
-                } else {
-                    console.error('storage.js: importData failed:', err);
-                }
+                onComplete({ ok: false, error: 'invalid-json', message: err.message });
+                return;
             }
+
+            // Determine source data shape
+            var sourceData = null;
+            if (parsed && parsed.type === 'master' && parsed.data) {
+                sourceData = parsed.data;
+            } else if (_isMasterDataEnvelope(parsed)) {
+                sourceData = parsed.data;
+            } else if (_isLegacyDataBlob(parsed)) {
+                sourceData = parsed;
+            }
+
+            if (!sourceData || typeof sourceData !== 'object' || Array.isArray(sourceData)) {
+                onComplete({
+                    ok: false,
+                    error: 'unknown-format',
+                    message: 'Unrecognized import format'
+                });
+                return;
+            }
+
+            // Build envelope
+            var envelope = {
+                schemaVersion: STORAGE_CONFIG.SCHEMA_VERSION,
+                savedAt: new Date().toISOString(),
+                data: sourceData
+            };
+
+            // Normalize via schema layer if available
+            if (typeof window.normalizeMasterData === 'function') {
+                envelope = window.normalizeMasterData(envelope);
+            }
+
+            // Capture prior state so we can restore on save failure
+            var prior = window.masterData;
+
+            // Install imported data, then attempt save
+            window.masterData = envelope;
+            _isDirty = true;
+
+            var saveOk = saveMasterData(true);
+
+            if (!saveOk) {
+                // Save failed — restore prior in-memory state so we don't
+                // claim success on data that won't persist.
+                window.masterData = prior;
+                _isDirty = false;
+                onComplete({
+                    ok: false,
+                    error: 'save-failed',
+                    message: 'Imported data could not be saved to storage'
+                });
+                return;
+            }
+
+            var charCount = Array.isArray(envelope.data.characters)
+                ? envelope.data.characters.length
+                : 0;
+
+            onComplete({ ok: true, charCount: charCount });
         };
 
         reader.onerror = function() {
-            if (typeof onComplete === 'function') {
-                onComplete(false, new Error('Error reading file'));
-            }
+            onComplete({
+                ok: false,
+                error: 'read-failed',
+                message: 'Error reading file'
+            });
         };
 
         reader.readAsText(file);
@@ -400,43 +457,39 @@ function importData(onComplete) {
 
 /**
  * Resets all data to defaults and removes the localStorage entry.
- * @param {boolean} [confirmed] - if false, does nothing (safety)
- * @returns {boolean} true on success
+ * Returns false if the save failed; the caller can show the appropriate UI.
+ * 
+ * @returns {{ ok: boolean, error?: string }}
  */
-function resetMasterData(confirmed) {
-    if (confirmed !== true) return false;
-
+function resetMasterData() {
     try {
+        var prior = window.masterData;
         window.masterData = createDefaultMasterData();
-        localStorage.removeItem(STORAGE_CONFIG.STORAGE_KEY);
-        saveMasterData(true);
-        return true;
+        _isDirty = true;
+
+        // Remove persisted entry first
+        try {
+            localStorage.removeItem(STORAGE_CONFIG.STORAGE_KEY);
+        } catch (e) {
+            // Ignore — save below will attempt to write defaults
+        }
+
+        var saved = saveMasterData(true);
+        if (!saved) {
+            // Restore prior in-memory state to keep consistency
+            window.masterData = prior;
+            _isDirty = false;
+            return { ok: false, error: 'save-failed' };
+        }
+        return { ok: true };
     } catch (e) {
-        console.error('storage.js: resetMasterData failed:', e);
-        return false;
+        console.error('storage.js: reset failed:', e);
+        return { ok: false, error: 'unknown' };
     }
 }
 
 // =============================================================================
-// 10. FORCE RELOAD
-// =============================================================================
-
-/**
- * Reloads data from localStorage, discarding in-memory changes.
- * @returns {boolean} true on success
- */
-function forceReloadData() {
-    if (_forceReloading) return false;
-    _forceReloading = true;
-    try {
-        return loadMasterData();
-    } finally {
-        _forceReloading = false;
-    }
-}
-
-// =============================================================================
-// 11. CROSS-TAB SYNC
+// 10. CROSS-TAB SYNC
 // =============================================================================
 
 function initCrossTabSync() {
@@ -448,17 +501,31 @@ function initCrossTabSync() {
         if (_syncing) return;
 
         _syncing = true;
-        if (_syncTimeout) clearTimeout(_syncTimeout);
+        if (_syncTimeout !== null) clearTimeout(_syncTimeout);
+
         _syncTimeout = setTimeout(function() {
+            _syncTimeout = null;
             try {
-                loadMasterData();
-                try {
-                    if (typeof window.dispatchEvent === 'function') {
+                // Do not clobber unsaved local changes
+                if (_isDirty) {
+                    console.warn(
+                        'storage.js: another tab updated storage while this tab ' +
+                        'has unsaved changes. Skipping auto-reload to prevent ' +
+                        'data loss. Call reloadMasterData(true) to force.'
+                    );
+                    return;
+                }
+
+                var result = loadMasterData();
+                if (result.ok) {
+                    try {
                         window.dispatchEvent(new CustomEvent('masterDataUpdated', {
                             detail: { source: 'cross-tab' }
                         }));
-                    }
-                } catch (evtErr) { /* ignore */ }
+                    } catch (evtErr) { /* ignore */ }
+                } else {
+                    console.warn('storage.js: cross-tab reload failed:', result.error);
+                }
             } finally {
                 _syncing = false;
             }
@@ -472,27 +539,34 @@ if (typeof window._crossTabSyncInitialized === 'undefined') {
 }
 
 // =============================================================================
-// 12. AUTO-LOAD
+// 11. AUTO-LOAD
 // =============================================================================
 
 if (typeof window._storageInitialized === 'undefined') {
     window._storageInitialized = true;
-    // Load synchronously so downstream modules find data ready.
-    loadMasterData();
+    try {
+        loadMasterData();
+    } catch (e) {
+        console.error('storage.js: initial load failed:', e);
+    }
 }
 
 // =============================================================================
-// 13. EXPORTS
+// 12. EXPORTS
 // =============================================================================
 
+window.STORAGE_CONFIG = STORAGE_CONFIG;
+
 window.createDefaultMasterData = createDefaultMasterData;
+
 window.loadMasterData = loadMasterData;
+window.reloadMasterData = reloadMasterData;
+window.forceReloadData = forceReloadData; // deprecated alias
 window.saveMasterData = saveMasterData;
-window.exportData = exportData;
+window.markDataDirty = markDataDirty;
+window.hasUnsavedChanges = hasUnsavedChanges;
 window.importData = importData;
 window.resetMasterData = resetMasterData;
-window.forceReloadData = forceReloadData;
 
-window.STORAGE_CONFIG = STORAGE_CONFIG;
-// Backward-compat alias
-window.CONFIG = STORAGE_CONFIG;
+// window.CONFIG was previously set as an alias. Removed.
+// Callers should use window.STORAGE_CONFIG if they need storage config.

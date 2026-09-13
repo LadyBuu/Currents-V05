@@ -5,30 +5,32 @@
  * 
  * LOCATION: js/core/world.js
  * 
- * This file contains PURE read-only queries using ONLY accessors.js.
- * NO dependency on location-state.js or any location system files.
- * NO mutation. NO UI. NO caches of its own.
+ * PURE read-only queries over canonical location data. Uses ONLY accessors.
  * 
  * SCOPE:
  *   - Location hierarchy queries (parents, children, ancestors)
  *   - Location type / priority resolution
- *   - Character current-location resolution from character.moves
- *   - Character grouping by location
+ *   - Current-location resolution from character.moves
+ *   - Character grouping by location (using stable IDs, not display strings)
  * 
  * OUT OF SCOPE:
- *   - Mutating moves (see character-commands or location-movement)
- *   - Selected/current location state (see SettlementState or LocationState)
- *   - Formatting/breadcrumbs with arrows (see formatting.js)
+ *   - Display strings ("Unknown", "Other Locations", breadcrumbs with arrows)
+ *     → see formatting.js / location-presentation.js
+ *   - Mutation of moves → character-commands / location-movement
+ *   - Selected-location UI state → SettlementState / LocationState
  * 
  * SEMANTIC RULES:
- *   - Missing/invalid IDs return null, not fabricated defaults.
- *   - Priority 0 is valid; `||` must not be used for priority.
- *   - Recursive traversal has a cycle guard.
- *   - Location hierarchy safety depth is bounded.
+ *   - Missing/invalid IDs return null.
+ *   - Priority 0 is valid.
+ *   - Recursion is bounded by Set-based cycle detection, not magic depths.
+ *   - Grouping keys are stable location IDs, not display strings.
+ *   - Current-location resolution is deterministic; ties break by first
+ *     record in the moves array.
  * 
- * DEPENDENCIES:
- *   - accessors.js (getPlaces, getPlaceById, getLocationTypes,
- *                  getLocationTypeById, getCharacters)
+ * DEPENDENCIES (all REQUIRED):
+ *   - accessors.js: getPlaces, getPlaceById, getLocationTypeById, getCharacters
+ *   - time.js: isValidYear (for move year validation) — optional if you
+ *     don't require strict year validation here
  * 
  * ICON POLICY: No emojis. No icons.
  * 
@@ -43,10 +45,20 @@
     // =========================================================================
 
     function _requireAccessors() {
-        if (typeof window.getPlaces !== 'function'
-            || typeof window.getPlaceById !== 'function'
-            || typeof window.getCharacters !== 'function') {
-            throw new Error('world.js: accessors.js must load first.');
+        var required = [
+            'getPlaces',
+            'getPlaceById',
+            'getLocationTypeById',
+            'getCharacters'
+        ];
+        var missing = [];
+        for (var i = 0; i < required.length; i++) {
+            if (typeof window[required[i]] !== 'function') {
+                missing.push(required[i]);
+            }
+        }
+        if (missing.length > 0) {
+            throw new Error('world.js: missing required dependencies: ' + missing.join(', '));
         }
     }
 
@@ -65,10 +77,8 @@
     }
 
     function _getLocationTypeById(id) {
-        if (typeof window.getLocationTypeById === 'function') {
-            return window.getLocationTypeById(id);
-        }
-        return null;
+        _requireAccessors();
+        return window.getLocationTypeById(id);
     }
 
     function _getCharacters() {
@@ -77,16 +87,26 @@
     }
 
     /**
-     * Returns a numeric priority for a location type.
-     * Falls back to 5 if the type is missing.
+     * Returns a numeric priority for a location type, or null if the type
+     * is missing or has no valid priority.
      * Preserves explicit 0.
      * @private
      */
     function _typePriority(type) {
-        if (!type) return 5;
+        if (!type) return null;
         var p = type.priority;
         if (typeof p === 'number' && Number.isFinite(p)) return p;
-        return 5;
+        return null;
+    }
+
+    /**
+     * Sort comparator mapping null priorities to the end.
+     * @private
+     */
+    function _compareByPriority(a, b) {
+        var pa = (a === null || a === undefined) ? Infinity : a;
+        var pb = (b === null || b === undefined) ? Infinity : b;
+        return pa - pb;
     }
 
     // =========================================================================
@@ -95,23 +115,23 @@
 
     /**
      * Gets the priority of a location type by ID.
-     * Returns 999 for unknown types (so they sort last).
-     * Preserves explicit priority 0.
+     * Returns null for missing type or missing priority.
+     * 
+     * @param {string} typeId
+     * @returns {number|null}
      */
     function getLocationTypePriority(typeId) {
-        if (!typeId) return 999;
+        if (typeof typeId !== 'string' || typeId.length === 0) return null;
         var type = _getLocationTypeById(typeId);
-        if (!type) return 999;
-        var p = type.priority;
-        if (typeof p === 'number' && Number.isFinite(p)) return p;
-        return 5;
+        return _typePriority(type);
     }
 
     /**
      * Gets the priority of a place.
+     * Returns null for missing place or missing priority.
      */
     function getPlacePriority(place) {
-        if (!place) return 999;
+        if (!place) return null;
         return getLocationTypePriority(place.typeId);
     }
 
@@ -121,15 +141,15 @@
 
     /**
      * Gets direct children of a place.
-     * If `recursive` is true, walks the full subtree using an iterative
-     * stack with a visited set to prevent infinite loops on malformed data.
+     * If `recursive`, walks the full subtree using an iterative stack with
+     * a visited set (no magic depth limit).
      * 
      * @param {string} parentId
      * @param {boolean} [recursive]
      * @returns {Array}
      */
     function getChildPlaces(parentId, recursive) {
-        if (!parentId) return [];
+        if (typeof parentId !== 'string' || parentId.length === 0) return [];
         recursive = recursive === true;
 
         var places = _getPlaces();
@@ -147,14 +167,11 @@
         // Recursive: iterative traversal with cycle guard
         var visited = new Set();
         var stack = [parentId];
-        var maxNodes = places.length + 1; // hard ceiling
-        var processed = 0;
 
-        while (stack.length > 0 && processed < maxNodes) {
+        while (stack.length > 0) {
             var currentId = stack.pop();
             if (visited.has(currentId)) continue;
             visited.add(currentId);
-            processed++;
 
             for (var j = 0; j < places.length; j++) {
                 if (places[j].parentId === currentId) {
@@ -165,19 +182,20 @@
                 }
             }
         }
-
         return result;
     }
 
     /**
      * Gets top-level places (no parent).
+     * Uses explicit missing check (not truthiness).
      */
     function getTopLevelPlaces() {
         var places = _getPlaces();
         var result = [];
         for (var i = 0; i < places.length; i++) {
-            if (!places[i].parentId) {
-                result.push(places[i]);
+            var p = places[i];
+            if (p.parentId === null || p.parentId === undefined) {
+                result.push(p);
             }
         }
         return result;
@@ -185,14 +203,15 @@
 
     /**
      * Gets places by priority.
+     * @param {number} priority
+     * @returns {Array}
      */
     function getPlacesByPriority(priority) {
         if (typeof priority !== 'number' || !Number.isFinite(priority)) return [];
         var places = _getPlaces();
         var result = [];
         for (var i = 0; i < places.length; i++) {
-            var type = _getLocationTypeById(places[i].typeId);
-            if (type && _typePriority(type) === priority) {
+            if (getPlacePriority(places[i]) === priority) {
                 result.push(places[i]);
             }
         }
@@ -207,93 +226,109 @@
      * Gets the full parent chain for a place, ordered root → leaf.
      * Includes the place itself.
      * 
-     * Has a safety depth limit to prevent infinite loops on circular data.
-     * (Circular data should be caught by validation, but query code must
-     * not hang if malformed data slips through.)
+     * Cycle guard uses a Set; no arbitrary depth limit.
+     * 
+     * @param {Object} place
+     * @returns {Array}
      */
     function getParentChain(place) {
         if (!place) return [];
         var chain = [];
         var current = place;
         var seen = new Set();
-        var depth = 0;
-        var MAX_DEPTH = 20;
 
-        while (current && depth < MAX_DEPTH) {
+        while (current) {
             if (seen.has(current.id)) break;
             seen.add(current.id);
             chain.unshift(current);
             if (!current.parentId) break;
             current = _getPlaceById(current.parentId);
-            depth++;
         }
         return chain;
     }
 
     /**
-     * Returns true if `possibleAncestor` appears in the parent chain of `place`.
+     * True if `possibleAncestor` appears in the parent chain of `place`.
      */
     function isAncestorOf(possibleAncestor, place) {
         if (!possibleAncestor || !place) return false;
         if (possibleAncestor.id === place.id) return false;
 
         var current = place;
-        var depth = 0;
         var seen = new Set();
-        while (current && depth < 20) {
+        while (current) {
             if (seen.has(current.id)) break;
             seen.add(current.id);
             if (current.parentId === possibleAncestor.id) return true;
             current = _getPlaceById(current.parentId);
-            depth++;
         }
         return false;
     }
 
     /**
-     * Gets the topmost ancestor (typically the country) of a place.
-     * Returns 'Other Locations' if no chain can be established.
+     * Gets the country-level ancestor of a place.
+     * 
+     * Resolution:
+     *   1. Highest ancestor with location type priority === 1
+     *   2. Otherwise the topmost ancestor
+     * 
+     * Returns the place object or null. Presentation decides how to display
+     * a missing country.
+     * 
+     * @param {Object} place
+     * @returns {Object|null}
      */
     function getLocationCountry(place) {
-        if (!place) return 'Other Locations';
+        if (!place) return null;
         var chain = getParentChain(place);
-        if (chain.length === 0) return 'Other Locations';
+        if (chain.length === 0) return null;
 
-        // Prefer the highest-priority ancestor (priority 1 = country)
         for (var i = 0; i < chain.length; i++) {
-            var priority = getLocationTypePriority(chain[i].typeId);
-            if (priority === 1) return chain[i].displayName || 'Other Locations';
+            if (getLocationTypePriority(chain[i].typeId) === 1) {
+                return chain[i];
+            }
         }
-        // Fallback: topmost
-        return chain[0].displayName || 'Other Locations';
+        return chain[0];
     }
 
     /**
      * Gets the district-level ancestor of a place, if any.
+     * Returns the place object or null.
      */
     function getLocationDistrict(place) {
         if (!place) return null;
         var chain = getParentChain(place);
         for (var i = 0; i < chain.length; i++) {
-            var priority = getLocationTypePriority(chain[i].typeId);
-            if (priority === 2) return chain[i].displayName || null;
+            if (getLocationTypePriority(chain[i].typeId) === 2) {
+                return chain[i];
+            }
         }
         return null;
     }
 
     // =========================================================================
-    // 5. CHARACTER LOCATION QUERIES
+    // 5. CURRENT-LOCATION RESOLUTION
     // =========================================================================
     // 
-    // SEMANTIC NOTE:
-    //   A character's current location is resolved in this order:
-    //     1. `character.currentLocationId` (explicit override)
-    //     2. Latest move in `character.moves` (by year, descending)
-    //     3. `character.birthplaceId` (documented fallback)
-    //   The birthplace fallback is deliberate for this yearly-resolution
-    //   world model. It is documented here so no other module has to
-    //   invent its own version.
+    // A character's current location is resolved in this order:
+    //   1. `character.currentLocationId` (explicit override)
+    //   2. Latest valid move in `character.moves` (highest year; ties break
+    //      by first-encountered in array order)
+    //   3. `character.birthplaceId` (documented fallback)
+    // 
+    // Moves with invalid years (non-integer, non-finite, out of range) are
+    // skipped. If all moves have invalid years, falls back to birthplace.
+    // 
+    // If you later add an explicit ordering field to moves, replace the
+    // tie-break rule accordingly.
     // =========================================================================
+
+    function _isValidMoveYear(year) {
+        if (typeof window.isValidYear === 'function') {
+            return window.isValidYear(year);
+        }
+        return typeof year === 'number' && Number.isFinite(year) && Number.isInteger(year);
+    }
 
     /**
      * Gets the current location ID for a character.
@@ -303,28 +338,32 @@
     function getCurrentLocationId(character) {
         if (!character) return null;
 
-        if (typeof character.currentLocationId === 'string' && character.currentLocationId) {
+        if (typeof character.currentLocationId === 'string' && character.currentLocationId.length > 0) {
             return character.currentLocationId;
         }
 
         if (Array.isArray(character.moves) && character.moves.length > 0) {
             var best = null;
             var bestYear = -Infinity;
+
             for (var i = 0; i < character.moves.length; i++) {
                 var move = character.moves[i];
-                if (!move || !move.locationId) continue;
-                var y = typeof move.year === 'number' && Number.isFinite(move.year)
-                    ? move.year
-                    : -Infinity;
-                if (y > bestYear) {
-                    bestYear = y;
+                if (!move || typeof move.locationId !== 'string' || move.locationId.length === 0) {
+                    continue;
+                }
+                if (!_isValidMoveYear(move.year)) continue;
+
+                if (move.year > bestYear) {
+                    bestYear = move.year;
                     best = move;
                 }
+                // Ties: first-encountered wins (do not overwrite on equal year)
             }
+
             if (best) return best.locationId;
         }
 
-        if (typeof character.birthplaceId === 'string' && character.birthplaceId) {
+        if (typeof character.birthplaceId === 'string' && character.birthplaceId.length > 0) {
             return character.birthplaceId;
         }
 
@@ -332,24 +371,32 @@
     }
 
     /**
-     * Gets the current location display name for a character.
-     * Returns 'Unknown' if no location can be resolved.
+     * Gets the current location place object for a character.
+     * Returns null if no location can be resolved.
+     * 
+     * Callers who want a display name use:
+     *   var place = getCurrentPlace(character);
+     *   var label = place ? place.displayName : 'Unknown';
+     * 
+     * @param {Object} character
+     * @returns {Object|null}
      */
-    function getCurrentLocation(character) {
+    function getCurrentPlace(character) {
         var id = getCurrentLocationId(character);
-        if (!id) return 'Unknown';
-        var place = _getPlaceById(id);
-        return place ? (place.displayName || 'Unknown') : 'Unknown';
+        if (!id) return null;
+        return _getPlaceById(id);
     }
 
     /**
-     * Gets a character's location path as an array of { id, name, priority, typeId },
-     * ordered root → leaf.
+     * Gets a character's location path as an array of
+     * { id, name, priority, typeId }, ordered root → leaf.
+     * Returns [] if no location can be resolved.
+     * 
+     * `name` may be undefined if a place has no displayName. Callers who
+     * need a display label should compose one.
      */
     function getCharacterLocationPath(character) {
-        var locId = getCurrentLocationId(character);
-        if (!locId) return [];
-        var place = _getPlaceById(locId);
+        var place = getCurrentPlace(character);
         if (!place) return [];
 
         var chain = getParentChain(place);
@@ -367,83 +414,101 @@
     }
 
     /**
-     * Groups characters by their location hierarchy display string.
+     * Groups characters by the ID of their resolved current place.
      * 
-     * Returns an object keyed by the hierarchy string (e.g., "Kingdom → Duchy").
-     * Characters with no resolvable location appear under "Ungrouped".
+     * Returns an array of:
+     *   {
+     *     locationId: string,
+     *     place: Object,
+     *     characters: Array
+     *   }
      * 
-     * NOTE: The keys are display strings, which means they change if a
-     * location is renamed. If you need stable identifiers, group by the
-     * location ID instead.
+     * Characters with no resolvable location are returned in a group with
+     * locationId === null and place === null.
+     * 
+     * The groups are ordered by location hierarchy path (root → leaf) using
+     * display names as a secondary sort within equal-priority groups.
+     * 
+     * Presentation callers who want "Kingdom → Duchy" strings should
+     * compose them from place objects themselves.
      * 
      * @param {boolean} [includeDeceased]
-     * @returns {Object}
+     * @returns {Array<{ locationId: string|null, place: Object|null, characters: Array }>}
      */
     function getCharactersGroupedByLocation(includeDeceased) {
         includeDeceased = includeDeceased === true;
 
         var characters = _getCharacters();
-        var groups = {};
+        var groupsByLocationId = new Map();
         var ungrouped = [];
 
         for (var i = 0; i < characters.length; i++) {
             var char = characters[i];
             if (!includeDeceased && char.isDeceased) continue;
 
-            var locId = getCurrentLocationId(char);
-            var place = locId ? _getPlaceById(locId) : null;
-
+            var place = getCurrentPlace(char);
             if (!place) {
                 ungrouped.push(char);
                 continue;
             }
 
-            var chain = getParentChain(place);
-            var names = [];
-            for (var j = 0; j < chain.length; j++) {
-                names.push(chain[j].displayName || 'Unknown');
+            if (!groupsByLocationId.has(place.id)) {
+                groupsByLocationId.set(place.id, { place: place, characters: [] });
             }
-            var key = names.join(' → ');
-
-            if (!groups[key]) groups[key] = [];
-            groups[key].push(char);
+            groupsByLocationId.get(place.id).characters.push(char);
         }
 
-        // Sort group keys
-        var sortedKeys = Object.keys(groups).sort();
-        var ordered = {};
-        for (var k = 0; k < sortedKeys.length; k++) {
-            ordered[sortedKeys[k]] = groups[sortedKeys[k]];
-        }
+        var groups = [];
+        groupsByLocationId.forEach(function(entry, locationId) {
+            groups.push({
+                locationId: locationId,
+                place: entry.place,
+                characters: entry.characters
+            });
+        });
+
+        // Sort groups by their parent-chain length (shallow first), then by
+        // displayName for determinism.
+        groups.sort(function(a, b) {
+            var chainA = getParentChain(a.place);
+            var chainB = getParentChain(b.place);
+            if (chainA.length !== chainB.length) {
+                return chainA.length - chainB.length;
+            }
+            var na = (a.place.displayName || '');
+            var nb = (b.place.displayName || '');
+            return na.localeCompare(nb);
+        });
+
         if (ungrouped.length > 0) {
-            ordered['Ungrouped'] = ungrouped;
+            groups.push({
+                locationId: null,
+                place: null,
+                characters: ungrouped
+            });
         }
 
-        return ordered;
+        return groups;
     }
 
     // =========================================================================
     // 6. EXPORTS
     // =========================================================================
 
-    // Location type / priority
     window.getLocationTypePriority = getLocationTypePriority;
     window.getPlacePriority = getPlacePriority;
 
-    // Hierarchy
     window.getChildPlaces = getChildPlaces;
     window.getTopLevelPlaces = getTopLevelPlaces;
     window.getPlacesByPriority = getPlacesByPriority;
 
-    // Path
     window.getParentChain = getParentChain;
     window.isAncestorOf = isAncestorOf;
     window.getLocationCountry = getLocationCountry;
     window.getLocationDistrict = getLocationDistrict;
 
-    // Character location
     window.getCurrentLocationId = getCurrentLocationId;
-    window.getCurrentLocation = getCurrentLocation;
+    window.getCurrentPlace = getCurrentPlace;
     window.getCharacterLocationPath = getCharacterLocationPath;
     window.getCharactersGroupedByLocation = getCharactersGroupedByLocation;
 

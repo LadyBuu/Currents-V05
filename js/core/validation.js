@@ -2,42 +2,86 @@
  * =============================================================================
  * STILL WATERS - VALIDATION (validation.js)
  * =============================================================================
- * 
+ *
  * LOCATION: js/core/validation.js
- * 
- * SINGLE SOURCE OF TRUTH for all validation functions.
- * 
+ *
+ * SINGLE SOURCE OF TRUTH for validation.
+ *
  * SCOPE:
- *   - Field shape validation (year, name, ID, etc.)
+ *   - Field shape validation (year, name, ID syntax, etc.)
  *   - Entity validation (character, place, rank, role, relationship)
- *   - Import validation (structural + entity-level)
- *   - Schema field checking (presence/unknown fields)
- *   - Utility validators (sanitize/truncate, normalize)
- * 
+ *   - Reference syntax validation within entities
+ *   - Import structural + entity validation
+ *   - Schema field presence/unknown-field checking
+ *
+ * OUT OF SCOPE:
+ *   - Existence checks ("does this entity exist in canonical data?")
+ *     → see accessors.js: characterExists, placeExists, roleExists, ...
+ *   - Presentation formatting → see formatting.js
+ *   - Data access → see accessors.js
+ *   - Storage-boundary string normalization → see storage-schema.js
+ *   - Import policy (defaults for invalid fields) → caller / import layer
+ *
  * SEMANTIC RULES:
  *   - Years are integers. Fractional years are invalid.
  *   - Year 0 is valid. Negative years are valid within range.
- *   - Validators are TOTAL functions: null/non-object input returns a
- *     validation failure, never throws.
- *   - Missing field vs invalid field are distinguished in messages.
  *   - Validators do not mutate. They return { isValid, errors, warnings }.
- * 
- * DEPENDENCIES:
- *   - time.js (TIME_CONSTANTS for year bounds) — optional
- * 
+ *   - Missing field vs invalid field are distinguished in messages.
+ *   - ID syntax here means "well-formed string". Existence is a separate,
+ *     explicitly named concern owned by accessors.js.
+ *   - Explicit missing checks only. Truthiness is not a domain predicate.
+ *   - For supported runtime dependencies, arbitrary caller input does not
+ *     throw. Missing dependencies throw (see _requireTimeConstants).
+ *     "Total" is bounded by that contract.
+ *
+ * DEPENDENCIES (REQUIRED):
+ *   - time.js: TIME_CONSTANTS.MIN_YEAR, TIME_CONSTANTS.MAX_YEAR
+ *
+ * OPTIONAL:
+ *   - constants.js: GENDER_VALUES, ATTRACTION_VALUES, RELATIONSHIP_STATUS
+ *
  * ICON POLICY: No emojis. No icons.
- * 
+ *
  * =============================================================================
  */
+
+// =============================================================================
+// 0. DEPENDENCY GUARDS
+// =============================================================================
+
+function _requireTimeConstants() {
+    if (typeof window.TIME_CONSTANTS === 'undefined'
+        || typeof window.TIME_CONSTANTS.MIN_YEAR !== 'number'
+        || typeof window.TIME_CONSTANTS.MAX_YEAR !== 'number') {
+        throw new Error(
+            'validation.js: time.js must load first ' +
+            '(TIME_CONSTANTS.MIN_YEAR / MAX_YEAR missing).'
+        );
+    }
+    return window.TIME_CONSTANTS;
+}
+
+/**
+ * Returns a canonical domain enum from constants.js if available.
+ * Returns null if the canonical source isn't loaded — validation does
+ * NOT invent fallback definitions of domain vocabulary.
+ * @private
+ */
+function _getCanonicalEnum(name) {
+    if (typeof window[name] !== 'undefined' && Array.isArray(window[name])) {
+        return window[name];
+    }
+    return null;
+}
 
 // =============================================================================
 // 1. CONSTANTS
 // =============================================================================
 
+// Validation-layer constants. These describe validation policy, NOT world
+// rules. World rules (year bounds, time policy, simulation parameters)
+// belong to their canonical owners.
 var VALIDATION_CONSTANTS = {
-    MIN_YEAR: -10000,
-    MAX_YEAR: 9999,
-    DEFAULT_MAX_AGE: 120,
     MAX_NAME_LENGTH: 100,
     MAX_SURNAME_LENGTH: 100,
     MAX_DISPLAY_NAME_LENGTH: 200,
@@ -49,26 +93,6 @@ var VALIDATION_CONSTANTS = {
     NAME_REGEX: /^[\p{L}\s\-'\.]+$/u,
     VARIABLE_KEY_REGEX: /^[a-z0-9_]+$/
 };
-
-/**
- * Domain enums. Consumed by validators so they don't duplicate the values.
- * Populated lazily from constants.js when available.
- * @private
- */
-function _getEnum(name, fallback) {
-    if (typeof window[name] !== 'undefined' && Array.isArray(window[name])) {
-        return window[name];
-    }
-    return fallback;
-}
-
-function _getGenders() {
-    return _getEnum('GENDER_VALUES', ['male', 'female', 'unknown', 'other']);
-}
-
-function _getAttractions() {
-    return _getEnum('ATTRACTION_VALUES', ['both', 'men', 'women', 'neither', 'unknown']);
-}
 
 function _getPlaceStatuses() {
     return ['active', 'disputed', 'abandoned', 'ruined'];
@@ -82,18 +106,6 @@ function _getRoleGenderRestrictions() {
     return ['both', 'male', 'female'];
 }
 
-function _getRelationshipStatuses() {
-    if (typeof window.RELATIONSHIP_STATUS !== 'undefined') {
-        var rs = window.RELATIONSHIP_STATUS;
-        var out = [];
-        for (var k in rs) {
-            if (rs.hasOwnProperty(k) && typeof rs[k] === 'string') out.push(rs[k]);
-        }
-        if (out.length) return out;
-    }
-    return ['ongoing', 'ended', 'widowed', 'single', 'partnered'];
-}
-
 function _getRelationshipTypes() {
     return ['casual', 'serious', 'affair', 'betrothed', 'marriage', 'committed', 'romance'];
 }
@@ -105,15 +117,19 @@ function _getRelationshipTypes() {
 /**
  * Returns true if `year` is a valid integer world year.
  * Year 0 is valid. Fractional years are invalid.
- * 
+ * Bounds come from TIME_CONSTANTS unless explicitly overridden.
+ *
  * @param {number} year
  * @param {number} [minYear]
  * @param {number} [maxYear]
  * @returns {boolean}
  */
 function isValidYear(year, minYear, maxYear) {
-    if (minYear === undefined || minYear === null) minYear = VALIDATION_CONSTANTS.MIN_YEAR;
-    if (maxYear === undefined || maxYear === null) maxYear = VALIDATION_CONSTANTS.MAX_YEAR;
+    var time = _requireTimeConstants();
+
+    if (minYear === undefined || minYear === null) minYear = time.MIN_YEAR;
+    if (maxYear === undefined || maxYear === null) maxYear = time.MAX_YEAR;
+
     if (year === undefined || year === null) return false;
     if (typeof year !== 'number') return false;
     if (!Number.isFinite(year)) return false;
@@ -123,27 +139,44 @@ function isValidYear(year, minYear, maxYear) {
 
 /**
  * Checks consistency between birth year, death year, and deceased flag.
- * Distinguishes missing from invalid.
- * 
+ *
+ * Owns ALL birth/death year semantics. Callers should not duplicate the
+ * birth-year check separately.
+ *
  * @param {number|null} birthYear
  * @param {number|null} deathYear
  * @param {boolean} isDeceased
  * @returns {{ isValid: boolean, message: string }}
  */
 function validateYearsConsistency(birthYear, deathYear, isDeceased) {
-    isDeceased = isDeceased === true;
+    // isDeceased must be an actual boolean. Silent coercion hides bugs.
+    if (isDeceased !== undefined && isDeceased !== null
+        && typeof isDeceased !== 'boolean') {
+        return {
+            isValid: false,
+            message: 'isDeceased must be a boolean, got: ' + typeof isDeceased
+        };
+    }
 
+    var deceased = isDeceased === true;
     var hasBirth = birthYear !== null && birthYear !== undefined;
     var hasDeath = deathYear !== null && deathYear !== undefined;
 
     if (!hasBirth) {
+        if (hasDeath) {
+            return {
+                isValid: false,
+                message: 'Death year specified without a birth year'
+            };
+        }
         return { isValid: true, message: 'No birth year specified' };
     }
+
     if (!isValidYear(birthYear)) {
         return { isValid: false, message: 'Invalid birth year: ' + birthYear };
     }
 
-    if (isDeceased) {
+    if (deceased) {
         if (!hasDeath) {
             return { isValid: false, message: 'Deceased character must have a death year' };
         }
@@ -166,17 +199,55 @@ function validateYearsConsistency(birthYear, deathYear, isDeceased) {
 }
 
 // =============================================================================
-// 3. ID VALIDATION (syntactic)
+// 3. ID SYNTAX VALIDATION
 // =============================================================================
+//
+// These check that an ID STRING is well-formed. They do NOT check whether
+// an entity with that ID exists in canonical data. For existence checks,
+// use accessors.js's characterExists / placeExists / roleExists / etc.
 
-function isValidCharacterId(id) {
-    if (!id || typeof id !== 'string') return false;
+/**
+ * True if `id` is a well-formed ID string (non-empty, allowed characters).
+ * @param {*} id
+ * @returns {boolean}
+ */
+function isValidIdSyntax(id) {
+    if (id === undefined || id === null) return false;
+    if (typeof id !== 'string' || id.length === 0) return false;
     return VALIDATION_CONSTANTS.ID_REGEX.test(id);
 }
 
+/**
+ * True if `id` is a well-formed character ID string.
+ * Does NOT check existence.
+ */
+function isValidCharacterId(id) {
+    return isValidIdSyntax(id);
+}
+
+/**
+ * True if `id` is a well-formed place ID string.
+ * Does NOT check existence.
+ */
 function isValidPlaceId(id) {
-    if (!id || typeof id !== 'string') return false;
-    return VALIDATION_CONSTANTS.ID_REGEX.test(id);
+    return isValidIdSyntax(id);
+}
+
+/**
+ * Validates a reference ID field: either explicitly missing, or a valid
+ * ID string. Never accepts a malformed string, a non-string, or an empty
+ * string.
+ *
+ * @param {*} id
+ * @param {string} fieldName - for the error message
+ * @param {Function} syntaxChecker - isValidCharacterId / isValidPlaceId / ...
+ * @param {string[]} errors - accumulator
+ */
+function _checkReferenceId(id, fieldName, syntaxChecker, errors) {
+    if (id === undefined || id === null) return;
+    if (!syntaxChecker(id)) {
+        errors.push(fieldName + ' "' + String(id) + '" is not a valid ID');
+    }
 }
 
 // =============================================================================
@@ -191,13 +262,15 @@ function validateCharacter(char, context) {
         return { isValid: false, errors: ['Character is null or not an object'] };
     }
 
-    if (!char.id) {
+    // --- Identity ---
+    if (char.id === undefined || char.id === null) {
         errors.push('Character missing ID');
     } else if (!isValidCharacterId(char.id)) {
-        errors.push('Character ID "' + char.id + '" contains invalid characters');
+        errors.push('Character ID "' + char.id + '" is not a valid ID');
     }
 
-    if (!char.name || typeof char.name !== 'string' || char.name.trim() === '') {
+    if (char.name === undefined || char.name === null
+        || typeof char.name !== 'string' || char.name.trim() === '') {
         errors.push('Character name is required');
     } else if (char.name.length > VALIDATION_CONSTANTS.MAX_NAME_LENGTH) {
         errors.push('Character name exceeds ' + VALIDATION_CONSTANTS.MAX_NAME_LENGTH + ' characters');
@@ -205,6 +278,7 @@ function validateCharacter(char, context) {
         errors.push('Character name "' + char.name + '" contains invalid characters');
     }
 
+    // --- Surname ---
     if (char.surname !== undefined && char.surname !== null) {
         if (typeof char.surname !== 'string') {
             errors.push('Surname must be a string');
@@ -215,18 +289,26 @@ function validateCharacter(char, context) {
         }
     }
 
+    // --- Domain enum fields ---
+    var genders = _getCanonicalEnum('GENDER_VALUES');
     if (char.gender !== undefined && char.gender !== null) {
-        if (_getGenders().indexOf(char.gender) === -1) {
+        if (!genders) {
+            errors.push('GENDER_VALUES not loaded; cannot validate gender');
+        } else if (genders.indexOf(char.gender) === -1) {
             errors.push('Invalid gender: ' + char.gender);
         }
     }
 
+    var attractions = _getCanonicalEnum('ATTRACTION_VALUES');
     if (char.attraction !== undefined && char.attraction !== null) {
-        if (_getAttractions().indexOf(char.attraction) === -1) {
+        if (!attractions) {
+            errors.push('ATTRACTION_VALUES not loaded; cannot validate attraction');
+        } else if (attractions.indexOf(char.attraction) === -1) {
             errors.push('Invalid attraction: ' + char.attraction);
         }
     }
 
+    // --- Epithet ---
     if (char.epithet !== undefined && char.epithet !== null) {
         if (typeof char.epithet !== 'string') {
             errors.push('Epithet must be a string');
@@ -235,28 +317,30 @@ function validateCharacter(char, context) {
         }
     }
 
-    if (char.birthYear !== undefined && char.birthYear !== null) {
-        if (!isValidYear(char.birthYear)) {
-            errors.push('Invalid birth year: ' + char.birthYear);
-        }
+    // --- isDeceased ---
+    if (char.isDeceased !== undefined && char.isDeceased !== null
+        && typeof char.isDeceased !== 'boolean') {
+        errors.push('isDeceased must be a boolean');
     }
 
+    // --- Years (consistency validator owns ALL year semantics) ---
     var yearCheck = validateYearsConsistency(char.birthYear, char.deathYear, char.isDeceased);
     if (!yearCheck.isValid) {
         errors.push(yearCheck.message);
     }
 
-    if (char.motherId !== undefined && char.motherId !== null && typeof char.motherId !== 'string') {
-        errors.push('Mother ID must be a string');
-    }
-    if (char.fatherId !== undefined && char.fatherId !== null && typeof char.fatherId !== 'string') {
-        errors.push('Father ID must be a string');
-    }
+    // --- Reference ID syntax ---
+    // Mother / father / household are character-or-household IDs; we check
+    // syntax only. Existence belongs to accessors / integrity.
+    _checkReferenceId(char.motherId, 'Mother ID', isValidCharacterId, errors);
+    _checkReferenceId(char.fatherId, 'Father ID', isValidCharacterId, errors);
 
-    if (char.household !== undefined && char.household !== null && typeof char.household !== 'string') {
+    if (char.household !== undefined && char.household !== null
+        && typeof char.household !== 'string') {
         errors.push('Household must be a string');
     }
 
+    // --- Notes ---
     if (char.notes !== undefined && char.notes !== null) {
         if (typeof char.notes !== 'string') {
             errors.push('Notes must be a string');
@@ -265,18 +349,24 @@ function validateCharacter(char, context) {
         }
     }
 
+    // --- Import duplicate detection (only when caller supplies a set that
+    //     is NOT the import's own ID set — see validateImportData) ---
     if (context.existingCharacterIds
         && typeof context.existingCharacterIds.has === 'function'
+        && char.id !== undefined && char.id !== null
         && context.existingCharacterIds.has(char.id)) {
         errors.push('Duplicate character ID: ' + char.id);
     }
 
-    // Reference existence checks (when context supplies ID sets)
+    // --- Reference existence checks (only when caller supplies ID sets
+    //     representing the world's canonical ID space, not the import) ---
     if (context.existingCharacterIds && typeof context.existingCharacterIds.has === 'function') {
-        if (char.motherId && !context.existingCharacterIds.has(char.motherId)) {
+        if (char.motherId !== undefined && char.motherId !== null
+            && !context.existingCharacterIds.has(char.motherId)) {
             errors.push('Mother "' + char.motherId + '" does not exist');
         }
-        if (char.fatherId && !context.existingCharacterIds.has(char.fatherId)) {
+        if (char.fatherId !== undefined && char.fatherId !== null
+            && !context.existingCharacterIds.has(char.fatherId)) {
             errors.push('Father "' + char.fatherId + '" does not exist');
         }
     }
@@ -285,31 +375,59 @@ function validateCharacter(char, context) {
 }
 
 /**
- * Validates a character's age.
+ * Validates a character's age against a reference year and maximum.
+ *
+ * Semantics:
+ *   - missing birthYear            → valid, age null
+ *   - invalid birthYear            → INVALID
+ *   - valid birthYear, no ref year → valid/indeterminate, age null
+ *   - negative age                 → invalid
+ *   - age > maxAge                 → invalid
+ *
  * @param {Object} char
  * @param {number} currentYear
  * @param {number} [maxAge]
  * @returns {{ isValid: boolean, age: number|null, message: string }}
  */
 function validateCharacterAge(char, currentYear, maxAge) {
-    maxAge = (maxAge === undefined || maxAge === null)
-        ? VALIDATION_CONSTANTS.DEFAULT_MAX_AGE
-        : maxAge;
-
     if (!char || typeof char !== 'object') {
         return { isValid: false, age: null, message: 'Invalid character' };
     }
+
+    if (maxAge !== undefined && maxAge !== null) {
+        if (typeof maxAge !== 'number' || !Number.isFinite(maxAge)
+            || !Number.isInteger(maxAge) || maxAge < 0) {
+            return {
+                isValid: false,
+                age: null,
+                message: 'maxAge must be a non-negative integer'
+            };
+        }
+    }
+
+    var hasBirth = char.birthYear !== undefined && char.birthYear !== null;
+    if (!hasBirth) {
+        return { isValid: true, age: null, message: 'No birth year set' };
+    }
     if (!isValidYear(char.birthYear)) {
-        return { isValid: true, age: null, message: 'No valid birth year set' };
+        return {
+            isValid: false,
+            age: null,
+            message: 'Invalid birth year: ' + char.birthYear
+        };
     }
 
     var age;
-    if (char.isDeceased && isValidYear(char.deathYear)) {
+    if (char.isDeceased === true && isValidYear(char.deathYear)) {
         age = char.deathYear - char.birthYear;
     } else if (isValidYear(currentYear)) {
         age = currentYear - char.birthYear;
     } else {
-        return { isValid: true, age: null, message: 'Cannot determine age without current year' };
+        return {
+            isValid: true,
+            age: null,
+            message: 'Cannot determine age without a reference year'
+        };
     }
 
     if (age < 0) {
@@ -320,8 +438,12 @@ function validateCharacterAge(char, currentYear, maxAge) {
         };
     }
 
-    if (age > maxAge) {
-        return { isValid: false, age: age, message: 'Age ' + age + ' exceeds maximum ' + maxAge };
+    if (maxAge !== undefined && maxAge !== null && age > maxAge) {
+        return {
+            isValid: false,
+            age: age,
+            message: 'Age ' + age + ' exceeds maximum ' + maxAge
+        };
     }
 
     return { isValid: true, age: age, message: 'Valid age' };
@@ -339,20 +461,23 @@ function validatePlace(place, context) {
         return { isValid: false, errors: ['Place is null or not an object'] };
     }
 
-    if (!place.id) {
+    if (place.id === undefined || place.id === null) {
         errors.push('Place missing ID');
     } else if (!isValidPlaceId(place.id)) {
-        errors.push('Place ID "' + place.id + '" contains invalid characters');
+        errors.push('Place ID "' + place.id + '" is not a valid ID');
     }
 
-    if (!place.displayName || typeof place.displayName !== 'string' || place.displayName.trim() === '') {
+    if (place.displayName === undefined || place.displayName === null
+        || typeof place.displayName !== 'string' || place.displayName.trim() === '') {
         errors.push('Place name is required');
     } else if (place.displayName.length > VALIDATION_CONSTANTS.MAX_DISPLAY_NAME_LENGTH) {
         errors.push('Place name exceeds ' + VALIDATION_CONSTANTS.MAX_DISPLAY_NAME_LENGTH + ' characters');
     }
 
-    if (!place.typeId) {
+    if (place.typeId === undefined || place.typeId === null) {
         errors.push('Place "' + (place.displayName || 'unnamed') + '" missing type ID');
+    } else if (typeof place.typeId !== 'string' || place.typeId.length === 0) {
+        errors.push('Place typeId must be a non-empty string');
     }
 
     if (place.status !== undefined && place.status !== null) {
@@ -369,16 +494,12 @@ function validatePlace(place, context) {
         }
     }
 
-    if (place.parentId !== undefined && place.parentId !== null) {
-        if (typeof place.parentId !== 'string') {
-            errors.push('Parent ID must be a string');
-        } else if (!isValidPlaceId(place.parentId)) {
-            errors.push('Parent ID "' + place.parentId + '" contains invalid characters');
-        } else if (context.existingPlaceIds
-            && typeof context.existingPlaceIds.has === 'function'
-            && !context.existingPlaceIds.has(place.parentId)) {
-            errors.push('Parent place "' + place.parentId + '" does not exist');
-        }
+    _checkReferenceId(place.parentId, 'Parent ID', isValidPlaceId, errors);
+    if (place.parentId !== undefined && place.parentId !== null
+        && context.existingPlaceIds
+        && typeof context.existingPlaceIds.has === 'function'
+        && !context.existingPlaceIds.has(place.parentId)) {
+        errors.push('Parent place "' + place.parentId + '" does not exist');
     }
 
     if (place.notes !== undefined && place.notes !== null) {
@@ -391,6 +512,7 @@ function validatePlace(place, context) {
 
     if (context.existingPlaceIds
         && typeof context.existingPlaceIds.has === 'function'
+        && place.id !== undefined && place.id !== null
         && context.existingPlaceIds.has(place.id)) {
         errors.push('Duplicate place ID: ' + place.id);
     }
@@ -399,9 +521,8 @@ function validatePlace(place, context) {
 }
 
 /**
- * Detects parent-cycle if `place` has a parentId and `context.placesById`
- * supplies a way to look up places.
- * 
+ * Detects parent cycles in a place hierarchy.
+ *
  * @param {Object} place
  * @param {Map|Object} placesById - Lookup keyed by place id
  * @returns {{ isValid: boolean, message: string }}
@@ -410,7 +531,7 @@ function validatePlaceHierarchy(place, placesById) {
     if (!place || typeof place !== 'object') {
         return { isValid: false, message: 'Invalid place' };
     }
-    if (!place.parentId) {
+    if (place.parentId === undefined || place.parentId === null) {
         return { isValid: true, message: 'No parent; root place' };
     }
     if (!placesById) {
@@ -422,23 +543,20 @@ function validatePlaceHierarchy(place, placesById) {
         return placesById[id];
     };
 
-    var seen = {};
-    seen[place.id] = true;
-    var current = get(place.parentId);
-    var depth = 0;
+    var seen = new Set();
+    seen.add(place.id);
 
-    while (current && depth < 50) {
-        if (seen[current.id]) {
+    var current = get(place.parentId);
+    while (current) {
+        if (current.id === undefined || current.id === null) {
+            return { isValid: false, message: 'Parent entity missing ID' };
+        }
+        if (seen.has(current.id)) {
             return { isValid: false, message: 'Circular parent reference detected' };
         }
-        seen[current.id] = true;
-        if (!current.parentId) break;
+        seen.add(current.id);
+        if (current.parentId === undefined || current.parentId === null) break;
         current = get(current.parentId);
-        depth++;
-    }
-
-    if (depth >= 50) {
-        return { isValid: false, message: 'Hierarchy depth exceeds safety limit' };
     }
 
     return { isValid: true, message: 'Valid hierarchy' };
@@ -456,8 +574,11 @@ function validateRank(rank, context) {
         return { isValid: false, errors: ['Rank is null or not an object'] };
     }
 
-    if (!rank.id) errors.push('Rank missing ID');
-    if (!rank.name || typeof rank.name !== 'string' || rank.name.trim() === '') {
+    if (rank.id === undefined || rank.id === null) {
+        errors.push('Rank missing ID');
+    }
+    if (rank.name === undefined || rank.name === null
+        || typeof rank.name !== 'string' || rank.name.trim() === '') {
         errors.push('Rank name is required');
     } else if (rank.name.length > VALIDATION_CONSTANTS.MAX_NAME_LENGTH) {
         errors.push('Rank name exceeds ' + VALIDATION_CONSTANTS.MAX_NAME_LENGTH + ' characters');
@@ -484,12 +605,14 @@ function validateRank(rank, context) {
         }
     }
 
-    if (rank.numbered !== undefined && rank.numbered !== null && typeof rank.numbered !== 'boolean') {
+    if (rank.numbered !== undefined && rank.numbered !== null
+        && typeof rank.numbered !== 'boolean') {
         errors.push('Rank.numbered must be a boolean');
     }
 
     if (context.existingRankIds
         && typeof context.existingRankIds.has === 'function'
+        && rank.id !== undefined && rank.id !== null
         && context.existingRankIds.has(rank.id)) {
         errors.push('Duplicate rank ID: ' + rank.id);
     }
@@ -509,8 +632,11 @@ function validateRole(role, context) {
         return { isValid: false, errors: ['Role is null or not an object'] };
     }
 
-    if (!role.id) errors.push('Role missing ID');
-    if (!role.name || typeof role.name !== 'string' || role.name.trim() === '') {
+    if (role.id === undefined || role.id === null) {
+        errors.push('Role missing ID');
+    }
+    if (role.name === undefined || role.name === null
+        || typeof role.name !== 'string' || role.name.trim() === '') {
         errors.push('Role name is required');
     } else if (role.name.length > VALIDATION_CONSTANTS.MAX_NAME_LENGTH) {
         errors.push('Role name exceeds ' + VALIDATION_CONSTANTS.MAX_NAME_LENGTH + ' characters');
@@ -546,6 +672,7 @@ function validateRole(role, context) {
 
     if (context.existingRoleIds
         && typeof context.existingRoleIds.has === 'function'
+        && role.id !== undefined && role.id !== null
         && context.existingRoleIds.has(role.id)) {
         errors.push('Duplicate role ID: ' + role.id);
     }
@@ -557,6 +684,15 @@ function validateRole(role, context) {
 // 8. RELATIONSHIP VALIDATION
 // =============================================================================
 
+/**
+ * Validates a single relationship record owned by `charId`.
+ *
+ * @param {Object} relationship
+ * @param {string} charId - owning character
+ * @param {string} partnerId - the other party
+ * @param {Object} [context]
+ * @returns {{ isValid: boolean, errors: string[], warnings: string[] }}
+ */
 function validateRelationship(relationship, charId, partnerId, context) {
     context = context || {};
     var errors = [];
@@ -572,25 +708,43 @@ function validateRelationship(relationship, charId, partnerId, context) {
         errors.push('Character cannot have a relationship with themselves');
     }
 
-    if (relationship.partnerId !== undefined && relationship.partnerId !== partnerId) {
+    if (relationship.partnerId !== undefined && relationship.partnerId !== null
+        && relationship.partnerId !== partnerId) {
         errors.push('Relationship partner mismatch: expected ' + partnerId + ', got ' + relationship.partnerId);
     }
 
     if (relationship.status !== undefined && relationship.status !== null) {
-        if (_getRelationshipStatuses().indexOf(relationship.status) === -1) {
+        var statuses = _getCanonicalEnum('RELATIONSHIP_STATUS');
+        // RELATIONSHIP_STATUS is an object (enum), not an array — handle both.
+        var statusList = statuses
+            ? Object.keys(statuses).map(function(k) { return statuses[k]; })
+            : ['ongoing', 'ended', 'widowed', 'single', 'partnered'];
+        if (statusList.indexOf(relationship.status) === -1) {
             errors.push('Invalid relationship status: ' + relationship.status);
         }
     }
 
-    var details = relationship.details || {};
+    var details = relationship.details;
+    if (details !== undefined && details !== null) {
+        if (typeof details !== 'object' || Array.isArray(details)) {
+            errors.push('Relationship details must be an object');
+            details = null;
+        }
+    }
+    if (!details) details = {};
 
-    if (details.startYear !== undefined && details.startYear !== null && !isValidYear(details.startYear)) {
+    var hasStart = details.startYear !== undefined && details.startYear !== null;
+    var hasEnd = details.endYear !== undefined && details.endYear !== null;
+
+    if (hasStart && !isValidYear(details.startYear)) {
         errors.push('Invalid start year: ' + details.startYear);
     }
-    if (details.endYear !== undefined && details.endYear !== null && !isValidYear(details.endYear)) {
+    if (hasEnd && !isValidYear(details.endYear)) {
         errors.push('Invalid end year: ' + details.endYear);
     }
-    if (details.startYear && details.endYear && details.endYear < details.startYear) {
+    if (hasStart && hasEnd
+        && isValidYear(details.startYear) && isValidYear(details.endYear)
+        && details.endYear < details.startYear) {
         errors.push('End year (' + details.endYear + ') before start year (' + details.startYear + ')');
     }
 
@@ -613,16 +767,36 @@ function validateRelationship(relationship, charId, partnerId, context) {
     return { isValid: errors.length === 0, errors: errors, warnings: warnings };
 }
 
-function validateBidirectionalRelationship(rel1, rel2) {
+/**
+ * Validates that two relationship records are reciprocal.
+ *
+ * @param {Object} rel1 - relationship owned by char1Id
+ * @param {string} char1Id
+ * @param {Object} rel2 - relationship owned by char2Id
+ * @param {string} char2Id
+ * @returns {{ isConsistent: boolean, issues: string[] }}
+ */
+function validateBidirectionalRelationship(rel1, char1Id, rel2, char2Id) {
     var issues = [];
 
     if (!rel1 || !rel2) {
         issues.push('Missing bidirectional relationship');
         return { isConsistent: false, issues: issues };
     }
+    if (!char1Id || !char2Id) {
+        issues.push('Missing owner character IDs for bidirectional check');
+        return { isConsistent: false, issues: issues };
+    }
 
-    if (rel1.partnerId && rel2.partnerId && rel1.partnerId !== rel2.partnerId) {
-        issues.push('Partner ID mismatch: ' + rel1.partnerId + ' vs ' + rel2.partnerId);
+    // rel1 belongs to char1 and should point at char2.
+    // rel2 belongs to char2 and should point at char1.
+    if (rel1.partnerId !== undefined && rel1.partnerId !== null
+        && rel1.partnerId !== char2Id) {
+        issues.push('rel1.partnerId should be ' + char2Id + ', got ' + rel1.partnerId);
+    }
+    if (rel2.partnerId !== undefined && rel2.partnerId !== null
+        && rel2.partnerId !== char1Id) {
+        issues.push('rel2.partnerId should be ' + char1Id + ', got ' + rel2.partnerId);
     }
 
     if (rel1.status !== rel2.status) {
@@ -649,10 +823,105 @@ function validateBidirectionalRelationship(rel1, rel2) {
 // =============================================================================
 
 /**
- * Validates an imported JSON structure. This is a structural + entity-level
- * check. Malformed structures return errors; individual malformed entities
- * return per-entity errors.
- * 
+ * @private
+ * Detects whether `imported` looks like a Still Waters payload and returns
+ * the inner data object. Returns null if unrecognized.
+ */
+function _detectImportPayload(imported) {
+    if (!imported || typeof imported !== 'object') return null;
+    if (imported.type === 'master' && imported.data && typeof imported.data === 'object') {
+        return imported.data;
+    }
+    if (imported.data && typeof imported.data === 'object'
+        && _hasAnyCanonicalCollection(imported.data)) {
+        return imported.data;
+    }
+    if (_hasAnyCanonicalCollection(imported)) {
+        return imported;
+    }
+    return null;
+}
+
+/**
+ * @private
+ * True if the object contains at least one recognized canonical collection
+ * or reference-data field. Used for import format detection only.
+ */
+function _hasAnyCanonicalCollection(obj) {
+    if (!obj || typeof obj !== 'object') return false;
+    var keys = ['characters', 'places', 'ranks', 'roles', 'locationTypes',
+                'governmentTypes', 'households', 'residences', 'disasters',
+                'eventLog', 'nameLists', 'cityNameParts', 'rankInheritanceRules'];
+    for (var i = 0; i < keys.length; i++) {
+        if (obj[keys[i]] !== undefined) return true;
+    }
+    return false;
+}
+
+/**
+ * @private
+ * Collects canonical IDs from an array into a Set.
+ * Does NOT decide what constitutes an ID; malformed IDs are left for the
+ * entity validator to report.
+ */
+function _collectIds(arr) {
+    var set = new Set();
+    if (!Array.isArray(arr)) return set;
+    for (var i = 0; i < arr.length; i++) {
+        var item = arr[i];
+        if (!item) continue;
+        if (typeof item.id === 'string' && item.id.length > 0) {
+            set.add(item.id);
+        }
+    }
+    return set;
+}
+
+/**
+ * @private
+ * Builds an id -> entity map for cycle detection and lookups.
+ * Only string IDs are indexed.
+ */
+function _buildIdLookup(arr) {
+    var m = new Map();
+    if (!Array.isArray(arr)) return m;
+    for (var i = 0; i < arr.length; i++) {
+        var item = arr[i];
+        if (!item) continue;
+        if (typeof item.id === 'string' && item.id.length > 0) {
+            m.set(item.id, item);
+        }
+    }
+    return m;
+}
+
+/**
+ * @private
+ * Reports duplicates within an import's own ID set as errors.
+ */
+function _reportSelfDuplicates(arr, entityLabel, errors) {
+    if (!Array.isArray(arr)) return;
+    var seen = new Set();
+    for (var i = 0; i < arr.length; i++) {
+        var item = arr[i];
+        if (!item) continue;
+        if (typeof item.id !== 'string' || item.id.length === 0) continue;
+        if (seen.has(item.id)) {
+            errors.push('Duplicate ' + entityLabel + ' ID: ' + item.id);
+        } else {
+            seen.add(item.id);
+        }
+    }
+}
+
+/**
+ * Validates an imported JSON structure.
+ *
+ * The context passed to entity validators describes the IMPORT's ID space
+ * for reference resolution. It is NOT passed as `existing*Ids`, because
+ * those are reserved for "IDs already in the canonical world". The import's
+ * own duplicate detection is done by dedicated passes.
+ *
  * @param {Object} imported
  * @returns {{ isValid: boolean, errors: string[], warnings: string[] }}
  */
@@ -660,104 +929,52 @@ function validateImportData(imported) {
     var errors = [];
     var warnings = [];
 
-    if (!imported) {
-        errors.push('No data provided');
-        return { isValid: false, errors: errors, warnings: warnings };
-    }
-
-    var dataToValidate;
-    if (imported.type === "master" && imported.data) {
-        dataToValidate = imported.data;
-    } else if (imported.data && imported.data.characters) {
-        dataToValidate = imported.data;
-    } else if (imported.characters) {
-        dataToValidate = imported;
-    } else {
+    var dataToValidate = _detectImportPayload(imported);
+    if (!dataToValidate) {
         errors.push('Unknown file format - expected Still Waters export');
         return { isValid: false, errors: errors, warnings: warnings };
     }
 
-    // Build id sets
-    var characterIds = new Set();
-    var placeIds = new Set();
-    var rankIds = new Set();
-    var roleIds = new Set();
-
-    if (dataToValidate.characters !== undefined) {
-        if (!Array.isArray(dataToValidate.characters)) {
-            errors.push('Characters must be an array');
-        } else {
-            for (var i = 0; i < dataToValidate.characters.length; i++) {
-                var c = dataToValidate.characters[i];
-                if (c && c.id) {
-                    if (characterIds.has(c.id)) {
-                        errors.push('Duplicate character ID: ' + c.id);
-                    } else {
-                        characterIds.add(c.id);
-                    }
-                }
-            }
-        }
-    } else {
-        warnings.push('No characters found in import data');
-    }
-
-    if (dataToValidate.places !== undefined) {
-        if (!Array.isArray(dataToValidate.places)) {
-            errors.push('Places must be an array');
-        } else {
-            for (var i = 0; i < dataToValidate.places.length; i++) {
-                var p = dataToValidate.places[i];
-                if (p && p.id) {
-                    if (placeIds.has(p.id)) {
-                        errors.push('Duplicate place ID: ' + p.id);
-                    } else {
-                        placeIds.add(p.id);
-                    }
-                }
-            }
+    // --- Structural shape checks ---
+    var arrayFields = [
+        ['characters', 'Characters'],
+        ['places', 'Places'],
+        ['ranks', 'Ranks'],
+        ['roles', 'Roles'],
+        ['locationTypes', 'Location types'],
+        ['governmentTypes', 'Government types'],
+        ['households', 'Households'],
+        ['residences', 'Residences'],
+        ['disasters', 'Disasters'],
+        ['eventLog', 'Event log']
+    ];
+    for (var i = 0; i < arrayFields.length; i++) {
+        var key = arrayFields[i][0];
+        var label = arrayFields[i][1];
+        if (dataToValidate[key] !== undefined && !Array.isArray(dataToValidate[key])) {
+            errors.push(label + ' must be an array');
         }
     }
 
-    if (dataToValidate.ranks !== undefined) {
-        if (!Array.isArray(dataToValidate.ranks)) {
-            errors.push('Ranks must be an array');
-        } else {
-            for (var i = 0; i < dataToValidate.ranks.length; i++) {
-                var r = dataToValidate.ranks[i];
-                if (r && r.id) {
-                    if (rankIds.has(r.id)) {
-                        errors.push('Duplicate rank ID: ' + r.id);
-                    } else {
-                        rankIds.add(r.id);
-                    }
-                }
-            }
-        }
-    }
+    // --- Collect IDs (for reference resolution within the import) ---
+    var importCharacterIds = _collectIds(dataToValidate.characters);
+    var importPlaceIds = _collectIds(dataToValidate.places);
 
-    if (dataToValidate.roles !== undefined) {
-        if (!Array.isArray(dataToValidate.roles)) {
-            errors.push('Roles must be an array');
-        } else {
-            for (var i = 0; i < dataToValidate.roles.length; i++) {
-                var rl = dataToValidate.roles[i];
-                if (rl && rl.id) {
-                    if (roleIds.has(rl.id)) {
-                        errors.push('Duplicate role ID: ' + rl.id);
-                    } else {
-                        roleIds.add(rl.id);
-                    }
-                }
-            }
-        }
-    }
+    // --- Self-duplicate detection within the import ---
+    _reportSelfDuplicates(dataToValidate.characters, 'character', errors);
+    _reportSelfDuplicates(dataToValidate.places, 'place', errors);
+    _reportSelfDuplicates(dataToValidate.ranks, 'rank', errors);
+    _reportSelfDuplicates(dataToValidate.roles, 'role', errors);
 
-    // Validate individual characters with reference sets
+    // --- Validate characters (references resolved against the import) ---
     if (Array.isArray(dataToValidate.characters)) {
+        // NOTE: existingCharacterIds here means "IDs available for reference
+        // resolution", NOT "IDs that already exist in canonical data". The
+        // entity validator uses this set for mother/father existence and,
+        // because we do NOT want to double-report duplicates, we do not
+        // supply it as the duplicate-detection set.
         var charContext = {
-            existingCharacterIds: characterIds,
-            currentYear: dataToValidate.currentYear
+            existingCharacterIds: importCharacterIds
         };
         for (var i = 0; i < dataToValidate.characters.length; i++) {
             var char = dataToValidate.characters[i];
@@ -766,20 +983,24 @@ function validateImportData(imported) {
                 errors.push('Character ' + (char && char.name ? '"' + char.name + '"' : '#' + i) + ': ' + v.errors[k]);
             }
         }
+    } else {
+        warnings.push('No characters found in import data');
     }
 
-    // Validate individual places with place-id set for parent existence
+    // --- Validate places (single lookup built once) ---
     if (Array.isArray(dataToValidate.places)) {
-        var placeContext = { existingPlaceIds: placeIds };
+        var placeContext = { existingPlaceIds: importPlaceIds };
+        var placesById = _buildIdLookup(dataToValidate.places);
+
         for (var i = 0; i < dataToValidate.places.length; i++) {
             var place = dataToValidate.places[i];
             var pv = validatePlace(place, placeContext);
             for (var k = 0; k < pv.errors.length; k++) {
                 errors.push('Place ' + (place && place.displayName ? '"' + place.displayName + '"' : '#' + i) + ': ' + pv.errors[k]);
             }
-            // Cycle detection
-            if (place && place.parentId) {
-                var cyc = validatePlaceHierarchy(place, placeIds.size > 0 ? _buildIdLookup(dataToValidate.places) : null);
+
+            if (place && place.parentId !== undefined && place.parentId !== null) {
+                var cyc = validatePlaceHierarchy(place, placesById);
                 if (!cyc.isValid) {
                     errors.push('Place ' + (place.displayName || place.id) + ': ' + cyc.message);
                 }
@@ -787,6 +1008,7 @@ function validateImportData(imported) {
         }
     }
 
+    // --- Validate ranks ---
     if (Array.isArray(dataToValidate.ranks)) {
         for (var i = 0; i < dataToValidate.ranks.length; i++) {
             var rv = validateRank(dataToValidate.ranks[i], {});
@@ -796,6 +1018,7 @@ function validateImportData(imported) {
         }
     }
 
+    // --- Validate roles ---
     if (Array.isArray(dataToValidate.roles)) {
         for (var i = 0; i < dataToValidate.roles.length; i++) {
             var rlv = validateRole(dataToValidate.roles[i], {});
@@ -805,32 +1028,24 @@ function validateImportData(imported) {
         }
     }
 
-    // Year check
+    // --- Metadata: report only. Import policy decides what to do. ---
     if (dataToValidate.currentYear !== undefined
         && dataToValidate.currentYear !== null
         && !isValidYear(dataToValidate.currentYear)) {
-        warnings.push('Invalid current year: ' + dataToValidate.currentYear + ', will use default');
+        warnings.push('Invalid current year: ' + dataToValidate.currentYear);
     }
 
     return { isValid: errors.length === 0, errors: errors, warnings: warnings };
 }
 
-/**
- * @private
- * Builds an id → place map for cycle detection.
- */
-function _buildIdLookup(arr) {
-    var m = new Map();
-    if (!Array.isArray(arr)) return m;
-    for (var i = 0; i < arr.length; i++) {
-        if (arr[i] && arr[i].id) m.set(arr[i].id, arr[i]);
-    }
-    return m;
-}
-
 // =============================================================================
 // 10. SCHEMA VALIDATION
 // =============================================================================
+//
+// Schema validation answers "does this entity have the right shape?"
+// It does NOT validate field semantics — that's each entity validator's job.
+// ENTITY_SCHEMAS must remain synchronized with the canonical model; drift
+// here is silent and dangerous, so treat this as a maintenance liability.
 
 var ENTITY_SCHEMAS = {
     character: {
@@ -869,8 +1084,7 @@ var ENTITY_SCHEMAS = {
 
 /**
  * Checks presence of required fields and absence of unknown fields.
- * Does NOT validate field types — that's each entity validator's job.
- * 
+ *
  * @param {Object} entity
  * @param {string} type
  * @returns {{ isValid: boolean, errors: string[] }}
@@ -894,12 +1108,14 @@ function validateEntitySchema(entity, type) {
         }
     }
 
-    var validFields = {};
+    var validFields = Object.create(null);
     for (var i = 0; i < schema.required.length; i++) validFields[schema.required[i]] = true;
     for (var i = 0; i < schema.optional.length; i++) validFields[schema.optional[i]] = true;
 
-    for (var key in entity) {
-        if (entity.hasOwnProperty(key) && !validFields[key]) {
+    var keys = Object.keys(entity);
+    for (var i = 0; i < keys.length; i++) {
+        var key = keys[i];
+        if (!validFields[key]) {
             errors.push('Unknown field: ' + key);
         }
     }
@@ -908,42 +1124,7 @@ function validateEntitySchema(entity, type) {
 }
 
 // =============================================================================
-// 11. UTILITY
-// =============================================================================
-
-/**
- * Truncates a string for storage, preserving length budget.
- * Renamed from sanitizeString to reflect what it actually does.
- * 
- * @param {string} str
- * @param {number} [maxLength]
- * @returns {string}
- */
-function truncateString(str, maxLength) {
-    maxLength = (maxLength === undefined || maxLength === null)
-        ? VALIDATION_CONSTANTS.MAX_NAME_LENGTH
-        : maxLength;
-    if (!str || typeof str !== 'string') return '';
-    if (str.length <= maxLength) return str;
-    if (maxLength <= 3) return str.slice(0, maxLength);
-    return str.slice(0, maxLength - 3) + '...';
-}
-
-/**
- * @deprecated Use truncateString instead.
- * Kept as alias for backward compatibility.
- */
-function sanitizeString(str, maxLength) {
-    return truncateString(str, maxLength);
-}
-
-function normalizeNameForStorage(name) {
-    if (!name || typeof name !== 'string') return '';
-    return name.trim().replace(/\s+/g, ' ');
-}
-
-// =============================================================================
-// 12. EXPORTS
+// 11. EXPORTS
 // =============================================================================
 
 // Constants
@@ -953,7 +1134,8 @@ window.VALIDATION_CONSTANTS = VALIDATION_CONSTANTS;
 window.isValidYear = isValidYear;
 window.validateYearsConsistency = validateYearsConsistency;
 
-// ID validation
+// ID syntax validation (does NOT check existence — see accessors.js)
+window.isValidIdSyntax = isValidIdSyntax;
 window.isValidCharacterId = isValidCharacterId;
 window.isValidPlaceId = isValidPlaceId;
 
@@ -976,7 +1158,8 @@ window.validateImportData = validateImportData;
 window.validateEntitySchema = validateEntitySchema;
 window.ENTITY_SCHEMAS = ENTITY_SCHEMAS;
 
-// Utility
-window.truncateString = truncateString;
-window.sanitizeString = sanitizeString; // deprecated
-window.normalizeNameForStorage = normalizeNameForStorage;
+// NOTE: Storage-boundary string utilities (truncateForStorage, sanitizeString,
+// normalizeNameForStorage) were removed from this module. They transform data
+// rather than validate it. They belong with storage-schema.js or an
+// equivalent normalization layer. If callers still reference them,
+// migrate them before dropping the globals.
