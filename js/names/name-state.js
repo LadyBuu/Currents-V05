@@ -1,19 +1,75 @@
 /**
  * =============================================================================
- * NAME STATE - Single source of truth for name data
+ * STILL WATERS - NAME STATE (name-state.js)
  * =============================================================================
- * 
- * Responsibilities:
- * - Store name lists by country
- * - Cache surname histories
- * - Track name generation rules by country
- * - Change notifications
- * - UI state management
- * 
- * DEPENDENCIES:
- *   - accessors.js (getPlaces, getPlaceById, getCharacterById, getNameLists)
- *   - storage.js (saveMasterData)
- * 
+ *
+ * LOCATION: js/modules/names/name-state.js
+ *
+ * SCOPE:
+ *   - Runtime caches over canonical name-domain data
+ *   - UI generation state (country, gender, preview, mode)
+ *   - Subscription mechanism for change notifications
+ *   - Targeted cache invalidation
+ *
+ * OUT OF SCOPE:
+ *   - Canonical data ownership → masterData (via accessors and storage)
+ *   - Name list reads → name-queries.js
+ *   - Surname history reads → name-queries.js
+ *   - Random name selection → name-queries.js
+ *   - Surname mutations → name-commands.js
+ *   - Rule application → name-rules.js
+ *   - Persistence → storage.js
+ *   - Presentation → UI
+ *   - Schema repair → storage-schema.js
+ *
+ * SEMANTIC RULES:
+ *   - This module does NOT own persisted data. It caches and projects.
+ *     It never writes to masterData. It never repairs schema.
+ *   - Missing dependencies throw at load. There are no `typeof X ===
+ *     'function' ? ... : fallback` wrappers.
+ *   - Cache lookups distinguish "not cached" from "cached falsy value".
+ *   - `invalidateSurnameHistory` and `invalidateNameList` are targeted.
+ *     There is no "nuke everything" invalidation, because callers
+ *     rarely want that.
+ *   - UI state is validated. `setUiState` rejects unknown keys and
+ *     unknown enum values.
+ *   - Subscriber exceptions are logged, not silently swallowed.
+ *   - Initialization is explicit. There is no DOM-ready auto-init.
+ *     Bootstrap calls `NameState.initialize()` after masterData is loaded.
+ *
+ * CACHE OWNERSHIP:
+ *   - `surnameHistoryCache`: characterId → surname history object. The
+ *     authoritative history is on the character record; this cache is a
+ *     projection. Invalidation: `invalidateSurnameHistory(id)`, or
+ *     `clearAllCaches()` on masterData reload.
+ *   - `nameListCache`: countryId → name list. The authoritative list is
+ *     in masterData.nameLists; this cache is a projection. Invalidation:
+ *     `invalidateNameList(countryId)`, or `clearAllCaches()`.
+ *
+ *   Nothing else is cached. Random name selections are not cached
+ *   anywhere: caching a random result turns "getRandomName" into "get
+ *   the previously chosen name", which is not what the function says.
+ *
+ * SUBSCRIPTIONS:
+ *   NameState is a listener, not a source of truth. Two events drive it:
+ *     - `characterChanged` (action 'surnameChange'/'surnameRevert'/
+ *       'surnameHistoryCleared') → invalidates the affected surname
+ *       history cache entries.
+ *     - `nameListChanged` → invalidates the affected name list cache
+ *       entry.
+ *   NameState also re-emits `nameStateChanged` for its own subscribers
+ *   when its caches or UI state change.
+ *
+ * DEPENDENCIES (REQUIRED):
+ *   - accessors.js: getCharacterById, getNameLists
+ *
+ * DEPENDENCIES (OPTIONAL):
+ *   - None. This module subscribes to events that other modules emit,
+ *     but does not require those modules to be loaded. If an event never
+ *     fires, the cache simply isn't invalidated by it.
+ *
+ * ICON POLICY: No emojis. No icons.
+ *
  * =============================================================================
  */
 
@@ -21,299 +77,372 @@
     'use strict';
 
     // =========================================================================
-    // 1. RECURSION GUARD
+    // 0. DEPENDENCY GUARDS
     // =========================================================================
 
-    var _initializingState = false;
-    var _notifyingSubscribers = false;
-
-    // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
-    // =========================================================================
-
-    function _getPlaces() {
-        return typeof window.getPlaces === 'function' ? window.getPlaces() : [];
-    }
-
-    function _getPlaceById(id) {
-        return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
-    }
-
-    function _getCharacterById(id) {
-        return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
-    }
-
-    function _getNameLists() {
-        return typeof window.getNameLists === 'function' ? window.getNameLists() : {};
-    }
-
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
-    function _saveMasterData() {
-        if (typeof window.saveMasterData === 'function') window.saveMasterData();
-    }
-
-    function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
-        return '';
-    }
-
-    // =========================================================================
-    // 3. STATE DEFINITION
-    // =========================================================================
-
-    var _state = {
-        // Raw data from masterData
-        nameLists: {},
-        surnameHistories: new Map(),
-        
-        // Caches for performance
-        cache: {
-            countryNameLists: new Map(),
-            characterSurnameHistory: new Map(),
-            randomNames: new Map(),
-            randomSurnames: new Map()
-        },
-        
-        // Change listeners
-        subscribers: [],
-        
-        // UI State
-        uiState: {
-            selectedCountry: null,
-            selectedGender: 'male',
-            previewName: '',
-            previewSurname: '',
-            generationMode: 'random',
-            filters: {
-                gender: 'all',
-                minAge: null,
-                maxAge: null
+    function _requireDependencies() {
+        var required = ['getCharacterById', 'getNameLists'];
+        var missing = [];
+        for (var i = 0; i < required.length; i++) {
+            if (typeof window[required[i]] !== 'function') {
+                missing.push(required[i]);
             }
-        },
-        
-        // Initialization flag
-        initialized: false
+        }
+        if (missing.length > 0) {
+            throw new Error(
+                'name-state.js: missing required dependencies: ' +
+                missing.join(', ')
+            );
+        }
+    }
+
+    _requireDependencies();
+
+    // =========================================================================
+    // 1. INTERNAL STATE
+    // =========================================================================
+
+    // Caches. Both are keyed by string ID.
+    // A missing key means "not cached", not "cached falsy value".
+    var _surnameHistoryCache = new Map();
+    var _nameListCache = new Map();
+
+    // UI generation state. Scoped to the "Generate Name" modal.
+    var _uiState = {
+        selectedCountryId: null,
+        selectedGender: 'all',
+        previewName: '',
+        previewSurname: '',
+        generationMode: 'random'
     };
 
+    // Subscribers. Each entry is a callback receiving an event object.
+    var _subscribers = [];
+
+    // Initialization flag.
+    var _initialized = false;
+
     // =========================================================================
-    // 4. INITIALIZATION
+    // 2. CONSTANTS
     // =========================================================================
 
-    function _initializeState() {
-        if (_initializingState) {
-            return;
-        }
-        _initializingState = true;
+    var VALID_GENDERS = ['male', 'female', 'all'];
+    var VALID_GENERATION_MODES = ['random', 'family', 'patronymic', 'chain'];
 
-        try {
-            if (_state.initialized) return;
+    var UI_STATE_KEYS = [
+        'selectedCountryId',
+        'selectedGender',
+        'previewName',
+        'previewSurname',
+        'generationMode'
+    ];
 
-            // Load name lists from masterData
-            var nameLists = _getNameLists();
-            _state.nameLists = nameLists || {};
+    // =========================================================================
+    // 3. HELPERS
+    // =========================================================================
 
-            // Ensure all places have at least empty name lists
-            var places = _getPlaces();
-            for (var i = 0; i < places.length; i++) {
-                var placeId = places[i].id;
-                if (!_state.nameLists[placeId]) {
-                    _state.nameLists[placeId] = {
-                        male: [],
-                        female: [],
-                        surnames: [],
-                        rules: null
-                    };
+    function _hasId(v) {
+        return typeof v === 'string' && v.length > 0;
+    }
+
+    function _isMissing(v) {
+        return v === undefined || v === null;
+    }
+
+    function _isPlainObject(v) {
+        if (v === null || typeof v !== 'object') return false;
+        var proto = Object.getPrototypeOf(v);
+        return proto === Object.prototype || proto === null;
+    }
+
+    /**
+     * Emits an internal state-change event to NameState's own subscribers.
+     */
+    function _notifySubscribers(event) {
+        var snapshot = _subscribers.slice();
+        for (var i = 0; i < snapshot.length; i++) {
+            try {
+                snapshot[i](event);
+            } catch (e) {
+                // Log and continue. A misbehaving subscriber must not
+                // prevent other subscribers from receiving the event.
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error('name-state.js: subscriber threw:', e);
                 }
             }
-
-            // Load surname histories from characters
-            var characters = typeof window.getCharacters === 'function' ? window.getCharacters() : [];
-            for (var i = 0; i < characters.length; i++) {
-                var char = characters[i];
-                if (char.surnameHistory) {
-                    _state.surnameHistories.set(char.id, char.surnameHistory);
-                    _state.cache.characterSurnameHistory.set(char.id, char.surnameHistory);
-                }
-            }
-
-            _state.initialized = true;
-            _notifySubscribers('initialized', null);
-
-        } catch(e) {
-            console.warn('NameState initialization error:', e);
-        } finally {
-            _initializingState = false;
         }
     }
 
     // =========================================================================
-    // 5. CORE STATE ACCESS
+    // 4. LIFECYCLE
     // =========================================================================
 
-    function getNameLists() {
-        if (!_state.initialized) _initializeState();
-        return _state.nameLists;
+    /**
+     * Initializes runtime caches. Idempotent. Bootstrap calls this once
+     * after masterData is loaded.
+     */
+    function initialize() {
+        if (_initialized) return;
+        _initialized = true;
+        _notifySubscribers({ type: 'initialized' });
     }
 
-    function getNameList(countryId) {
-        if (!_state.initialized) _initializeState();
-        if (!countryId) return null;
-        return _state.nameLists[countryId] || null;
+    /**
+     * Clears every cache and re-notifies subscribers. Called on
+     * masterData reload or import. Does not touch UI state: reloading
+     * canonical data should not reset the user's current selection.
+     */
+    function clearAllCaches() {
+        _surnameHistoryCache.clear();
+        _nameListCache.clear();
+        _notifySubscribers({ type: 'cachesCleared' });
     }
 
+    // =========================================================================
+    // 5. SURNAME HISTORY CACHE
+    // =========================================================================
+
+    /**
+     * Returns the surname history for a character, reading through the
+     * cache when possible.
+     *
+     * Returns:
+     *   - null when the character does not exist
+     *   - null when the character exists but has no surnameHistory field
+     *   - the history object otherwise
+     *
+     * "No surnameHistory field" is not the same as "empty history". The
+     * caller decides how to render each case.
+     */
     function getSurnameHistory(characterId) {
-        if (!_state.initialized) _initializeState();
-        if (!characterId) return null;
+        if (!_hasId(characterId)) return null;
 
-        // Check cache first
-        if (_state.cache.characterSurnameHistory.has(characterId)) {
-            return _state.cache.characterSurnameHistory.get(characterId);
+        if (_surnameHistoryCache.has(characterId)) {
+            return _surnameHistoryCache.get(characterId);
         }
 
-        // Try to load from character
-        var char = _getCharacterById(characterId);
-        if (char && char.surnameHistory) {
-            _state.surnameHistories.set(characterId, char.surnameHistory);
-            _state.cache.characterSurnameHistory.set(characterId, char.surnameHistory);
-            return char.surnameHistory;
-        }
+        var character = window.getCharacterById(characterId);
+        if (!character) return null;
+        if (!_isPlainObject(character.surnameHistory)) return null;
 
-        return null;
+        _surnameHistoryCache.set(characterId, character.surnameHistory);
+        return character.surnameHistory;
     }
 
+    /**
+     * Drops the cached surname history for one character.
+     */
+    function invalidateSurnameHistory(characterId) {
+        if (!_hasId(characterId)) return;
+        _surnameHistoryCache.delete(characterId);
+        _notifySubscribers({ type: 'surnameHistoryInvalidated', characterId: characterId });
+    }
+
+    // =========================================================================
+    // 6. NAME LIST CACHE
+    // =========================================================================
+
+    /**
+     * Returns the name list for a country, reading through the cache.
+     *
+     * Returns:
+     *   - null when the country has no configured list
+     *   - the list object otherwise
+     */
+    function getNameList(countryId) {
+        if (!_hasId(countryId)) return null;
+
+        if (_nameListCache.has(countryId)) {
+            return _nameListCache.get(countryId);
+        }
+
+        var lists = window.getNameLists();
+        if (!_isPlainObject(lists)) return null;
+        var list = lists[countryId];
+        if (!_isPlainObject(list)) return null;
+
+        _nameListCache.set(countryId, list);
+        return list;
+    }
+
+    /**
+     * Drops the cached name list for one country.
+     */
+    function invalidateNameList(countryId) {
+        if (!_hasId(countryId)) return;
+        _nameListCache.delete(countryId);
+        _notifySubscribers({ type: 'nameListInvalidated', countryId: countryId });
+    }
+
+    // =========================================================================
+    // 7. UI GENERATION STATE
+    // =========================================================================
+
+    /**
+     * Returns the current UI generation state. The returned object is
+     * the live internal object; callers must treat it as read-only. Use
+     * `setUiState` to modify.
+     */
     function getUiState() {
-        return _state.uiState;
+        return _uiState;
     }
 
+    /**
+     * Updates UI generation state.
+     *
+     * Unknown keys are rejected. Enum fields (`selectedGender`,
+     * `generationMode`) are validated. Missing keys are left unchanged;
+     * passing `undefined` explicitly sets a field to `undefined`.
+     *
+     * Nested objects are not supported. If you need nested state, add a
+     * dedicated field with a clear contract.
+     *
+     * @param {Object} updates
+     * @throws {Error} for unknown keys or invalid enum values
+     */
     function setUiState(updates) {
-        for (var key in updates) {
-            if (updates.hasOwnProperty(key)) {
-                _state.uiState[key] = updates[key];
+        if (!_isPlainObject(updates)) {
+            throw new Error('NameState.setUiState: updates must be a plain object');
+        }
+
+        var keys = Object.keys(updates);
+        for (var i = 0; i < keys.length; i++) {
+            var key = keys[i];
+            if (UI_STATE_KEYS.indexOf(key) === -1) {
+                throw new Error('NameState.setUiState: unknown key "' + key + '"');
+            }
+            var value = updates[key];
+            if (key === 'selectedGender') {
+                if (value !== null && VALID_GENDERS.indexOf(value) === -1) {
+                    throw new Error(
+                        "NameState.setUiState: selectedGender must be 'male', 'female', or 'all'"
+                    );
+                }
+            } else if (key === 'generationMode') {
+                if (value !== null && VALID_GENERATION_MODES.indexOf(value) === -1) {
+                    throw new Error(
+                        'NameState.setUiState: generationMode must be one of: ' +
+                        VALID_GENERATION_MODES.join(', ')
+                    );
+                }
+            } else if (key === 'selectedCountryId') {
+                if (value !== null && value !== undefined && typeof value !== 'string') {
+                    throw new Error(
+                        'NameState.setUiState: selectedCountryId must be a string or null'
+                    );
+                }
+            } else if (key === 'previewName' || key === 'previewSurname') {
+                if (typeof value !== 'string') {
+                    throw new Error(
+                        'NameState.setUiState: ' + key + ' must be a string'
+                    );
+                }
             }
         }
-        _notifySubscribers('uiStateChanged', _state.uiState);
+
+        for (var j = 0; j < keys.length; j++) {
+            _uiState[keys[j]] = updates[keys[j]];
+        }
+        _notifySubscribers({ type: 'uiStateChanged', uiState: _uiState });
+    }
+
+    /**
+     * Resets UI state to defaults. Does not touch caches.
+     */
+    function resetUiState() {
+        _uiState.selectedCountryId = null;
+        _uiState.selectedGender = 'all';
+        _uiState.previewName = '';
+        _uiState.previewSurname = '';
+        _uiState.generationMode = 'random';
+        _notifySubscribers({ type: 'uiStateChanged', uiState: _uiState });
     }
 
     // =========================================================================
-    // 6. CACHE MANAGEMENT
+    // 8. SUBSCRIPTIONS
     // =========================================================================
 
-    function invalidateCache() {
-        _state.cache.countryNameLists.clear();
-        _state.cache.characterSurnameHistory.clear();
-        _state.cache.randomNames.clear();
-        _state.cache.randomSurnames.clear();
-        _notifySubscribers('cacheInvalidated', null);
-    }
-
-    function refreshFromMasterData() {
-        _state.initialized = false;
-        _initializeState();
-        invalidateCache();
-    }
-
-    // =========================================================================
-    // 7. CHANGE NOTIFICATIONS (Observer Pattern)
-    // =========================================================================
-
+    /**
+     * Subscribes to NameState internal events.
+     *
+     * Events:
+     *   - { type: 'initialized' }
+     *   - { type: 'cachesCleared' }
+     *   - { type: 'surnameHistoryInvalidated', characterId }
+     *   - { type: 'nameListInvalidated', countryId }
+     *   - { type: 'uiStateChanged', uiState }
+     *
+     * @param {Function} callback
+     * @returns {Function} unsubscribe
+     */
     function subscribe(callback) {
-        if (typeof callback !== 'function') return null;
-        _state.subscribers.push(callback);
-        
-        // Return unsubscribe function
+        if (typeof callback !== 'function') {
+            throw new Error('NameState.subscribe: callback must be a function');
+        }
+        _subscribers.push(callback);
         return function unsubscribe() {
-            var index = _state.subscribers.indexOf(callback);
-            if (index !== -1) {
-                _state.subscribers.splice(index, 1);
-            }
+            var index = _subscribers.indexOf(callback);
+            if (index !== -1) _subscribers.splice(index, 1);
         };
     }
 
-    function _notifySubscribers(event, data) {
-        if (_notifyingSubscribers) {
+    // =========================================================================
+    // 9. EXTERNAL EVENT LISTENERS
+    // =========================================================================
+    //
+    // These keep caches coherent without requiring the emitters to know
+    // NameState exists. If the emitters are absent, no event fires and
+    // the caches are simply not auto-invalidated.
+
+    function _handleCharacterChanged(event) {
+        var detail = event && event.detail;
+        if (!detail) return;
+        var action = detail.action;
+        if (action !== 'surnameChange'
+            && action !== 'surnameRevert'
+            && action !== 'surnameHistoryCleared'
+            && action !== 'birthSurname') {
             return;
         }
-        _notifyingSubscribers = true;
-
-        try {
-            var subscribers = _state.subscribers.slice();
-            for (var i = 0; i < subscribers.length; i++) {
-                try {
-                    subscribers[i]({ type: event, data: data });
-                } catch(e) {
-                    // Don't let one subscriber break others
-                }
-            }
-        } finally {
-            _notifyingSubscribers = false;
+        var ids = Array.isArray(detail.characterIds) ? detail.characterIds : [];
+        for (var i = 0; i < ids.length; i++) {
+            invalidateSurnameHistory(ids[i]);
         }
     }
 
-    // =========================================================================
-    // 8. CACHE GETTERS/SETTERS (Internal)
-    // =========================================================================
-
-    function _getCache(cacheName, key) {
-        if (!_state.cache[cacheName]) return null;
-        return _state.cache[cacheName].get(key) || null;
+    function _handleNameListChanged(event) {
+        var detail = event && event.detail;
+        if (!detail || !_hasId(detail.countryId)) return;
+        invalidateNameList(detail.countryId);
     }
 
-    function _setCache(cacheName, key, value) {
-        if (!_state.cache[cacheName]) {
-            _state.cache[cacheName] = new Map();
-        }
-        _state.cache[cacheName].set(key, value);
-    }
+    window.addEventListener('characterChanged', _handleCharacterChanged);
+    window.addEventListener('nameListChanged', _handleNameListChanged);
 
     // =========================================================================
-    // 9. EXPORTS
+    // 10. EXPORTS
     // =========================================================================
 
     window.NameState = {
-        // Core access
-        getNameLists: getNameLists,
-        getNameList: getNameList,
+        // Lifecycle
+        initialize: initialize,
+        clearAllCaches: clearAllCaches,
+
+        // Surname history cache
         getSurnameHistory: getSurnameHistory,
-        
-        // UI State
+        invalidateSurnameHistory: invalidateSurnameHistory,
+
+        // Name list cache
+        getNameList: getNameList,
+        invalidateNameList: invalidateNameList,
+
+        // UI state
         getUiState: getUiState,
         setUiState: setUiState,
-        
-        // Cache management
-        invalidateCache: invalidateCache,
-        refreshFromMasterData: refreshFromMasterData,
-        
-        // Subscription
-        subscribe: subscribe,
-        
-        // Internal cache access (for queries)
-        _getCache: _getCache,
-        _setCache: _setCache,
-        
-        // Initialize
-        _initialize: _initializeState
+        resetUiState: resetUiState,
+
+        // Subscriptions
+        subscribe: subscribe
     };
-
-    // Auto-initialize
-    if (typeof window !== 'undefined') {
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', function() {
-                _initializeState();
-            });
-        } else {
-            setTimeout(function() {
-                _initializeState();
-            }, 0);
-        }
-    }
-
 
 })();

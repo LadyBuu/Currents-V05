@@ -1,848 +1,491 @@
-# COMPLETE NAME SYSTEM DOCUMENTATION
+# Name System — Architecture Documentation
 
-## TABLE OF CONTENTS
-1. [NAME SYSTEM OVERVIEW](#1-name-system-overview)
-2. [name-state.js - Single Source of Truth](#2-name-statejs)
-3. [name-commands.js - Write Operations](#3-name-commandsjs)
-4. [name-queries.js - Read Operations](#4-name-queriesjs)
-5. [name-rules.js - Business Logic](#5-name-rulesjs)
-6. [modals-name.js - Name UI Modals](#6-modals-namejs)
-7. [name-system.js - Legacy Wrapper](#7-name-systemjs)
-8. [DEPENDENCY MAP](#8-dependency-map)
-9. [RECURSION GUARDS](#9-recursion-guards)
-10. [ICON POLICY](#10-icon-policy)
-11. [COMPLETE FUNCTION LIST](#11-complete-function-list)
+A reference document for the name/character-naming subsystem after the rewrite.
 
 ---
 
-# 1. NAME SYSTEM OVERVIEW
+## 1. Purpose
 
-## Purpose
+The name system answers four questions:
 
-The Name System manages all name-related operations in the Still Waters simulation, including:
-- Random name/surname generation by country/culture
-- Family surname inheritance (father/mother/both)
-- Patronymic/Matronymic surname generation
-- Chain surname generation from multiple generations
-- Surname history tracking with undo capability
-- Marriage surname changes
-- Location-based cultural rules
-- Name list management
+1. **What is this character's name and surname?** (canonical data, on the character record)
+2. **How are names generated for a new character?** (rules over cultural data)
+3. **Where does a name come from?** (cultural pools keyed by country)
+4. **What has this character's surname been historically?** (surname history)
 
-## Key Principles
-
-| Principle | Description |
-|-----------|-------------|
-| **Single Source of Truth** | `name-state.js` holds all name data |
-| **Command-Query Separation** | Commands (writes) vs Queries (reads) separated |
-| **Separation of Concerns** | State, commands, queries, rules, UI all separate |
-| **Recursion Guards** | All public functions protected from infinite loops |
-| **Change Notifications** | Subscriptions for reactive updates |
-| **No Emojis** | All icons from `icons.js` via `_getIcon()` |
-| **Caching** | Performance optimization for random names and history |
+It does **not** answer: who is married to whom, who lives where, what a character looks like, or what the UI should display. Those belong to their own domains.
 
 ---
 
-## Directory Structure
+## 2. Module map
+
+| File | Role | Depends on |
+|------|------|-----------|
+| `name-queries.js` | Read names, surname history, ancestor data, country rules. Random selection. | `accessors.js`, `randomness.js`, `world.js`, `NameState` |
+| `name-rules.js` | Validate and apply declarative naming rules. Newborn surname policy. | `name-queries.js`, `randomness.js` |
+| `name-commands.js` | Mutate surname history, marriage surnames, name lists. | `accessors.js`, `storage.js`, `time.js`, `NameState` |
+| `name-state.js` | Runtime caches over canonical data. UI generation state. Subscriptions. | `accessors.js` |
+| `name-system.js` | Legacy global compatibility. | `name-queries.js`, `name-commands.js`, `name-rules.js`, `world.js` |
+| `modals-name.js` | Name generator and surname management UIs. | `modals-core.js`, `name-queries.js`, `name-commands.js`, `world.js`, `formatting.js`, `icons.js` |
+| `name-modals.css` | Presentation for the name modals. | — |
+
+Plus the world-side helpers these depend on:
+
+| Function | Owner |
+|----------|-------|
+| `getCharacterCountryId(characterId)` | `world.js` |
+| `getCountryIdForPlace(placeId)` | `world.js` |
+| `getCountryPlaces()` | `world.js` |
+
+---
+
+## 3. Dependency direction
 
 ```
-js/core/
-├── name-state.js           # Single source of truth + cache + notifications
-├── name-commands.js        # All write operations (surname changes, name lists)
-├── name-queries.js         # All read operations (generation, lookup, history)
-├── name-rules.js           # Business logic for name generation rules
-├── modals-name.js          # UI modals (generator, surname management)
-└── name-system.js          # Legacy wrapper (backward compatibility)
-
-js/core/name-docs.txt       # This documentation
+                  ┌──────────────────┐
+                  │   modals-name    │  presentation
+                  └────────┬─────────┘
+                           │
+                  ┌────────▼─────────┐
+                  │   name-system    │  legacy compatibility
+                  └────────┬─────────┘
+                           │
+        ┌──────────────────┼──────────────────┐
+        ▼                  ▼                  ▼
+ ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
+ │ name-rules  │   │name-queries │   │name-commands│
+ └──────┬──────┘   └──────┬──────┘   └──────┬──────┘
+        │                 │                 │
+        │                 ▼                 │
+        │          ┌─────────────┐          │
+        │          │  NameState  │          │
+        │          └──────┬──────┘          │
+        │                 │                 │
+        └────────┬────────┴────────┬────────┘
+                 ▼                 ▼
+        ┌────────────────┐ ┌──────────────┐
+        │   world.js     │ │ randomness   │
+        └────────────────┘ └──────────────┘
+                 │
+                 ▼
+        ┌────────────────┐
+        │  accessors.js  │
+        └────────┬───────┘
+                 ▼
+        ┌────────────────┐
+        │  masterData    │
+        └────────────────┘
 ```
 
----
+Rules of the graph:
 
-# 2. NAME-STATE.JS
-
-**PURPOSE:** Single source of truth for all name data. Manages caching, subscriptions, and data persistence.
-
-**DEPENDENCIES:**
-- `accessors.js` - `getPlaces`, `getPlaceById`, `getCharacterById`, `getNameLists`
-- `storage.js` - `saveMasterData`
+- **Nothing depends upward.** `name-queries.js` never calls `name-rules.js`. `name-rules.js` never calls `name-commands.js`. Commands do not call modals.
+- **`NameState` is a leaf.** It only depends on accessors and event subscriptions. Nothing in the domain calls into `NameState` except for cache invalidation.
+- **`name-system.js` and `modals-name.js` are the only files that reference legacy globals.**
 
 ---
 
-## State Structure
+## 4. Ownership table
 
-```javascript
-_state = {
-    nameLists: {},              // Raw name lists by country
-    surnameHistories: new Map(), // Surname histories by character ID
-    cache: {
-        countryNameLists: new Map(),
-        characterSurnameHistory: new Map(),
-        randomNames: new Map(),
-        randomSurnames: new Map()
+| Concept | Canonical owner | Notes |
+|---------|----------------|-------|
+| A character's current `name` and `surname` | Character record (via `accessors.getCharacterById`) | Not owned by the name system |
+| Surname history (`surnameHistory`) | Character record | Not owned by the name system |
+| Name lists (`masterData.data.nameLists`) | `masterData` (persisted) | Not owned by any name module |
+| What a "name" looks like (validation) | `validation.js` | Not owned by the name system |
+| Rule type definitions and presets | `name-rules.js` | `RULE_TYPES`, `RULE_PRESETS` |
+| Rule application (family/patronymic/chain) | `name-rules.js` | Single dispatcher: `generateSurnameFromRules` |
+| Newborn surname policy | `name-rules.js` | `determineNewbornSurname` |
+| Random name/surname selection | `name-queries.js` | Uses `randomness.js` |
+| Country resolution | `world.js` | `getCharacterCountryId`, `getCountryIdForPlace` |
+| Surname history mutations | `name-commands.js` | `recordSurnameChange`, `revertLastSurnameChange`, `clearSurnameHistory` |
+| Name list mutations | `name-commands.js` | `addNameToList`, `removeNameFromList` |
+| Marriage surname policy | `name-commands.js` | `applyMarriageSurnames` |
+| Runtime caches | `name-state.js` | Surname history, name lists |
+| UI generation state | `name-state.js` | `selectedCountryId`, `selectedGender`, etc. |
+
+---
+
+## 5. Data shapes
+
+### 5.1 Character (name-relevant fields)
+
+```js
+{
+    id: 'char_...',
+    name: 'Alice',
+    surname: 'Ashvale',
+    surnameSource: 'country' | 'cultural' | 'inherited' | 'custom' | 'none',
+    surnameRules: { ... } | null,
+    surnameHistory: {
+        birthSurname: 'Ashvale',
+        entries: [
+            {
+                surname: 'Blackwood',
+                year: 1250,
+                reason: 'marriage' | 'custom' | 'inheritance' | ...,
+                previousSurname: 'Ashvale',
+                spouseId: 'char_...' | null,
+                notes: ''
+            }
+        ],
+        lastUpdated: 1250
     },
-    subscribers: [],            // Change listeners
-    uiState: {
-        selectedCountry: null,
-        selectedGender: 'male',
-        previewName: '',
-        previewSurname: '',
-        generationMode: 'random',
-        filters: { gender: 'all', minAge: null, maxAge: null }
-    },
-    initialized: false
-};
-```
-
----
-
-## Data Access Functions
-
-### `NameState.getNameLists()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all name lists by country |
-| **Returns** | `Object` - Name lists mapping by country ID |
-
-### `NameState.getNameList(countryId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a name list for a specific country |
-| **Parameters** | `countryId` (string) - Country ID |
-| **Returns** | `{ male: [], female: [], surnames: [], rules: null } | null` |
-
-### `NameState.getSurnameHistory(characterId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets surname history for a character |
-| **Parameters** | `characterId` (string) - Character ID |
-| **Returns** | `{ birthSurname: string, entries: Array, lastUpdated: number }` |
-
----
-
-## UI State
-
-### `NameState.getUiState()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the current UI state for name generation |
-| **Returns** | `Object` - UI state object |
-
-### `NameState.setUiState(updates)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates UI state values |
-| **Parameters** | `updates` (Object) - State updates to apply |
-
----
-
-## Cache Management
-
-### `NameState.invalidateCache()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Invalidates all caches (random names, random surnames, etc.) |
-
-### `NameState.refreshFromMasterData()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Refreshes state from masterData and invalidates caches |
-
----
-
-## Subscriptions
-
-### `NameState.subscribe(callback)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Subscribes to state changes |
-| **Parameters** | `callback` (function) - Callback receiving `{ type, data }` |
-| **Returns** | `function` - Unsubscribe function |
-
----
-
-# 3. NAME-COMMANDS.JS
-
-**PURPOSE:** All write operations for name management.
-
-**DEPENDENCIES:**
-- `name-state.js` - `NameState`
-- `accessors.js` - `getCharacterById`, `getCharacters`, `getCurrentYear`
-- `eventLogger.js` - `logEvent`
-- `storage.js` - `saveMasterData`
-
----
-
-## Core Command: Record Surname Change
-
-### `NameCommands.recordSurnameChange(character, newSurname, year, reason, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Records a surname change with full history tracking |
-| **Parameters** | `character` (Object), `newSurname` (string), `year` (number), `reason` (string), `options` (Object) |
-| **Returns** | `{ surname, year, reason, previousSurname, spouseId, notes, timestamp } | null` |
-
-**Options:**
-| Field | Type | Description |
-|-------|------|-------------|
-| `spouseId` | string | Spouse ID (if applicable) |
-| `notes` | string | Additional notes |
-| `surnameSource` | string | Source of surname |
-| `surnameRules` | Object | Rules used |
-| `previousSurname` | string | Override previous surname |
-
-### `NameCommands.recordBirthSurname(character, birthSurname)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Records the birth surname for a character |
-| **Parameters** | `character` (Object), `birthSurname` (string) |
-| **Returns** | `Object` - Surname history object |
-
----
-
-## Marriage Surname Commands
-
-### `NameCommands.applyMarriageSurnames(person, spouse, rule, year, notes)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Applies marriage surname changes to both spouses |
-| **Parameters** | `person` (Object), `spouse` (Object), `rule` (string), `year` (number), `notes` (string) |
-| **Returns** | `{ personChanged, spouseChanged, personNewSurname, spouseNewSurname } | null` |
-
-**Rules:**
-| Rule | Description |
-|------|-------------|
-| `wife_takes_husband` | Both take husband's surname |
-| `husband_takes_wife` | Both take wife's surname |
-| `hyphenate` | Both take hyphenated surname |
-| `keep` | Both keep their surnames |
-
----
-
-## Revert Command
-
-### `NameCommands.revertLastSurnameChange(character)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Reverts the last surname change for a character |
-| **Parameters** | `character` (Object) |
-| **Returns** | `{ surname, year, reason, previousSurname } | null` |
-
----
-
-## Name List Command
-
-### `NameCommands.addNameToList(countryId, name, gender, category)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Adds a name to a country's name list |
-| **Parameters** | `countryId` (string), `name` (string), `gender` (string), `category` (string) |
-| **Returns** | `boolean` - True if added |
-
----
-
-# 4. NAME-QUERIES.JS
-
-**PURPOSE:** All read-only operations for name generation and lookup.
-
-**DEPENDENCIES:**
-- `name-state.js` - `NameState`
-- `accessors.js` - `getCharacterById`, `getPlaceById`, `getPlaces`, `getCurrentYear`
-- `icons.js` - SVG icons (NO EMOJIS)
-
----
-
-## Core Generation Functions
-
-### `NameQueries.getRandomName(countryId, gender)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a random given name from a country's name list |
-| **Parameters** | `countryId` (string), `gender` (string - 'male', 'female', 'all') |
-| **Returns** | `string|null` - Random name or null |
-
-### `NameQueries.getRandomSurname(countryId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a random surname from a country's name list |
-| **Parameters** | `countryId` (string) |
-| **Returns** | `string` - Random surname or empty string |
-
----
-
-## Family Surname Generation
-
-### `NameQueries.generateFamilySurname(father, mother, rules)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Generates a family surname from parents |
-| **Parameters** | `father` (Object), `mother` (Object), `rules` (Object) |
-| **Returns** | `string` - Generated surname |
-
-**Rules:**
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `source` | string | `'both'` | 'father', 'mother', or 'both' |
-| `order` | string | `'father_first'` | 'father_first' or 'mother_first' |
-| `count` | number | `1` | 1 or 2 |
-| `position` | string | `'first'` | 'first' or 'last' |
-| `connector` | string | `'space'` | 'space', 'hyphen', 'none', 'custom' |
-| `customConnector` | string | `''` | Custom connector string |
-
----
-
-## Patronymic Surname Generation
-
-### `NameQueries.generatePatronymicSurname(parent, childGender, rules)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Generates a patronymic surname from a parent |
-| **Parameters** | `parent` (Object), `childGender` (string), `rules` (Object) |
-| **Returns** | `string` - Generated surname |
-
-**Rules:**
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `source` | string | `'father'` | 'father' or 'mother' |
-| `malePrefix` | string | `''` | Prefix for male children |
-| `maleSuffix` | string | `'son'` | Suffix for male children |
-| `femalePrefix` | string | `''` | Prefix for female children |
-| `femaleSuffix` | string | `'dottir'` | Suffix for female children |
-| `usePrefix` | boolean | `true` | Use prefix |
-| `useSuffix` | boolean | `true` | Use suffix |
-
----
-
-## Chain Surname Generation
-
-### `NameQueries.generateChainSurname(character, rules)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Generates a chain surname from multiple generations |
-| **Parameters** | `character` (Object), `rules` (Object) |
-| **Returns** | `string` - Generated surname |
-
-**Rules:**
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `order` | Array | `['father', 'mother']` | Ancestor types in order |
-| `depth` | number | `1` | Generations to go back |
-| `source` | string | `'firstname'` | 'firstname' or 'surname' |
-| `connector` | string | `'space'` | 'space', 'hyphen', 'none', 'custom' |
-| `customConnector` | string | `''` | Custom connector string |
-
----
-
-## Unified Generation
-
-### `NameQueries.generateSurnameFromRules(mother, father, childGender, rules)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Unified surname generation from rules object |
-| **Parameters** | `mother` (Object), `father` (Object), `childGender` (string), `rules` (Object) |
-| **Returns** | `string` - Generated surname |
-
----
-
-## Ancestor Queries
-
-### `NameQueries.getAncestorData(character, type)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets ancestor data for a character |
-| **Parameters** | `character` (Object), `type` (string) |
-| **Returns** | `{ id, firstName, surname } | null` |
-
-**Types:** `'father'`, `'mother'`, `'paternal_grandfather'`, `'paternal_grandmother'`, `'maternal_grandfather'`, `'maternal_grandmother'`
-
----
-
-## Surname History Queries
-
-### `NameQueries.getSurnameHistory(characterId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets surname history for a character |
-| **Parameters** | `characterId` (string) |
-| **Returns** | `{ birthSurname, entries, lastUpdated } | null` |
-
-### `NameQueries.getBirthSurname(characterId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the birth surname for a character |
-| **Parameters** | `characterId` (string) |
-| **Returns** | `string` - Birth surname or empty string |
-
-### `NameQueries.getCurrentSurname(characterId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the current surname for a character |
-| **Parameters** | `characterId` (string) |
-| **Returns** | `string` - Current surname or empty string |
-
-### `NameQueries.getSurnameChanges(characterId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all surname changes for a character |
-| **Parameters** | `characterId` (string) |
-| **Returns** | `Array` - Array of change entries |
-
-### `NameQueries.getSurnameChangeCount(characterId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the number of surname changes for a character |
-| **Parameters** | `characterId` (string) |
-| **Returns** | `number` - Number of changes |
-
----
-
-## Country Rules Queries
-
-### `NameQueries.getCountrySurnameRules(countryId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets surname rules for a country |
-| **Parameters** | `countryId` (string) |
-| **Returns** | `Object|null` - Rules object or null |
-
-### `NameQueries.getCharacterCountryId(character)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the country ID for a character (walks up location hierarchy) |
-| **Parameters** | `character` (Object) |
-| **Returns** | `string|null` - Country ID or null |
-
-### `NameQueries.determineNewbornSurname(mother, father, countryId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Determines the surname for a newborn based on location rules |
-| **Parameters** | `mother` (Object), `father` (Object), `countryId` (string) |
-| **Returns** | `{ surname, surnameSource, surnameRules, countryId } | null` |
-
-**Priority Order:**
-1. Mother's current location rules
-2. Father's current location rules
-3. Cultural surname from country
-4. Father's surname
-5. Mother's surname
-
----
-
-# 5. NAME-RULES.JS
-
-**PURPOSE:** Business logic for name generation rules.
-
-**DEPENDENCIES:**
-- `name-queries.js` - `NameQueries`
-
----
-
-## Rule Types
-
-```javascript
-RULE_TYPES = {
-    RANDOM: 'random',           // Random name from cultural pool
-    FAMILY: 'family',           // Surname derived from parents
-    PATRONYMIC: 'patronymic',   // Surname derived from parent (with prefix/suffix)
-    CHAIN: 'chain',             // Surname from multiple generations
-    HYPHENATED: 'hyphenated',   // Surname combining both parents with hyphen
-    CUSTOM: 'custom'            // Custom rule logic
+    fatherId: 'char_...' | null,
+    motherId: 'char_...' | null,
+    birthplaceId: 'place_...' | null,
+    currentLocationId: 'place_...' | null,
+    moves: [{ locationId: 'place_...', year: 1240 }, ...]
 }
 ```
 
----
+### 5.2 Name list (per place/country)
 
-## Rule Presets
+Stored in `masterData.data.nameLists[placeId]`:
 
-| Preset | Description | Rules |
-|--------|-------------|-------|
-| `european` | Father's surname only | `family: { source: 'father', count: 1 }` |
-| `spanish` | Father's surname + Mother's surname | `family: { source: 'both', count: 2 }` |
-| `icelandic` | Patronymic: son/dottir suffix | `patronymic: { source: 'father', maleSuffix: 'son', femaleSuffix: 'dottir' }` |
-| `russian` | Patronymic: ovich/ovna suffix | `patronymic: { source: 'father', maleSuffix: 'ovich', femaleSuffix: 'ovna' }` |
-| `arabic` | Chain: ibn/bin/bint from father/grandfather | `chain: { order: ['father', 'paternal_grandfather'], depth: 2 }` |
-| `hyphenated` | Hyphenated: father-mother | `family: { source: 'both', connector: 'hyphen' }` |
-
----
-
-## Functions
-
-### `NameRules.validateRules(rules)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Validates a rules object |
-| **Parameters** | `rules` (Object) |
-| **Returns** | `{ valid: boolean, reason: string }` |
-
-### `NameRules.generateSurnameFromRules(mother, father, childGender, rules)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Generates surname from validated rules |
-| **Parameters** | `mother` (Object), `father` (Object), `childGender` (string), `rules` (Object) |
-| **Returns** | `string` - Generated surname |
-
-### `NameRules.getRuleDescription(rules)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a human-readable description of rules |
-| **Parameters** | `rules` (Object) |
-| **Returns** | `string` - Description |
-
-### `NameRules.getRulePreset(presetName)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a rule preset by name |
-| **Parameters** | `presetName` (string) |
-| **Returns** | `Object|null` - Preset rules or null |
-
-### `NameRules.getRulePresetNames()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all available rule preset names |
-| **Returns** | `Array` - Array of preset names |
-
----
-
-# 6. MODALS-NAME.JS
-
-**PURPOSE:** UI modals for name generation and surname management.
-
-**DEPENDENCIES:**
-- `modals-core.js` - `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon`
-- `name-state.js` - `NameState`
-- `name-queries.js` - `NameQueries`
-- `name-commands.js` - `NameCommands`
-- `name-rules.js` - `NameRules`
-- `accessors.js` - `getPlaceById`, `getPlaces`, `getCharacterById`
-
----
-
-## Functions
-
-### `openNameGeneratorModal(options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to generate a random name with country/gender selection |
-| **Parameters** | `options` (Object) |
-| **Returns** | `Object|null` - Modal instance or null |
-
-**Options:**
-| Field | Type | Description |
-|-------|------|-------------|
-| `title` | string | Modal title (default: 'Generate Name') |
-| `countryId` | string | Pre-selected country |
-| `gender` | string | Pre-selected gender ('all', 'male', 'female') |
-| `onSelect` | function | Callback with selected name |
-| `characterId` | string | Character ID for history display |
-
-### `openSurnameManagementModal(characterId, onSuccess)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens modal to view and manage surname history |
-| **Parameters** | `characterId` (string), `onSuccess` (function) |
-| **Returns** | `Object|null` - Modal instance or null |
-
-**Features:**
-- Display current and birth surname
-- View full change history
-- Revert last change
-- Clear history
-
----
-
-# 7. NAME-SYSTEM.JS
-
-**PURPOSE:** Legacy wrapper for backward compatibility with old `nameGeneratorCore.js`.
-
-**DEPRECATED:** Use `NameQueries` and `NameCommands` directly instead.
-
-All functions delegate to the new modular system.
-
----
-
-# 8. DEPENDENCY MAP
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    CORE DEPENDENCIES                                       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  modals-core.js ─────────────────────────────────────────────────────────┐ │
-│  ├── openModal()                                                         │ │
-│  ├── closeTopModal()                                                     │ │
-│  ├── _escapeHtml()                                                       │ │
-│  ├── _showToast()                                                        │ │
-│  └── _getIcon()                                                          │ │
-│                                                                             │
-│  accessors.js ──────────────────────────────────────────────────────────┐ │
-│  ├── getCharacterById()                                                  │ │
-│  ├── getCharacters()                                                     │ │
-│  ├── getPlaceById()                                                      │ │
-│  ├── getPlaces()                                                         │ │
-│  ├── getNameLists()                                                      │ │
-│  └── getCurrentYear()                                                    │ │
-│                                                                             │
-│  storage.js ────────────────────────────────────────────────────────────┐ │
-│  └── saveMasterData()                                                    │ │
-│                                                                             │
-│  eventLogger.js ────────────────────────────────────────────────────────┐ │
-│  └── logEvent()                                                          │ │
-│                                                                             │
-│  icons.js ──────────────────────────────────────────────────────────────┐ │
-│  └── Icons                                                               │ │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    NAME SYSTEM DEPENDENCIES                               │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  name-state.js ──────────────────────────────────────────────────────────┐ │
-│  ├── accessors.js                                                        │ │
-│  └── storage.js                                                          │ │
-│                                                                             │
-│  name-commands.js ──────────────────────────────────────────────────────┐ │
-│  ├── name-state.js                                                       │ │
-│  ├── accessors.js                                                        │ │
-│  ├── eventLogger.js                                                      │ │
-│  └── storage.js                                                          │ │
-│                                                                             │
-│  name-queries.js ───────────────────────────────────────────────────────┐ │
-│  ├── name-state.js                                                       │ │
-│  └── accessors.js                                                        │ │
-│                                                                             │
-│  name-rules.js ─────────────────────────────────────────────────────────┐ │
-│  └── name-queries.js                                                     │ │
-│                                                                             │
-│  modals-name.js ────────────────────────────────────────────────────────┐ │
-│  ├── modals-core.js                                                      │ │
-│  ├── name-state.js                                                       │ │
-│  ├── name-queries.js                                                     │ │
-│  ├── name-commands.js                                                    │ │
-│  ├── name-rules.js                                                       │ │
-│  └── accessors.js                                                        │ │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+```js
+{
+    male: ['William', 'John', ...],
+    female: ['Mary', 'Elizabeth', ...],
+    surnames: ['Ashvale', 'Blackwood', ...],
+    rules: {
+        type: 'family' | 'patronymic' | 'chain',
+        family?: { ... },
+        patronymic?: { ... },
+        chain?: { ... }
+    } | null
+}
 ```
 
----
+### 5.3 Rule object
 
-# 9. RECURSION GUARDS
+```js
+// RANDOM — pick a random surname from the culture
+{ type: 'random' }
 
-| Guard Name | Location | Purpose |
-|------------|----------|---------|
-| `_processingCommand` | name-commands.js | Prevent command re-entry |
-| `_processingQuery` | name-queries.js | Prevent query re-entry |
-| `_processingRules` | name-rules.js | Prevent rules re-entry |
-| `_initializingState` | name-state.js | Prevent state re-initialization |
-| `_notifyingSubscribers` | name-state.js | Prevent subscriber re-entry |
-
----
-
-# 10. ICON POLICY
-
-All icons must come from `icons.js` via the `_getIcon()` function:
-
-| Rule | Description |
-|------|-------------|
-| **Rule 1** | NO emojis in code or UI |
-| **Rule 2** | All icons from icons.js via `_getIcon()` |
-| **Rule 3** | NO icons in confirm/cancel buttons (plain text only) |
-
-**Available Icons Used by Name System:**
-
-| Usage | Icon |
-|-------|------|
-| Person | `PERSON` |
-| Location | `LOCATION` |
-| Book/History | `BOOK` |
-| Check | `CHECK_SIMPLE` |
-| Refresh | `REFRESH` |
-| Search | `SEARCH` |
-
----
-
-# 11. COMPLETE FUNCTION LIST
-
-## name-state.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `getNameLists()` | Query | Get all name lists |
-| `getNameList(countryId)` | Query | Get name list for country |
-| `getSurnameHistory(characterId)` | Query | Get surname history |
-| `getUiState()` | Query | Get UI state |
-| `setUiState(updates)` | Command | Update UI state |
-| `invalidateCache()` | Command | Invalidate all caches |
-| `refreshFromMasterData()` | Command | Refresh from master data |
-| `subscribe(callback)` | Command | Subscribe to changes |
-
-## name-commands.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `recordSurnameChange(character, newSurname, year, reason, options)` | Command | Record surname change |
-| `recordBirthSurname(character, birthSurname)` | Command | Record birth surname |
-| `applyMarriageSurnames(person, spouse, rule, year, notes)` | Command | Apply marriage surnames |
-| `revertLastSurnameChange(character)` | Command | Revert last change |
-| `addNameToList(countryId, name, gender, category)` | Command | Add name to list |
-
-## name-queries.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `getRandomName(countryId, gender)` | Query | Get random given name |
-| `getRandomSurname(countryId)` | Query | Get random surname |
-| `generateFamilySurname(father, mother, rules)` | Query | Generate family surname |
-| `generatePatronymicSurname(parent, childGender, rules)` | Query | Generate patronymic surname |
-| `generateChainSurname(character, rules)` | Query | Generate chain surname |
-| `generateSurnameFromRules(mother, father, childGender, rules)` | Query | Generate from rules |
-| `getAncestorData(character, type)` | Query | Get ancestor data |
-| `getSurnameHistory(characterId)` | Query | Get surname history |
-| `getBirthSurname(characterId)` | Query | Get birth surname |
-| `getCurrentSurname(characterId)` | Query | Get current surname |
-| `getSurnameChanges(characterId)` | Query | Get surname changes |
-| `getSurnameChangeCount(characterId)` | Query | Get change count |
-| `getCountrySurnameRules(countryId)` | Query | Get country rules |
-| `getCharacterCountryId(character)` | Query | Get character's country |
-| `determineNewbornSurname(mother, father, countryId)` | Query | Determine newborn surname |
-
-## name-rules.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `validateRules(rules)` | Query | Validate rules |
-| `generateSurnameFromRules(mother, father, childGender, rules)` | Query | Generate from validated rules |
-| `getRuleDescription(rules)` | Query | Get rule description |
-| `getRulePreset(presetName)` | Query | Get rule preset |
-| `getRulePresetNames()` | Query | Get all preset names |
-
-## modals-name.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `openNameGeneratorModal(options)` | UI | Open name generator |
-| `openSurnameManagementModal(characterId, onSuccess)` | UI | Open surname management |
-
-## name-system.js (Legacy)
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `getBaseNameForPatronymic(character)` | Query | Get base name for patronymic |
-| `capitalizeFirstLetter(str)` | Query | Capitalize first letter |
-| `getCharacterGender(character)` | Query | Get character gender |
-| `getCharacterCountryId(character)` | Query | Get character's country |
-| `getCharacterLocationName(character)` | Query | Get character's location name |
-| `generateFamilySurname(father, mother, rules)` | Query | Generate family surname |
-| `generatePatronymicSurnameFromRules(parent, childGender, rules)` | Query | Generate patronymic |
-| `generateChainSurnameFromRules(character, rules)` | Query | Generate chain surname |
-| `generateSurnameFromRules(mother, father, childGender, rules)` | Query | Generate from rules |
-| `getAncestorFirstName(character, type)` | Query | Get ancestor first name |
-| `getAncestorSurname(character, type)` | Query | Get ancestor surname |
-| `getAncestorChain(character, maxDepth)` | Query | Get ancestor chain |
-| `getRandomNameFromCountry(countryId, gender)` | Query | Get random name |
-| `getRandomSurnameFromCountry(countryId)` | Query | Get random surname |
-| `getCountrySurnameRules(countryId)` | Query | Get country rules |
-| `determineNewbornSurname(mother, father, countryId)` | Query | Determine newborn surname |
-| `getSurnameHistory(character)` | Query | Get surname history |
-| `getBirthSurname(character)` | Query | Get birth surname |
-| `getCurrentSurname(character)` | Query | Get current surname |
-| `getSurnameChanges(character)` | Query | Get surname changes |
-| `recordSurnameChange(character, newSurname, year, reason, options)` | Command | Record change |
-| `recordBirthSurname(character, birthSurname)` | Command | Record birth surname |
-| `revertLastSurnameChange(character)` | Command | Revert last change |
-| `getMarriageSurnameRule(countryId)` | Query | Get marriage rule |
-| `calculateMarriageSurnames(person, spouse, rule, year)` | Query | Calculate marriage surnames |
-| `applyMarriageSurnames(person, spouse, rule, year, notes)` | Command | Apply marriage surnames |
-
----
-
-## Quick Test Commands
-
-```javascript
-// Get a random name
-var name = NameQueries.getRandomName('country_1', 'male');
-console.log('Random name:', name);
-
-// Get a random surname
-var surname = NameQueries.getRandomSurname('country_1');
-console.log('Random surname:', surname);
-
-// Generate family surname
-var father = { surname: 'Smith' };
-var mother = { surname: 'Jones' };
-var familyName = NameQueries.generateFamilySurname(father, mother, {
-    source: 'both',
-    connector: 'hyphen',
-    count: 2
-});
-console.log('Family surname:', familyName); // "Smith-Jones"
-
-// Generate patronymic
-var father = { name: 'John' };
-var patronymic = NameQueries.generatePatronymicSurname(father, 'male', {
-    maleSuffix: 'son',
-    useSuffix: true
-});
-console.log('Patronymic:', patronymic); // "Johnson"
-
-// Get surname history
-var history = NameQueries.getSurnameHistory('char_123');
-console.log('Surname history:', history);
-
-// Record surname change
-var result = NameCommands.recordSurnameChange(character, 'Smith-Jones', 1250, 'marriage');
-console.log('Surname change result:', result);
-
-// Open name generator modal
-openNameGeneratorModal({
-    title: 'Generate New Name',
-    gender: 'male',
-    onSelect: function(name) {
-        console.log('Selected name:', name);
+// FAMILY — combine parent surnames
+{
+    type: 'family',
+    family: {
+        source: 'father' | 'mother' | 'both',
+        order: 'father_first' | 'mother_first',   // default 'father_first'
+        count: 1 | 2,                              // default 1
+        position: 'first' | 'last',                // default 'first'
+        connector: 'space' | 'hyphen' | 'custom' | 'none',  // default 'space'
+        customConnector: '-'                       // required if connector='custom'
     }
-});
+}
+
+// PATRONYMIC — derive from a parent's given name
+{
+    type: 'patronymic',
+    patronymic: {
+        source: 'father' | 'mother',
+        malePrefix: '', maleSuffix: 'son',
+        femalePrefix: '', femaleSuffix: 'dottir',
+        usePrefix: false, useSuffix: true
+    }
+}
+
+// CHAIN — walk up the ancestor graph
+{
+    type: 'chain',
+    chain: {
+        order: ['father', 'paternal_grandfather', 'paternal_grandmother',
+                'maternal_grandfather', 'maternal_grandmother', 'mother'],
+        depth: 3,
+        source: 'firstname' | 'surname',
+        connector: 'space' | 'hyphen' | 'none' | 'custom',
+        customConnector: '-'
+    }
+}
+```
+
+### 5.4 Rule presets
+
+Available via `NameRules.getRulePreset(name)`:
+
+| Name | Type | Meaning |
+|------|------|---------|
+| `patrilineal` | family | Father's surname only |
+| `dual_family` | family | Father + mother, space-separated |
+| `hyphenated` | family | Father + mother, hyphenated |
+| `patronymic_son_dottir` | patronymic | Icelandic-style |
+| `patronymic_ovich_ovna` | patronymic | Slavic-style |
+| `chain_two_generation` | chain | Father → paternal grandfather |
+| `chain_three_generation` | chain | Father → paternal grandfather → great-grandfather |
+
+Presets are deeply frozen. `getRulePreset` returns a clone.
+
+### 5.5 Command results
+
+Every command returns:
+
+```js
+{ success: true, data?: ..., reason?: 'informational' }
+{ success: false, reason: '...' }
+```
+
+Never `null` on failure. Never a toast.
+
+---
+
+## 6. The three main flows
+
+### 6.1 Character creation with a surname rule
+
+Called from `character-commands.js` during `createCharacter`:
+
+```
+1. Character data is submitted with fatherId, motherId, birthplaceId.
+2. CharacterCommands resolves:
+   - countryId = world.getCharacterCountryId(motherId) or (fatherId) or birthplace
+   - rules     = NameQueries.getCountrySurnameRules(countryId)
+3. If rules exist:
+   - surname = NameRules.generateSurnameFromRules(mother, father, childGender, rules)
+   - surnameSource = 'country_rules'
+   - surnameRules = rules
+   Else:
+   - surname = '' (no fallback)
+   - surnameSource = 'none'
+4. CharacterCommands calls NameCommands.recordSurnameChange(
+       newCharacterId, surname, birthYear, 'birth', { previousSurname: '' }
+   ) — the initial entry is the birth surname.
+5. The character is persisted once by CharacterCommands.
+```
+
+### 6.2 Newborn surname determination
+
+Called when a character is born into an existing family:
+
+```
+1. NameRules.determineNewbornSurname(mother, father, countryId) is called.
+2. Resolution order:
+   a. Mother's country rules (if resolvable)
+   b. Father's country rules (if resolvable)
+   c. Random surname from `countryId` pool
+   d. Father's surname
+   e. Mother's surname
+   f. → null (no surname)
+3. The result is:
+   { surname, surnameSource, surnameRules, countryId }
+4. The caller (character-commands or lifecycle) passes `surname` into
+   the new character's `createCharacter` call.
+```
+
+### 6.3 Manual surname change
+
+Called from the surname modal or any other UI:
+
+```
+1. UI calls NameCommands.recordSurnameChange(
+       characterId, newSurname, year, reason, options
+   ).
+2. Command validates the year (rejects 0-as-missing; accepts year 0).
+3. Command validates the character is not deceased.
+4. Command ensures surnameHistory exists, appends the change entry,
+   updates `character.surname`, marks data dirty.
+5. Command emits `characterChanged` with action 'surnameChange'.
+6. NameState subscribes; invalidates its surname-history cache for
+   that character.
+7. Any UI subscribed to NameState re-renders.
 ```
 
 ---
 
-# END OF DOCUMENTATION
+## 7. Randomness
 
-**Generated:** 2026-07-12
-**Version:** 1.0
-**File Count:** 6 core modules
+**The name system consumes the canonical RNG stream.** No `Math.random()` anywhere in the name modules.
+
+Functions that consume RNG:
+
+| Function | Uses |
+|----------|------|
+| `NameQueries.getRandomName(countryId, gender)` | `pickRandom` |
+| `NameQueries.getRandomSurname(countryId)` | `pickRandom` |
+| `NameRules._applyRandomRule` (via `NameQueries`) | indirect |
+| `NameRules.determineNewbornSurname` (priority 3 only) | indirect |
+
+**Random results are never cached.** The old `NameState` cached `country + gender → name`, which turned a random query into a stable lookup. That cache is gone.
+
+**Reproducibility contract:** given the same RNG seed and the same call sequence, name generation is deterministic. This is what the simulation layer relies on.
+
+**Callers who want stability** (e.g., "show me one name and don't change it when the user looks away") must store the result themselves. `modals-name.js` does this via a local `state.generatedName`.
+
+---
+
+## 8. Caching
+
+`NameState` maintains exactly two caches:
+
+| Cache | Key | Value | Invalidation |
+|-------|-----|-------|--------------|
+| `_surnameHistoryCache` | `characterId` | surname history object | `invalidateSurnameHistory(id)`; event `characterChanged` with action `surnameChange`/`surnameRevert`/`surnameHistoryCleared`/`birthSurname` |
+| `_nameListCache` | `countryId` | name list object | `invalidateNameList(countryId)`; event `nameListChanged` |
+
+Caches are cleared entirely by `NameState.clearAllCaches()` on masterData reload or import.
+
+**Nothing else is cached.** Not random results. Not ancestor data. Not country resolution (that is a cheap accessor lookup plus a small Set).
+
+**Cache misses return `null`**, not `undefined`, and not a synthesized empty object. A caller that cannot distinguish "not cached and not present" from "cached empty" should query the canonical source directly.
+
+---
+
+## 9. Events
+
+The name system participates in two events. Both use `CustomEvent` on `window`.
+
+| Event | Emitted by | Detail | Consumed by |
+|-------|-----------|--------|-------------|
+| `characterChanged` | `name-commands.js` (also `character-commands.js`, `family-commands.js`) | `{ action: string, characterIds: string[] }` | `NameState`, `CharacterState`, accessor cache |
+| `nameListChanged` | `name-commands.js` | `{ countryId: string, name: string }` | `NameState` |
+
+`NameState` also re-emits its own internal events to its own subscribers (`initialized`, `cachesCleared`, `surnameHistoryInvalidated`, `nameListInvalidated`, `uiStateChanged`). These are not DOM events; they are private callbacks.
+
+---
+
+## 10. What lives where — the anti-confusion table
+
+Frequently misplaced responsibilities and where they actually belong:
+
+| Not here | Here |
+|----------|------|
+| Country hierarchy walking → `world.js` | `getCountryPlaces`, `getCharacterCountryId`, `getCountryIdForPlace` |
+| Random selection implementation → `randomness.js` | `getRandomName`, `getRandomSurname` (delegate) |
+| Persistence, storage → `storage.js` | Commands call `markDataDirty`; storage saves |
+| Schema repair → `storage-schema.js` | NameState does not create missing entries |
+| UI notifications → caller / modals | Commands return `{ success, reason }` |
+| Icons → `icons.js` | Domain modules never see icon markup |
+| Presentation strings → `formatting.js` / modals | Queries return data, not labels |
+| Time fallbacks → `time.js` | No `1250` anywhere; missing year throws or requires an argument |
+| Character validation → `validation.js` | Commands check only what they need to mutate |
+| Marriage/relationship policy → relationship domain, eventually | Currently in `name-commands.js` for want of a better home |
+
+---
+
+## 11. Deprecated API surface (the legacy wrapper)
+
+`name-system.js` exists to give old callers a migration path. It is not a permanent API.
+
+### 11.1 Delegating wrappers
+
+These still work and delegate:
+
+| Legacy global | Canonical API |
+|--------------|--------------|
+| `capitalizeFirstLetter` | inline (formatting) |
+| `getCharacterGender` | inline (enum check) |
+| `getBaseNameForPatronymic` | `NameQueries.getBaseFirstName` |
+| `getCharacterCurrentLocationId` | `world.getCurrentLocationId` |
+| `getCharacterCountryId` | `world.getCharacterCountryId` |
+| `getCountryIdFromPlace` | `world.getCountryIdForPlace` |
+| `getCharacterLocationName` | `world.getCurrentPlace` + `.displayName` |
+| `generateFamilySurname` | `NameRules.generateSurnameFromRules` |
+| `generatePatronymicSurnameFromRules` | `NameRules.generateSurnameFromRules` |
+| `generateChainSurnameFromRules` | `NameRules.generateSurnameFromRules` |
+| `generateSurnameFromRules` | `NameRules.generateSurnameFromRules` |
+| `determineNewbornSurname` | `NameRules.determineNewbornSurname` |
+| `getRandomNameFromCountry` | `NameQueries.getRandomName` |
+| `getRandomSurnameFromCountry` | `NameQueries.getRandomSurname` |
+| `getCountrySurnameRules` | `NameQueries.getCountrySurnameRules` |
+| `getAncestorFirstName` | `NameQueries.getAncestorData(...).firstName` |
+| `getAncestorSurname` | `NameQueries.getAncestorData(...).surname` |
+| `getAncestorChain` | `NameQueries.getAncestorNames` (with reduced metadata) |
+| `getSurnameHistory` | `NameQueries.getSurnameHistory` |
+| `getBirthSurname` | `NameQueries.getBirthSurname` (null → '') |
+| `getCurrentSurname` | `NameQueries.getCurrentSurname` |
+| `getSurnameChanges` | `NameQueries.getSurnameChanges` |
+| `recordSurnameChange` | `NameCommands.recordSurnameChange` |
+| `recordBirthSurname` | `NameCommands.recordBirthSurname` |
+| `revertLastSurnameChange` | `NameCommands.revertLastSurnameChange` |
+| `applyMarriageSurnames` | `NameCommands.applyMarriageSurnames` |
+| `calculateMarriageSurnames` | `NameCommands._calculateMarriageSurnames` |
+
+### 11.2 Removed wrappers
+
+These exist only to throw a clear error. Any caller that invokes them gets an immediate, actionable message.
+
+| Legacy global | Replacement |
+|--------------|-------------|
+| `getMarriageSurnameRule(countryId)` | Pass an explicit rule to `NameCommands.applyMarriageSurnames` |
+| `_getAncestorNamesForChain` | `NameQueries.getAncestorNames` |
+| `_getConnectorValue` | Use `connector` on a FAMILY rule; validation rejects invalid values |
+| `_splitSurname` | Use `position: 'first' | 'last'` on a FAMILY rule |
+| `_getSurnamePart` | Same |
+
+Grep for each of these. If any live caller exists, migrate it. If not, delete the wrapper line.
+
+---
+
+## 12. Extending the system
+
+### 12.1 Adding a new rule type
+
+1. Add the type to `RULE_TYPES` in `name-rules.js`.
+2. Add a validator branch in `validateRules`.
+3. Add a dispatch branch in `generateSurnameFromRules`.
+4. Add a description branch in `describeRule`.
+5. Add a preset if useful.
+
+Do not add a new public global. Do not add a second implementation in `NameQueries`.
+
+### 12.2 Adding a new preset
+
+1. Add the definition to `RULE_PRESETS` in `name-rules.js`.
+2. Ensure every field validates. Run `validateRules` on it in a test.
+3. Name it after what it does, not where it comes from.
+
+### 12.3 Adding a name list field
+
+1. Extend the shape in `storage-schema.js` if a default is needed.
+2. Update `NameQueries.getNameList` if consumers need typed access.
+3. Update `NameCommands.addNameToList`/`removeNameFromList` if the field is user-editable.
+4. Nothing else changes.
+
+### 12.4 Adding a country field to name resolution
+
+1. Extend `world.js`, not the name modules. Country semantics belong to the world domain.
+
+---
+
+## 13. Verification checklist
+
+Before deploying the name system, confirm:
+
+- [ ] `grep -r "_processingQuery" js/` — zero hits
+- [ ] `grep -r "_processingRules" js/` — zero hits
+- [ ] `grep -r "_processingCommand" js/modules/names/` — zero hits
+- [ ] `grep -r "Math.random" js/modules/names/` — zero hits
+- [ ] `grep -r ": 1250" js/modules/names/` — zero hits
+- [ ] `grep -r "getCurrentYearSafe" js/modules/names/` — zero hits (use `getCurrentYear`)
+- [ ] `grep -r "style=" js/modules/names/modals-name.js` — zero hits
+- [ ] `grep -r "confirm(" js/modules/names/modals-name.js` — zero hits
+- [ ] `grep -r "↩" js/modules/names/` — zero hits
+- [ ] `grep -r "NameQueries\._" js/modules/names/` — zero hits
+- [ ] `grep -r "_saveMasterData" js/modules/names/modals-name.js` — zero hits
+- [ ] `grep -r "getElementById" js/modules/names/modals-name.js` — zero hits
+- [ ] `grep -r "setTimeout" js/modules/names/modals-name.js` — zero hits (except the deliberate `_renderError` auto-clear)
+- [ ] Test `NameRules.generateSurnameFromRules` against every preset — all produce a non-null surname given valid parents
+- [ ] Test `NameRules.determineNewbornSurname` with: both parents + rules, one parent + rules, no rules + country pool, no rules + no pool → null
+- [ ] Test `NameCommands.applyMarriageSurnames` with both parties alive — both records updated, one `characterChanged` event, one `markDataDirty` call
+- [ ] Test `NameCommands.revertLastSurnameChange` on a character with one entry → entry removed, surname reverted
+- [ ] Test `NameCommands.clearSurnameHistory` → entries array empty, birth surname preserved, current surname preserved
+- [ ] Test `NameState.getSurnameHistory` cache: populate, invalidate via event, verify reload
+
+---
+
+## 14. Open questions
+
+These are not blockers but are worth resolving as the codebase grows.
+
+1. **Marriage surname policy.** Currently in `name-commands.js` as `applyMarriageSurnames`. If marriage rules become per-country or per-religion, they belong in a dedicated policy module. The name system owns the *mechanics*; the *policy* could migrate.
+
+2. **Cross-country name rules.** `determineNewbornSurname` prefers the mother's country rules, then the father's. If your world has interfaith or international marriages, this is a policy decision that may need a more explicit resolution — "whose culture wins for the child?" — with an explicit answer.
+
+3. **Surname inheritance beyond two generations.** The FAMILY rule uses parent surnames directly. If you want grandparent inclusion or dynastic chains, that is a new rule type, not a modification to FAMILY.
+
+4. **Name list mutation UI.** `addNameToList` and `removeNameFromList` are commands, but no modal uses them yet. When you build a "manage country name lists" UI, it will be the third name modal.
+
+5. **Rule editing UI.** Similarly, no UI lets a user edit a country's surname rules. When you build one, it should use `NameRules.validateRules` for inline validation and `NameCommands` for persistence (the command does not exist yet — you would add a `setCountrySurnameRules` command).
+
+6. **Legacy removal timeline.** The `name-system.js` wrapper is meant to be deleted. Grep for each deprecated global; when the count reaches zero, delete the corresponding wrapper. When the count for the whole file reaches zero, delete the file.

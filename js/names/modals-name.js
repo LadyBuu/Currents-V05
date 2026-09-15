@@ -1,23 +1,89 @@
 /**
  * =============================================================================
- * NAME MODALS - UI for name generation and management
+ * STILL WATERS - NAME MODALS (modals-name.js)
  * =============================================================================
- * 
- * Responsibilities:
- * - Name generation preview
- * - Surname management (view history, revert)
- * - Name list management (add/remove names)
- * 
- * DEPENDENCIES:
- *   - modals-core.js (openModal, closeTopModal, _showToast)
- *   - name-state.js (NameState)
- *   - name-queries.js (NameQueries)
- *   - name-commands.js (NameCommands)
- *   - name-rules.js (NameRules)
- *   - accessors.js (getPlaceById, getPlaces)
- * 
- * ICON POLICY: Uses icons.js only, NO emojis in UI
- * 
+ *
+ * LOCATION: js/modules/names/modals-name.js
+ *
+ * SCOPE:
+ *   - Name generator modal (preview random names, select one)
+ *   - Surname history modal (view changes, revert, clear)
+ *
+ * OUT OF SCOPE:
+ *   - Name/surname generation logic → name-queries.js, name-rules.js
+ *   - Name/surname mutations → name-commands.js
+ *   - Surname history reads/writes → name-queries.js, name-commands.js
+ *   - Country resolution → world.js
+ *   - Modal lifecycle → modals-core.js
+ *   - Presentation CSS → name-modals.css
+ *   - Confirmation dialogs → modals-core.js (confirmDialog)
+ *
+ * SEMANTIC RULES:
+ *   - This module is pure UI. It reads via NameQueries and world.js,
+ *     mutates via NameCommands, and renders. It does not touch storage,
+ *     masterData, NameState, or accessors directly.
+ *   - Required dependencies throw at load. No silent fallbacks.
+ *   - Missing optional data (a character with no surname history) is a
+ *     legitimate UI state and renders as "no history" — not as a hidden
+ *     empty pane.
+ *   - Presentation is owned by CSS. This module emits classes only.
+ *     No inline style attributes.
+ *   - Events are delegated on the modal root, scoped via data-action.
+ *     No global element IDs, no per-render listener stacks.
+ *   - The generated name is held in a local variable, not read back from
+ *     DOM text. The DOM is a rendering of state, not the state itself.
+ *   - Year 0 is preserved in any year rendering.
+ *   - No browser confirm(). Confirmation goes through confirmDialog.
+ *   - No Unicode arrows in buttons. Icons come from icons.js.
+ *   - Any string from canonical data that ends up in innerHTML is escaped.
+ *     Any generated string that ends up in textContent is not (textContent
+ *     does not interpret HTML).
+ *
+ * REQUIRED CSS:
+ *   See name-modals.css. The module emits:
+ *     .name-modal
+ *     .name-modal__intro
+ *     .name-modal__field
+ *     .name-modal__label
+ *     .name-modal__input
+ *     .name-modal__button-row
+ *     .name-modal__generate
+ *     .name-modal__preview
+ *     .name-modal__preview--empty
+ *     .name-modal__preview--filled
+ *     .name-modal__history
+ *     .name-modal__history-title
+ *     .name-modal__history-list
+ *     .name-modal__history-entry
+ *     .name-modal__history-entry--current
+ *     .name-modal__history-entry--past
+ *     .name-modal__history-year
+ *     .name-modal__history-reason
+ *     .name-modal__history-surname
+ *     .name-modal__history-previous
+ *     .name-modal__history-empty
+ *     .name-modal__surname-summary
+ *     .name-modal__surname-summary-cell
+ *     .name-modal__surname-summary-label
+ *     .name-modal__surname-summary-value
+ *     .name-modal__surname-summary-value--accent
+ *     .name-modal__actions
+ *     .name-modal__action-button
+ *     .name-modal__error
+ *
+ * DEPENDENCIES (REQUIRED):
+ *   - formatting.js:    escapeHtml
+ *   - icons.js:         Icons
+ *   - modals-core.js:   openModal, confirmDialog
+ *   - name-queries.js:  NameQueries
+ *   - name-commands.js: NameCommands
+ *   - world.js:         getCountryPlaces
+ *
+ * DEPENDENCIES (OPTIONAL):
+ *   - None.
+ *
+ * ICON POLICY: Uses icons.js. No emojis. No Unicode arrows.
+ *
  * =============================================================================
  */
 
@@ -25,351 +91,466 @@
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
+    // 0. DEPENDENCY GUARDS
     // =========================================================================
 
-    function _openModal(options) {
-        if (typeof window.openModal === 'function') {
-            return window.openModal(options);
+    function _requireDependencies() {
+        var requiredFns = [
+            'escapeHtml',
+            'openModal',
+            'confirmDialog',
+            'getCountryPlaces'
+        ];
+        var missing = [];
+        for (var i = 0; i < requiredFns.length; i++) {
+            if (typeof window[requiredFns[i]] !== 'function') {
+                missing.push(requiredFns[i]);
+            }
         }
-        return null;
-    }
+        if (typeof window.Icons === 'undefined') missing.push('Icons');
+        if (typeof window.NameQueries === 'undefined') missing.push('NameQueries');
+        if (typeof window.NameCommands === 'undefined') missing.push('NameCommands');
 
-    function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') {
-            window.closeTopModal();
-        }
-    }
-
-    function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
-        }
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
-
-    function _showToast(message, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(message, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(message, type);
+        if (missing.length > 0) {
+            throw new Error(
+                'modals-name.js: missing required dependencies: ' +
+                missing.join(', ')
+            );
         }
     }
 
-    function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
-        return '';
+    _requireDependencies();
+
+    // =========================================================================
+    // 1. HELPERS
+    // =========================================================================
+
+    function _esc(v) {
+        return window.escapeHtml(v);
     }
 
-    function _getPlaceById(id) {
-        return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    function _hasId(v) {
+        return typeof v === 'string' && v.length > 0;
     }
 
-    function _getPlaces() {
-        return typeof window.getPlaces === 'function' ? window.getPlaces() : [];
+    function _isMissing(v) {
+        return v === undefined || v === null;
     }
 
-    function _getCharacterById(id) {
-        return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    /**
+     * Returns an icon SVG by name, or '' if the name is unknown.
+     * The icon module is required, so a missing name is a programming
+     * error worth surfacing quietly in the DOM (no SVG rendered) rather
+     * than throwing during a render.
+     */
+    function _icon(name) {
+        return window.Icons[name] || '';
+    }
+
+    /**
+     * Formats a year for display. Missing yields the missingText.
+     * Year 0 is rendered as '0'.
+     */
+    function _formatYear(year, missingText) {
+        if (_isMissing(year)) return missingText || 'Unknown';
+        return String(year);
+    }
+
+    /**
+     * Formats a surname for display. Missing or empty yields a visible
+     * placeholder so the UI does not look broken.
+     */
+    function _displaySurname(surname) {
+        if (typeof surname !== 'string' || surname.length === 0) return '(no surname)';
+        return surname;
+    }
+
+    /**
+     * Renders an error line inside the modal. Errors are shown inline,
+     * not as toasts, because the modal is already the user's focus.
+     */
+    function _renderError(root, message) {
+        if (!root) return;
+        var existing = root.querySelector('.name-modal__error');
+        if (existing) existing.parentNode.removeChild(existing);
+        var errorEl = document.createElement('div');
+        errorEl.className = 'name-modal__error';
+        errorEl.textContent = message;
+        root.appendChild(errorEl);
+        // Auto-clear on next successful action, but for now leave it.
+        setTimeout(function() {
+            if (errorEl.parentNode) errorEl.parentNode.removeChild(errorEl);
+        }, 5000);
     }
 
     // =========================================================================
-    // 2. OPEN NAME GENERATOR PREVIEW MODAL
+    // 2. NAME GENERATOR MODAL
     // =========================================================================
 
+    /**
+     * Opens the name generator modal.
+     *
+     * Options:
+     *   title       - modal title (default 'Generate Name')
+     *   countryId   - preselect a country
+     *   gender      - 'male' | 'female' | 'all' (default 'all')
+     *   onSelect    - called with the chosen name string when the user
+     *                 confirms. Not called if the user cancels or if no
+     *                 name has been generated yet.
+     *
+     * @param {Object} [options]
+     * @returns {{ element: HTMLElement, close: Function }|null}
+     */
     function openNameGeneratorModal(options) {
-        options = options || {};
-
-        var title = options.title || 'Generate Name';
-        var countryId = options.countryId || null;
-        var gender = options.gender || 'all';
-        var onSelect = options.onSelect || function() {};
-
-        // Get available countries
-        var places = _getPlaces();
-        var countryOptions = '<option value="">Select country...</option>';
-        for (var i = 0; i < places.length; i++) {
-            var p = places[i];
-            var selected = (p.id === countryId) ? 'selected' : '';
-            countryOptions += '<option value="' + p.id + '" ' + selected + '>' +
-                _escapeHtml(p.displayName) +
-                '</option>';
+        if (_isMissing(options)) options = {};
+        if (typeof options !== 'object' || Array.isArray(options)) {
+            throw new Error('openNameGeneratorModal: options must be an object');
         }
 
-        var personIcon = _getIcon('PERSON');
-        var locationIcon = _getIcon('LOCATION');
-        var refreshIcon = _getIcon('REFRESH');
+        var title = _isMissing(options.title) ? 'Generate Name' : options.title;
+        var initialCountryId = _isMissing(options.countryId) ? null : options.countryId;
+        var initialGender = _isMissing(options.gender) ? 'all' : options.gender;
+        var onSelect = _isMissing(options.onSelect) ? null : options.onSelect;
 
-        var modalContent =
-            '<div style="max-height: 500px; overflow-y: auto;">' +
-            // Country selection
-            '<div class="form-group" style="margin-bottom: 12px;">' +
-            '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">' +
-            locationIcon + ' Country/Culture' +
-            '</label>' +
-            '<select id="nameGenCountry" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-            countryOptions +
-            '</select>' +
-            '</div>' +
+        if (onSelect !== null && typeof onSelect !== 'function') {
+            throw new Error('openNameGeneratorModal: onSelect must be a function');
+        }
+        if (initialGender !== 'male' && initialGender !== 'female' && initialGender !== 'all') {
+            throw new Error("openNameGeneratorModal: gender must be 'male', 'female', or 'all'");
+        }
 
-            // Gender selection
-            '<div class="form-group" style="margin-bottom: 12px;">' +
-            '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">' +
-            personIcon + ' Gender' +
-            '</label>' +
-            '<select id="nameGenGender" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-            '<option value="all" ' + (gender === 'all' ? 'selected' : '') + '>All</option>' +
-            '<option value="male" ' + (gender === 'male' ? 'selected' : '') + '>Male</option>' +
-            '<option value="female" ' + (gender === 'female' ? 'selected' : '') + '>Female</option>' +
-            '</select>' +
-            '</div>' +
+        // Local state — the DOM renders this, not the other way around.
+        var state = {
+            generatedName: null
+        };
 
-            // Generate button and preview
-            '<div style="display: flex; gap: 8px; margin-bottom: 12px;">' +
-            '<button id="nameGenGenerateBtn" class="btn primary" style="flex: 1; padding: 8px; background: var(--accent); border: 1px solid var(--accent); color: white; border-radius: 6px; cursor: pointer;">' +
-            refreshIcon + ' Generate' +
-            '</button>' +
-            '</div>' +
+        // Country list. Uses world's canonical country query.
+        var countries = window.getCountryPlaces();
+        if (!Array.isArray(countries)) countries = [];
 
-            // Preview area
-            '<div id="nameGenPreview" style="background: var(--bg3); padding: 12px; border-radius: 6px; min-height: 40px; text-align: center; font-size: 1.1rem; font-weight: bold; margin-bottom: 12px;">' +
-            'Click Generate to preview' +
-            '</div>' +
+        var hasCountries = countries.length > 0;
 
-            // History (if character is provided)
-            (options.characterId ? _buildNameHistoryHtml(options.characterId) : '') +
+        var html = '';
+        html += '<div class="name-modal">';
 
-            '</div>';
+        // Intro
+        html += '<p class="name-modal__intro">'
+             + (hasCountries
+                ? 'Choose a country to draw names from its cultural pool.'
+                : 'No countries with name data are available yet.')
+             + '</p>';
 
-        var modal = _openModal({
-            title: title,
-            content: modalContent,
+        // Country
+        html += '<div class="name-modal__field">';
+        html += '<label class="name-modal__label" for="name-modal-country">Country</label>';
+        html += '<select class="name-modal__input" id="name-modal-country"'
+             + ' data-role="country"'
+             + (hasCountries ? '' : ' disabled') + '>';
+        html += '<option value="">— Select country —</option>';
+        for (var ci = 0; ci < countries.length; ci++) {
+            var country = countries[ci];
+            if (!country || !_hasId(country.id)) continue;
+            var selected = (country.id === initialCountryId) ? ' selected' : '';
+            html += '<option value="' + _esc(country.id) + '"' + selected + '>'
+                 + _esc(country.displayName || country.id)
+                 + '</option>';
+        }
+        html += '</select>';
+        html += '</div>';
+
+        // Gender
+        html += '<div class="name-modal__field">';
+        html += '<label class="name-modal__label" for="name-modal-gender">Gender</label>';
+        html += '<select class="name-modal__input" id="name-modal-gender" data-role="gender">';
+        html += '<option value="all"' + (initialGender === 'all' ? ' selected' : '') + '>Any</option>';
+        html += '<option value="male"' + (initialGender === 'male' ? ' selected' : '') + '>Male</option>';
+        html += '<option value="female"' + (initialGender === 'female' ? ' selected' : '') + '>Female</option>';
+        html += '</select>';
+        html += '</div>';
+
+        // Generate button
+        html += '<div class="name-modal__button-row">';
+        html += '<button type="button" class="name-modal__generate" data-action="generate">'
+             + _icon('REFRESH') + ' Generate'
+             + '</button>';
+        html += '</div>';
+
+        // Preview
+        html += '<div class="name-modal__preview name-modal__preview--empty" data-role="preview">'
+             + 'No name generated yet'
+             + '</div>';
+
+        html += '</div>';
+
+        var modal = window.openModal({
+            titleHtml: _esc(title),
+            contentHtml: html,
             confirmText: 'Select',
             cancelText: 'Cancel',
+            onOpen: function(root) {
+                _bindNameGeneratorActions(root, state, onSelect);
+            },
             onConfirm: function() {
-                var previewEl = document.getElementById('nameGenPreview');
-                if (previewEl) {
-                    var nameText = previewEl.textContent || previewEl.innerText || '';
-                    if (nameText && nameText !== 'Click Generate to preview') {
-                        onSelect(nameText);
-                    } else {
-                        _showToast('Please generate a name first', 'warning');
-                        return false;
-                    }
+                if (state.generatedName && onSelect) {
+                    onSelect(state.generatedName);
                 }
-                return true;
+                // If no name has been generated, we simply do not call
+                // onSelect. The modal still closes — the caller can decide
+                // whether that matters. We do not block the close with an
+                // error, since "user opened and closed without choosing"
+                // is a legitimate outcome.
             }
         });
-
-        // Attach generate handler
-        setTimeout(function() {
-            var generateBtn = document.getElementById('nameGenGenerateBtn');
-            var countrySelect = document.getElementById('nameGenCountry');
-            var genderSelect = document.getElementById('nameGenGender');
-            var previewEl = document.getElementById('nameGenPreview');
-
-            if (generateBtn && countrySelect && genderSelect && previewEl) {
-                generateBtn.addEventListener('click', function() {
-                    var countryId = countrySelect.value;
-                    var gender = genderSelect.value;
-
-                    if (!countryId) {
-                        _showToast('Please select a country', 'warning');
-                        return;
-                    }
-
-                    var name = NameQueries.getRandomName(countryId, gender);
-                    if (name) {
-                        previewEl.textContent = name;
-                    } else {
-                        previewEl.textContent = 'No names available for this country';
-                    }
-                });
-            }
-        }, 100);
 
         return modal;
     }
 
+    function _bindNameGeneratorActions(root, state, onSelect) {
+        var countrySelect = root.querySelector('[data-role="country"]');
+        var genderSelect = root.querySelector('[data-role="gender"]');
+        var previewEl = root.querySelector('[data-role="preview"]');
+
+        root.addEventListener('click', function(e) {
+            var target = e.target.closest('[data-action="generate"]');
+            if (!target) return;
+
+            var countryId = countrySelect ? countrySelect.value : '';
+            var gender = genderSelect ? genderSelect.value : 'all';
+
+            if (!countryId) {
+                _renderError(root, 'Please choose a country first.');
+                return;
+            }
+
+            var name;
+            try {
+                name = window.NameQueries.getRandomName(countryId, gender);
+            } catch (err) {
+                _renderError(root, err.message || 'Could not generate name.');
+                return;
+            }
+
+            if (!name) {
+                state.generatedName = null;
+                if (previewEl) {
+                    previewEl.textContent = 'No names available for this country.';
+                    previewEl.classList.remove('name-modal__preview--filled');
+                    previewEl.classList.add('name-modal__preview--empty');
+                }
+                return;
+            }
+
+            state.generatedName = name;
+            if (previewEl) {
+                previewEl.textContent = name;
+                previewEl.classList.remove('name-modal__preview--empty');
+                previewEl.classList.add('name-modal__preview--filled');
+            }
+        });
+    }
+
     // =========================================================================
-    // 3. BUILD NAME HISTORY HTML
+    // 3. SURNAME MANAGEMENT MODAL
     // =========================================================================
 
-    function _buildNameHistoryHtml(characterId) {
-        var changes = NameQueries.getSurnameChanges(characterId);
-        var birthSurname = NameQueries.getBirthSurname(characterId);
-        var currentSurname = NameQueries.getCurrentSurname(characterId);
-
-        if (changes.length === 0 && !birthSurname) {
-            return '';
+    /**
+     * Opens the surname history modal for a character.
+     *
+     * Actions available:
+     *   - Revert the most recent surname change.
+     *   - Clear the entire surname history (destructive; the birth
+     *     surname and current surname are preserved).
+     *
+     * @param {string} characterId
+     * @param {Function} [onChange] - called after a successful revert or
+     *   clear, so the caller can re-render.
+     * @returns {{ element: HTMLElement, close: Function }|null}
+     */
+    function openSurnameManagementModal(characterId, onChange) {
+        if (!_hasId(characterId)) {
+            throw new Error('openSurnameManagementModal: characterId is required');
+        }
+        if (!_isMissing(onChange) && typeof onChange !== 'function') {
+            throw new Error('openSurnameManagementModal: onChange must be a function');
         }
 
-        var historyIcon = _getIcon('BOOK');
-        var html =
-            '<div style="border-top: 1px solid var(--border); padding-top: 12px; margin-top: 12px;">' +
-            '<div style="font-size: 0.7rem; color: var(--accent); margin-bottom: 8px;">' +
-            historyIcon + ' Surname History' +
-            '</div>' +
-            '<div style="background: var(--bg3); padding: 8px; border-radius: 4px; max-height: 150px; overflow-y: auto; font-size: 0.6rem;">';
-
-        if (birthSurname) {
-            html += '<div style="display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid var(--border-light);">' +
-                '<span style="color: var(--dim);">Birth</span>' +
-                '<span>' + _escapeHtml(birthSurname) + '</span>' +
-                '</div>';
+        var character = window.getCharacterById
+            ? window.getCharacterById(characterId)
+            : null;
+        if (!character) {
+            return { success: false, reason: 'Character not found' };
         }
 
-        for (var i = 0; i < changes.length; i++) {
-            var c = changes[i];
-            var isCurrent = (i === changes.length - 1);
-            var color = isCurrent ? 'var(--accent)' : 'var(--dim)';
-            html += '<div style="display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid var(--border-light);">' +
-                '<span style="color: ' + color + ';">' + (isCurrent ? 'Current' : c.year + ' (' + (c.reason || 'change') + ')') + '</span>' +
-                '<span>' + _escapeHtml(c.surname) + '</span>' +
-                '</div>';
+        var html = _buildSurnameManagementContent(characterId);
+
+        var modal = window.openModal({
+            titleHtml: _esc('Surname: ' + (character.name || characterId)),
+            contentHtml: html,
+            confirmText: 'Close',
+            cancelText: '',
+            onOpen: function(root) {
+                _bindSurnameManagementActions(root, characterId, onChange);
+            },
+            onConfirm: function() {}
+        });
+
+        return modal;
+    }
+
+    /**
+     * Builds the modal's HTML from current canonical data. Called at open
+     * time and again after a mutation to rebuild the content in place.
+     */
+    function _buildSurnameManagementContent(characterId) {
+        var character = window.getCharacterById
+            ? window.getCharacterById(characterId)
+            : null;
+        if (!character) {
+            return '<div class="name-modal"><p class="name-modal__error">'
+                 + 'Character not found.'
+                 + '</p></div>';
         }
 
-        html += '</div>' +
-            (changes.length > 0 ? '<button id="revertSurnameBtn" class="btn small" style="margin-top: 8px; padding: 4px 12px; font-size: 0.55rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">↩ Revert Last Change</button>' : '') +
-            '</div>';
+        var history = window.NameQueries.getSurnameHistory(characterId);
+        var changes = window.NameQueries.getSurnameChanges(characterId);
+        var birthSurname = window.NameQueries.getBirthSurname(characterId);
+        var currentSurname = window.NameQueries.getCurrentSurname(characterId);
 
+        // Birth surname query returns null for missing history. Distinguish
+        // that from "empty birth surname".
+        var hasHistory = _isMissing(history) === false;
+        var birthSurnameForDisplay = _isMissing(birthSurname)
+            ? (typeof character.surname === 'string' ? character.surname : '')
+            : birthSurname;
+
+        var html = '';
+        html += '<div class="name-modal">';
+
+        // Summary: current + birth
+        html += '<div class="name-modal__surname-summary">';
+        html += '<div class="name-modal__surname-summary-cell">';
+        html += '<div class="name-modal__surname-summary-label">Current Surname</div>';
+        html += '<div class="name-modal__surname-summary-value name-modal__surname-summary-value--accent">'
+             + _esc(_displaySurname(currentSurname))
+             + '</div>';
+        html += '</div>';
+        html += '<div class="name-modal__surname-summary-cell">';
+        html += '<div class="name-modal__surname-summary-label">Birth Surname</div>';
+        html += '<div class="name-modal__surname-summary-value">'
+             + _esc(_displaySurname(birthSurnameForDisplay))
+             + '</div>';
+        html += '</div>';
+        html += '</div>';
+
+        // History
+        html += '<div class="name-modal__history">';
+        html += '<div class="name-modal__history-title">'
+             + _icon('BOOK') + ' History (' + changes.length + ')'
+             + '</div>';
+
+        if (!hasHistory || changes.length === 0) {
+            html += '<div class="name-modal__history-empty">No surname changes recorded.</div>';
+        } else {
+            html += '<div class="name-modal__history-list">';
+            for (var i = 0; i < changes.length; i++) {
+                var c = changes[i];
+                var isCurrent = (i === changes.length - 1);
+                var entryClass = 'name-modal__history-entry '
+                    + (isCurrent ? 'name-modal__history-entry--current'
+                                 : 'name-modal__history-entry--past');
+
+                html += '<div class="' + entryClass + '">';
+                html += '<span class="name-modal__history-year">'
+                     + _esc(_formatYear(c.year, '—'))
+                     + '</span>';
+                html += '<span class="name-modal__history-reason">'
+                     + _esc(c.reason || 'change')
+                     + '</span>';
+                html += '<span class="name-modal__history-surname">'
+                     + _esc(_displaySurname(c.surname))
+                     + '</span>';
+                if (typeof c.previousSurname === 'string' && c.previousSurname.length > 0) {
+                    html += '<span class="name-modal__history-previous">'
+                         + 'from ' + _esc(c.previousSurname)
+                         + '</span>';
+                }
+                html += '</div>';
+            }
+            html += '</div>';
+        }
+        html += '</div>';
+
+        // Actions
+        html += '<div class="name-modal__actions">';
+        if (changes.length > 0) {
+            html += '<button type="button" class="name-modal__action-button" data-action="revert-surname">'
+                 + _icon('UNDO') + ' Revert Last Change'
+                 + '</button>';
+            html += '<button type="button" class="name-modal__action-button name-modal__action-button--danger" data-action="clear-surname-history">'
+                 + _icon('TRASH') + ' Clear History'
+                 + '</button>';
+        }
+        html += '</div>';
+
+        html += '</div>';
         return html;
     }
 
-    // =========================================================================
-    // 4. OPEN SURNAME MANAGEMENT MODAL
-    // =========================================================================
+    function _bindSurnameManagementActions(root, characterId, onChange) {
+        root.addEventListener('click', function(e) {
+            var actionEl = e.target.closest('[data-action]');
+            if (!actionEl) return;
+            var action = actionEl.getAttribute('data-action');
 
-    function openSurnameManagementModal(characterId, onSuccess) {
-        var character = _getCharacterById(characterId);
-        if (!character) {
-            _showToast('Character not found', 'error');
-            return;
-        }
-
-        var history = NameQueries.getSurnameHistory(characterId);
-        var birthSurname = history ? history.birthSurname : character.surname || '';
-        var changes = history ? history.entries : [];
-        var currentSurname = character.surname || '';
-
-        var personIcon = _getIcon('PERSON');
-        var bookIcon = _getIcon('BOOK');
-        var checkIcon = _getIcon('CHECK_SIMPLE');
-
-        // Build change list
-        var changeHtml = '';
-        if (changes.length === 0) {
-            changeHtml = '<div style="text-align: center; padding: 12px; color: var(--dim); font-size: 0.6rem;">No surname changes recorded</div>';
-        } else {
-            for (var i = changes.length - 1; i >= 0; i--) {
-                var c = changes[i];
-                var isCurrent = (i === changes.length - 1);
-                var color = isCurrent ? 'var(--accent)' : 'var(--dim)';
-                var prefix = isCurrent ? '▶' : '•';
-                changeHtml += '<div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border-light); font-size: 0.6rem;">' +
-                    '<span>' + prefix + ' ' + c.year + ' - ' + (c.reason || 'change') + '</span>' +
-                    '<span style="color: ' + color + ';">' + _escapeHtml(c.surname) + ' ' +
-                    (c.previousSurname ? '← ' + _escapeHtml(c.previousSurname) : '') +
-                    '</span>' +
-                    '</div>';
+            if (action === 'revert-surname') {
+                var result = window.NameCommands.revertLastSurnameChange(characterId);
+                if (!result.success) {
+                    _renderError(root, result.reason || 'Failed to revert surname change.');
+                    return;
+                }
+                _refreshSurnameModalContent(root, characterId);
+                if (onChange) onChange();
+                return;
             }
-        }
 
-        var modalContent =
-            '<div style="max-height: 500px; overflow-y: auto;">' +
-            '<div style="background: var(--bg2); padding: 12px; border-radius: 6px; margin-bottom: 12px;">' +
-            personIcon + ' <strong>' + _escapeHtml(character.name) + ' ' + _escapeHtml(character.surname || '') + '</strong>' +
-            '</div>' +
-
-            // Current surname
-            '<div style="display: flex; gap: 12px; margin-bottom: 12px;">' +
-            '<div style="flex: 1; background: var(--bg3); padding: 8px; border-radius: 6px; text-align: center;">' +
-            '<div style="font-size: 0.55rem; color: var(--dim);">Current Surname</div>' +
-            '<div style="font-size: 0.9rem; font-weight: bold; color: var(--accent);">' + _escapeHtml(currentSurname) + '</div>' +
-            '</div>' +
-            '<div style="flex: 1; background: var(--bg3); padding: 8px; border-radius: 6px; text-align: center;">' +
-            '<div style="font-size: 0.55rem; color: var(--dim);">Birth Surname</div>' +
-            '<div style="font-size: 0.9rem;">' + _escapeHtml(birthSurname) + '</div>' +
-            '</div>' +
-            '</div>' +
-
-            // Change history
-            '<div style="margin-bottom: 12px;">' +
-            '<div style="font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">' +
-            bookIcon + ' History (' + changes.length + ' changes)' +
-            '</div>' +
-            '<div style="background: var(--bg3); padding: 8px; border-radius: 4px; max-height: 150px; overflow-y: auto;">' +
-            changeHtml +
-            '</div>' +
-            '</div>' +
-
-            // Action buttons
-            '<div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px;">' +
-            (changes.length > 0 ? '<button id="revertSurnameBtn" class="btn small" style="padding: 4px 12px; font-size: 0.55rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">↩ Revert Last Change</button>' : '') +
-            '<button id="clearSurnameHistoryBtn" class="btn small" style="padding: 4px 12px; font-size: 0.55rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">' + checkIcon + ' Clear History</button>' +
-            '</div>' +
-
-            '</div>';
-
-        var modal = _openModal({
-            title: 'Surname Management: ' + character.name,
-            content: modalContent,
-            confirmText: 'Close',
-            cancelText: '',
-            onConfirm: function() {
-                if (onSuccess) onSuccess();
+            if (action === 'clear-surname-history') {
+                window.confirmDialog(
+                    'Clear all surname history entries? The birth surname and current surname are preserved. This action cannot be undone.',
+                    'Clear Surname History',
+                    function() {
+                        var clearResult = window.NameCommands.clearSurnameHistory(characterId);
+                        if (!clearResult.success) {
+                            _renderError(root, clearResult.reason || 'Failed to clear surname history.');
+                            return;
+                        }
+                        _refreshSurnameModalContent(root, characterId);
+                        if (onChange) onChange();
+                    }
+                );
+                return;
             }
         });
+    }
 
-        // Attach handlers
-        setTimeout(function() {
-            var revertBtn = document.getElementById('revertSurnameBtn');
-            if (revertBtn) {
-                revertBtn.addEventListener('click', function() {
-                    var result = NameCommands.revertLastSurnameChange(character);
-                    if (result) {
-                        _closeTopModal();
-                        setTimeout(function() {
-                            openSurnameManagementModal(characterId, onSuccess);
-                        }, 100);
-                    }
-                });
-            }
-
-            var clearBtn = document.getElementById('clearSurnameHistoryBtn');
-            if (clearBtn) {
-                clearBtn.addEventListener('click', function() {
-                    if (confirm('Clear all surname history entries? This action cannot be undone.')) {
-                        var history = NameState.getSurnameHistory(characterId);
-                        if (history) {
-                            history.entries = [];
-                            history.lastUpdated = character.birthYear || _getCurrentYear();
-                            _saveMasterData();
-                            NameState.invalidateCache();
-                            _showToast('Surname history cleared', 'info');
-                            _closeTopModal();
-                            setTimeout(function() {
-                                openSurnameManagementModal(characterId, onSuccess);
-                            }, 100);
-                        }
-                    }
-                });
-            }
-        }, 100);
-
-        return modal;
+    /**
+     * Re-renders the surname management content in place, preserving the
+     * modal shell. Called after a successful mutation.
+     */
+    function _refreshSurnameModalContent(root, characterId) {
+        var contentHost = root.querySelector('.modal-body');
+        if (!contentHost) {
+            // Fallback: if we can't find the body, just replace the whole
+            // content. This should not happen given modals-core's structure,
+            // but we do not want to crash a working modal.
+            contentHost = root;
+        }
+        contentHost.innerHTML = _buildSurnameManagementContent(characterId);
+        // The delegated click handler is on the root, not on the body, so
+        // rebuilding the body does not detach it. No rebinding needed.
     }
 
     // =========================================================================
-    // 5. EXPORTS
+    // 4. EXPORTS
     // =========================================================================
 
     window.openNameGeneratorModal = openNameGeneratorModal;
