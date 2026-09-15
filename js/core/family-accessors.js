@@ -1,10 +1,9 @@
 /**
  * =============================================================================
- * STILL WATERS - FAMILY ACCESSORS (js/core/family-accessors.js)
+ * STILL WATERS - FAMILY ACCESSORS (js/character/family-accessors.js)
  * =============================================================================
  *
  * PURE read-only accessors for family relationships.
- * NO system dependencies beyond core accessors.
  * NO UI. NO mutations. NO household semantics. NO relationship semantics.
  *
  * SCOPE:
@@ -13,14 +12,16 @@
  *   - Sibling accessors
  *   - Grandparent / grandchild accessors
  *   - Extended family (aunts/uncles, first cousins, nieces/nephews)
- *   - Limited kinship classifier (see KINSHIP section)
+ *   - Limited kinship classifier (see KINSHIP below)
+ *   - Delegation of aggregate statistics to family-statistics.js
  *
  * OUT OF SCOPE:
  *   - Partner/spouse semantics → relationship-queries.js
- *   - Household membership → household-queries.js
  *   - Family statistics aggregation → family-statistics.js
+ *   - Household membership → household-queries.js
  *   - Time calculations → time.js
  *   - Adoption consistency policy → integrity.js
+ *   - Family graph mutations → family-commands.js
  *
  * SEMANTIC RULES:
  *   - Missing/invalid character → null (singular) or [] (collection).
@@ -34,39 +35,42 @@
  *   - Explicit missing checks only. Truthiness is not a domain predicate.
  *
  * ADOPTION AUTHORITY:
- *   The adoption graph can in principle be represented from both sides
+ *   The adoption graph can be represented from both sides
  *   (`character.adoptedParents` on the child, `character.adoptedChildren`
  *   on the parent). This module reads BOTH and treats them as independent
- *   facts, the same way biological and adoptive are treated as independent
- *   on the child side. If the two sides disagree, that is a data integrity
+ *   facts, the same way biological and adoptive are independent on the
+ *   child side. If the two sides disagree, that is a data integrity
  *   problem for integrity.js to report, not for this module to silently
- *   resolve. Callers who need a single authoritative direction should
- *   build it on top of the data integrity audit.
+ *   resolve.
  *
  * EXTENDED FAMILY AND ADOPTION:
  *   Extended-family relationships (aunts/uncles, cousins, nieces/nephews)
- *   currently follow BIOLOGICAL ancestry only. Adoptive siblings are not
- *   promoted to aunts/uncles, and their children are not promoted to
- *   cousins. This is a deliberate policy: extended-family traversal
- *   through adoptive links would balloon the graph and produce surprising
- *   classifications. If this policy changes, it should change here and be
- *   documented in the changelog.
+ *   follow BIOLOGICAL ancestry only. Adoptive siblings are not promoted
+ *   to aunts/uncles, and their children are not promoted to cousins.
+ *   This is a deliberate policy: extended-family traversal through
+ *   adoptive links produces surprising classifications and expands the
+ *   graph faster than succession rules generally want.
  *
  * KINSHIP:
  *   getKinship is a LIMITED classifier. It recognizes: Self, Parent,
  *   Child, Sibling, Grandparent, Grandchild, Aunt/Uncle, Niece/Nephew,
- *   Cousin (first), and Spouse. It does NOT recognize great-grandparents,
- *   second cousins, or any degree beyond what is listed. Unrecognized
- *   relationships return Unrelated, which is intentional: the classifier
- *   answers "what is the closest recognized relationship between these
- *   two people?" not "what is the mathematical kinship coefficient?"
+ *   Cousin (first), and Unrelated. It does NOT recognize great-
+ *   grandparents, second cousins, or any degree beyond what is listed.
  *
- *   Spouse is included in getKinship for UI convenience, but it is
- *   affinity, not consanguinity. Do not use getKinshipCloseness as a
- *   blood-relationship measure.
+ *   Spouse is NOT part of this classifier. Affinity belongs in the
+ *   relationship layer. Callers who need to display "Spouse" alongside
+ *   "Sibling" compose it with relationship-queries.js.
+ *
+ *   Do not use getKinshipCloseness as a blood-relationship measure. It is
+ *   a UI sort score, not a consanguinity coefficient.
  *
  * DEPENDENCIES (REQUIRED):
  *   - accessors.js: getCharacterById, getCharacters
+ *
+ * DEPENDENCIES (OPTIONAL):
+ *   - family-statistics.js (FamilyStatistics)
+ *     — getFamilyStatistics is delegated to this module.
+ *     — If absent, the delegated function returns null.
  *
  * ICON POLICY: No emojis. No icons.
  *
@@ -89,13 +93,13 @@
         }
     }
 
+    _requireAccessors();
+
     function _getCharacterById(id) {
-        _requireAccessors();
         return window.getCharacterById(id);
     }
 
     function _getCharacters() {
-        _requireAccessors();
         return window.getCharacters();
     }
 
@@ -103,10 +107,6 @@
         return v === undefined || v === null;
     }
 
-    /**
-     * True if `id` is a non-empty string.
-     * @private
-     */
     function _hasId(id) {
         return typeof id === 'string' && id.length > 0;
     }
@@ -117,9 +117,6 @@
 
     /**
      * True if `year` is a valid integer birth year shape for sorting.
-     * Range validation is time.js's concern; this predicate only answers
-     * "can this value participate in integer comparison?"
-     * @private
      */
     function _isSortableBirthYear(year) {
         return typeof year === 'number'
@@ -130,7 +127,6 @@
     /**
      * Sort comparator for entities with birthYear. Unknown or invalid
      * birth years sort last, in stable input order.
-     * @private
      */
     function _compareBirthYear(a, b) {
         var aYear = a && a.birthYear;
@@ -146,8 +142,7 @@
 
     /**
      * Deduplicates a list of characters or character-wrapping entries by
-     * the character's ID. Uses a Set (prototype-safe).
-     * @private
+     * the character's ID.
      */
     function _dedupeById(list) {
         var seen = new Set();
@@ -168,6 +163,15 @@
             out.push(item);
         }
         return out;
+    }
+
+    /**
+     * Ensures an array is returned. FamilyAccessors never returns
+     * undefined/null for collection queries; this is a defensive guard for
+     * the case where a caller has passed an uninitialized character.
+     */
+    function _asArray(v) {
+        return Array.isArray(v) ? v : [];
     }
 
     // =========================================================================
@@ -204,8 +208,12 @@
         var character = _getCharacterById(characterId);
         if (!character) return { father: null, mother: null };
         return {
-            father: _hasId(character.fatherId) ? _getCharacterById(character.fatherId) : null,
-            mother: _hasId(character.motherId) ? _getCharacterById(character.motherId) : null
+            father: _hasId(character.fatherId)
+                ? _getCharacterById(character.fatherId)
+                : null,
+            mother: _hasId(character.motherId)
+                ? _getCharacterById(character.motherId)
+                : null
         };
     }
 
@@ -213,9 +221,7 @@
      * Gets all parents (biological and, optionally, adoptive).
      *
      * Each parent appears ONCE. A parent who is both biological and
-     * adoptive has both flags set on a single entry. This mirrors
-     * getAllChildren()'s merge policy and makes it possible to ask
-     * "who is X's parent?" without filtering duplicates.
+     * adoptive has both flags set on a single entry.
      *
      * @param {string} characterId
      * @param {boolean} [includeAdoptive] - default false
@@ -273,7 +279,7 @@
         if (includeAdoptive && Array.isArray(character.adoptedParents)) {
             for (var i = 0; i < character.adoptedParents.length; i++) {
                 var ap = character.adoptedParents[i];
-                if (ap.status === 'ended') continue;
+                if (!ap || ap.status === 'ended') continue;
                 if (!_hasId(ap.parentId)) continue;
                 var parent = _getCharacterById(ap.parentId);
                 if (!parent) continue;
@@ -284,9 +290,9 @@
 
                 var entry = ensure(parent.id, parent, type);
                 entry.adoptive = true;
-                if (type === 'father' || type === 'mother' || type === 'parent') {
-                    // Only override a neutral 'parent' label with a specific one.
-                    if (entry.type === 'parent' && type !== 'parent') entry.type = type;
+                if ((type === 'father' || type === 'mother')
+                    && entry.type === 'parent') {
+                    entry.type = type;
                 }
                 if (!_isMissing(ap.type)) entry.adoptionType = ap.type;
                 if (!_isMissing(ap.year)) entry.adoptionYear = ap.year;
@@ -311,7 +317,8 @@
 
         if (includeAdoptive && Array.isArray(character.adoptedParents)) {
             for (var i = 0; i < character.adoptedParents.length; i++) {
-                if (character.adoptedParents[i].status !== 'ended') return true;
+                var ap = character.adoptedParents[i];
+                if (ap && ap.status !== 'ended' && _hasId(ap.parentId)) return true;
             }
         }
         return false;
@@ -330,7 +337,7 @@
         var parents = getAllParents(characterId, includeAdoptive === true);
         for (var i = 0; i < parents.length; i++) {
             var parent = parents[i].character;
-            if (parent && !parent.isDeceased) return false;
+            if (parent && parent.isDeceased !== true) return false;
         }
         return true;
     }
@@ -352,7 +359,7 @@
         for (var i = 0; i < allChars.length; i++) {
             var child = allChars[i];
             if (child.id === characterId) continue;
-            if (!includeDeceased && child.isDeceased) continue;
+            if (!includeDeceased && child.isDeceased === true) continue;
             if (child.fatherId === characterId || child.motherId === characterId) {
                 children.push(child);
             }
@@ -374,11 +381,11 @@
 
         for (var i = 0; i < character.adoptedChildren.length; i++) {
             var ac = character.adoptedChildren[i];
-            if (ac.status === 'ended') continue;
+            if (!ac || ac.status === 'ended') continue;
             if (!_hasId(ac.childId)) continue;
             var child = _getCharacterById(ac.childId);
             if (!child) continue;
-            if (!includeDeceased && child.isDeceased) continue;
+            if (!includeDeceased && child.isDeceased === true) continue;
             result.push({
                 character: child,
                 adoptionType: _isMissing(ac.type) ? 'legal' : ac.type,
@@ -452,23 +459,17 @@
         return result;
     }
 
-    /**
-     * Number of living children (biological + optionally adopted).
-     */
     function getLivingChildrenCount(characterId, includeAdopted) {
         includeAdopted = includeAdopted !== false;
         var all = getAllChildren(characterId, false);
         var count = 0;
         for (var i = 0; i < all.length; i++) {
             if (!includeAdopted && !all[i].biological) continue;
-            if (!all[i].character.isDeceased) count++;
+            if (all[i].character.isDeceased !== true) count++;
         }
         return count;
     }
 
-    /**
-     * Total children count.
-     */
     function getTotalChildrenCount(characterId, includeAdopted, includeDeceased) {
         includeAdopted = includeAdopted !== false;
         includeDeceased = includeDeceased !== false;
@@ -482,7 +483,11 @@
     }
 
     function hasChildren(characterId, includeAdopted, includeDeceased) {
-        return getTotalChildrenCount(characterId, includeAdopted, includeDeceased) > 0;
+        return getTotalChildrenCount(
+            characterId,
+            includeAdopted,
+            includeDeceased
+        ) > 0;
     }
 
     function getEldestChild(characterId, includeAdopted, includeDeceased) {
@@ -511,9 +516,6 @@
 
     /**
      * Gets all siblings of a character.
-     *
-     * A sibling is anyone who shares at least one parent (biological or
-     * adoptive) with this character.
      *
      * @returns {Array<{
      *   character,
@@ -549,11 +551,10 @@
             return byId.get(id);
         }
 
-        // Biological siblings
         for (var i = 0; i < allChars.length; i++) {
             var s = allChars[i];
             if (s.id === characterId) continue;
-            if (!includeDeceased && s.isDeceased) continue;
+            if (!includeDeceased && s.isDeceased === true) continue;
 
             var sharedFather = _hasId(character.fatherId)
                 && _hasId(s.fatherId)
@@ -577,9 +578,6 @@
             }
         }
 
-        // Adoptive siblings: children who share at least one adoptive
-        // parent with this character. The sibling relationship is defined
-        // by the shared adoptive parent, not by the sibling's own type.
         if (includeAdopted) {
             var myAdoptiveParents = getAllParents(characterId, true).filter(function(p) {
                 return p.adoptive;
@@ -592,7 +590,7 @@
                 for (var c = 0; c < coChildren.length; c++) {
                     var co = coChildren[c];
                     if (co.character.id === characterId) continue;
-                    if (!includeDeceased && co.character.isDeceased) continue;
+                    if (!includeDeceased && co.character.isDeceased === true) continue;
 
                     var entryA = ensure(co.character.id);
                     entryA.character = co.character;
@@ -632,13 +630,23 @@
     }
 
     function getEldestSibling(characterId, includeHalfSiblings, includeDeceased) {
-        var siblings = getSiblings(characterId, includeHalfSiblings === true, includeDeceased === true, false);
+        var siblings = getSiblings(
+            characterId,
+            includeHalfSiblings === true,
+            includeDeceased === true,
+            false
+        );
         if (siblings.length === 0) return null;
         return siblings[0].character;
     }
 
     function getYoungestSibling(characterId, includeHalfSiblings, includeDeceased) {
-        var siblings = getSiblings(characterId, includeHalfSiblings === true, includeDeceased === true, false);
+        var siblings = getSiblings(
+            characterId,
+            includeHalfSiblings === true,
+            includeDeceased === true,
+            false
+        );
         if (siblings.length === 0) return null;
         return siblings[siblings.length - 1].character;
     }
@@ -702,18 +710,8 @@
     // 6. EXTENDED FAMILY
     // =========================================================================
     //
-    // Extended-family traversal follows BIOLOGICAL ancestry only. See
-    // EXTENDED FAMILY AND ADOPTION in the file header.
+    // Extended-family traversal follows BIOLOGICAL ancestry only.
 
-    /**
-     * Gets aunts and uncles of a character (biological parents' siblings).
-     *
-     * @returns {Array<{
-     *   character,
-     *   relations: Array<'paternal'|'maternal'>,
-     *   type: 'aunt' | 'uncle' | 'aunt-or-uncle'
-     * }>}
-     */
     function getAuntsAndUncles(characterId, includeDeceased) {
         includeDeceased = includeDeceased === true;
         var parents = getParents(characterId);
@@ -753,8 +751,6 @@
      * Only first cousins are supported. Second cousins and beyond would
      * require a general relationship-traversal API, which this module
      * does not provide.
-     *
-     * @returns {Array<Object>}
      */
     function getFirstCousins(characterId, includeDeceased) {
         includeDeceased = includeDeceased === true;
@@ -771,11 +767,6 @@
         return _dedupeById(cousins);
     }
 
-    /**
-     * Gets nieces and nephews of a character (biological siblings' children).
-     *
-     * @returns {Array<{ character, through: Array<Object>, type }>}
-     */
     function getNiecesAndNephews(characterId, includeDeceased) {
         includeDeceased = includeDeceased === true;
         var siblings = getSiblings(characterId, true, includeDeceased, false);
@@ -810,25 +801,9 @@
     // 7. KINSHIP (LIMITED CLASSIFIER)
     // =========================================================================
     //
-    // See KINSHIP in the file header for the classification's scope and
-    // limitations. This is NOT a general kinship engine. It is a bounded
-    // classifier that answers "what is the closest recognized relationship
-    // between these two people?" Spouse is included for UI convenience but
-    // is affinity, not consanguinity.
+    // Consanguineous only. Affinity (spouse, in-laws) is NOT classified
+    // here. See KINSHIP in the file header.
 
-    /**
-     * Gets a structured relationship descriptor between two characters.
-     *
-     * Returns { degree, closeness } or null when inputs are invalid or
-     * one party is missing.
-     *
-     * Degrees: Self, Parent, Child, Sibling, Grandparent, Grandchild,
-     *          Uncle, Aunt, UncleOrAunt, Nephew, Niece, Nibling,
-     *          Cousin, Unrelated
-     *
-     * Closeness: 0 = self, 1 = immediate, 2 = sibling/grandparent,
-     *            3 = aunt/uncle/niece/nephew, 4 = cousin, 99 = unrelated.
-     */
     function getKinship(charId1, charId2) {
         if (!_hasId(charId1) || !_hasId(charId2)) return null;
         if (charId1 === charId2) return { degree: 'Self', closeness: 0 };
@@ -889,19 +864,31 @@
         return { degree: 'Unrelated', closeness: 99 };
     }
 
-    /**
-     * Gets the closeness score for two characters.
-     * Returns the closeness integer from getKinship (or 99 for unrelated).
-     *
-     * This is a UI sort score, NOT a consanguinity coefficient.
-     */
     function getKinshipCloseness(charId1, charId2) {
         var k = getKinship(charId1, charId2);
         return k ? k.closeness : 99;
     }
 
     // =========================================================================
-    // 8. EXPORTS
+    // 8. STATISTICS DELEGATION
+    // =========================================================================
+
+    /**
+     * Delegates to family-statistics.js. Returns null if that module is
+     * not loaded.
+     *
+     * This delegation exists so that callers who already have a reference
+     * to FamilyAccessors can obtain statistics without importing a second
+     * module. It is not a second implementation.
+     */
+    function getFamilyStatistics(characterId) {
+        if (typeof window.FamilyStatistics === 'undefined') return null;
+        if (typeof window.FamilyStatistics.getFamilyStatistics !== 'function') return null;
+        return window.FamilyStatistics.getFamilyStatistics(characterId);
+    }
+
+    // =========================================================================
+    // 9. EXPORTS
     // =========================================================================
 
     var api = {
@@ -943,12 +930,22 @@
 
         // Kinship (limited classifier)
         getKinship: getKinship,
-        getKinshipCloseness: getKinshipCloseness
+        getKinshipCloseness: getKinshipCloseness,
+
+        // Statistics delegation
+        getFamilyStatistics: getFamilyStatistics
     };
 
     window.FamilyAccessors = api;
 
-    // Backward-compatible global aliases (deprecated)
+    // =========================================================================
+    // 10. LEGACY GLOBAL ALIASES
+    // =========================================================================
+    //
+    // These exist for backward compatibility with callers that use bare
+    // global names instead of the FamilyAccessors namespace. They are
+    // thin aliases, not second implementations.
+
     window.getFather = getFather;
     window.getMother = getMother;
     window.getParents = getParents;
@@ -958,34 +955,28 @@
     window.getGrandchildren = getGrandchildren;
 
     /**
-     * @deprecated Use getFirstCousins instead. Second cousins and beyond
-     * were never supported; the previous signature pretended otherwise.
+     * @deprecated Use getFirstCousins. The prior name implied general
+     * cousin traversal that was never supported.
      */
     window.getCousins = getFirstCousins;
 
     /**
-     * @deprecated Use getKinshipCloseness instead. The name suggested
-     * a blood-relationship coefficient, but the value is a UI sort score
-     * that includes spouse (affinity).
+     * @deprecated Use getKinshipCloseness. The prior name implied a
+     * blood-relationship coefficient; the value is a UI sort score.
      */
     window.getConsanguinityDegree = getKinshipCloseness;
 
     /**
-     * @deprecated Use getKinship instead.
+     * @deprecated Use getKinship.
      */
     window.getConsanguinity = getKinship;
 
     /**
-     * @deprecated Use getKinship instead.
+     * @deprecated Use getKinship.
      */
     window.getRelationshipDescription = function(charId1, charId2) {
         var k = getKinship(charId1, charId2);
         return k ? k.degree : 'Unknown';
     };
-
-    // CommonJS
-    if (typeof module !== 'undefined' && module.exports) {
-        module.exports = api;
-    }
 
 })();

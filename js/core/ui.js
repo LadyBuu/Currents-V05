@@ -2,9 +2,9 @@
  * =============================================================================
  * STILL WATERS - UI SYSTEM (ui.js)
  * =============================================================================
- * 
+ *
  * LOCATION: js/core/ui.js
- * 
+ *
  * SINGLE SOURCE OF TRUTH for:
  *   - Toast notifications
  *   - Loading overlays (with nested counter)
@@ -13,19 +13,37 @@
  *   - Progress bars
  *   - Skeleton loaders
  *   - Body scroll locking (UI.lockBodyScroll / UI.unlockBodyScroll)
- * 
+ *
  * OUT OF SCOPE:
+ *   - Presentation CSS → see ui.css (or the application stylesheet)
  *   - Tabs / settlement controller → js/modules/settlement/settlement-tabs.js
  *   - Location dropdowns → js/selectors/location-dropdown.js
  *   - Modal system → js/core/modals-core.js
  *   - Column/card rendering → domain modules
- * 
+ *
+ * SEMANTIC RULES:
+ *   - Missing optional arguments → documented default.
+ *     Invalid explicit arguments → throw or return null (never silently
+ *     converted to the default).
+ *   - Presentation is owned by CSS. This module toggles classes and sets
+ *     dynamic values (width percentages, counts) but does not embed
+ *     style strings.
+ *   - Temporary UI overrides (button loading, inline loading) capture
+ *     and restore the original DOM and disabled state.
+ *   - A progress bar has one instance per container. showProgressBar on
+ *     an already-active container updates rather than appends.
+ *
  * DEPENDENCIES:
- *   - formatting.js (escapeHtml)
- *   - icons.js (Icons)
- * 
+ *   - Application dependencies:
+ *       formatting.js (escapeHtml)
+ *       icons.js (Icons)
+ *   - Browser globals used: window, document, setTimeout.
+ *   - Stylesheet: ui.css (or the application's canonical stylesheet) must
+ *     define the classes this module emits: .toast, .loading-overlay,
+ *     .inline-loader, .progress-container, .skeleton-*, etc.
+ *
  * ICON POLICY: Uses icons.js for icons. No emojis.
- * 
+ *
  * =============================================================================
  */
 
@@ -36,149 +54,97 @@
     // 0. DEPENDENCY GUARDS
     // =========================================================================
 
-    if (typeof window.escapeHtml !== 'function') {
-        throw new Error('ui.js: formatting.js must load first (escapeHtml missing).');
-    }
-
-    function _getIcon(name) {
-        if (typeof window.Icons === 'undefined') return '';
-        return window.Icons[name] || '';
-    }
-
-    // =========================================================================
-    // 1. GLOBAL STYLES INJECTION
-    // =========================================================================
-
-    function injectGlobalStyles() {
-        if (document.querySelector('#ui-global-styles')) return;
-
-        var style = document.createElement('style');
-        style.id = 'ui-global-styles';
-        style.textContent =
-            '::-webkit-scrollbar { width: 8px; height: 8px; }' +
-            '::-webkit-scrollbar-track { background: var(--bg2); border-radius: 4px; }' +
-            '::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 4px; }' +
-            '::-webkit-scrollbar-thumb:hover { background: var(--accent-hover); }' +
-            '::selection { background: var(--accent); color: white; }' +
-            'button:focus, input:focus, select:focus, textarea:focus { outline: none; }' +
-            'button:disabled, .btn:disabled { opacity: 0.5; cursor: not-allowed; }' +
-            '.clickable { cursor: pointer; transition: opacity 0.2s; }' +
-            '.clickable:hover { opacity: 0.8; }' +
-            '@keyframes spin { to { transform: rotate(360deg); } }' +
-            '@keyframes pulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }' +
-            '@keyframes toastSlideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }' +
-            '@keyframes toastSlideOut { from { transform: translateX(0); opacity: 1; } to { transform: translateX(100%); opacity: 0; } }';
-        document.head.appendChild(style);
-    }
-
-    function initUI() {
-        injectGlobalStyles();
-    }
-
-    // =========================================================================
-    // 2. BODY SCROLL LOCK (SHARED)
-    // =========================================================================
-
-    var _scrollLocks = new Set();
-
-    /**
-     * Acquires a named scroll lock. Multiple callers may hold locks
-     * simultaneously; the body remains locked until all are released.
-     * 
-     * @param {string} key - Unique identifier for the lock holder
-     */
-    function lockBodyScroll(key) {
-        if (!key) return;
-        _scrollLocks.add(key);
-        document.body.style.overflow = 'hidden';
-    }
-
-    /**
-     * Releases a named scroll lock.
-     * @param {string} key
-     */
-    function unlockBodyScroll(key) {
-        if (!key) return;
-        _scrollLocks.delete(key);
-        if (_scrollLocks.size === 0) {
-            document.body.style.overflow = '';
+    function _requireFormatting() {
+        if (typeof window.escapeHtml !== 'function') {
+            throw new Error('ui.js: formatting.js must load first (escapeHtml missing).');
         }
     }
 
-    /**
-     * Releases all scroll locks. Escape hatch for teardown/reset.
-     */
-    function clearAllScrollLocks() {
-        _scrollLocks.clear();
-        document.body.style.overflow = '';
+    function _requireIcons() {
+        if (typeof window.Icons === 'undefined') {
+            throw new Error('ui.js: icons.js must load first.');
+        }
+    }
+
+    _requireFormatting();
+    _requireIcons();
+
+    function _getIcon(name) {
+        return window.Icons[name] || window.Icons.CIRCLE || '';
+    }
+
+    function _isMissing(v) {
+        return v === undefined || v === null;
     }
 
     // =========================================================================
-    // 3. TOAST NOTIFICATIONS
+    // 1. TOAST NOTIFICATIONS
     // =========================================================================
 
-    var COLORS = Object.freeze({
-        success: '#4a9060',
-        error: '#c84444',
-        warning: '#c87040',
-        info: '#6a9ecf'
+    var TOAST_TYPES = Object.freeze({
+        SUCCESS: 'success',
+        ERROR: 'error',
+        WARNING: 'warning',
+        INFO: 'info'
     });
+
+    var _VALID_TOAST_TYPES = [
+        TOAST_TYPES.SUCCESS,
+        TOAST_TYPES.ERROR,
+        TOAST_TYPES.WARNING,
+        TOAST_TYPES.INFO
+    ];
+
+    var _TOAST_ICON_FOR_TYPE = {
+        success: 'CHECK_SIMPLE',
+        error: 'X_HEAVY',
+        warning: 'WARNING',
+        info: 'CIRCLE_DOT'
+    };
 
     function getToastContainer() {
         var container = document.getElementById('toast-container');
         if (!container) {
             container = document.createElement('div');
             container.id = 'toast-container';
-            container.style.cssText = 'position:fixed; bottom:20px; right:20px; z-index:10000; display:flex; flex-direction:column; gap:10px;';
+            container.className = 'toast-container';
+            container.setAttribute('role', 'region');
+            container.setAttribute('aria-live', 'polite');
+            container.setAttribute('aria-label', 'Notifications');
             document.body.appendChild(container);
         }
         return container;
     }
 
     /**
-     * Creates a toast element. Used by both showToast and showPersistentToast.
+     * Creates a toast element. Only sets classes and dynamic content;
+     * presentation lives in the stylesheet.
      * @private
      */
     function _createToastElement(message, type) {
-        var icon;
-        switch (type) {
-            case 'success': icon = _getIcon('CHECK_SIMPLE'); break;
-            case 'error': icon = _getIcon('X_HEAVY'); break;
-            case 'warning': icon = _getIcon('WARNING'); break;
-            default: icon = _getIcon('CIRCLE_DOT');
-        }
+        var icon = _getIcon(_TOAST_ICON_FOR_TYPE[type] || _TOAST_ICON_FOR_TYPE.info);
 
-        // message may contain trusted SVG icons; escape everything else.
-        // We use escapeHtml on the plain text and rely on the caller to
-        // compose icons. For backward compat with callers passing SVG,
-        // we keep a minimal pass-through for known icon tags.
+        // message is a plain string; escape it. Icons from icons.js are
+        // the only trusted HTML the toast contains.
         var safeContent = window.escapeHtml(message);
 
         var toast = document.createElement('div');
         toast.className = 'toast toast-' + type;
+        // error toasts warrant assertive announcement; others are polite.
+        toast.setAttribute('role', type === TOAST_TYPES.ERROR ? 'alert' : 'status');
         toast.innerHTML =
-            '<div style="display:flex;align-items:center;gap:10px;">' +
-                '<span style="flex-shrink:0;">' + icon + '</span>' +
-                '<span style="flex:1;word-break:break-word;">' + safeContent + '</span>' +
-                '<button class="toast-close" style="background:none;border:none;color:var(--dim);cursor:pointer;font-size:1rem;padding:4px;flex-shrink:0;">' + _getIcon('X') + '</button>' +
-            '</div>';
-        toast.style.cssText =
-            'background:var(--bg2);' +
-            'border-left:4px solid ' + (COLORS[type] || COLORS.info) + ';' +
-            'border-radius:8px;' +
-            'padding:12px 16px;' +
-            'margin-bottom:8px;' +
-            'box-shadow:0 4px 12px rgba(0,0,0,0.15);' +
-            'min-width:250px;' +
-            'max-width:350px;' +
-            'transition:opacity 0.3s ease;';
+            '<span class="toast-icon" aria-hidden="true">' + icon + '</span>' +
+            '<span class="toast-message">' + safeContent + '</span>' +
+            '<button type="button" class="toast-close" aria-label="Dismiss">' +
+                _getIcon('X') +
+            '</button>';
         return toast;
     }
 
     function _dismissToast(toast, animated) {
         if (!toast || !toast.parentNode) return;
         if (animated) {
-            toast.style.animation = 'toastSlideOut 0.3s ease';
+            toast.classList.add('toast-leaving');
             setTimeout(function() {
                 if (toast.parentNode) toast.parentNode.removeChild(toast);
             }, 300);
@@ -189,20 +155,41 @@
 
     /**
      * Shows a toast notification.
-     * Duration of 0 means "do not auto-dismiss."
-     * 
+     *
      * @param {string} message
-     * @param {string} type - 'success' | 'error' | 'warning' | 'info'
-     * @param {number} duration - ms; default 3000
+     * @param {string} [type] - 'success' | 'error' | 'warning' | 'info'
+     *   Missing → 'info'. Explicit invalid → throws.
+     * @param {number} [duration] - ms; missing → 3000; 0 → persistent;
+     *   negative or non-numeric → throws.
      * @returns {HTMLElement}
      */
     function showToast(message, type, duration) {
-        type = type || 'info';
-        duration = duration === undefined ? 3000 : duration;
+        if (typeof message !== 'string') {
+            throw new Error('showToast: message must be a string');
+        }
+
+        if (_isMissing(type)) {
+            type = TOAST_TYPES.INFO;
+        } else if (_VALID_TOAST_TYPES.indexOf(type) === -1) {
+            throw new Error(
+                'showToast: unknown type "' + type + '". ' +
+                'Expected one of: ' + _VALID_TOAST_TYPES.join(', ')
+            );
+        }
+
+        if (_isMissing(duration)) {
+            duration = 3000;
+        } else if (typeof duration !== 'number'
+            || !Number.isFinite(duration)
+            || duration < 0) {
+            throw new Error(
+                'showToast: duration must be a non-negative finite number'
+            );
+        }
 
         var container = getToastContainer();
         var toast = _createToastElement(message, type);
-        toast.style.animation = 'toastSlideIn 0.3s ease';
+        toast.classList.add('toast-entering');
         container.appendChild(toast);
 
         var closeBtn = toast.querySelector('.toast-close');
@@ -223,43 +210,60 @@
     }
 
     function showSuccessToast(message, duration) {
-        return showToast(message, 'success', duration === undefined ? 3000 : duration);
+        return showToast(message, TOAST_TYPES.SUCCESS, duration);
     }
 
     function showErrorToast(message, duration) {
-        return showToast(message, 'error', duration === undefined ? 4000 : duration);
+        return showToast(message, TOAST_TYPES.ERROR, duration);
     }
 
     function showWarningToast(message, duration) {
-        return showToast(message, 'warning', duration === undefined ? 3500 : duration);
+        return showToast(message, TOAST_TYPES.WARNING, duration);
     }
 
     function showInfoToast(message, duration) {
-        return showToast(message, 'info', duration === undefined ? 3000 : duration);
+        return showToast(message, TOAST_TYPES.INFO, duration);
     }
 
     /**
      * Shows a persistent toast (no auto-dismiss).
      */
     function showPersistentToast(message, type) {
-        return showToast(message, type || 'info', 0);
+        return showToast(message, type, 0);
     }
 
     /**
      * Shows a sequence of toasts.
      * @param {Array<{message: string, type?: string}>} messages
-     * @param {number} [delayBetween] - ms
+     * @param {number} [delayBetween] - ms; default 500
+     * @throws {Error} for malformed input
      */
     function showToastSequence(messages, delayBetween) {
-        if (!Array.isArray(messages)) return;
-        delayBetween = delayBetween === undefined ? 500 : delayBetween;
+        if (!Array.isArray(messages)) {
+            throw new Error('showToastSequence: messages must be an array');
+        }
+        if (_isMissing(delayBetween)) {
+            delayBetween = 500;
+        } else if (typeof delayBetween !== 'number'
+            || !Number.isFinite(delayBetween)
+            || delayBetween < 0) {
+            throw new Error('showToastSequence: delayBetween must be a non-negative finite number');
+        }
         for (var i = 0; i < messages.length; i++) {
+            var m = messages[i];
+            if (!m || typeof m.message !== 'string') {
+                throw new Error(
+                    'showToastSequence: messages[' + i + '].message must be a string'
+                );
+            }
+        }
+        for (var j = 0; j < messages.length; j++) {
             (function(idx) {
                 setTimeout(function() {
                     var m = messages[idx];
-                    showToast(m.message, m.type || 'info');
+                    showToast(m.message, m.type);
                 }, idx * delayBetween);
-            })(i);
+            })(j);
         }
     }
 
@@ -269,21 +273,30 @@
     }
 
     // =========================================================================
-    // 4. LOADING OVERLAY (with nested counter)
+    // 2. LOADING OVERLAY (with nested counter)
     // =========================================================================
 
     var _loadingOverlay = null;
     var _loadingOverlayCount = 0;
 
     /**
-     * Shows the loading overlay. Nested calls increment a counter;
-     * the overlay hides only when the counter returns to zero.
-     * 
-     * @param {string} [message]
+     * Shows the loading overlay. Nested calls increment a counter; the
+     * overlay hides only when the counter returns to zero.
+     *
+     * MESSAGE OWNERSHIP: the displayed message belongs to the most recent
+     * active caller. There is no per-caller message stack. If you need
+     * distinct messages per operation, use named loading tokens (future
+     * extension) rather than calling showLoading() repeatedly.
+     *
+     * @param {string} [message] - missing → 'Loading...'; empty string is
+     *   preserved as an explicit empty message.
      * @returns {HTMLElement}
      */
     function showLoading(message) {
-        message = message || 'Loading...';
+        if (_isMissing(message)) message = 'Loading...';
+        if (typeof message !== 'string') {
+            throw new Error('showLoading: message must be a string');
+        }
         _loadingOverlayCount++;
 
         if (_loadingOverlay) {
@@ -294,14 +307,12 @@
 
         _loadingOverlay = document.createElement('div');
         _loadingOverlay.className = 'loading-overlay';
-        _loadingOverlay.style.cssText =
-            'position:fixed; top:0; left:0; right:0; bottom:0;' +
-            'background:rgba(0,0,0,0.7);' +
-            'display:flex; align-items:center; justify-content:center;' +
-            'z-index:20000; flex-direction:column; gap:16px;';
+        _loadingOverlay.setAttribute('role', 'status');
+        _loadingOverlay.setAttribute('aria-live', 'polite');
         _loadingOverlay.innerHTML =
-            '<div class="loading-spinner" style="width:48px;height:48px;border:4px solid var(--bg2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;"></div>' +
-            '<div class="loading-message" style="color:white;font-size:0.9rem;">' + window.escapeHtml(message) + '</div>';
+            '<div class="loading-spinner" aria-hidden="true"></div>' +
+            '<div class="loading-message"></div>';
+        _loadingOverlay.querySelector('.loading-message').textContent = message;
 
         document.body.appendChild(_loadingOverlay);
         return _loadingOverlay;
@@ -325,7 +336,7 @@
 
     /**
      * Force-hides the loading overlay, regardless of counter.
-     * For error recovery.
+     * Emergency teardown for error recovery.
      */
     function forceHideLoading() {
         if (_loadingOverlay && _loadingOverlay.parentNode) {
@@ -336,18 +347,28 @@
     }
 
     // =========================================================================
-    // 5. INLINE LOADING
+    // 3. INLINE LOADING
     // =========================================================================
+    //
+    // Preserves the container's existing child nodes in a DocumentFragment
+    // while loading, and restores them on hide.
+    //
+    // CONTRACT: hideInlineLoading() replaces the container's current
+    // contents with the fragment captured at show time. Any content added
+    // to the container by other code while the loader is active will be
+    // removed. This is a "temporarily replace the entire contents"
+    // contract, not "insert a loader alongside existing content."
 
-    // Track original DOM nodes for restoration via DocumentFragment
     var _inlineLoaderState = new WeakMap();
 
     function showInlineLoading(containerId, message) {
-        message = message || 'Loading...';
+        if (_isMissing(message)) message = 'Loading...';
+        if (typeof message !== 'string') {
+            throw new Error('showInlineLoading: message must be a string');
+        }
         var container = document.getElementById(containerId);
         if (!container) return null;
 
-        // If already showing, update message
         var existing = container.querySelector('.inline-loader');
         if (existing) {
             var msgEl = existing.querySelector('.inline-loader-message');
@@ -355,7 +376,6 @@
             return existing;
         }
 
-        // Preserve original child nodes as a DocumentFragment
         var fragment = document.createDocumentFragment();
         while (container.firstChild) {
             fragment.appendChild(container.firstChild);
@@ -364,10 +384,12 @@
 
         var loader = document.createElement('div');
         loader.className = 'inline-loader';
-        loader.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:12px;padding:40px;color:var(--dim);';
+        loader.setAttribute('role', 'status');
+        loader.setAttribute('aria-live', 'polite');
         loader.innerHTML =
-            '<div style="width:24px;height:24px;border:2px solid var(--bg2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;"></div>' +
-            '<span class="inline-loader-message">' + window.escapeHtml(message) + '</span>';
+            '<div class="inline-loader-spinner" aria-hidden="true"></div>' +
+            '<span class="inline-loader-message"></span>';
+        loader.querySelector('.inline-loader-message').textContent = message;
         container.appendChild(loader);
         return loader;
     }
@@ -387,52 +409,106 @@
     }
 
     // =========================================================================
-    // 6. BUTTON LOADING
+    // 4. BUTTON LOADING
     // =========================================================================
+    //
+    // Preserves the button's child nodes (not innerHTML) and its disabled
+    // state. On hide, both are restored.
 
-    // Track original button content via WeakMap
     var _buttonLoaderState = new WeakMap();
 
     function showButtonLoading(buttonId, text) {
         var button = document.getElementById(buttonId);
         if (!button) return null;
 
-        // Save original innerHTML once
         if (!_buttonLoaderState.has(button)) {
-            _buttonLoaderState.set(button, button.innerHTML);
+            var fragment = document.createDocumentFragment();
+            while (button.firstChild) {
+                fragment.appendChild(button.firstChild);
+            }
+            _buttonLoaderState.set(button, {
+                content: fragment,
+                disabled: button.disabled
+            });
         }
 
-        var loadingText = text === undefined ? button.textContent || 'Loading...' : text;
+        var loadingText = _isMissing(text)
+            ? (button.textContent || 'Loading...')
+            : text;
+        if (typeof loadingText !== 'string') {
+            throw new Error('showButtonLoading: text must be a string');
+        }
+
         button.disabled = true;
+        button.classList.add('button-loading');
         button.innerHTML =
-            '<span class="button-spinner" style="display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,0.3);border-top-color:white;border-radius:50%;animation:spin 0.8s linear infinite;margin-right:8px;vertical-align:middle;"></span>' +
-            window.escapeHtml(loadingText);
-        return _buttonLoaderState.get(button);
+            '<span class="button-spinner" aria-hidden="true"></span>' +
+            '<span class="button-loading-text"></span>';
+        button.querySelector('.button-loading-text').textContent = loadingText;
+        return button;
     }
 
     function hideButtonLoading(buttonId) {
         var button = document.getElementById(buttonId);
         if (!button) return;
-        button.disabled = false;
-        var original = _buttonLoaderState.get(button);
-        if (original !== undefined) {
-            button.innerHTML = original;
+        button.classList.remove('button-loading');
+
+        var state = _buttonLoaderState.get(button);
+        if (state) {
+            while (button.firstChild) button.removeChild(button.firstChild);
+            button.appendChild(state.content);
+            button.disabled = state.disabled;
             _buttonLoaderState.delete(button);
+        } else {
+            button.disabled = false;
         }
     }
 
     // =========================================================================
-    // 7. PROGRESS BAR
+    // 5. PROGRESS BAR
     // =========================================================================
+    //
+    // One progress instance per container. Calling showProgressBar again on
+    // the same container updates the existing instance rather than appending
+    // a second one.
 
     var _progressState = new WeakMap();
 
+    /**
+     * Validates numeric progress inputs. Missing current/total are invalid;
+     * negative numbers are clamped for presentation.
+     * @private
+     */
+    function _calculateProgressPercentage(current, total) {
+        if (typeof current !== 'number' || !Number.isFinite(current)) return null;
+        if (typeof total !== 'number' || !Number.isFinite(total)) return null;
+        if (total <= 0) return 0;
+        var pct = (current / total) * 100;
+        if (pct < 0) return 0;
+        if (pct > 100) return 100;
+        return pct;
+    }
+
     function showProgressBar(containerId, current, total, label) {
-        label = label || '';
+        if (_isMissing(label)) label = '';
+        if (typeof label !== 'string') {
+            throw new Error('showProgressBar: label must be a string');
+        }
         var container = document.getElementById(containerId);
         if (!container) return null;
 
-        // Preserve original children
+        // If an instance already exists in this container, update it.
+        var existing = container.querySelector('.progress-container');
+        if (existing) {
+            updateProgressBar(containerId, current, total);
+            if (label) {
+                var labelEl = existing.querySelector('.progress-label');
+                if (labelEl) labelEl.textContent = label;
+            }
+            return existing;
+        }
+
+        // Preserve original children the first time.
         if (!_progressState.has(container)) {
             var fragment = document.createDocumentFragment();
             while (container.firstChild) {
@@ -441,19 +517,29 @@
             _progressState.set(container, fragment);
         }
 
-        // Guard against total=0
-        var percentage = total > 0 ? (current / total) * 100 : 0;
-        percentage = Math.min(100, Math.max(0, percentage));
+        var pct = _calculateProgressPercentage(current, total);
+        var percentageText = (pct === null) ? '' : Math.round(pct) + '%';
+        var countText = (typeof current === 'number' && typeof total === 'number')
+            ? current + ' / ' + total
+            : '';
 
         var wrapper = document.createElement('div');
         wrapper.className = 'progress-container';
-        wrapper.style.cssText = 'background:var(--bg2);border-radius:8px;padding:8px;margin:8px 0;';
+        wrapper.setAttribute('role', 'progressbar');
+        wrapper.setAttribute('aria-valuemin', '0');
+        wrapper.setAttribute('aria-valuemax', '100');
+        if (pct !== null) wrapper.setAttribute('aria-valuenow', String(Math.round(pct)));
         wrapper.innerHTML =
-            (label ? '<div style="margin-bottom:8px;font-size:0.7rem;">' + window.escapeHtml(label) + '</div>' : '') +
-            '<div style="background:var(--bg3);border-radius:4px;overflow:hidden;">' +
-                '<div class="progress-fill" style="width:' + percentage + '%;background:var(--accent);height:20px;transition:width 0.3s ease;display:flex;align-items:center;justify-content:center;color:white;font-size:0.6rem;">' + Math.round(percentage) + '%</div>' +
+            '<div class="progress-label"></div>' +
+            '<div class="progress-track">' +
+                '<div class="progress-fill"></div>' +
             '</div>' +
-            '<div class="progress-count" style="margin-top:4px;font-size:0.55rem;color:var(--dim);text-align:right;">' + current + ' / ' + total + '</div>';
+            '<div class="progress-count"></div>';
+        wrapper.querySelector('.progress-label').textContent = label;
+        wrapper.querySelector('.progress-count').textContent = countText;
+        var fill = wrapper.querySelector('.progress-fill');
+        fill.style.width = (pct === null ? '0' : pct) + '%';
+        fill.textContent = percentageText;
         container.appendChild(wrapper);
         return wrapper;
     }
@@ -471,35 +557,122 @@
         }
     }
 
+    /**
+     * Updates a progress bar in place.
+     *
+     * total:
+     *   null → indeterminate mode; current is treated as a 0-100 percent
+     *   number → current/total mode
+     *
+     * @param {string} containerId
+     * @param {number} current
+     * @param {number|null} [total]
+     */
     function updateProgressBar(containerId, current, total) {
         var container = document.getElementById(containerId);
         if (!container) return;
         var fill = container.querySelector('.progress-fill');
         var count = container.querySelector('.progress-count');
+        var wrapper = container.querySelector('.progress-container');
         if (!fill) return;
 
-        var percentage;
-        if (total === null || total === undefined) {
-            percentage = Math.min(100, Math.max(0, current));
-            if (count && total === undefined) count.textContent = Math.round(percentage) + '%';
+        var pct;
+        if (total === null) {
+            // Indeterminate / percentage mode. Validate current as 0-100.
+            if (typeof current !== 'number' || !Number.isFinite(current)) {
+                throw new Error('updateProgressBar: current must be a finite number');
+            }
+            pct = current < 0 ? 0 : (current > 100 ? 100 : current);
+            if (count) count.textContent = Math.round(pct) + '%';
         } else {
-            percentage = total > 0 ? (current / total) * 100 : 0;
-            percentage = Math.min(100, Math.max(0, percentage));
+            pct = _calculateProgressPercentage(current, total);
+            if (pct === null) {
+                throw new Error(
+                    'updateProgressBar: current and total must be finite numbers ' +
+                    '(or total === null for percentage mode)'
+                );
+            }
             if (count) count.textContent = current + ' / ' + total;
         }
-        fill.style.width = percentage + '%';
-        fill.textContent = Math.round(percentage) + '%';
+
+        fill.style.width = pct + '%';
+        fill.textContent = Math.round(pct) + '%';
+        if (wrapper) wrapper.setAttribute('aria-valuenow', String(Math.round(pct)));
     }
 
     // =========================================================================
-    // 8. SKELETON LOADERS
+    // 6. SKELETON LOADERS
     // =========================================================================
+
+    var _SKELETON_TYPES = ['card', 'list', 'table', 'text'];
+    var _SKELETON_MAX_COUNT = 100;
 
     var _skeletonState = new WeakMap();
 
+    function _renderSkeletonHtml(type, count) {
+        if (type === 'card') {
+            var cards = '<div class="skeleton-grid">';
+            for (var i = 0; i < count; i++) {
+                cards += '<div class="skeleton-card">' +
+                    '<div class="skeleton-line skeleton-line-title"></div>' +
+                    '<div class="skeleton-line skeleton-line-body"></div>' +
+                    '<div class="skeleton-line skeleton-line-short"></div>' +
+                '</div>';
+            }
+            return cards + '</div>';
+        }
+        if (type === 'list') {
+            var list = '<div class="skeleton-list">';
+            for (var j = 0; j < count; j++) {
+                list += '<div class="skeleton-list-item">' +
+                    '<div class="skeleton-avatar"></div>' +
+                    '<div class="skeleton-list-body">' +
+                        '<div class="skeleton-line skeleton-line-body"></div>' +
+                        '<div class="skeleton-line skeleton-line-short"></div>' +
+                    '</div>' +
+                '</div>';
+            }
+            return list + '</div>';
+        }
+        if (type === 'table') {
+            var rows = '';
+            for (var k = 0; k < count; k++) {
+                rows += '<tr class="skeleton-row">' +
+                    '<td><div class="skeleton-line"></div></td>' +
+                    '<td><div class="skeleton-line"></div></td>' +
+                    '<td><div class="skeleton-line"></div></td>' +
+                '</tr>';
+            }
+            return '<table class="skeleton-table"><thead><tr>' +
+                '<th></th><th></th><th></th>' +
+                '</tr></thead><tbody>' + rows + '</tbody></table>';
+        }
+        // text
+        var lines = '<div class="skeleton-text">';
+        for (var p = 0; p < count; p++) {
+            lines += '<div class="skeleton-line skeleton-line-text"></div>';
+        }
+        return lines + '</div>';
+    }
+
     function showSkeletonLoader(containerId, type, count) {
-        type = type || 'card';
-        count = count === undefined ? 3 : count;
+        if (_isMissing(type)) type = 'card';
+        if (_SKELETON_TYPES.indexOf(type) === -1) {
+            throw new Error(
+                'showSkeletonLoader: unknown type "' + type + '". ' +
+                'Expected one of: ' + _SKELETON_TYPES.join(', ')
+            );
+        }
+
+        if (_isMissing(count)) {
+            count = 3;
+        } else if (!Number.isInteger(count) || count < 0 || count > _SKELETON_MAX_COUNT) {
+            throw new Error(
+                'showSkeletonLoader: count must be an integer in [0, ' +
+                _SKELETON_MAX_COUNT + ']'
+            );
+        }
+
         var container = document.getElementById(containerId);
         if (!container) return;
 
@@ -511,67 +684,18 @@
             _skeletonState.set(container, fragment);
         }
 
-        var html = '';
-        switch (type) {
-            case 'card':
-                html = '<div class="skeleton-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px;">';
-                for (var i = 0; i < count; i++) {
-                    html += '<div class="skeleton-card" style="background:var(--bg2);border-radius:8px;padding:16px;animation:pulse 1.5s ease-in-out infinite;">' +
-                        '<div style="width:60%;height:20px;background:var(--bg3);border-radius:4px;margin-bottom:12px;"></div>' +
-                        '<div style="width:80%;height:14px;background:var(--bg3);border-radius:4px;margin-bottom:8px;"></div>' +
-                        '<div style="width:40%;height:14px;background:var(--bg3);border-radius:4px;"></div>' +
-                    '</div>';
-                }
-                html += '</div>';
-                break;
-            case 'list':
-                html = '<div class="skeleton-list" style="display:flex;flex-direction:column;gap:12px;">';
-                for (var j = 0; j < count; j++) {
-                    html += '<div class="skeleton-list-item" style="display:flex;gap:12px;padding:12px;background:var(--bg2);border-radius:8px;animation:pulse 1.5s ease-in-out infinite;">' +
-                        '<div style="width:40px;height:40px;background:var(--bg3);border-radius:50%;"></div>' +
-                        '<div style="flex:1;">' +
-                            '<div style="width:60%;height:16px;background:var(--bg3);border-radius:4px;margin-bottom:8px;"></div>' +
-                            '<div style="width:40%;height:12px;background:var(--bg3);border-radius:4px;"></div>' +
-                        '</div>' +
-                    '</div>';
-                }
-                html += '</div>';
-                break;
-            case 'table':
-                html = '<table class="skeleton-table" style="width:100%;border-collapse:collapse;"><thead><tr>';
-                for (var k = 0; k < 3; k++) html += '<th style="padding:12px;">&nbsp;</th>';
-                html += '</tr></thead><tbody>';
-                for (var m = 0; m < count; m++) {
-                    html += '<tr style="animation:pulse 1.5s ease-in-out infinite;">';
-                    for (var n = 0; n < 3; n++) {
-                        html += '<td style="padding:12px;"><div style="height:16px;background:var(--bg3);border-radius:4px;"></div></td>';
-                    }
-                    html += '</tr>';
-                }
-                html += '</tbody></table>';
-                break;
-            case 'text':
-            default:
-                html = '<div class="skeleton-text" style="display:flex;flex-direction:column;gap:8px;">';
-                for (var p = 0; p < count; p++) {
-                    var width = 70 + ((p * 17) % 30); // deterministic-ish
-                    html += '<div style="height:14px;background:var(--bg3);border-radius:4px;animation:pulse 1.5s ease-in-out infinite;width:' + width + '%;"></div>';
-                }
-                html += '</div>';
-                break;
-        }
-
         var wrapper = document.createElement('div');
-        wrapper.innerHTML = html;
-        while (wrapper.firstChild) container.appendChild(wrapper.firstChild);
+        wrapper.className = 'skeleton-wrapper';
+        wrapper.setAttribute('aria-busy', 'true');
+        wrapper.innerHTML = _renderSkeletonHtml(type, count);
+        container.appendChild(wrapper);
     }
 
     function hideSkeletonLoader(containerId) {
         var container = document.getElementById(containerId);
         if (!container) return;
 
-        // Remove all skeleton children
-        var skels = container.querySelectorAll('.skeleton-grid, .skeleton-list, .skeleton-table, .skeleton-text');
+        var skels = container.querySelectorAll('.skeleton-wrapper');
         for (var i = 0; i < skels.length; i++) {
             if (skels[i].parentNode) skels[i].parentNode.removeChild(skels[i]);
         }
@@ -584,12 +708,53 @@
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 7. BODY SCROLL LOCK
     // =========================================================================
+    //
+    // SEMANTICS: named ownership set, not a counter.
+    //   - Each key represents one lock owner.
+    //   - Re-acquiring an existing key does not increase the lock count.
+    //   - Releasing a key that was not acquired is a no-op.
+    //   - The body remains locked until every key has been released.
 
-    // Global styles
-    window.injectGlobalStyles = injectGlobalStyles;
-    window.initUI = initUI;
+    var _scrollLocks = new Set();
+
+    /**
+     * Acquires a named scroll lock.
+     * @param {string} key - non-empty unique identifier for the lock holder
+     */
+    function lockBodyScroll(key) {
+        if (typeof key !== 'string' || key.length === 0) {
+            throw new Error('lockBodyScroll: key must be a non-empty string');
+        }
+        _scrollLocks.add(key);
+        document.body.classList.add('body-scroll-locked');
+    }
+
+    /**
+     * Releases a named scroll lock.
+     */
+    function unlockBodyScroll(key) {
+        if (typeof key !== 'string' || key.length === 0) {
+            throw new Error('unlockBodyScroll: key must be a non-empty string');
+        }
+        _scrollLocks.delete(key);
+        if (_scrollLocks.size === 0) {
+            document.body.classList.remove('body-scroll-locked');
+        }
+    }
+
+    /**
+     * Releases all scroll locks. Escape hatch for teardown/reset.
+     */
+    function clearAllScrollLocks() {
+        _scrollLocks.clear();
+        document.body.classList.remove('body-scroll-locked');
+    }
+
+    // =========================================================================
+    // 8. EXPORTS
+    // =========================================================================
 
     // Scroll lock
     window.UI = window.UI || {};
@@ -606,7 +771,6 @@
     window.showPersistentToast = showPersistentToast;
     window.showToastSequence = showToastSequence;
     window.clearAllToasts = clearAllToasts;
-    window._showToast = showToast; // backward compat
 
     // Loading overlay
     window.showLoading = showLoading;
@@ -629,5 +793,16 @@
     // Skeleton loaders
     window.showSkeletonLoader = showSkeletonLoader;
     window.hideSkeletonLoader = hideSkeletonLoader;
+
+    // =========================================================================
+    // 9. DEPRECATED ALIASES
+    // =========================================================================
+
+    /**
+     * @deprecated Use window.showToast directly.
+     * This alias exists only for callers that predated the rename; it
+     * should be removed once those callers migrate.
+     */
+    window._showToast = showToast;
 
 })();

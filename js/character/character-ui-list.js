@@ -2,15 +2,73 @@
  * =============================================================================
  * STILL WATERS - CHARACTER UI LIST (js/character/character-ui-list.js)
  * =============================================================================
- * 
- * UI rendering for character lists.
- * 
- * DEPENDENCIES:
- *   - character-queries.js (CharacterQueries)
+ *
+ * Rendering for character lists and character cards.
+ *
+ * SCOPE:
+ *   - Rendering a list of characters into a container
+ *   - Rendering a single character as a card (HTML string)
+ *   - Delegated click handling for list rows
+ *
+ * OUT OF SCOPE:
+ *   - Family semantics → FamilyAccessors / FamilyStatistics
+ *   - Age calculation → time.js (via CharacterQueries)
+ *   - Culture display → CultureQueries
+ *   - Presentation CSS → the stylesheet (see character-ui.css)
+ *   - Modal workflows → modals-character.js
+ *   - Mutation → CharacterCommands
+ *   - Persistence → storage.js
+ *
+ * SEMANTIC RULES:
+ *   - This module does NOT compute domain values. It calls
+ *     CharacterQueries for projections and renders them.
+ *   - Presentation is owned by CSS. This module produces semantic markup
+ *     with classes. It does NOT emit inline style attributes.
+ *   - All strings interpolated into HTML are escaped, including
+ *     appearance fields and any values returned by query projections.
+ *   - Row interaction is delegated: one listener on the container, not
+ *     one per row.
+ *   - Rows are native buttons. They are keyboard-accessible by default.
+ *   - The row-class option is additive. It never replaces the base class
+ *     that event delegation depends on.
+ *
+ * REQUIRED CSS:
+ *   This module emits the following classes. The stylesheet must define
+ *   them. See character-ui.css.
+ *     .character-list
+ *     .character-row
+ *     .character-row__name
+ *     .character-row__details
+ *     .character-row__status
+ *     .character-row--deceased
+ *     .character-row__death-marker
+ *     .character-row__culture-badge
+ *     .character-empty-message
+ *     .character-card
+ *     .character-card__header
+ *     .character-card__name
+ *     .character-card__badges
+ *     .character-card__status
+ *     .character-card__culture-badge
+ *     .character-card__grid
+ *     .character-card__field
+ *     .character-card__field-label
+ *     .character-card__field-value
+ *     .character-card__appearance
+ *     .character-card__notes
+ *
+ * DEPENDENCIES (REQUIRED):
  *   - formatting.js (escapeHtml)
- *   - icons.js (Icons)
- *   - culture-queries.js (CultureQueries) - NEW
- * 
+ *   - CharacterQueries (getCharacterSummary, searchCharacters)
+ *   - accessors.js (getCharacters)
+ *
+ * DEPENDENCIES (OPTIONAL):
+ *   - CultureQueries.getCultureDisplay(cultureId) — for culture badges
+ *     If absent, culture badges are omitted.
+ *
+ * ICON POLICY: Uses SVG from icons.js if available. No emojis. No Unicode
+ * gender symbols.
+ *
  * =============================================================================
  */
 
@@ -18,282 +76,413 @@
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
+    // 0. DEPENDENCY GUARDS
     // =========================================================================
 
-    function _getQueries() {
-        return typeof window.CharacterQueries !== 'undefined' ? window.CharacterQueries : null;
+    function _requireDependencies() {
+        if (typeof window.escapeHtml !== 'function') {
+            throw new Error(
+                'character-ui-list.js: formatting.js must load first (escapeHtml missing).'
+            );
+        }
+        if (typeof window.getCharacters !== 'function') {
+            throw new Error(
+                'character-ui-list.js: accessors.js must load first.'
+            );
+        }
+        if (typeof window.CharacterQueries === 'undefined') {
+            throw new Error(
+                'character-ui-list.js: character-queries.js must load first.'
+            );
+        }
     }
 
-    function _escapeHtml(str) {
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
-        }
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    _requireDependencies();
+
+    // =========================================================================
+    // 1. INTERNAL HELPERS
+    // =========================================================================
+
+    function _esc(v) {
+        return window.escapeHtml(v);
     }
 
-    function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
+    function _isMissing(v) {
+        return v === undefined || v === null;
+    }
+
+    function _hasId(v) {
+        return typeof v === 'string' && v.length > 0;
+    }
+
+    /**
+     * Returns a display string for age, or the fallback string when null.
+     */
+    function _formatAge(age) {
+        if (age === null || age === undefined) return 'Unknown age';
+        if (typeof age !== 'number' || !Number.isFinite(age) || age < 0) return 'Unknown age';
+        if (age === 0) return '<1y';
+        return age + 'y';
+    }
+
+    /**
+     * Resolves the culture badge text for a character, or ''.
+     *
+     * If CultureQueries is not loaded, returns ''. If the culture cannot
+     * be resolved, returns ''. No fallback character or emoji.
+     */
+    function _cultureBadgeText(cultureId) {
+        if (!_hasId(cultureId)) return '';
+        if (typeof window.CultureQueries === 'undefined') return '';
+        if (typeof window.CultureQueries.getCultureDisplay !== 'function') return '';
+
+        var display = window.CultureQueries.getCultureDisplay(cultureId);
+        if (!display) return '';
+
+        // Accept either a string or { name, icon }.
+        if (typeof display === 'string') return display;
+        if (typeof display === 'object') {
+            var name = typeof display.name === 'string' ? display.name : '';
+            return name;
         }
         return '';
     }
 
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
+    // =========================================================================
+    // 2. ROW RENDERING
+    // =========================================================================
 
-    function _calculateAge(birthYear, isDeceased, deathYear) {
-    // Delegates to time.js — do not reimplement age logic here.
-    if (typeof window.calculateAge === 'function') {
-        return window.calculateAge(birthYear, isDeceased, deathYear);
+    /**
+     * Builds one row's HTML.
+     *
+     * @param {Object} character
+     * @param {Object} options - { showStatus, showLocation, showAge, showCulture }
+     * @returns {string}
+     */
+    function _renderRow(character, options) {
+        var summary = window.CharacterQueries.getCharacterSummary(character.id);
+        if (!summary) return '';
+
+        var rowClasses = ['character-row'];
+        if (summary.isDeceased) rowClasses.push('character-row--deceased');
+        if (!_isMissing(options.rowClass) && typeof options.rowClass === 'string') {
+            rowClasses.push(options.rowClass);
+        }
+
+        var html = '';
+        html += '<button type="button" class="' + rowClasses.join(' ') + '"'
+             + ' data-action="select-character"'
+             + ' data-character-id="' + _esc(character.id) + '"'
+             + '>';
+
+        // Name line
+        html += '<span class="character-row__name">';
+        html += _esc(summary.fullName || summary.name || 'Unnamed');
+        if (summary.isDeceased) {
+            html += '<span class="character-row__death-marker" aria-label="Deceased">';
+            html += '<span aria-hidden="true">&dagger;</span>';
+            html += '</span>';
+        }
+
+        var cultureText = _cultureBadgeText(character.cultureId);
+        if (options.showCulture && cultureText) {
+            html += '<span class="character-row__culture-badge">'
+                 + _esc(cultureText)
+                 + '</span>';
+        }
+        html += '</span>';
+
+        // Details line
+        var details = [];
+        if (options.showAge) details.push(_formatAge(summary.age));
+        if (options.showLocation && summary.location) details.push(summary.location);
+        if (_hasId(character.household)) details.push(character.household);
+
+        if (details.length > 0) {
+            html += '<span class="character-row__details">';
+            for (var i = 0; i < details.length; i++) {
+                if (i > 0) html += ' &middot; ';
+                html += _esc(details[i]);
+            }
+            html += '</span>';
+        }
+
+        // Status
+        if (options.showStatus) {
+            html += '<span class="character-row__status">'
+                 + (summary.isDeceased ? 'Deceased' : 'Living')
+                 + '</span>';
+        }
+
+        html += '</button>';
+        return html;
     }
-    return null;
-}
 
     // =========================================================================
-    // NEW: Culture Helpers
+    // 3. PUBLIC — RENDER LIST
     // =========================================================================
 
-    function _getCultureName(cultureId) {
-        if (typeof window.CultureState !== 'undefined' &&
-            typeof window.CultureState.getCulture === 'function') {
-            var culture = window.CultureState.getCulture(cultureId);
-            return culture ? (culture.displayName || culture.name) : null;
-        }
-        return null;
-    }
-
-    function _getCultureIcon(cultureId) {
-        if (typeof window.CultureState !== 'undefined' &&
-            typeof window.CultureState.getCulture === 'function') {
-            var culture = window.CultureState.getCulture(cultureId);
-            return culture ? (culture.icon || '✦') : null;
-        }
-        return null;
-    }
-
-    // =========================================================================
-    // 2. RENDER CHARACTER LIST
-    // =========================================================================
-
-    function renderCharacterList(containerId, options) {
-        options = options || {};
-
-        var container = typeof containerId === 'string' ?
-            document.getElementById(containerId) :
-            containerId;
-
-        if (!container) {
-            return false;
+    /**
+     * Renders a character list into the given container.
+     *
+     * @param {string|HTMLElement} containerOrId
+     * @param {Object} [options]
+     * @param {Array} [options.filteredCharacters] - supply a pre-filtered
+     *   list. When omitted, all characters are rendered.
+     * @param {Function} [options.onSelect] - called with the character
+     *   object on click.
+     * @param {string} [options.emptyMessage] - default 'No characters found'
+     * @param {boolean} [options.showStatus] - default true
+     * @param {boolean} [options.showLocation] - default true
+     * @param {boolean} [options.showAge] - default true
+     * @param {boolean} [options.showCulture] - default true
+     * @param {string} [options.rowClass] - additional class for rows
+     * @returns {boolean} - true if rendering succeeded
+     */
+    function renderCharacterList(containerOrId, options) {
+        if (_isMissing(options)) options = {};
+        if (typeof options !== 'object' || Array.isArray(options)) {
+            throw new Error('renderCharacterList: options must be an object');
         }
 
-        var queries = _getQueries();
-        if (!queries) {
-            container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--dim);">Character system not available</div>';
-            return false;
+        var container = typeof containerOrId === 'string'
+            ? document.getElementById(containerOrId)
+            : containerOrId;
+
+        if (!container) return false;
+
+        var showStatus = options.showStatus !== false;
+        var showLocation = options.showLocation !== false;
+        var showAge = options.showAge !== false;
+        var showCulture = options.showCulture !== false;
+
+        var emptyMessage = _isMissing(options.emptyMessage)
+            ? 'No characters found'
+            : options.emptyMessage;
+
+        var characters;
+        if (Array.isArray(options.filteredCharacters)) {
+            characters = options.filteredCharacters;
+        } else {
+            characters = window.getCharacters();
         }
 
-        var characters = options.filteredCharacters || queries.getAllCharacters();
-        var onSelect = options.onSelect || null;
-        var emptyMessage = options.emptyMessage || 'No characters found';
-        var showStatus = options.showStatus !== undefined ? options.showStatus : true;
-        var showLocation = options.showLocation !== undefined ? options.showLocation : true;
-        var showAge = options.showAge !== undefined ? options.showAge : true;
-        var showCulture = options.showCulture !== undefined ? options.showCulture : true;  // NEW
-
-        if (!characters || characters.length === 0) {
-            container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--dim);">' + _escapeHtml(emptyMessage) + '</div>';
+        if (characters.length === 0) {
+            container.innerHTML =
+                '<div class="character-empty-message">'
+                + _esc(emptyMessage)
+                + '</div>';
             return true;
         }
 
+        // Sort by full name for stable presentation.
         var sorted = characters.slice().sort(function(a, b) {
-            return (a.name || '').localeCompare(b.name || '');
+            var aName = (typeof a.name === 'string' ? a.name : '') + ' '
+                      + (typeof a.surname === 'string' ? a.surname : '');
+            var bName = (typeof b.name === 'string' ? b.name : '') + ' '
+                      + (typeof b.surname === 'string' ? b.surname : '');
+            return aName.localeCompare(bName);
         });
 
-        var html = '<div class="character-list" style="display:flex;flex-direction:column;gap:4px;">';
+        var rowOptions = {
+            showStatus: showStatus,
+            showLocation: showLocation,
+            showAge: showAge,
+            showCulture: showCulture,
+            rowClass: options.rowClass
+        };
 
+        var html = '<div class="character-list">';
         for (var i = 0; i < sorted.length; i++) {
-            var c = sorted[i];
-            var age = _calculateAge(c.birthYear, c.isDeceased, c.deathYear);
-            var isDeceased = c.isDeceased === true;
-
-            var statusColor = isDeceased ? 'var(--dim)' : 'var(--success)';
-            var statusText = isDeceased ? 'Deceased' : 'Living';
-
-            var genderSymbol = c.gender === 'male' ? '♂' : (c.gender === 'female' ? '♀' : '⚥');
-
-            var rowClass = options.rowClass || 'character-row';
-            var clickable = onSelect ? 'cursor:pointer;' : '';
-
-            // NEW: Culture badge
-            var cultureBadge = '';
-            if (showCulture && c.cultureId) {
-                var cultureName = _getCultureName(c.cultureId);
-                var cultureIcon = _getCultureIcon(c.cultureId);
-                if (cultureName) {
-                    cultureBadge = '<span style="font-size:0.5rem;background:var(--bg2);padding:1px 6px;border-radius:10px;border:1px solid var(--border-light);margin-left:6px;">' +
-                        (cultureIcon ? _escapeHtml(cultureIcon) + ' ' : '') +
-                        _escapeHtml(cultureName) +
-                        '</span>';
-                }
-            }
-
-            html += '<div class="' + _escapeHtml(rowClass) + '" data-character-id="' + _escapeHtml(c.id) + '" style="' +
-                'display:flex;justify-content:space-between;align-items:center;' +
-                'padding:8px 12px;background:var(--bg3);border-radius:6px;' +
-                (isDeceased ? 'opacity:0.6;' : '') +
-                clickable +
-                '">';
-
-            html += '<div style="flex:1;min-width:0;">';
-            html += '<div style="font-weight:bold;font-size:0.8rem;">' +
-                genderSymbol + ' ' +
-                _escapeHtml(c.name) + ' ' + _escapeHtml(c.surname || '') +
-                (isDeceased ? ' <span style="font-size:0.6rem;color:var(--dim);">†</span>' : '') +
-                cultureBadge +
-                '</div>';
-
-            var details = [];
-            if (showAge) details.push(age + 'y');
-            if (showLocation && c.currentLocation) details.push(_escapeHtml(c.currentLocation));
-            if (c.household) details.push('Household: ' + _escapeHtml(c.household));
-
-            if (details.length > 0) {
-                html += '<div style="font-size:0.6rem;color:var(--dim);">' + details.join(' · ') + '</div>';
-            }
-
-            html += '</div>';
-
-            if (showStatus) {
-                html += '<div style="font-size:0.6rem;color:' + statusColor + ';flex-shrink:0;margin-left:12px;">' +
-                    statusText +
-                    '</div>';
-            }
-
-            html += '</div>';
+            html += _renderRow(sorted[i], rowOptions);
         }
-
         html += '</div>';
 
         container.innerHTML = html;
 
-        if (onSelect) {
-            var rows = container.querySelectorAll('.character-row');
-            for (var i = 0; i < rows.length; i++) {
-                (function(row) {
-                    row.addEventListener('click', function() {
-                        var id = this.dataset.characterId;
-                        var queries = _getQueries();
-                        if (queries) {
-                            var character = queries.getCharacter(id);
-                            if (character && onSelect) {
-                                onSelect(character);
-                            }
-                        }
-                    });
-                    row.addEventListener('mouseenter', function() {
-                        this.style.background = 'var(--bg2)';
-                    });
-                    row.addEventListener('mouseleave', function() {
-                        this.style.background = 'var(--bg3)';
-                    });
-                })(rows[i]);
-            }
-        }
+        // Delegated click handling. One listener on the container; the
+        // listener is replaced on each render by removing a previously
+        // installed one.
+        _installDelegatedClickHandler(container, options.onSelect);
 
         return true;
     }
 
     // =========================================================================
-    // 3. RENDER CHARACTER CARD
+    // 4. DELEGATED CLICK HANDLING
     // =========================================================================
 
-    function renderCharacterCard(character) {
-        if (!character) {
-            return '<div style="text-align:center;padding:20px;color:var(--dim);">Character not found</div>';
+    // Track the active click handler per container so re-rendering does
+    // not stack listeners.
+    var _containerHandlers = new WeakMap();
+
+    function _installDelegatedClickHandler(container, onSelect) {
+        // Remove any previously installed handler.
+        var previous = _containerHandlers.get(container);
+        if (previous) {
+            container.removeEventListener('click', previous);
+            _containerHandlers.delete(container);
         }
 
-        var age = _calculateAge(character.birthYear, character.isDeceased, character.deathYear);
-        var isDeceased = character.isDeceased === true;
-        var genderSymbol = character.gender === 'male' ? '♂' : (character.gender === 'female' ? '♀' : '⚥');
+        if (typeof onSelect !== 'function') return;
 
-        var statusColor = isDeceased ? 'var(--dim)' : 'var(--success)';
-        var statusText = isDeceased ? 'Deceased' : 'Living';
+        function handleClick(event) {
+            var target = event.target;
+            if (!target || !target.closest) return;
 
-        // NEW: Culture badge
-        var cultureBadge = '';
-        if (character.cultureId) {
-            var cultureName = _getCultureName(character.cultureId);
-            var cultureIcon = _getCultureIcon(character.cultureId);
-            if (cultureName) {
-                cultureBadge = '<span style="font-size:0.55rem;background:var(--bg3);padding:2px 10px;border-radius:12px;border:1px solid var(--border-light);">' +
-                    (cultureIcon ? _escapeHtml(cultureIcon) + ' ' : '') +
-                    _escapeHtml(cultureName) +
-                    '</span>';
+            var row = target.closest('[data-action="select-character"]');
+            if (!row || !container.contains(row)) return;
+
+            var id = row.getAttribute('data-character-id');
+            if (!_hasId(id)) return;
+
+            var character = window.getCharacterById(id);
+            if (character) {
+                onSelect(character);
             }
         }
 
-        // Appearance preview (NEW)
-        var appearancePreview = '';
-        if (character.appearance && Object.keys(character.appearance).length > 0) {
-            var app = character.appearance;
-            var parts = [];
-            if (app.skinTone) parts.push(app.skinTone);
-            if (app.eyeColor) parts.push(app.eyeColor + ' eyes');
-            if (app.hairColor) parts.push(app.hairColor + ' hair');
-            if (app.build) parts.push(app.build);
-            if (app.height) parts.push(app.height + 'cm');
-            if (parts.length > 0) {
-                appearancePreview = '<div style="font-size:0.55rem;color:var(--dim);margin-top:4px;">' +
-                    parts.join(' · ') +
-                    '</div>';
-            }
-        }
-
-        return '<div class="character-card" style="' +
-            'background:var(--bg2);border-radius:8px;padding:16px;' +
-            'border:1px solid var(--border);' +
-            '">' +
-            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
-            '<h4 style="margin:0;font-size:0.9rem;">' +
-            genderSymbol + ' ' + _escapeHtml(character.name) + ' ' + _escapeHtml(character.surname || '') +
-            '</h4>' +
-            '<div style="display:flex;align-items:center;gap:6px;">' +
-            cultureBadge +
-            '<span style="font-size:0.6rem;color:' + statusColor + ';padding:2px 10px;border-radius:12px;border:1px solid ' + statusColor + ';">' +
-            statusText +
-            '</span>' +
-            '</div>' +
-            '</div>' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:0.65rem;">' +
-            '<div><span style="color:var(--dim);">Age</span><br><strong>' + age + ' years</strong></div>' +
-            '<div><span style="color:var(--dim);">Gender</span><br><strong>' + _escapeHtml(character.gender || 'Unknown') + '</strong></div>' +
-            '<div><span style="color:var(--dim);">Location</span><br><strong>' + _escapeHtml(character.currentLocation || 'Unknown') + '</strong></div>' +
-            '</div>' +
-            appearancePreview +
-            (character.notes ? '<div style="margin-top:8px;font-size:0.55rem;color:var(--dim);padding-top:8px;border-top:1px solid var(--border-light);">' + _escapeHtml(character.notes) + '</div>' : '') +
-            '</div>';
+        container.addEventListener('click', handleClick);
+        _containerHandlers.set(container, handleClick);
     }
 
     // =========================================================================
-    // 4. EXPORTS
+    // 5. PUBLIC — RENDER CARD
+    // =========================================================================
+
+    /**
+     * Returns an HTML string for a single character card.
+     *
+     * @param {Object} character
+     * @returns {string}
+     */
+    function renderCharacterCard(character) {
+        if (!character || !_hasId(character.id)) {
+            return '<div class="character-card character-card--missing">'
+                 + 'Character not found'
+                 + '</div>';
+        }
+
+        var summary = window.CharacterQueries.getCharacterSummary(character.id);
+        if (!summary) {
+            return '<div class="character-card character-card--missing">'
+                 + 'Character summary unavailable'
+                 + '</div>';
+        }
+
+        var html = '';
+        html += '<div class="character-card">';
+
+        // Header
+        html += '<div class="character-card__header">';
+        html += '<h4 class="character-card__name">'
+             + _esc(summary.fullName || summary.name || 'Unnamed')
+             + '</h4>';
+        html += '<div class="character-card__badges">';
+
+        var cultureText = _cultureBadgeText(character.cultureId);
+        if (cultureText) {
+            html += '<span class="character-card__culture-badge">'
+                 + _esc(cultureText)
+                 + '</span>';
+        }
+
+        var statusClass = summary.isDeceased
+            ? 'character-card__status character-card__status--deceased'
+            : 'character-card__status character-card__status--living';
+        html += '<span class="' + statusClass + '">'
+             + (summary.isDeceased ? 'Deceased' : 'Living')
+             + '</span>';
+
+        html += '</div>'; // badges
+        html += '</div>'; // header
+
+        // Grid: age / gender / location
+        html += '<div class="character-card__grid">';
+
+        html += '<div class="character-card__field">'
+             + '<div class="character-card__field-label">Age</div>'
+             + '<div class="character-card__field-value">'
+             + _esc(_formatAge(summary.age))
+             + '</div></div>';
+
+        html += '<div class="character-card__field">'
+             + '<div class="character-card__field-label">Gender</div>'
+             + '<div class="character-card__field-value">'
+             + _esc(summary.gender || 'Unknown')
+             + '</div></div>';
+
+        html += '<div class="character-card__field">'
+             + '<div class="character-card__field-label">Location</div>'
+             + '<div class="character-card__field-value">'
+             + _esc(summary.location || 'Unknown')
+             + '</div></div>';
+
+        html += '</div>'; // grid
+
+        // Appearance preview
+        var appearanceHtml = _renderAppearancePreview(character.appearance);
+        if (appearanceHtml) {
+            html += appearanceHtml;
+        }
+
+        // Notes
+        if (typeof summary.notes === 'string' && summary.notes.length > 0) {
+            html += '<div class="character-card__notes">'
+                 + _esc(summary.notes)
+                 + '</div>';
+        }
+
+        html += '</div>'; // card
+        return html;
+    }
+
+    /**
+     * Renders an appearance preview from the character's appearance object.
+     *
+     * Escapes every field. Returns '' when there is nothing to render.
+     */
+    function _renderAppearancePreview(appearance) {
+        if (!appearance || typeof appearance !== 'object' || Array.isArray(appearance)) {
+            return '';
+        }
+
+        var parts = [];
+        if (typeof appearance.skinTone === 'string' && appearance.skinTone) {
+            parts.push(appearance.skinTone);
+        }
+        if (typeof appearance.eyeColor === 'string' && appearance.eyeColor) {
+            parts.push(appearance.eyeColor + ' eyes');
+        }
+        if (typeof appearance.hairColor === 'string' && appearance.hairColor) {
+            parts.push(appearance.hairColor + ' hair');
+        }
+        if (typeof appearance.build === 'string' && appearance.build) {
+            parts.push(appearance.build);
+        }
+        if (typeof appearance.height === 'number' && Number.isFinite(appearance.height)
+            && appearance.height > 0) {
+            parts.push(appearance.height + 'cm');
+        }
+
+        if (parts.length === 0) return '';
+
+        // Escape the whole joined string once. Each individual part has
+        // already been validated as a string or a finite number, so this
+        // is safe.
+        var text = parts.join(' \u00b7 ');
+        return '<div class="character-card__appearance">'
+             + _esc(text)
+             + '</div>';
+    }
+
+    // =========================================================================
+    // 6. EXPORTS
     // =========================================================================
 
     window.CharacterUI = {
         renderCharacterList: renderCharacterList,
         renderCharacterCard: renderCharacterCard
     };
-
-    if (typeof module !== 'undefined' && module.exports) {
-        module.exports = window.CharacterUI;
-    }
 
 })();

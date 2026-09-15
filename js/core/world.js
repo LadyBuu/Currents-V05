@@ -9,8 +9,8 @@
  *
  * SCOPE:
  *   - Location hierarchy queries (parents, children, ancestors)
- *   - Location type / priority resolution
- *   - Location scope resolution (country, district)
+ *   - Location type / priority / scope resolution
+ *   - Country and district resolution for places and characters
  *   - Current-location resolution from character.moves
  *   - Character grouping by location (using stable IDs, not display strings)
  *
@@ -25,8 +25,6 @@
  *   - Missing/invalid IDs return null (singular) or [] (collection).
  *   - Priority 0 is valid.
  *   - Recursion is bounded by Set-based cycle detection, not magic depths.
- *     A cycle cannot cause the starting place to appear in its own
- *     descendant result.
  *   - Grouping keys are stable location IDs, not display strings.
  *   - Current-location resolution is deterministic; ties break by first
  *     record in the moves array.
@@ -45,12 +43,12 @@
  *   when its target is missing. See getCurrentLocationId().
  *
  * HIERARCHY SCOPE vs PRIORITY:
- *   Location types may declare a `locationScope` field ('country',
- *   'region', 'district', 'locality', or similar) that denotes their
- *   semantic position in a hierarchy. Separately, they may declare
- *   `priority` for sort ordering. This module uses `locationScope` when it
- *   needs semantic hierarchy levels and `priority` when it needs sort
- *   order. Do not conflate the two.
+ *   Location types declare a `locationScope` field ('country', 'region',
+ *   'district', 'locality', or similar) that denotes their semantic
+ *   position in a hierarchy. Separately, they may declare `priority` for
+ *   sort ordering. This module uses `locationScope` when it needs semantic
+ *   hierarchy levels and `priority` when it needs sort order. Do not
+ *   conflate the two.
  *
  *   Types without `locationScope` are treated as scope-less: they can
  *   still be part of a hierarchy (via parentId), but they are not
@@ -103,27 +101,25 @@
         _requireTime();
     }
 
+    _requireAll();
+
     // =========================================================================
     // 1. INTERNAL WRAPPERS
     // =========================================================================
 
     function _getPlaces() {
-        _requireAccessors();
         return window.getPlaces();
     }
 
     function _getPlaceById(id) {
-        _requireAccessors();
         return window.getPlaceById(id);
     }
 
     function _getLocationTypeById(id) {
-        _requireAccessors();
         return window.getLocationTypeById(id);
     }
 
     function _getCharacters() {
-        _requireAccessors();
         return window.getCharacters();
     }
 
@@ -138,7 +134,6 @@
     /**
      * Returns a numeric priority for a location type, or null if the type
      * is missing or has no valid priority. Preserves explicit 0.
-     * @private
      */
     function _typePriority(type) {
         if (!type) return null;
@@ -150,7 +145,6 @@
     /**
      * Returns the semantic scope string for a location type, or null if
      * the type has no declared scope.
-     * @private
      */
     function _typeScope(type) {
         if (!type) return null;
@@ -167,9 +161,6 @@
      * Gets the priority of a location type by ID.
      * Returns null for missing type or missing priority. Priority 0 is
      * preserved as a valid value.
-     *
-     * @param {string} typeId
-     * @returns {number|null}
      */
     function getLocationTypePriority(typeId) {
         if (!_hasId(typeId)) return null;
@@ -178,7 +169,6 @@
 
     /**
      * Gets the priority of a place.
-     * Returns null for missing place or missing priority.
      */
     function getPlacePriority(place) {
         if (!place) return null;
@@ -188,9 +178,6 @@
     /**
      * Gets the semantic scope of a location type by ID.
      * Returns null for missing type or missing scope.
-     *
-     * @param {string} typeId
-     * @returns {string|null}
      */
     function getLocationTypeScope(typeId) {
         if (!_hasId(typeId)) return null;
@@ -217,10 +204,6 @@
      *   - Each descendant appears at most once.
      *   - Corrupted cycles are not repaired; they simply stop contributing
      *     new descendants once every reachable node has been visited.
-     *
-     * @param {string} parentId
-     * @param {boolean} [recursive]
-     * @returns {Array}
      */
     function getChildPlaces(parentId, recursive) {
         if (!_hasId(parentId)) return [];
@@ -238,9 +221,6 @@
             return direct;
         }
 
-        // Recursive traversal. The starting place is pre-marked as
-        // "already accounted for" so a cycle cannot insert it into its
-        // own descendant list.
         var visited = new Set();
         visited.add(parentId);
 
@@ -272,7 +252,6 @@
 
     /**
      * Gets top-level places (no parent).
-     * Uses explicit missing check (not truthiness).
      */
     function getTopLevelPlaces() {
         var places = _getPlaces();
@@ -288,8 +267,6 @@
 
     /**
      * Gets places whose location type has the given priority.
-     * @param {number} priority
-     * @returns {Array}
      */
     function getPlacesByPriority(priority) {
         if (typeof priority !== 'number' || !Number.isFinite(priority)) return [];
@@ -305,8 +282,6 @@
 
     /**
      * Gets places whose location type has the given scope.
-     * @param {string} scope
-     * @returns {Array}
      */
     function getPlacesByScope(scope) {
         if (typeof scope !== 'string' || scope.length === 0) return [];
@@ -329,12 +304,6 @@
      * Includes the place itself.
      *
      * Returns [] when `place` is missing or has no valid ID.
-     *
-     * Cycle guard uses a Set; no arbitrary depth limit. If a cycle is
-     * encountered, the chain stops at the first repeated ID.
-     *
-     * @param {Object} place
-     * @returns {Array}
      */
     function getParentChain(place) {
         if (!place || !_hasId(place.id)) return [];
@@ -386,9 +355,6 @@
      * This module does NOT substitute the root place for a missing
      * country. Callers who want "country or topmost ancestor" should
      * compose that themselves with getParentChain()[0].
-     *
-     * @param {Object} place
-     * @returns {Object|null}
      */
     function getLocationCountry(place) {
         if (!place) return null;
@@ -417,25 +383,87 @@
     }
 
     // =========================================================================
-    // 5. CURRENT-LOCATION RESOLUTION
+    // 5. COUNTRY RESOLUTION HELPERS
     // =========================================================================
-    //
-    // See DANGING LOCATION REFERENCES in the file header.
-    //
-    // A character's current location ID is resolved in this order:
-    //   1. character.currentLocationId (explicit override)
-    //   2. Latest valid move in character.moves (highest year; ties break
-    //      by first-encountered in array order)
-    //   3. character.birthplaceId
-    //
-    // Moves with invalid years are skipped. If all moves have invalid
-    // years, resolution falls back to birthplaceId.
-    //
-    // The returned ID may be dangling: it may not correspond to a place
-    // currently in the world. Use getCurrentPlace() to resolve.
+
+    /**
+     * Returns all places whose scope is 'country'.
+     * Used by callers that need to enumerate countries (country selectors,
+     * name generation, census filters, etc.).
+     */
+    function getCountryPlaces() {
+        return getPlacesByScope('country');
+    }
+
+    /**
+     * Resolves the country ID for a place by walking its parent chain.
+     * Returns null when the place is invalid or no country ancestor exists.
+     */
+    function getCountryIdForPlace(placeId) {
+        if (!_hasId(placeId)) return null;
+        var place = _getPlaceById(placeId);
+        if (!place) return null;
+        var country = getLocationCountry(place);
+        return country ? country.id : null;
+    }
+
+    /**
+     * Resolves the country ID for a character.
+     *
+     * Uses the character's current location if it resolves to a place;
+     * otherwise falls back to birthplace. Returns null when neither
+     * resolves to a country.
+     *
+     * This is the canonical character → country resolution. Callers in
+     * name generation, modals, census, etc. should use this rather than
+     * walking the hierarchy themselves.
+     *
+     * @param {string} characterId
+     * @returns {string|null}
+     */
+    function getCharacterCountryId(characterId) {
+        if (!_hasId(characterId)) return null;
+
+        // Resolve character via accessors to avoid depending on any
+        // specific character-state module.
+        if (typeof window.getCharacterById !== 'function') return null;
+        var character = window.getCharacterById(characterId);
+        if (!character) return null;
+
+        // Current location takes precedence.
+        var locationId = getCurrentLocationId(character);
+        if (_hasId(locationId)) {
+            var countryId = getCountryIdForPlace(locationId);
+            if (countryId) return countryId;
+        }
+
+        // Fallback: birthplace.
+        if (_hasId(character.birthplaceId)) {
+            var birthplaceCountryId = getCountryIdForPlace(character.birthplaceId);
+            if (birthplaceCountryId) return birthplaceCountryId;
+        }
+
+        return null;
+    }
+
+    /**
+     * Resolves the country object for a character.
+     * Convenience wrapper around getCharacterCountryId.
+     *
+     * @param {string} characterId
+     * @returns {Object|null}
+     */
+    function getCharacterCountry(characterId) {
+        var countryId = getCharacterCountryId(characterId);
+        if (!countryId) return null;
+        return _getPlaceById(countryId);
+    }
+
+    // =========================================================================
+    // 6. CURRENT-LOCATION RESOLUTION
+    // =========================================================================
 
     function _isValidMoveYear(year) {
-        _requireTime();
         return window.isValidYear(year);
     }
 
@@ -444,8 +472,14 @@
      * Returns null when no location can be resolved from the character
      * record.
      *
-     * @param {Object} character
-     * @returns {string|null}
+     * Resolution order:
+     *   1. character.currentLocationId (explicit override)
+     *   2. Latest valid move in character.moves (highest year; ties break
+     *      by first-encountered in array order)
+     *   3. character.birthplaceId
+     *
+     * Moves with invalid years are skipped. If all moves have invalid
+     * years, resolution falls back to birthplaceId.
      */
     function getCurrentLocationId(character) {
         if (!character) return null;
@@ -467,7 +501,6 @@
                     bestYear = move.year;
                     best = move;
                 }
-                // Ties: first-encountered wins (do not overwrite on equal year)
             }
 
             if (best) return best.locationId;
@@ -484,9 +517,6 @@
      * Gets the current location place object for a character.
      * Returns null if no location can be resolved, or if the resolved
      * ID is dangling.
-     *
-     * @param {Object} character
-     * @returns {Object|null}
      */
     function getCurrentPlace(character) {
         var id = getCurrentLocationId(character);
@@ -499,11 +529,8 @@
      * fields, ordered root → leaf. Returns [] if no location can be
      * resolved or the resolved reference is dangling.
      *
-     * Each entry contains:
-     *   { id, typeId, priority, scope }
-     *
-     * The presentation layer is responsible for turning these into labels
-     * (display names, breadcrumbs, etc.).
+     * Each entry contains: { id, typeId, priority, scope }
+     * Presentation is responsible for turning these into labels.
      */
     function getCharacterLocationPath(character) {
         var place = getCurrentPlace(character);
@@ -540,11 +567,7 @@
      *   1. Parent-chain length (shallow before deep)
      *   2. Ancestor ID path, lexicographic (root → leaf, joined by '/')
      *
-     * Stable IDs are used for ordering. Display names are not consulted;
-     * renaming a location does not change group order.
-     *
-     * @param {boolean} [includeDeceased]
-     * @returns {Array}
+     * Stable IDs are used for ordering. Display names are not consulted.
      */
     function getCharactersGroupedByLocation(includeDeceased) {
         includeDeceased = includeDeceased === true;
@@ -555,7 +578,7 @@
 
         for (var i = 0; i < characters.length; i++) {
             var char = characters[i];
-            if (!includeDeceased && char.isDeceased) continue;
+            if (!includeDeceased && char.isDeceased === true) continue;
 
             var place = getCurrentPlace(char);
             if (!place) {
@@ -578,7 +601,6 @@
             });
         });
 
-        // Deterministic sort key: the joined ancestor ID path (root → leaf).
         function pathKey(place) {
             var chain = getParentChain(place);
             var ids = [];
@@ -609,24 +631,34 @@
     }
 
     // =========================================================================
-    // 6. EXPORTS
+    // 7. EXPORTS
     // =========================================================================
 
+    // Type / priority / scope
     window.getLocationTypePriority = getLocationTypePriority;
     window.getPlacePriority = getPlacePriority;
     window.getLocationTypeScope = getLocationTypeScope;
     window.getPlaceScope = getPlaceScope;
 
+    // Hierarchy
     window.getChildPlaces = getChildPlaces;
     window.getTopLevelPlaces = getTopLevelPlaces;
     window.getPlacesByPriority = getPlacesByPriority;
     window.getPlacesByScope = getPlacesByScope;
 
+    // Path and ancestry
     window.getParentChain = getParentChain;
     window.isAncestorOf = isAncestorOf;
     window.getLocationCountry = getLocationCountry;
     window.getLocationDistrict = getLocationDistrict;
 
+    // Country resolution helpers
+    window.getCountryPlaces = getCountryPlaces;
+    window.getCountryIdForPlace = getCountryIdForPlace;
+    window.getCharacterCountryId = getCharacterCountryId;
+    window.getCharacterCountry = getCharacterCountry;
+
+    // Current location
     window.getCurrentLocationId = getCurrentLocationId;
     window.getCurrentPlace = getCurrentPlace;
     window.getCharacterLocationPath = getCharacterLocationPath;

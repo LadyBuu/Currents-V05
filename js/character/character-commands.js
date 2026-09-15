@@ -1,38 +1,53 @@
 /**
  * =============================================================================
- * STILL WATERS - CHARACTER COMMANDS js/character/character-commands.js
+ * STILL WATERS - CHARACTER COMMANDS (js/character/character-commands.js)
  * =============================================================================
- * 
- * All write operations for character management.
- * 
- * FEATURES:
- *   - Full character creation with complete schema
- *   - Deep merge updates preserving cultural data
- *   - Complete deletion with reference cleanup
- *   - Full profession management (add, remove, update skill, set primary)
- *   - Surname history recording
- *   - Household history tracking
- *   - Event emission
- *   - Recursion guard
- *   - SOFT DELETE - Non-destructive deletion with restore capability
- *   - PURGE - Permanently remove soft-deleted characters
- *   - BULK OPERATIONS - Create, update, delete multiple characters at once
- *   - RANDOM CHARACTER GENERATION - Fully automatic with cultural name support
- *   - RELIGION MANAGEMENT - Assign, remove, and track religion changes
- *   - CULTURE INTEGRATION - Generate appearance from culture
- *   - FAMILY ACCESSORS - Uses FamilyAccessors core module for family relationships
- * 
- * DEPENDENCIES:
- *   - character-state.js (CharacterState)
- *   - accessors.js (getCharacterById, getCharacters, getPlaceById)
- *   - ids.js (generateId)
- *   - names.js (name generation functions)
- *   - world.js (location functions)
- *   - time.js (getCurrentYearSafe)
+ *
+ * Canonical mutation boundary for characters.
+ *
+ * SCOPE:
+ *   - Character CRUD (create, update, delete, soft delete, restore, purge)
+ *   - Bulk character operations (create, update, delete)
+ *   - Profession management (add, remove, skill, primary, specializations)
+ *   - Surname history mutations
+ *   - Religion orchestration (delegates to ReligionCommands)
+ *   - Family orchestration (delegates to FamilyCommands)
+ *
+ * OUT OF SCOPE:
+ *   - Reads of any kind → CharacterQueries, FamilyAccessors
+ *   - Random character generation → character-generator.js
+ *   - Character schema construction → character-factory.js
+ *   - UI notifications → caller
+ *   - Cache invalidation policy → subscribers to the characterChanged event
+ *   - Persistence mechanics → storage.js
+ *
+ * SEMANTIC RULES:
+ *   - Missing (undefined/null) optional arguments use documented defaults.
+ *   - Invalid explicit arguments are rejected. No silent clamping.
+ *   - Year 0 is preserved wherever a year is stored.
+ *   - Public commands acquire the mutation lock; internal primitives assume it.
+ *   - Public commands never call other public commands. They call internal
+ *     primitives so that bulk/orchestration operations can compose.
+ *   - Every mutating public command commits once (one save, one event).
+ *   - Soft delete is orthogonal to life/death state.
+ *
+ * DEPENDENCIES (REQUIRED):
+ *   - storage.js:       masterData, saveMasterData, markDataDirty
+ *   - accessors.js:     getCharacterById, getCharacters, getRoles, getRoleById
+ *   - ids.js:           generateId
+ *   - time.js:          getCurrentYear, isValidYear
+ *   - randomness.js:    pickRandom, random, chance
+ *   - character-factory.js: buildCharacter
+ *   - character-generator.js: generateRandomCharacterData
+ *   - family-commands.js:   setParent, removeParent
+ *
+ * DEPENDENCIES (OPTIONAL, required only when the feature is used):
  *   - religion-commands.js (ReligionCommands)
  *   - culture-generation.js (CultureGeneration)
- *   - family-accessors.js (FamilyAccessors) - NEW
- * 
+ *   - name-queries.js       (NameQueries)
+ *
+ * ICON POLICY: No emojis. No icons.
+ *
  * =============================================================================
  */
 
@@ -40,577 +55,421 @@
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
+    // 0. DEPENDENCY GUARDS
     // =========================================================================
 
-    function _getState() {
-        return typeof window.CharacterState !== 'undefined' ? window.CharacterState : null;
-    }
-
-    function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(id);
-        }
-        return null;
-    }
-
-    function _getCharacters() {
-        if (typeof window.getCharacters === 'function') {
-            return window.getCharacters();
-        }
-        return [];
-    }
-
-    function _getPlaceById(id) {
-        if (typeof window.getPlaceById === 'function') {
-            return window.getPlaceById(id);
-        }
-        return null;
-    }
-
-    function _getPlaces() {
-        if (typeof window.getPlaces === 'function') {
-            return window.getPlaces();
-        }
-        return [];
-    }
-
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
-    function _generateId(prefix) {
-        if (typeof window.generateId === 'function') {
-            return window.generateId(prefix);
-        }
-        return prefix + '_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
-    }
-
-    function _showToast(message, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(message, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(message, type);
-        }
-    }
-
-    function _logEvent(category, type, message, subjects) {
-        if (typeof window.logEvent === 'function') {
-            window.logEvent(category, type, message, subjects);
-        }
-    }
-
-    function _invalidateCaches() {
-        if (typeof window.clearFamilyCache === 'function') {
-            window.clearFamilyCache();
-        }
-        if (typeof window.invalidateWorldCache === 'function') {
-            window.invalidateWorldCache();
-        }
-        if (typeof window.invalidateAccessorCaches === 'function') {
-            window.invalidateAccessorCaches();
-        }
-        var state = _getState();
-        if (state && typeof state.invalidateCache === 'function') {
-            state.invalidateCache();
-        }
-    }
-
-    function _safeGetRoleById(roleId) {
-        if (typeof window.getRoleById === 'function') {
-            return window.getRoleById(roleId);
-        }
-        return null;
-    }
-
-    function _getLocationTypeById(id) {
-        if (typeof window.getLocationTypeById === 'function') {
-            return window.getLocationTypeById(id);
-        }
-        return null;
-    }
-
-    function _getLocationTypePriority(typeId) {
-        if (typeof window.getLocationTypePriority === 'function') {
-            return window.getLocationTypePriority(typeId);
-        }
-        var types = typeof window.getLocationTypes === 'function' ? window.getLocationTypes() : [];
-        for (var i = 0; i < types.length; i++) {
-            if (types[i].id === typeId) {
-                return types[i].priority || 5;
+    function _requireDependencies() {
+        var required = [
+            'masterData',
+            'saveMasterData',
+            'markDataDirty',
+            'getCharacterById',
+            'getCharacters',
+            'getRoles',
+            'getRoleById',
+            'generateId',
+            'getCurrentYear',
+            'isValidYear',
+            'pickRandom',
+            'buildCharacter',
+            'generateRandomCharacterData',
+            'FamilyCommands'
+        ];
+        var missing = [];
+        for (var i = 0; i < required.length; i++) {
+            if (typeof window[required[i]] === 'undefined') {
+                missing.push(required[i]);
             }
         }
-        return 5;
+        if (missing.length > 0) {
+            throw new Error(
+                'character-commands.js: missing required dependencies: ' +
+                missing.join(', ')
+            );
+        }
     }
 
-    function _getRandomNameFromCountry(countryId, gender) {
-        if (typeof window.getRandomNameFromCountry === 'function') {
-            return window.getRandomNameFromCountry(countryId, gender);
-        }
-        return null;
+    _requireDependencies();
+
+    // =========================================================================
+    // 1. INTERNAL STATE
+    // =========================================================================
+
+    // Mutation lock. Public commands acquire it; internal primitives assume
+    // the lock is already held. Public commands MUST NOT call other public
+    // commands, or they will deadlock against this lock.
+    var _mutationLocked = false;
+
+    function _acquireLock() {
+        if (_mutationLocked) return false;
+        _mutationLocked = true;
+        return true;
     }
 
-    function _getRandomSurnameFromCountry(countryId) {
-        if (typeof window.getRandomSurnameFromCountry === 'function') {
-            return window.getRandomSurnameFromCountry(countryId);
-        }
-        return '';
+    function _releaseLock() {
+        _mutationLocked = false;
     }
 
-    function _getNameLists() {
-        if (typeof window.getNameLists === 'function') {
-            return window.getNameLists();
-        }
-        return {};
-    }
-
-    function _pickRandom(arr) {
-        if (typeof window.pickRandom === 'function') {
-            return window.pickRandom(arr);
-        }
-        if (!arr || arr.length === 0) return null;
-        return arr[Math.floor(Math.random() * arr.length)];
-    }
-
-    function _getReligion(religionId) {
-        if (typeof window.ReligionState !== 'undefined' &&
-            typeof window.ReligionState.getReligion === 'function') {
-            return window.ReligionState.getReligion(religionId);
-        }
-        return null;
-    }
-
-    function _convertCharacter(characterId, newReligionId, options) {
-        if (typeof window.ReligionCommands !== 'undefined' &&
-            typeof window.ReligionCommands.convertCharacter === 'function') {
-            return window.ReligionCommands.convertCharacter(characterId, newReligionId, options);
-        }
-        return null;
-    }
-
-    function _assignReligionToCharacter(characterId, religionId, options) {
-        if (typeof window.ReligionCommands !== 'undefined' &&
-            typeof window.ReligionCommands.assignReligionToCharacter === 'function') {
-            return window.ReligionCommands.assignReligionToCharacter(characterId, religionId, options);
-        }
-        return null;
-    }
-
-    function _removeReligionFromCharacter(characterId) {
-        if (typeof window.ReligionCommands !== 'undefined' &&
-            typeof window.ReligionCommands.removeReligionFromCharacter === 'function') {
-            return window.ReligionCommands.removeReligionFromCharacter(characterId);
-        }
-        return null;
+    function _alreadyProcessing() {
+        return { success: false, reason: 'Another mutation is in progress' };
     }
 
     // =========================================================================
-    // NEW: FAMILY ACCESSORS WRAPPERS
+    // 2. INTERNAL HELPERS
     // =========================================================================
 
-    function _getFamilyAccessors() {
-        return typeof window.FamilyAccessors !== 'undefined' ? window.FamilyAccessors : null;
+    function _isMissing(v) {
+        return v === undefined || v === null;
     }
 
-    function _setParentViaFamilyAccessors(childId, parentId, parentType, options) {
-        var fa = _getFamilyAccessors();
-        if (fa && typeof fa.setParent === 'function') {
-            return fa.setParent(childId, parentId, parentType, options);
-        }
-        return null;
+    function _hasId(v) {
+        return typeof v === 'string' && v.length > 0;
     }
 
-    function _getChildrenViaFamilyAccessors(parentId, includeDeceased) {
-        var fa = _getFamilyAccessors();
-        if (fa && typeof fa.getAllChildren === 'function') {
-            return fa.getAllChildren(parentId, includeDeceased || false);
-        }
-        return null;
+    /**
+     * Returns a copy of the canonical character collection.
+     * Mutating the returned array does not affect stored data.
+     */
+    function _readCollection() {
+        return window.getCharacters().slice();
     }
 
-    function _getParentsViaFamilyAccessors(childId) {
-        var fa = _getFamilyAccessors();
-        if (fa && typeof fa.getParents === 'function') {
-            return fa.getParents(childId);
-        }
-        return null;
+    /**
+     * Commits a single mutation.
+     *
+     * Persistence is owned by storage.js. This function does NOT call
+     * saveMasterData directly; the mutation is marked dirty and storage
+     * decides when to write. If the caller requires a durable commit, it
+     * must call saveMasterData() itself after this function returns.
+     *
+     * Emits exactly one characterChanged event carrying the mutated IDs.
+     */
+    function _commit(action, characterIds) {
+        window.markDataDirty();
+        window.dispatchEvent(new CustomEvent('characterChanged', {
+            detail: {
+                action: action,
+                characterIds: characterIds || []
+            }
+        }));
     }
 
-    function _hasChildrenViaFamilyAccessors(parentId, includeAdopted, includeDeceased) {
-        var fa = _getFamilyAccessors();
-        if (fa && typeof fa.hasChildren === 'function') {
-            return fa.hasChildren(parentId, includeAdopted !== false, includeDeceased || false);
-        }
-        return null;
+    /**
+     * Resolves the canonical character object by ID.
+     * Returns null when the character does not exist.
+     */
+    function _resolveCharacter(id) {
+        if (!_hasId(id)) return null;
+        return window.getCharacterById(id);
     }
 
-    // =========================================================================
-    // CULTURE GENERATION WRAPPERS
-    // =========================================================================
-
-    function _generateAppearance(cultureId, gender) {
-        if (typeof window.CultureGeneration !== 'undefined' &&
-            typeof window.CultureGeneration.generateAppearance === 'function') {
-            return window.CultureGeneration.generateAppearance(cultureId, gender);
+    /**
+     * Ensures the character exists and is not soft-deleted.
+     * Returns { ok: true, character } or { ok: false, result }.
+     */
+    function _ensureLiveCharacter(id) {
+        var character = _resolveCharacter(id);
+        if (!character) {
+            return { ok: false, result: { success: false, reason: 'Character not found' } };
         }
-        // Fallback to hardcoded defaults if culture system not available
-        return {
-            skinTone: _pickRandom(['Pale', 'Fair', 'Olive', 'Tan', 'Dark']),
-            eyeColor: _pickRandom(['Blue', 'Green', 'Hazel', 'Brown', 'Gray']),
-            hairColor: _pickRandom(['Blonde', 'Brown', 'Black', 'Red', 'Auburn']),
-            hairType: _pickRandom(['Straight', 'Wavy', 'Curly']),
-            build: _pickRandom(['Slim', 'Average', 'Athletic', 'Stocky']),
-            height: Math.floor(Math.random() * 40) + 155,
-            commonFeatures: []
-        };
-    }
-
-    function _getCultureForLocation(locationId) {
-        if (typeof window.CultureQueries !== 'undefined' &&
-            typeof window.CultureQueries.getCultureByLocation === 'function') {
-            var culture = window.CultureQueries.getCultureByLocation(locationId);
-            return culture ? culture.id : null;
-        }
-        return null;
-    }
-
-    // =========================================================================
-    // 2. RECURSION GUARD
-    // =========================================================================
-
-    var _processing = false;
-
-    // =========================================================================
-    // 3. CHARACTER CREATION - COMPLETE SCHEMA
-    // =========================================================================
-
-    function createCharacter(data) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processing = true;
-
-        try {
-            data = data || {};
-            var currentYear = _getCurrentYear();
-            var defaultBirthYear = currentYear - 25;
-
-            var newCharacter = {
-                id: _generateId('char'),
-                name: data.name || 'New Character',
-                surname: data.surname || '',
-                surnameSource: data.surnameSource || 'country',
-                surnameRules: data.surnameRules || null,
-                gender: data.gender || 'unknown',
-                attraction: data.attraction || 'both',
-                birthYear: data.birthYear !== undefined ? data.birthYear : defaultBirthYear,
-                isDeceased: data.isDeceased || false,
-                deathYear: data.deathYear || null,
-                deathCause: data.deathCause || '',
-
-                // Relationships
-                relationships: data.relationships || [],
-                friends: data.friends || [],
-
-                // Location & Movement
-                birthplaceId: data.birthplaceId || null,
-                currentLocationId: data.currentLocationId || null,
-                moves: data.moves || [],
-                household: data.household || null,
-
-                // Rank & Professions
-                rankAssignments: data.rankAssignments || [],
-                activeRankId: data.activeRankId || null,
-                activeRankNumber: data.activeRankNumber || null,
-                professions: data.professions || [],
-
-                // Family
-                motherId: data.motherId || null,
-                fatherId: data.fatherId || null,
-                children: data.children || [],
-                adoptedParents: data.adoptedParents || [],
-                adoptedChildren: data.adoptedChildren || [],
-
-                // Apprenticeship
-                apprentices: data.apprentices || [],
-                masterId: data.masterId || null,
-                isMaster: data.isMaster || false,
-                masterProfessionId: data.masterProfessionId || null,
-                apprenticeshipDetails: data.apprenticeshipDetails || {},
-
-                // Friendship details
-                friendshipDetails: data.friendshipDetails || {},
-
-                // Epithet / Nickname
-                epithet: data.epithet || '',
-
-                // Misc
-                notes: data.notes || '',
-                appearance: data.appearance || {},
-
-                // Household History
-                householdHistory: data.householdHistory || [],
-
-                // Surname History
-                surnameHistory: data.surnameHistory || {
-                    birthSurname: data.surname || '',
-                    entries: [],
-                    lastUpdated: data.birthYear || currentYear
-                },
-
-                // Religion
-                religionId: data.religionId || null,
-                religionHistory: data.religionHistory || [],
-
-                // Culture
-                cultureId: data.cultureId || null,
-
-                // Soft Delete Flag
-                isDeleted: false,
-                deletedAt: null,
-
-                // Metadata
-                createdAt: Date.now(),
-                updatedAt: Date.now()
+        if (character.isDeleted === true) {
+            return {
+                ok: false,
+                result: { success: false, reason: 'Character is soft-deleted. Restore first to modify.' }
             };
-
-            // If appearance wasn't provided, generate from culture
-            if (!data.appearance || Object.keys(data.appearance).length === 0) {
-                var cultureId = newCharacter.cultureId;
-                if (!cultureId && newCharacter.birthplaceId) {
-                    cultureId = _getCultureForLocation(newCharacter.birthplaceId);
-                    newCharacter.cultureId = cultureId;
-                }
-                newCharacter.appearance = _generateAppearance(cultureId, newCharacter.gender);
-            }
-
-            var state = _getState();
-            if (state) {
-                var characters = state.getAllCharacters();
-                characters.push(newCharacter);
-                state._setCharacters(characters);
-                state._emitCharacterChange('create', newCharacter);
-            } else {
-                var allChars = _getCharacters();
-                allChars.push(newCharacter);
-                if (typeof window.saveMasterData === 'function') {
-                    window.saveMasterData();
-                }
-            }
-
-            // ================================================================
-            // NEW: REGISTER FAMILY RELATIONSHIPS USING FAMILY ACCESSORS
-            // ================================================================
-            if (data.motherId) {
-                var mother = _getCharacterById(data.motherId);
-                if (mother) {
-                    _setParentViaFamilyAccessors(newCharacter.id, mother.id, 'mother', {
-                        biological: true,
-                        startYear: newCharacter.birthYear || currentYear,
-                        notes: 'Set during character creation'
-                    });
-                }
-            }
-
-            if (data.fatherId) {
-                var father = _getCharacterById(data.fatherId);
-                if (father) {
-                    _setParentViaFamilyAccessors(newCharacter.id, father.id, 'father', {
-                        biological: true,
-                        startYear: newCharacter.birthYear || currentYear,
-                        notes: 'Set during character creation'
-                    });
-                }
-            }
-
-            _invalidateCaches();
-            _logEvent('character', 'Character Created', 'Created: ' + newCharacter.name, [newCharacter]);
-
-            return { success: true, data: newCharacter };
-
-        } finally {
-            _processing = false;
         }
+        return { ok: true, character: character };
+    }
+
+    /**
+     * Validates a skill level argument.
+     * Returns { ok: true, value } or { ok: false, reason }.
+     */
+    function _validateSkillLevel(value, defaultIfMissing) {
+        if (_isMissing(value)) return { ok: true, value: defaultIfMissing };
+        if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value)) {
+            return { ok: false, reason: 'Skill level must be an integer' };
+        }
+        if (value < 0 || value > 100) {
+            return { ok: false, reason: 'Skill level must be between 0 and 100' };
+        }
+        return { ok: true, value: value };
+    }
+
+    /**
+     * Validates a year argument against the canonical time contract.
+     */
+    function _validateYear(value, name) {
+        if (_isMissing(value)) return { ok: true, value: null };
+        if (!window.isValidYear(value)) {
+            return { ok: false, reason: name + ' must be a valid world year' };
+        }
+        return { ok: true, value: value };
+    }
+
+    /**
+     * Resolves a year argument, falling back to the current year when the
+     * argument is missing. Year 0 is preserved.
+     */
+    function _resolveYear(value) {
+        if (_isMissing(value)) return window.getCurrentYear();
+        return value;
     }
 
     // =========================================================================
-    // 4. CHARACTER UPDATE - WITH DEEP MERGE
+    // 3. INTERNAL MUTATION PRIMITIVES
     // =========================================================================
+    //
+    // These primitives assume the mutation lock is held. They mutate the
+    // canonical character collection directly and return a result object.
+    // They do NOT emit events or mark dirty; the outer public command does
+    // that once, after all primitives have run.
 
-    function updateCharacter(id, updates) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
+    /**
+     * Performs the internal work of creating a character.
+     * Assumes the mutation lock is held.
+     */
+    function _createCharacterInternal(data) {
+        var built = window.buildCharacter(data);
+        if (!built.success) return built;
+
+        var character = built.data;
+        var collection = _readCollection();
+        collection.push(character);
+
+        _writeCollection(collection);
+
+        // Family links are applied after the character is in the collection
+        // so that FamilyCommands can resolve both ends.
+        if (_hasId(data.motherId)) {
+            window.FamilyCommands.setParent(character.id, data.motherId, 'mother', {
+                biological: true,
+                startYear: _resolveYear(data.birthYear)
+            });
         }
-        _processing = true;
+        if (_hasId(data.fatherId)) {
+            window.FamilyCommands.setParent(character.id, data.fatherId, 'father', {
+                biological: true,
+                startYear: _resolveYear(data.birthYear)
+            });
+        }
 
-        try {
-            var state = _getState();
-            var character = state ? state.getCharacter(id) : _getCharacterById(id);
+        return { success: true, data: character };
+    }
 
-            if (!character) {
-                return { success: false, reason: 'Character not found' };
+    /**
+     * Performs the internal work of updating a character.
+     * Assumes the mutation lock is held.
+     *
+     * The caller-supplied updates object is treated as immutable; it is
+     * never modified.
+     */
+    function _updateCharacterInternal(id, updates) {
+        var resolved = _ensureLiveCharacter(id);
+        if (!resolved.ok) return resolved.result;
+        var character = resolved.character;
+
+        var allowed = _ALLOWED_UPDATE_FIELDS;
+        var mutated = false;
+
+        for (var i = 0; i < allowed.length; i++) {
+            var key = allowed[i];
+            if (updates[key] === undefined) continue;
+
+            // Relationships are merged, not replaced.
+            if (key === 'relationships' && Array.isArray(character.relationships)) {
+                character.relationships = _mergeRelationships(
+                    character.relationships,
+                    updates.relationships
+                );
+                mutated = true;
+                continue;
             }
 
-            // Check if character is soft-deleted
-            if (character.isDeleted === true) {
-                return { success: false, reason: 'Character is soft-deleted. Restore first to update.' };
+            character[key] = updates[key];
+            mutated = true;
+        }
+
+        // Family graph updates are delegated. A null parentId means "remove
+        // the parent relationship"; undefined means "leave unchanged".
+        if (updates.motherId !== undefined) {
+            if (updates.motherId === null) {
+                window.FamilyCommands.removeParent(character.id, 'mother');
+            } else if (_hasId(updates.motherId)) {
+                window.FamilyCommands.setParent(character.id, updates.motherId, 'mother', {
+                    biological: true,
+                    startYear: _resolveYear(character.birthYear)
+                });
             }
-
-            // Store old state for event emission
-            var oldState = JSON.parse(JSON.stringify(character));
-
-            // Preserve cultural data if not being explicitly updated
-            if (!updates.surnameSource && character.surnameSource) {
-                updates.surnameSource = character.surnameSource;
+        }
+        if (updates.fatherId !== undefined) {
+            if (updates.fatherId === null) {
+                window.FamilyCommands.removeParent(character.id, 'father');
+            } else if (_hasId(updates.fatherId)) {
+                window.FamilyCommands.setParent(character.id, updates.fatherId, 'father', {
+                    biological: true,
+                    startYear: _resolveYear(character.birthYear)
+                });
             }
-            if (!updates.surnameRules && character.surnameRules) {
-                updates.surnameRules = character.surnameRules;
-            }
-            if (!updates.surnameHistory && character.surnameHistory) {
-                updates.surnameHistory = character.surnameHistory;
-            }
-            if (!updates.householdHistory && character.householdHistory) {
-                updates.householdHistory = character.householdHistory;
-            }
-            if (!updates.cultureId && character.cultureId) {
-                updates.cultureId = character.cultureId;
-            }
-            if (!updates.appearance && character.appearance) {
-                updates.appearance = character.appearance;
-            }
+        }
 
-            // Deep merge for relationships
-            if (updates.relationships && character.relationships) {
-                updates.relationships = _mergeRelationships(character.relationships, updates.relationships);
-            }
+        if (!mutated) {
+            return { success: true, data: character, message: 'No changes' };
+        }
 
-            var allowedFields = [
-                'name', 'surname', 'surnameSource', 'surnameRules', 'gender',
-                'attraction', 'birthYear', 'isDeceased', 'deathYear', 'deathCause',
-                'birthplaceId', 'currentLocationId', 'moves', 'household',
-                'rankAssignments', 'activeRankId', 'activeRankNumber',
-                'professions', 'motherId', 'fatherId', 'children', 'adoptedParents',
-                'adoptedChildren', 'apprentices', 'masterId', 'isMaster', 'masterProfessionId',
-                'apprenticeshipDetails', 'friendshipDetails', 'epithet',
-                'notes', 'appearance', 'householdHistory', 'surnameHistory',
-                'relationships', 'friends',
-                'religionId', 'religionHistory',
-                'cultureId'
-            ];
+        character.updatedAt = Date.now();
+        return { success: true, data: character };
+    }
 
-            var changed = false;
-            for (var i = 0; i < allowedFields.length; i++) {
-                var key = allowedFields[i];
-                if (updates[key] !== undefined) {
-                    character[key] = updates[key];
-                    changed = true;
-                }
-            }
+    /**
+     * Performs the internal work of deleting a character and cleaning
+     * cross-domain references.
+     * Assumes the mutation lock is held.
+     *
+     * Reference cleanup across domains belongs to the domains that own
+     * those references. This function coordinates the call.
+     */
+    function _deleteCharacterInternal(id) {
+        var character = _resolveCharacter(id);
+        if (!character) {
+            return { success: false, reason: 'Character not found' };
+        }
 
-            if (!changed) {
-                return { success: true, data: character, message: 'No changes' };
-            }
+        // Remove from canonical collection.
+        var collection = _readCollection();
+        var filtered = [];
+        for (var i = 0; i < collection.length; i++) {
+            if (collection[i].id !== id) filtered.push(collection[i]);
+        }
+        if (filtered.length === collection.length) {
+            return { success: false, reason: 'Character not found in collection' };
+        }
+        _writeCollection(filtered);
 
-            character.updatedAt = Date.now();
+        // Cross-domain reference cleanup. Each domain that references
+        // characters is responsible for its own cleanup; we dispatch to
+        // them here.
+        _dispatchReferenceCleanup(id);
 
-            if (state) {
-                var characters = state.getAllCharacters();
-                var index = -1;
-                for (var j = 0; j < characters.length; j++) {
-                    if (characters[j].id === id) {
-                        index = j;
-                        break;
-                    }
-                }
-                if (index !== -1) {
-                    characters[index] = character;
-                    state._setCharacters(characters);
-                    state._emitCharacterChange('update', character);
-                }
-            } else {
-                if (typeof window.saveMasterData === 'function') {
-                    window.saveMasterData();
-                }
-            }
+        return { success: true, deletedId: id, deletedCharacter: character };
+    }
 
-            // ================================================================
-            // NEW: UPDATE FAMILY RELATIONSHIPS IF PARENTS CHANGED
-            // ================================================================
-            if (updates.motherId !== undefined || updates.fatherId !== undefined) {
-                var currentYear = _getCurrentYear();
-                
-                // Handle mother update
-                if (updates.motherId !== undefined) {
-                    if (updates.motherId) {
-                        var mother = _getCharacterById(updates.motherId);
-                        if (mother) {
-                            _setParentViaFamilyAccessors(character.id, mother.id, 'mother', {
-                                biological: true,
-                                startYear: character.birthYear || currentYear,
-                                notes: 'Updated via character update'
-                            });
-                        }
-                    }
-                }
+    /**
+     * Performs the internal work of soft-deleting a character.
+     * Assumes the mutation lock is held.
+     *
+     * Soft delete only touches isDeleted/deletedAt. It does NOT modify
+     * life/death state.
+     */
+    function _softDeleteCharacterInternal(id) {
+        var character = _resolveCharacter(id);
+        if (!character) {
+            return { success: false, reason: 'Character not found' };
+        }
+        if (character.isDeleted === true) {
+            return { success: false, reason: 'Character is already soft-deleted' };
+        }
 
-                // Handle father update
-                if (updates.fatherId !== undefined) {
-                    if (updates.fatherId) {
-                        var father = _getCharacterById(updates.fatherId);
-                        if (father) {
-                            _setParentViaFamilyAccessors(character.id, father.id, 'father', {
-                                biological: true,
-                                startYear: character.birthYear || currentYear,
-                                notes: 'Updated via character update'
-                            });
-                        }
-                    }
-                }
-            }
+        character.isDeleted = true;
+        character.deletedAt = Date.now();
+        character.updatedAt = Date.now();
 
-            _invalidateCaches();
-            _logEvent('character', 'Character Updated', 'Updated: ' + character.name, [character]);
+        return { success: true, data: character };
+    }
 
-            return { success: true, data: character };
+    /**
+     * Performs the internal work of restoring a soft-deleted character.
+     * Assumes the mutation lock is held.
+     */
+    function _restoreSoftDeletedCharacterInternal(id) {
+        var character = _resolveCharacter(id);
+        if (!character) {
+            return { success: false, reason: 'Character not found' };
+        }
+        if (character.isDeleted !== true) {
+            return { success: false, reason: 'Character is not soft-deleted' };
+        }
 
-        } finally {
-            _processing = false;
+        character.isDeleted = false;
+        character.deletedAt = null;
+        character.updatedAt = Date.now();
+
+        return { success: true, data: character };
+    }
+
+    /**
+     * Writes the collection back to masterData.
+     * @private
+     */
+    function _writeCollection(collection) {
+        window.masterData.data.characters = collection;
+    }
+
+    /**
+     * Dispatches cleanup of a deleted character's references to the
+     * domains that own them.
+     *
+     * @private
+     */
+    function _dispatchReferenceCleanup(id) {
+        // Family graph cleanup
+        if (window.FamilyCommands
+            && typeof window.FamilyCommands.removeAllReferencesTo === 'function') {
+            window.FamilyCommands.removeAllReferencesTo(id);
+        }
+
+        // Relationship cleanup
+        if (typeof window.RelationshipCommands !== 'undefined'
+            && typeof window.RelationshipCommands.removeAllReferencesTo === 'function') {
+            window.RelationshipCommands.removeAllReferencesTo(id);
+        }
+
+        // Household cleanup
+        if (typeof window.HouseholdCommands !== 'undefined'
+            && typeof window.HouseholdCommands.removeCharacterReferences === 'function') {
+            window.HouseholdCommands.removeCharacterReferences(id);
+        }
+
+        // World leader assignment cleanup
+        if (typeof window.WorldCommands !== 'undefined'
+            && typeof window.WorldCommands.removeLeaderReferences === 'function') {
+            window.WorldCommands.removeLeaderReferences(id);
         }
     }
 
     /**
-     * Deep merges relationship arrays
+     * Deep merges relationship arrays.
+     *
+     * INPUT IMMUTABILITY: neither argument is modified. A new array is
+     * returned.
+     *
+     * CONTRACT: an update array is a merge. To remove a relationship, the
+     * caller must pass a relationship record with `status: 'ended'` or use
+     * a dedicated removal command.
+     *
+     * @private
      */
     function _mergeRelationships(existing, updates) {
-        if (!existing) return updates || [];
-        if (!updates) return existing;
+        if (!Array.isArray(existing)) return Array.isArray(updates) ? updates.slice() : [];
+        if (!Array.isArray(updates)) return existing.slice();
 
-        var result = existing.slice();
+        var result = existing.map(function(r) { return Object.assign({}, r); });
 
         for (var i = 0; i < updates.length; i++) {
             var update = updates[i];
             var existingIndex = -1;
 
             for (var j = 0; j < result.length; j++) {
-                var partnerId = result[j].participantB || result[j].partnerId;
-                var updatePartnerId = update.participantB || update.partnerId;
-                if (partnerId === updatePartnerId) {
+                if (result[j].partnerId === update.partnerId) {
                     existingIndex = j;
                     break;
                 }
             }
 
             if (existingIndex !== -1) {
-                // Merge with existing
                 result[existingIndex] = Object.assign({}, result[existingIndex], update);
             } else {
-                // Add new
-                result.push(update);
+                result.push(Object.assign({}, update));
             }
         }
 
@@ -618,1044 +477,453 @@
     }
 
     // =========================================================================
-    // 5. CHARACTER DELETION - WITH REFERENCE CLEANUP
+    // 4. ALLOWED UPDATE FIELDS
     // =========================================================================
 
-    function deleteCharacter(id) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processing = true;
+    var _ALLOWED_UPDATE_FIELDS = [
+        'name', 'surname', 'surnameSource', 'surnameRules', 'gender',
+        'attraction', 'birthYear', 'isDeceased', 'deathYear', 'deathCause',
+        'birthplaceId', 'currentLocationId', 'moves', 'household',
+        'rankAssignments', 'activeRankId', 'activeRankNumber',
+        'professions', 'motherId', 'fatherId',
+        'adoptedParents', 'adoptedChildren',
+        'apprentices', 'masterId', 'isMaster', 'masterProfessionId',
+        'apprenticeshipDetails', 'friendshipDetails', 'epithet',
+        'notes', 'appearance', 'householdHistory', 'surnameHistory',
+        'relationships', 'friends',
+        'religionId', 'religionHistory',
+        'cultureId'
+    ];
 
-        try {
-            var state = _getState();
-            var character = state ? state.getCharacter(id) : _getCharacterById(id);
-
-            if (!character) {
-                return { success: false, reason: 'Character not found' };
-            }
-
-            var deletedCharacter = character;
-
-            if (state) {
-                var characters = state.getAllCharacters();
-                var newCharacters = [];
-                var removed = null;
-                for (var i = 0; i < characters.length; i++) {
-                    if (characters[i].id === id) {
-                        removed = characters[i];
-                    } else {
-                        newCharacters.push(characters[i]);
-                    }
-                }
-                if (!removed) {
-                    return { success: false, reason: 'Character not found' };
-                }
-                state._setCharacters(newCharacters);
-                state._emitCharacterChange('delete', removed);
-            } else {
-                var allChars = _getCharacters();
-                var index = -1;
-                for (var i = 0; i < allChars.length; i++) {
-                    if (allChars[i].id === id) {
-                        index = i;
-                        break;
-                    }
-                }
-                if (index === -1) {
-                    return { success: false, reason: 'Character not found' };
-                }
-                allChars.splice(index, 1);
-                if (typeof window.saveMasterData === 'function') {
-                    window.saveMasterData();
-                }
-            }
-
-            // Clean up references in other characters
-            _cleanupCharacterReferences(id);
-
-            _invalidateCaches();
-            _logEvent('character', 'Character Deleted', 'Deleted: ' + character.name, [character]);
-
-            return { success: true };
-
-        } finally {
-            _processing = false;
-        }
-    }
+    // =========================================================================
+    // 5. PUBLIC COMMANDS — CHARACTER CRUD
+    // =========================================================================
 
     /**
-     * Cleans up references to a deleted character
+     * Creates a new character.
+     *
+     * @param {Object} data - character data. See character-factory.js.
+     * @returns {{ success: boolean, data?: Object, reason?: string }}
      */
-    function _cleanupCharacterReferences(id) {
-        var allChars = _getCharacters();
-
-        for (var i = 0; i < allChars.length; i++) {
-            var c = allChars[i];
-
-            // Remove from relationships
-            if (c.relationships) {
-                c.relationships = c.relationships.filter(function(r) {
-                    var partnerId = r.participantB || r.partnerId;
-                    return partnerId !== id;
-                });
+    function createCharacter(data) {
+        if (!_acquireLock()) return _alreadyProcessing();
+        try {
+            if (_isMissing(data)) data = {};
+            if (typeof data !== 'object' || Array.isArray(data)) {
+                return { success: false, reason: 'Character data must be an object' };
             }
 
-            // Remove from friends
-            if (c.friends) {
-                c.friends = c.friends.filter(function(fid) { return fid !== id; });
-            }
+            var result = _createCharacterInternal(data);
+            if (!result.success) return result;
 
-            // Remove from children
-            if (c.children) {
-                c.children = c.children.filter(function(cid) { return cid !== id; });
-            }
-
-            // Remove from apprentices
-            if (c.apprentices) {
-                c.apprentices = c.apprentices.filter(function(aid) { return aid !== id; });
-            }
-
-            // Remove parent references
-            if (c.motherId === id) c.motherId = null;
-            if (c.fatherId === id) c.fatherId = null;
-            if (c.masterId === id) c.masterId = null;
-
-            // Remove from adoptive parents
-            if (c.adoptedParents) {
-                c.adoptedParents = c.adoptedParents.filter(function(ap) { return ap.parentId !== id; });
-            }
-
-            // Remove from adopted children
-            if (c.adoptedChildren) {
-                c.adoptedChildren = c.adoptedChildren.filter(function(ac) { return ac.childId !== id; });
-            }
-
-            // Remove from friendship details
-            if (c.friendshipDetails && c.friendshipDetails[id]) {
-                delete c.friendshipDetails[id];
-            }
-
-            // Remove from apprenticeship details
-            if (c.apprenticeshipDetails && c.apprenticeshipDetails[id]) {
-                delete c.apprenticeshipDetails[id];
-            }
-
-            // Remove from householdHistory references
-            if (c.householdHistory) {
-                c.householdHistory = c.householdHistory.filter(function(h) { return h.characterId !== id; });
-            }
-        }
-
-        // Clean up households
-        var households = typeof window.getHouseholds === 'function' ? window.getHouseholds() : [];
-        for (var i = 0; i < households.length; i++) {
-            var household = households[i];
-            if (household.members) {
-                household.members = household.members.filter(function(m) { return m.characterId !== id; });
-            }
-            if (household.departments) {
-                for (var j = 0; j < household.departments.length; j++) {
-                    if (household.departments[j].headId === id) {
-                        household.departments[j].headId = null;
-                    }
-                }
-            }
-        }
-
-        // Clean up place leader assignments
-        var places = typeof window.getPlaces === 'function' ? window.getPlaces() : [];
-        for (var i = 0; i < places.length; i++) {
-            if (places[i].leaderAssignments) {
-                places[i].leaderAssignments = places[i].leaderAssignments.filter(function(l) { return l.characterId !== id; });
-            }
-        }
-
-        if (typeof window.saveMasterData === 'function') {
-            window.saveMasterData();
+            _commit('create', [result.data.id]);
+            return result;
+        } finally {
+            _releaseLock();
         }
     }
 
-    // =========================================================================
-    // 6. SOFT DELETE
-    // =========================================================================
+    /**
+     * Updates a character by ID.
+     *
+     * @param {string} id
+     * @param {Object} updates - treated as immutable
+     * @returns {{ success: boolean, data?: Object, reason?: string }}
+     */
+    function updateCharacter(id, updates) {
+        if (!_acquireLock()) return _alreadyProcessing();
+        try {
+            if (!_hasId(id)) {
+                return { success: false, reason: 'Character ID must be a non-empty string' };
+            }
+            if (_isMissing(updates)) updates = {};
+            if (typeof updates !== 'object' || Array.isArray(updates)) {
+                return { success: false, reason: 'Updates must be an object' };
+            }
+
+            var result = _updateCharacterInternal(id, updates);
+            if (!result.success) return result;
+
+            _commit('update', [id]);
+            return result;
+        } finally {
+            _releaseLock();
+        }
+    }
 
     /**
-     * Soft deletes a character (marks as deleted without removing)
-     * @param {string} id - Character ID
-     * @returns {Object} Result object
+     * Hard-deletes a character and cleans cross-domain references.
+     *
+     * @param {string} id
+     * @returns {{ success: boolean, reason?: string }}
+     */
+    function deleteCharacter(id) {
+        if (!_acquireLock()) return _alreadyProcessing();
+        try {
+            if (!_hasId(id)) {
+                return { success: false, reason: 'Character ID must be a non-empty string' };
+            }
+
+            var result = _deleteCharacterInternal(id);
+            if (!result.success) return result;
+
+            _commit('delete', [id]);
+            return { success: true };
+        } finally {
+            _releaseLock();
+        }
+    }
+
+    /**
+     * Soft-deletes a character. Orthogonal to life/death state.
+     *
+     * @param {string} id
+     * @returns {{ success: boolean, data?: Object, reason?: string }}
      */
     function softDeleteCharacter(id) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processing = true;
-
+        if (!_acquireLock()) return _alreadyProcessing();
         try {
-            var state = _getState();
-            var character = state ? state.getCharacter(id) : _getCharacterById(id);
-
-            if (!character) {
-                return { success: false, reason: 'Character not found' };
+            if (!_hasId(id)) {
+                return { success: false, reason: 'Character ID must be a non-empty string' };
             }
 
-            if (character.isDeleted === true) {
-                return { success: false, reason: 'Character is already soft-deleted' };
-            }
+            var result = _softDeleteCharacterInternal(id);
+            if (!result.success) return result;
 
-            // Mark as deleted
-            character.isDeleted = true;
-            character.isDeceased = true;
-            character.deletedAt = Date.now();
-            character.updatedAt = Date.now();
-
-            if (!character.deathYear) {
-                character.deathYear = _getCurrentYear();
-            }
-
-            if (!character.deathCause) {
-                character.deathCause = 'Soft deleted';
-            }
-
-            _saveCharacter(character, state);
-            _invalidateCaches();
-            _logEvent('character', 'Soft Deleted', 'Soft deleted: ' + character.name, [character]);
-
-            _showToast(character.name + ' soft-deleted. Use restore to recover.', 'info');
-
-            return { success: true, data: character };
-
-        } catch (e) {
-            return { success: false, reason: e.message || 'Failed to soft delete character' };
+            _commit('softDelete', [id]);
+            return result;
         } finally {
-            _processing = false;
+            _releaseLock();
         }
     }
 
     /**
-     * Restores a soft-deleted character
-     * @param {string} id - Character ID
-     * @returns {Object} Result object
+     * Restores a soft-deleted character.
+     *
+     * @param {string} id
+     * @returns {{ success: boolean, data?: Object, reason?: string }}
      */
     function restoreSoftDeletedCharacter(id) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processing = true;
-
+        if (!_acquireLock()) return _alreadyProcessing();
         try {
-            var state = _getState();
-            var character = state ? state.getCharacter(id) : _getCharacterById(id);
-
-            if (!character) {
-                return { success: false, reason: 'Character not found' };
+            if (!_hasId(id)) {
+                return { success: false, reason: 'Character ID must be a non-empty string' };
             }
 
-            if (character.isDeleted !== true) {
-                return { success: false, reason: 'Character is not soft-deleted' };
-            }
+            var result = _restoreSoftDeletedCharacterInternal(id);
+            if (!result.success) return result;
 
-            // Restore
-            character.isDeleted = false;
-            character.isDeceased = false;
-            character.deletedAt = null;
-            character.deathYear = null;
-            character.deathCause = '';
-            character.updatedAt = Date.now();
-
-            _saveCharacter(character, state);
-            _invalidateCaches();
-            _logEvent('character', 'Restored', 'Restored soft-deleted: ' + character.name, [character]);
-
-            _showToast(character.name + ' restored successfully.', 'success');
-
-            return { success: true, data: character };
-
-        } catch (e) {
-            return { success: false, reason: e.message || 'Failed to restore character' };
+            _commit('restore', [id]);
+            return result;
         } finally {
-            _processing = false;
+            _releaseLock();
         }
     }
 
     /**
-     * Gets all soft-deleted characters
-     * @returns {Array} Array of soft-deleted characters
-     */
-    function getSoftDeletedCharacters() {
-        var allChars = _getCharacters();
-        var result = [];
-        for (var i = 0; i < allChars.length; i++) {
-            if (allChars[i].isDeleted === true) {
-                result.push(allChars[i]);
-            }
-        }
-        return result;
-    }
-
-    /**
-     * Permanently removes all soft-deleted characters
-     * @returns {Object} Result with count
+     * Permanently removes all soft-deleted characters.
+     *
+     * @returns {{ success: boolean, count: number, reason?: string }}
      */
     function purgeSoftDeletedCharacters() {
-        if (_processing) {
-            return { success: false, reason: 'Already processing', count: 0 };
-        }
-        _processing = true;
-
+        if (!_acquireLock()) return { success: false, reason: 'Already processing', count: 0 };
         try {
-            var toDelete = getSoftDeletedCharacters();
-            var deletedCount = 0;
-
-            for (var i = 0; i < toDelete.length; i++) {
-                var result = deleteCharacter(toDelete[i].id);
-                if (result && result.success) {
-                    deletedCount++;
-                }
+            var collection = _readCollection();
+            var idsToDelete = [];
+            for (var i = 0; i < collection.length; i++) {
+                if (collection[i].isDeleted === true) idsToDelete.push(collection[i].id);
             }
 
-            if (deletedCount > 0) {
-                _showToast('Purged ' + deletedCount + ' soft-deleted characters', 'info');
-            } else {
-                _showToast('No soft-deleted characters to purge', 'info');
+            if (idsToDelete.length === 0) {
+                return { success: true, count: 0 };
             }
 
-            return { success: true, count: deletedCount };
+            for (var j = 0; j < idsToDelete.length; j++) {
+                _deleteCharacterInternal(idsToDelete[j]);
+            }
 
-        } catch (e) {
-            return { success: false, reason: e.message || 'Failed to purge', count: 0 };
+            _commit('purge', idsToDelete);
+            return { success: true, count: idsToDelete.length };
         } finally {
-            _processing = false;
+            _releaseLock();
         }
     }
 
     // =========================================================================
-    // 7. BULK OPERATIONS
+    // 6. PUBLIC COMMANDS — BULK OPERATIONS
     // =========================================================================
 
     /**
-     * Bulk creates multiple characters
-     * @param {Array} dataArray - Array of character data objects
-     * @returns {Object} Result with created characters
+     * Bulk-creates multiple characters in one transaction.
+     *
+     * @param {Array<Object>} dataArray
+     * @returns {{ success: boolean, count: number, data: Array, errors: Array }}
      */
     function bulkCreateCharacters(dataArray) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing', count: 0 };
-        }
-        _processing = true;
-
+        if (!_acquireLock()) return { success: false, reason: 'Already processing', count: 0, data: [], errors: [] };
         try {
             if (!Array.isArray(dataArray)) {
-                return { success: false, reason: 'Expected array', count: 0 };
+                return { success: false, reason: 'Expected array', count: 0, data: [], errors: [] };
             }
 
-            var results = [];
+            var created = [];
             var errors = [];
-
             for (var i = 0; i < dataArray.length; i++) {
-                var result = createCharacter(dataArray[i]);
-                if (result && result.success) {
-                    results.push(result.data);
+                var item = dataArray[i];
+                if (_isMissing(item)) item = {};
+                var result = _createCharacterInternal(item);
+                if (result.success) {
+                    created.push(result.data);
                 } else {
-                    errors.push({
-                        index: i,
-                        data: dataArray[i],
-                        error: result ? result.reason : 'Unknown error'
-                    });
+                    errors.push({ index: i, reason: result.reason });
                 }
             }
 
-            var message = 'Bulk created ' + results.length + ' characters';
-            if (errors.length > 0) {
-                message += ' (' + errors.length + ' failed)';
-                _showToast(message, 'warning');
-            } else {
-                _showToast(message, 'success');
+            if (created.length > 0) {
+                var ids = created.map(function(c) { return c.id; });
+                _commit('bulkCreate', ids);
             }
 
             return {
-                success: true,
-                count: results.length,
-                data: results,
+                success: errors.length === 0,
+                partial: errors.length > 0 && created.length > 0,
+                count: created.length,
+                data: created,
                 errors: errors
             };
-
-        } catch (e) {
-            return { success: false, reason: e.message || 'Failed to bulk create', count: 0 };
         } finally {
-            _processing = false;
+            _releaseLock();
         }
     }
 
     /**
-     * Bulk updates multiple characters
-     * @param {Object} updates - Object mapping character IDs to updates
-     * @returns {Object} Result with updated characters
+     * Bulk-updates multiple characters in one transaction.
+     *
+     * @param {Object} updatesById - map of character ID to updates object
+     * @returns {{ success: boolean, count: number, data: Array, errors: Array }}
      */
-    function bulkUpdateCharacters(updates) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing', count: 0 };
-        }
-        _processing = true;
-
+    function bulkUpdateCharacters(updatesById) {
+        if (!_acquireLock()) return { success: false, reason: 'Already processing', count: 0, data: [], errors: [] };
         try {
-            if (!updates || typeof updates !== 'object') {
-                return { success: false, reason: 'Expected object', count: 0 };
+            if (_isMissing(updatesById) || typeof updatesById !== 'object' || Array.isArray(updatesById)) {
+                return { success: false, reason: 'Expected object map of ID to updates', count: 0, data: [], errors: [] };
             }
 
-            var results = [];
+            var updated = [];
             var errors = [];
+            var ids = Object.keys(updatesById);
 
-            for (var id in updates) {
-                if (updates.hasOwnProperty(id)) {
-                    var result = updateCharacter(id, updates[id]);
-                    if (result && result.success) {
-                        results.push(result.data);
-                    } else {
-                        errors.push({
-                            id: id,
-                            error: result ? result.reason : 'Unknown error'
-                        });
-                    }
+            for (var i = 0; i < ids.length; i++) {
+                var id = ids[i];
+                var result = _updateCharacterInternal(id, updatesById[id]);
+                if (result.success) {
+                    updated.push(result.data);
+                } else {
+                    errors.push({ id: id, reason: result.reason });
                 }
             }
 
-            var message = 'Bulk updated ' + results.length + ' characters';
-            if (errors.length > 0) {
-                message += ' (' + errors.length + ' failed)';
-                _showToast(message, 'warning');
-            } else {
-                _showToast(message, 'success');
+            if (updated.length > 0) {
+                _commit('bulkUpdate', updated.map(function(c) { return c.id; }));
             }
 
             return {
-                success: true,
-                count: results.length,
-                data: results,
+                success: errors.length === 0,
+                partial: errors.length > 0 && updated.length > 0,
+                count: updated.length,
+                data: updated,
                 errors: errors
             };
-
-        } catch (e) {
-            return { success: false, reason: e.message || 'Failed to bulk update', count: 0 };
         } finally {
-            _processing = false;
+            _releaseLock();
         }
     }
 
     /**
-     * Bulk deletes multiple characters
-     * @param {Array} ids - Array of character IDs to delete
-     * @param {boolean} softDelete - Whether to soft delete instead of hard delete
-     * @returns {Object} Result with count
+     * Bulk-deletes multiple characters in one transaction.
+     *
+     * @param {Array<string>} ids
+     * @param {boolean} [soft] - when true, soft delete instead of hard delete
+     * @returns {{ success: boolean, count: number, errors: Array }}
      */
-    function bulkDeleteCharacters(ids, softDelete) {
-        softDelete = softDelete || false;
-        
-        if (_processing) {
-            return { success: false, reason: 'Already processing', count: 0 };
-        }
-        _processing = true;
-
+    function bulkDeleteCharacters(ids, soft) {
+        if (!_acquireLock()) return { success: false, reason: 'Already processing', count: 0, errors: [] };
         try {
             if (!Array.isArray(ids)) {
-                return { success: false, reason: 'Expected array', count: 0 };
+                return { success: false, reason: 'Expected array', count: 0, errors: [] };
             }
 
-            var deletedCount = 0;
+            var useSoft = soft === true;
+            var deleted = 0;
+            var deletedIds = [];
             var errors = [];
 
             for (var i = 0; i < ids.length; i++) {
-                var result;
-                if (softDelete) {
-                    result = softDeleteCharacter(ids[i]);
+                var id = ids[i];
+                var result = useSoft
+                    ? _softDeleteCharacterInternal(id)
+                    : _deleteCharacterInternal(id);
+                if (result.success) {
+                    deleted++;
+                    deletedIds.push(id);
                 } else {
-                    result = deleteCharacter(ids[i]);
-                }
-                if (result && result.success) {
-                    deletedCount++;
-                } else {
-                    errors.push({
-                        id: ids[i],
-                        error: result ? result.reason : 'Unknown error'
-                    });
+                    errors.push({ id: id, reason: result.reason });
                 }
             }
 
-            var method = softDelete ? 'soft-deleted' : 'deleted';
-            var message = 'Bulk ' + method + ' ' + deletedCount + ' characters';
-            if (errors.length > 0) {
-                message += ' (' + errors.length + ' failed)';
-                _showToast(message, 'warning');
-            } else {
-                _showToast(message, 'success');
+            if (deletedIds.length > 0) {
+                _commit(useSoft ? 'bulkSoftDelete' : 'bulkDelete', deletedIds);
             }
 
             return {
-                success: true,
-                count: deletedCount,
+                success: errors.length === 0,
+                partial: errors.length > 0 && deleted > 0,
+                count: deleted,
                 errors: errors
             };
-
-        } catch (e) {
-            return { success: false, reason: e.message || 'Failed to bulk delete', count: 0 };
         } finally {
-            _processing = false;
+            _releaseLock();
         }
     }
 
     // =========================================================================
-    // 8. RANDOM CHARACTER GENERATION
+    // 7. PUBLIC COMMANDS — RANDOM GENERATION
     // =========================================================================
 
     /**
-     * Helper: Gets country from location
-     */
-    function _getCountryFromLocation(locationId) {
-        if (!locationId) return null;
-        
-        var place = _getPlaceById(locationId);
-        if (!place) return null;
-        
-        // Check if this place itself is a country (priority 1)
-        var priority = _getLocationTypePriority(place.typeId);
-        if (priority === 1) {
-            return place;
-        }
-        
-        // Walk up the hierarchy to find a country
-        var current = place;
-        var visited = new Set();
-        
-        while (current && !visited.has(current.id)) {
-            visited.add(current.id);
-            var currentPriority = _getLocationTypePriority(current.typeId);
-            if (currentPriority === 1) {
-                return current;
-            }
-            if (!current.parentId) break;
-            current = _getPlaceById(current.parentId);
-        }
-        
-        return null;
-    }
-
-    /**
-     * Helper: Gets a random location with variable key
-     */
-    function _getRandomLocationWithVariableKey() {
-        var places = _getPlaces();
-        
-        // Filter places that have a variable key
-        var placesWithKey = places.filter(function(p) { 
-            return p.variableKey && p.variableKey !== ''; 
-        });
-        
-        if (placesWithKey.length === 0) {
-            var placesWithName = places.filter(function(p) { 
-                return p.displayName && p.displayName !== ''; 
-            });
-            if (placesWithName.length === 0) {
-                return null;
-            }
-            return placesWithName[Math.floor(Math.random() * placesWithName.length)];
-        }
-        
-        // Prioritize places that have name lists (cultural data)
-        var nameLists = _getNameLists();
-        var placesWithNameLists = placesWithKey.filter(function(p) {
-            return nameLists[p.id] && (nameLists[p.id].male || nameLists[p.id].female);
-        });
-        
-        if (placesWithNameLists.length > 0) {
-            return placesWithNameLists[Math.floor(Math.random() * placesWithNameLists.length)];
-        }
-        
-        return placesWithKey[Math.floor(Math.random() * placesWithKey.length)];
-    }
-
-    /**
-     * Helper: Gets a random country with name data
-     */
-    function _getRandomCountryWithNameData() {
-        var nameLists = _getNameLists();
-        var countryIds = Object.keys(nameLists).filter(function(id) {
-            var list = nameLists[id];
-            return list && (list.male || list.female);
-        });
-        
-        if (countryIds.length > 0) {
-            var countryId = countryIds[Math.floor(Math.random() * countryIds.length)];
-            return _getPlaceById(countryId);
-        }
-        
-        var places = _getPlaces();
-        var countries = places.filter(function(p) {
-            var priority = _getLocationTypePriority(p.typeId);
-            return priority === 1;
-        });
-        
-        if (countries.length > 0) {
-            return countries[Math.floor(Math.random() * countries.length)];
-        }
-        
-        return null;
-    }
-
-    /**
-     * Helper: Generate surname from rules
-     */
-    function _generateSurnameFromRules(mother, father, countryId, childGender) {
-        // Try to use the name system if available
-        if (typeof window.NameQueries !== 'undefined' && 
-            typeof window.NameQueries.generateSurnameFromRules === 'function') {
-            var rules = window.NameQueries.getCountrySurnameRules(countryId);
-            if (rules && rules.type) {
-                return window.NameQueries.generateSurnameFromRules(mother, father, childGender, rules);
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Generates a completely random character with cultural name support
-     * FULLY AUTOMATIC - NO USER INPUT REQUIRED
-     * 
-     * SURNAME PRIORITY (NO FALLBACK):
-     * 1. Country rules (Type 1 location) - applied via surname rules
-     * 2. Cultural surname from country (if exists)
-     * 3. NO SURNAME (empty string) - if no cultural surname exists
-     * 
-     * @param {Object} options - Optional configuration
-     * @param {string} options.gender - 'male', 'female', or null for random
-     * @param {number} options.age - Specific age, or null for random
-     * @param {string} options.countryId - Specific country, or null for random
-     * @param {boolean} options.assignProfession - Whether to assign a profession (default true)
-     * @param {string} options.religionId - Specific religion, or null for random
-     * @returns {Object} The created character
+     * Creates a fully random character.
+     *
+     * The generation rules live in character-generator.js. This command
+     * orchestrates: generate data → build character → mutate → commit.
+     *
+     * @param {Object} [options]
+     * @returns {{ success: boolean, data?: Object, reason?: string }}
      */
     function createRandomCharacter(options) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processing = true;
-
+        if (!_acquireLock()) return _alreadyProcessing();
         try {
-            options = options || {};
-            var currentYear = _getCurrentYear();
-            
-            // =========================================================================
-            // STEP 1: Select a random location with variable key for birthplace
-            // =========================================================================
-            
-            var birthplace = null;
-            var birthplaceId = null;
-            var birthplaceName = 'Unknown';
-            
-            if (options.countryId) {
-                var place = _getPlaceById(options.countryId);
-                if (place) {
-                    birthplace = place;
-                    birthplaceId = place.id;
-                    birthplaceName = place.displayName;
-                }
+            var generated = window.generateRandomCharacterData(options);
+            if (!generated || !generated.success) {
+                return {
+                    success: false,
+                    reason: generated ? generated.reason : 'Random generation failed'
+                };
             }
-            
-            if (!birthplace) {
-                birthplace = _getRandomLocationWithVariableKey();
-                if (birthplace) {
-                    birthplaceId = birthplace.id;
-                    birthplaceName = birthplace.displayName;
-                }
-            }
-            
-            // =========================================================================
-            // STEP 2: Determine the country for cultural names
-            // =========================================================================
-            
-            var country = null;
-            var countryId = null;
-            
-            if (birthplaceId) {
-                country = _getCountryFromLocation(birthplaceId);
-                if (country) countryId = country.id;
-            }
-            
-            // If no country found from birthplace, try to find any country with name data
-            if (!countryId) {
-                var randomCountry = _getRandomCountryWithNameData();
-                if (randomCountry) {
-                    country = randomCountry;
-                    countryId = randomCountry.id;
-                }
-            }
-            
-            // =========================================================================
-            // STEP 3: Generate gender
-            // =========================================================================
-            
-            var gender = options.gender || (Math.random() < 0.5 ? 'male' : 'female');
-            
-            // =========================================================================
-            // STEP 4: Generate age with weighted distribution
-            // =========================================================================
-            
-            var age;
-            if (options.age !== null && options.age !== undefined) {
-                age = options.age;
-            } else {
-                var ageRoll = Math.random();
-                if (ageRoll < 0.10) age = Math.floor(Math.random() * 6);           // 0-5: 10%
-                else if (ageRoll < 0.25) age = 6 + Math.floor(Math.random() * 12);  // 6-17: 15%
-                else if (ageRoll < 0.55) age = 18 + Math.floor(Math.random() * 18); // 18-35: 30%
-                else if (ageRoll < 0.80) age = 36 + Math.floor(Math.random() * 20); // 36-55: 25%
-                else if (ageRoll < 0.95) age = 56 + Math.floor(Math.random() * 20); // 56-75: 15%
-                else age = 76 + Math.floor(Math.random() * 15);                     // 76-90: 5%
-            }
-            
-            var birthYear = currentYear - age;
-            
-            // =========================================================================
-            // STEP 5: Generate name from culture
-            // =========================================================================
-            
-            var name = _getRandomNameFromCountry(countryId, gender);
-            if (!name) {
-                var fallbackNames = gender === 'male' ? 
-                    ['William', 'John', 'James', 'Robert', 'Thomas', 'Richard', 'Henry', 'Edward', 'George', 'Charles'] :
-                    ['Mary', 'Elizabeth', 'Margaret', 'Anne', 'Catherine', 'Jane', 'Alice', 'Eleanor', 'Lucy', 'Rose'];
-                name = fallbackNames[Math.floor(Math.random() * fallbackNames.length)];
-            }
-            
-            // =========================================================================
-            // STEP 6: Generate surname from culture - NO FALLBACK
-            // =========================================================================
-            
-            var surname = '';
-            
-            // Try to generate surname from country rules first
-            if (countryId) {
-                var generatedSurname = _generateSurnameFromRules(null, null, countryId, gender);
-                if (generatedSurname) {
-                    surname = generatedSurname;
-                }
-            }
-            
-            // If no rules generated a surname, try cultural surname
-            if (!surname && countryId) {
-                var culturalSurname = _getRandomSurnameFromCountry(countryId);
-                if (culturalSurname && culturalSurname !== '' && 
-                    culturalSurname !== 'Unknown' && culturalSurname !== 'Unnamed') {
-                    surname = culturalSurname;
-                }
-            }
-            
-            // If still no surname, leave EMPTY (no fallback)
-            
-            // =========================================================================
-            // STEP 7: Select a religion
-            // =========================================================================
-            
-            var religionId = null;
-            
-            if (options.religionId) {
-                religionId = options.religionId;
-            } else {
-                // Try to find a religion at the birthplace location
-                if (birthplaceId && typeof window.ReligionQueries !== 'undefined') {
-                    var religions = window.ReligionQueries.getReligionsByLocation(birthplaceId);
-                    if (religions && religions.length > 0) {
-                        // Weight by follower count
-                        var weightedReligions = [];
-                        for (var i = 0; i < religions.length; i++) {
-                            var count = 0;
-                            if (typeof window.ReligionQueries.getFollowerCount === 'function') {
-                                count = window.ReligionQueries.getFollowerCount(religions[i].id);
-                            }
-                            // Minimum weight of 1 for any religion at location
-                            weightedReligions.push({
-                                religion: religions[i],
-                                weight: Math.max(1, count)
-                            });
-                        }
-                        
-                        var totalWeight = 0;
-                        for (var i = 0; i < weightedReligions.length; i++) {
-                            totalWeight += weightedReligions[i].weight;
-                        }
-                        
-                        if (totalWeight > 0) {
-                            var roll = Math.random() * totalWeight;
-                            var accumulated = 0;
-                            for (var i = 0; i < weightedReligions.length; i++) {
-                                accumulated += weightedReligions[i].weight;
-                                if (roll <= accumulated) {
-                                    religionId = weightedReligions[i].religion.id;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // =========================================================================
-            // STEP 8: Determine culture for appearance
-            // =========================================================================
-            
-            var cultureId = null;
-            if (birthplaceId) {
-                cultureId = _getCultureForLocation(birthplaceId);
-            }
-            
-            // =========================================================================
-            // STEP 9: Generate appearance from culture
-            // =========================================================================
-            
-            var appearance = _generateAppearance(cultureId, gender);
-            
-            // =========================================================================
-            // STEP 10: Build the character object
-            // =========================================================================
-            
-            var character = {
-                id: _generateId('char'),
-                name: name,
-                surname: surname,
-                surnameSource: surname ? (countryId ? 'cultural' : 'fallback') : 'none',
-                surnameRules: null,
-                gender: gender,
-                attraction: 'both',
-                birthYear: birthYear,
-                isDeceased: false,
-                deathYear: null,
-                deathCause: null,
-                birthplaceId: birthplaceId,
-                currentLocationId: birthplaceId,
-                moves: [],
-                notes: 'Randomly generated character',
-                isLegitimate: true,
-                surnameHistory: {
-                    birthSurname: surname,
-                    entries: [],
-                    lastUpdated: birthYear
-                },
-                religionId: religionId,
-                religionHistory: [],
-                cultureId: cultureId,
-                appearance: appearance,
-                relationships: [],
-                friends: [],
-                household: null,
-                rankAssignments: [],
-                activeRankId: null,
-                activeRankNumber: null,
-                professions: [],
-                adoptedParents: [],
-                adoptedChildren: [],
-                apprentices: [],
-                masterId: null,
-                isMaster: false,
-                masterProfessionId: null,
-                apprenticeshipDetails: {},
-                friendshipDetails: {},
-                epithet: '',
-                children: [],
-                householdHistory: [],
-                isDeleted: false,
-                deletedAt: null,
-                createdAt: Date.now(),
-                updatedAt: Date.now()
-            };
-            
-            // =========================================================================
-            // STEP 11: Assign a random profession (if roles exist and enabled)
-            // =========================================================================
-            
-            if (options.assignProfession !== false && age >= 14) {
-                var allRoles = [];
-                if (typeof window.getRoles === 'function') {
-                    allRoles = window.getRoles();
-                } else if (window.masterData && window.masterData.data && window.masterData.data.roles) {
-                    allRoles = window.masterData.data.roles;
-                }
-                
-                if (allRoles && allRoles.length > 0) {
-                    var eligibleRoles = allRoles.filter(function(role) {
-                        if (!role.genderRestriction || role.genderRestriction === 'both') return true;
-                        return role.genderRestriction === gender;
-                    });
-                    
-                    if (eligibleRoles.length > 0) {
-                        var randomRole = eligibleRoles[Math.floor(Math.random() * eligibleRoles.length)];
-                        var skillLevel = 20 + Math.floor(Math.random() * 60);
-                        if (skillLevel > 90) skillLevel = 90;
-                        
-                        character.professions = [{
-                            id: randomRole.id,
-                            name: randomRole.name,
-                            skillLevel: skillLevel,
-                            primary: true
-                        }];
-                    }
-                }
-            }
-            
-            // =========================================================================
-            // STEP 12: Add to data and save
-            // =========================================================================
-            
-            var state = _getState();
-            if (state) {
-                var characters = state.getAllCharacters();
-                characters.push(character);
-                state._setCharacters(characters);
-                state._emitCharacterChange('create', character);
-            } else {
-                var allChars = _getCharacters();
-                allChars.push(character);
-                if (typeof window.saveMasterData === 'function') {
-                    window.saveMasterData();
-                }
-            }
-            
-            _invalidateCaches();
-            _logEvent('character', 'Random Character Created', 'Randomly generated: ' + character.name, [character]);
-            
-            return { success: true, data: character };
 
-        } catch (e) {
-            return { success: false, reason: e.message || 'Failed to generate random character' };
+            var result = _createCharacterInternal(generated.data);
+            if (!result.success) return result;
+
+            _commit('create', [result.data.id]);
+            return result;
         } finally {
-            _processing = false;
+            _releaseLock();
         }
     }
 
     // =========================================================================
-    // 9. HELPER - SAVE CHARACTER
+    // 8. PUBLIC COMMANDS — PROFESSION MANAGEMENT
     // =========================================================================
 
-    function _saveCharacter(character, state) {
-        if (state) {
-            var characters = state.getAllCharacters();
-            var index = -1;
-            for (var j = 0; j < characters.length; j++) {
-                if (characters[j].id === character.id) {
-                    index = j;
-                    break;
-                }
-            }
-            if (index !== -1) {
-                characters[index] = character;
-                state._setCharacters(characters);
-                state._emitCharacterChange('update', character);
-            }
-        } else {
-            if (typeof window.saveMasterData === 'function') {
-                window.saveMasterData();
-            }
-        }
-    }
-
-    // =========================================================================
-    // 10. PROFESSION MANAGEMENT - FULL
-    // =========================================================================
-
+    /**
+     * Adds a profession to a character.
+     *
+     * @param {string} characterId
+     * @param {string} roleId
+     * @param {Object} [options]
+     * @param {number} [options.skillLevel] - 0..100, default 10
+     * @param {boolean} [options.isPrimary] - default: true if first profession
+     * @param {number} [options.startYear]
+     * @param {string[]} [options.specializations]
+     * @param {string} [options.notes]
+     * @returns {{ success: boolean, profession?: Object, reason?: string }}
+     */
     function addProfession(characterId, roleId, options) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processing = true;
-
+        if (!_acquireLock()) return _alreadyProcessing();
         try {
-            options = options || {};
-            var state = _getState();
-            var character = state ? state.getCharacter(characterId) : _getCharacterById(characterId);
-
-            if (!character) {
-                return { success: false, reason: 'Character not found' };
+            if (_isMissing(options)) options = {};
+            if (typeof options !== 'object' || Array.isArray(options)) {
+                return { success: false, reason: 'Options must be an object' };
             }
 
-            if (character.isDeleted === true) {
-                return { success: false, reason: 'Character is soft-deleted' };
+            var resolved = _ensureLiveCharacter(characterId);
+            if (!resolved.ok) return resolved.result;
+            var character = resolved.character;
+
+            if (!_hasId(roleId)) {
+                return { success: false, reason: 'Role ID must be a non-empty string' };
             }
 
-            var role = _safeGetRoleById(roleId);
+            var role = window.getRoleById(roleId);
             if (!role) {
                 return { success: false, reason: 'Role not found' };
             }
 
-            if (!character.professions) {
+            if (!Array.isArray(character.professions)) {
                 character.professions = [];
             }
-
             for (var i = 0; i < character.professions.length; i++) {
                 if (character.professions[i].id === roleId) {
                     return { success: false, reason: 'Character already has this profession' };
                 }
             }
 
-            var startYear = options.startYear || _getCurrentYear();
-            var skillLevel = options.skillLevel !== undefined ? Math.min(100, Math.max(0, options.skillLevel)) : 10;
-            var isPrimary = options.isPrimary !== undefined ? options.isPrimary : (character.professions.length === 0);
+            var skillResult = _validateSkillLevel(options.skillLevel, 10);
+            if (!skillResult.ok) return { success: false, reason: skillResult.reason };
+
+            var startYearResult = _validateYear(options.startYear, 'startYear');
+            if (!startYearResult.ok) return { success: false, reason: startYearResult.reason };
+
+            var isPrimary = options.isPrimary === undefined
+                ? character.professions.length === 0
+                : options.isPrimary === true;
 
             var newProfession = {
                 id: roleId,
-                name: role.name,
                 primary: isPrimary,
-                specs: options.specializations || [],
-                skillLevel: skillLevel,
-                startYear: startYear,
-                notes: options.notes || ''
+                specs: Array.isArray(options.specializations) ? options.specializations.slice() : [],
+                skillLevel: skillResult.value,
+                startYear: _resolveYear(startYearResult.value),
+                notes: typeof options.notes === 'string' ? options.notes : ''
             };
 
             character.professions.push(newProfession);
 
             if (isPrimary) {
-                for (var i = 0; i < character.professions.length; i++) {
-                    if (character.professions[i] !== newProfession) {
-                        character.professions[i].primary = false;
+                for (var j = 0; j < character.professions.length; j++) {
+                    if (character.professions[j] !== newProfession) {
+                        character.professions[j].primary = false;
                     }
                 }
             }
 
             character.updatedAt = Date.now();
-
-            _saveCharacter(character, state);
-
-            _invalidateCaches();
-            _logEvent('profession', 'Profession Added', 'Added ' + role.name + ' to ' + character.name, [character]);
-
+            _commit('update', [characterId]);
             return { success: true, profession: newProfession };
-
         } finally {
-            _processing = false;
+            _releaseLock();
         }
     }
 
+    /**
+     * Removes a profession from a character.
+     */
     function removeProfession(characterId, roleId) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processing = true;
-
+        if (!_acquireLock()) return _alreadyProcessing();
         try {
-            var state = _getState();
-            var character = state ? state.getCharacter(characterId) : _getCharacterById(characterId);
+            var resolved = _ensureLiveCharacter(characterId);
+            if (!resolved.ok) return resolved.result;
+            var character = resolved.character;
 
-            if (!character || !character.professions) {
-                return { success: false, reason: 'Character or professions not found' };
-            }
-
-            if (character.isDeleted === true) {
-                return { success: false, reason: 'Character is soft-deleted' };
+            if (!Array.isArray(character.professions) || character.professions.length === 0) {
+                return { success: false, reason: 'Character has no professions' };
             }
 
             var index = -1;
-            var removedProfession = null;
+            var wasPrimary = false;
             for (var i = 0; i < character.professions.length; i++) {
                 if (character.professions[i].id === roleId) {
                     index = i;
-                    removedProfession = character.professions[i];
+                    wasPrimary = character.professions[i].primary === true;
                     break;
                 }
             }
@@ -1665,40 +933,40 @@
 
             character.professions.splice(index, 1);
 
-            if (removedProfession.primary && character.professions.length > 0) {
-                character.professions[0].primary = true;
+            // Promotion policy: earliest start year becomes primary.
+            if (wasPrimary && character.professions.length > 0) {
+                var promoted = character.professions[0];
+                for (var j = 1; j < character.professions.length; j++) {
+                    var p = character.professions[j];
+                    var pYear = p.startYear;
+                    var promotedYear = promoted.startYear;
+                    if (_isMissing(promotedYear)) { promoted = p; continue; }
+                    if (_isMissing(pYear)) continue;
+                    if (pYear < promotedYear) promoted = p;
+                }
+                promoted.primary = true;
             }
 
             character.updatedAt = Date.now();
-
-            _saveCharacter(character, state);
-
-            _invalidateCaches();
-            _logEvent('profession', 'Profession Removed', 'Removed ' + (removedProfession.name || roleId) + ' from ' + character.name, [character]);
-
+            _commit('update', [characterId]);
             return { success: true };
-
         } finally {
-            _processing = false;
+            _releaseLock();
         }
     }
 
+    /**
+     * Updates a profession's skill level.
+     */
     function updateProfessionSkill(characterId, roleId, newSkillLevel) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processing = true;
-
+        if (!_acquireLock()) return _alreadyProcessing();
         try {
-            var state = _getState();
-            var character = state ? state.getCharacter(characterId) : _getCharacterById(characterId);
+            var resolved = _ensureLiveCharacter(characterId);
+            if (!resolved.ok) return resolved.result;
+            var character = resolved.character;
 
-            if (!character || !character.professions) {
-                return { success: false, reason: 'Character or professions not found' };
-            }
-
-            if (character.isDeleted === true) {
-                return { success: false, reason: 'Character is soft-deleted' };
+            if (!Array.isArray(character.professions)) {
+                return { success: false, reason: 'Character has no professions' };
             }
 
             var profession = null;
@@ -1712,44 +980,42 @@
                 return { success: false, reason: 'Profession not found' };
             }
 
-            var oldLevel = profession.skillLevel || 0;
-            var boundedLevel = Math.min(100, Math.max(0, newSkillLevel));
-            profession.skillLevel = boundedLevel;
+            var skillResult = _validateSkillLevel(newSkillLevel, null);
+            if (!skillResult.ok) return { success: false, reason: skillResult.reason };
+            if (skillResult.value === null) {
+                return { success: false, reason: 'Skill level is required' };
+            }
+
+            var oldLevel = profession.skillLevel;
+            if (typeof oldLevel !== 'number' || !Number.isInteger(oldLevel)) oldLevel = 0;
+
+            profession.skillLevel = skillResult.value;
             character.updatedAt = Date.now();
-
-            _saveCharacter(character, state);
-
-            _invalidateCaches();
+            _commit('update', [characterId]);
 
             return {
                 success: true,
                 profession: profession,
                 oldLevel: oldLevel,
-                newLevel: boundedLevel,
-                increased: boundedLevel - oldLevel
+                newLevel: skillResult.value
             };
-
         } finally {
-            _processing = false;
+            _releaseLock();
         }
     }
 
+    /**
+     * Sets a profession as primary; demotes all others.
+     */
     function setPrimaryProfession(characterId, roleId) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processing = true;
-
+        if (!_acquireLock()) return _alreadyProcessing();
         try {
-            var state = _getState();
-            var character = state ? state.getCharacter(characterId) : _getCharacterById(characterId);
+            var resolved = _ensureLiveCharacter(characterId);
+            if (!resolved.ok) return resolved.result;
+            var character = resolved.character;
 
-            if (!character || !character.professions) {
-                return { success: false, reason: 'Character or professions not found' };
-            }
-
-            if (character.isDeleted === true) {
-                return { success: false, reason: 'Character is soft-deleted' };
+            if (!Array.isArray(character.professions)) {
+                return { success: false, reason: 'Character has no professions' };
             }
 
             var found = false;
@@ -1767,35 +1033,26 @@
             }
 
             character.updatedAt = Date.now();
-
-            _saveCharacter(character, state);
-
-            _invalidateCaches();
-
+            _commit('update', [characterId]);
             return { success: true };
-
         } finally {
-            _processing = false;
+            _releaseLock();
         }
     }
 
+    /**
+     * Adds a specialization to a profession.
+     */
     function addProfessionSpecialization(characterId, roleId, specialization) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processing = true;
-
+        if (!_acquireLock()) return _alreadyProcessing();
         try {
-            var state = _getState();
-            var character = state ? state.getCharacter(characterId) : _getCharacterById(characterId);
-
-            if (!character || !character.professions) {
-                return { success: false, reason: 'Character or professions not found' };
+            if (typeof specialization !== 'string' || specialization.length === 0) {
+                return { success: false, reason: 'Specialization must be a non-empty string' };
             }
 
-            if (character.isDeleted === true) {
-                return { success: false, reason: 'Character is soft-deleted' };
-            }
+            var resolved = _ensureLiveCharacter(characterId);
+            if (!resolved.ok) return resolved.result;
+            var character = resolved.character;
 
             var profession = null;
             for (var i = 0; i < character.professions.length; i++) {
@@ -1808,45 +1065,29 @@
                 return { success: false, reason: 'Profession not found' };
             }
 
-            if (!profession.specs) {
-                profession.specs = [];
-            }
-
+            if (!Array.isArray(profession.specs)) profession.specs = [];
             if (profession.specs.indexOf(specialization) !== -1) {
-                return { success: false, reason: 'Already has this specialization' };
+                return { success: false, reason: 'Character already has this specialization' };
             }
 
             profession.specs.push(specialization);
             character.updatedAt = Date.now();
-
-            _saveCharacter(character, state);
-
-            _invalidateCaches();
-
+            _commit('update', [characterId]);
             return { success: true, specialization: specialization };
-
         } finally {
-            _processing = false;
+            _releaseLock();
         }
     }
 
+    /**
+     * Removes a specialization from a profession.
+     */
     function removeProfessionSpecialization(characterId, roleId, specialization) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processing = true;
-
+        if (!_acquireLock()) return _alreadyProcessing();
         try {
-            var state = _getState();
-            var character = state ? state.getCharacter(characterId) : _getCharacterById(characterId);
-
-            if (!character || !character.professions) {
-                return { success: false, reason: 'Character or professions not found' };
-            }
-
-            if (character.isDeleted === true) {
-                return { success: false, reason: 'Character is soft-deleted' };
-            }
+            var resolved = _ensureLiveCharacter(characterId);
+            if (!resolved.ok) return resolved.result;
+            var character = resolved.character;
 
             var profession = null;
             for (var i = 0; i < character.professions.length; i++) {
@@ -1855,7 +1096,7 @@
                     break;
                 }
             }
-            if (!profession || !profession.specs) {
+            if (!profession || !Array.isArray(profession.specs)) {
                 return { success: false, reason: 'Profession or specializations not found' };
             }
 
@@ -1866,627 +1107,310 @@
 
             profession.specs.splice(index, 1);
             character.updatedAt = Date.now();
-
-            _saveCharacter(character, state);
-
-            _invalidateCaches();
-
+            _commit('update', [characterId]);
             return { success: true };
-
         } finally {
-            _processing = false;
+            _releaseLock();
         }
     }
 
     // =========================================================================
-    // 11. SURNAME HISTORY - FULL
+    // 9. PUBLIC COMMANDS — SURNAME HISTORY
     // =========================================================================
 
-    function getCharacterSurnameHistory(id) {
-        var state = _getState();
-        var character = state ? state.getCharacter(id) : _getCharacterById(id);
-        if (!character) return null;
-
-        if (!character.surnameHistory) {
-            character.surnameHistory = {
-                birthSurname: character.surname || '',
-                entries: [],
-                lastUpdated: character.birthYear || _getCurrentYear()
-            };
-            _saveCharacter(character, state);
-        }
-        return character.surnameHistory;
-    }
-
-    function getCharacterBirthSurname(id) {
-        var history = getCharacterSurnameHistory(id);
-        return history ? history.birthSurname : '';
-    }
-
-    function getCharacterSurnameChanges(id) {
-        var history = getCharacterSurnameHistory(id);
-        return history ? history.entries : [];
-    }
-
+    /**
+     * Records a surname change.
+     *
+     * @param {string} id
+     * @param {string} newSurname
+     * @param {number} [year]
+     * @param {string} [reason]
+     * @param {Object} [options]
+     * @returns {{ success: boolean, change?: Object, reason?: string }}
+     */
     function recordCharacterSurnameChange(id, newSurname, year, reason, options) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processing = true;
-
+        if (!_acquireLock()) return _alreadyProcessing();
         try {
-            options = options || {};
-            var state = _getState();
-            var character = state ? state.getCharacter(id) : _getCharacterById(id);
-
-            if (!character) {
-                return { success: false, reason: 'Character not found' };
+            if (typeof newSurname !== 'string') {
+                return { success: false, reason: 'New surname must be a string' };
+            }
+            if (_isMissing(options)) options = {};
+            if (typeof options !== 'object' || Array.isArray(options)) {
+                return { success: false, reason: 'Options must be an object' };
             }
 
-            if (character.isDeleted === true) {
-                return { success: false, reason: 'Character is soft-deleted' };
+            var resolved = _ensureLiveCharacter(id);
+            if (!resolved.ok) return resolved.result;
+            var character = resolved.character;
+
+            var yearResult = _validateYear(year, 'year');
+            if (!yearResult.ok) return { success: false, reason: yearResult.reason };
+            var changeYear = _resolveYear(yearResult.value);
+
+            // Ensure surname history exists. This is a mutation; it lives
+            // here, not in a getter.
+            if (!character.surnameHistory || typeof character.surnameHistory !== 'object') {
+                character.surnameHistory = {
+                    birthSurname: typeof character.surname === 'string' ? character.surname : '',
+                    entries: [],
+                    lastUpdated: _resolveYear(character.birthYear)
+                };
+            }
+            if (!Array.isArray(character.surnameHistory.entries)) {
+                character.surnameHistory.entries = [];
             }
 
-            var history = getCharacterSurnameHistory(id);
-            var previousSurname = options.previousSurname || character.surname || '';
-            var changeYear = year || _getCurrentYear();
+            var previousSurname = _isMissing(options.previousSurname)
+                ? (typeof character.surname === 'string' ? character.surname : '')
+                : options.previousSurname;
 
             var change = {
                 surname: newSurname,
                 year: changeYear,
-                reason: reason || 'custom',
+                reason: typeof reason === 'string' ? reason : 'custom',
                 previousSurname: previousSurname,
-                spouseId: options.spouseId || null,
-                notes: options.notes || ''
+                spouseId: _isMissing(options.spouseId) ? null : options.spouseId,
+                notes: _isMissing(options.notes) ? '' : options.notes
             };
 
-            history.entries.push(change);
-            history.lastUpdated = changeYear;
+            character.surnameHistory.entries.push(change);
+            character.surnameHistory.lastUpdated = changeYear;
             character.surname = newSurname;
             character.updatedAt = Date.now();
 
-            _saveCharacter(character, state);
-
-            _invalidateCaches();
-            _logEvent('surname', 'Surname Changed', character.name + ' changed surname to ' + newSurname, [character]);
-
+            _commit('update', [id]);
             return { success: true, change: change };
-
         } finally {
-            _processing = false;
+            _releaseLock();
         }
     }
 
+    /**
+     * Reverts the most recent surname change.
+     */
     function revertCharacterSurnameChange(id) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processing = true;
-
+        if (!_acquireLock()) return _alreadyProcessing();
         try {
-            var state = _getState();
-            var character = state ? state.getCharacter(id) : _getCharacterById(id);
+            var resolved = _ensureLiveCharacter(id);
+            if (!resolved.ok) return resolved.result;
+            var character = resolved.character;
 
-            if (!character) {
-                return { success: false, reason: 'Character not found' };
-            }
-
-            if (character.isDeleted === true) {
-                return { success: false, reason: 'Character is soft-deleted' };
-            }
-
-            var history = getCharacterSurnameHistory(id);
-            if (history.entries.length === 0) {
+            if (!character.surnameHistory
+                || !Array.isArray(character.surnameHistory.entries)
+                || character.surnameHistory.entries.length === 0) {
                 return { success: false, reason: 'No surname changes to revert' };
             }
 
-            var lastChange = history.entries.pop();
-            history.lastUpdated = history.entries.length > 0 ?
-                history.entries[history.entries.length - 1].year :
-                character.birthYear || _getCurrentYear();
+            var lastChange = character.surnameHistory.entries.pop();
+            character.surnameHistory.lastUpdated =
+                character.surnameHistory.entries.length > 0
+                    ? character.surnameHistory.entries[character.surnameHistory.entries.length - 1].year
+                    : _resolveYear(character.birthYear);
 
-            character.surname = lastChange.previousSurname || history.birthSurname || '';
+            character.surname = lastChange.previousSurname
+                || character.surnameHistory.birthSurname
+                || '';
             character.updatedAt = Date.now();
 
-            _saveCharacter(character, state);
-
-            _invalidateCaches();
-
+            _commit('update', [id]);
             return { success: true, reverted: lastChange };
-
         } finally {
-            _processing = false;
+            _releaseLock();
         }
     }
 
     // =========================================================================
-    // 12. RELIGION MANAGEMENT
+    // 10. PUBLIC COMMANDS — RELIGION ORCHESTRATION
     // =========================================================================
+    //
+    // These are thin orchestrators. ReligionCommands owns the actual
+    // religion mutation. CharacterCommands coordinates the character-level
+    // commit and event.
+
+    function _requireReligionCommands() {
+        if (typeof window.ReligionCommands === 'undefined') {
+            return { ok: false, reason: 'ReligionCommands module is not loaded' };
+        }
+        return { ok: true };
+    }
 
     /**
-     * Assigns a religion to a character
-     * @param {string} characterId - Character ID
-     * @param {string} religionId - Religion ID
-     * @param {Object} options - Options { year, reason, notes }
-     * @returns {Object} Result object
+     * Assigns a religion to a character.
+     * If the character already has a different religion, converts instead.
+     *
+     * @param {string} characterId
+     * @param {string} religionId
+     * @param {Object} [options]
+     * @returns {{ success: boolean, data?: Object, reason?: string }}
      */
     function assignCharacterReligion(characterId, religionId, options) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processing = true;
-
+        if (!_acquireLock()) return _alreadyProcessing();
         try {
-            var state = _getState();
-            var character = state ? state.getCharacter(characterId) : _getCharacterById(characterId);
+            var deps = _requireReligionCommands();
+            if (!deps.ok) return { success: false, reason: deps.reason };
 
-            if (!character) {
-                return { success: false, reason: 'Character not found' };
+            if (_isMissing(options)) options = {};
+            if (typeof options !== 'object' || Array.isArray(options)) {
+                return { success: false, reason: 'Options must be an object' };
             }
 
-            if (character.isDeleted === true) {
-                return { success: false, reason: 'Character is soft-deleted' };
+            var resolved = _ensureLiveCharacter(characterId);
+            if (!resolved.ok) return resolved.result;
+            var character = resolved.character;
+
+            if (!_hasId(religionId)) {
+                return { success: false, reason: 'Religion ID must be a non-empty string' };
             }
 
-            var religion = _getReligion(religionId);
-            if (!religion) {
-                return { success: false, reason: 'Religion not found' };
-            }
-
-            if (religion.isDeprecated) {
-                return { success: false, reason: 'Cannot assign deprecated religion' };
-            }
-
-            options = options || {};
-
-            // If character already has a religion, convert instead
-            if (character.religionId && character.religionId !== religionId) {
-                return convertCharacterReligion(characterId, religionId, options);
-            }
-
-            // If character already has this religion, just return success
             if (character.religionId === religionId) {
                 return { success: true, data: character, message: 'Character already has this religion' };
             }
 
-            // Use ReligionCommands
-            var result = _assignReligionToCharacter(characterId, religionId, {
-                year: options.year || _getCurrentYear(),
-                reason: options.reason || 'assignment',
-                notes: options.notes || ''
-            });
+            var yearResult = _validateYear(options.year, 'year');
+            if (!yearResult.ok) return { success: false, reason: yearResult.reason };
 
-            if (result && result.success) {
-                _invalidateCaches();
-                _logEvent('religion', 'Religion Assigned', 'Assigned ' + religion.name + ' to ' + character.name, [character]);
-                return result;
+            var result;
+            if (_hasId(character.religionId)) {
+                // Convert path — this is a public command in ReligionCommands,
+                // not in this module, so no lock conflict.
+                result = window.ReligionCommands.convertCharacter(characterId, religionId, {
+                    year: _resolveYear(yearResult.value),
+                    reason: _isMissing(options.reason) ? 'personal' : options.reason,
+                    notes: _isMissing(options.notes) ? '' : options.notes
+                });
+            } else {
+                result = window.ReligionCommands.assignReligionToCharacter(characterId, religionId, {
+                    year: _resolveYear(yearResult.value),
+                    reason: _isMissing(options.reason) ? 'assignment' : options.reason,
+                    notes: _isMissing(options.notes) ? '' : options.notes
+                });
             }
 
-            return { success: false, reason: result ? result.reason : 'Failed to assign religion' };
+            if (!result || !result.success) {
+                return { success: false, reason: result ? result.reason : 'Religion mutation failed' };
+            }
 
-        } catch (e) {
-            return { success: false, reason: e.message || 'Failed to assign religion' };
+            _commit('update', [characterId]);
+            return result;
         } finally {
-            _processing = false;
+            _releaseLock();
         }
     }
 
     /**
-     * Removes religion from a character
-     * @param {string} characterId - Character ID
-     * @returns {Object} Result object
+     * Removes a character's religion.
      */
     function removeCharacterReligion(characterId) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processing = true;
-
+        if (!_acquireLock()) return _alreadyProcessing();
         try {
-            var state = _getState();
-            var character = state ? state.getCharacter(characterId) : _getCharacterById(characterId);
+            var deps = _requireReligionCommands();
+            if (!deps.ok) return { success: false, reason: deps.reason };
 
-            if (!character) {
-                return { success: false, reason: 'Character not found' };
-            }
+            var resolved = _ensureLiveCharacter(characterId);
+            if (!resolved.ok) return resolved.result;
+            var character = resolved.character;
 
-            if (character.isDeleted === true) {
-                return { success: false, reason: 'Character is soft-deleted' };
-            }
-
-            if (!character.religionId) {
+            if (!_hasId(character.religionId)) {
                 return { success: false, reason: 'Character has no religion' };
             }
 
-            var result = _removeReligionFromCharacter(characterId);
-
-            if (result && result.success) {
-                _invalidateCaches();
-                _logEvent('religion', 'Religion Removed', 'Removed religion from ' + character.name, [character]);
-                return result;
+            var result = window.ReligionCommands.removeReligionFromCharacter(characterId);
+            if (!result || !result.success) {
+                return { success: false, reason: result ? result.reason : 'Religion removal failed' };
             }
 
-            return { success: false, reason: result ? result.reason : 'Failed to remove religion' };
-
-        } catch (e) {
-            return { success: false, reason: e.message || 'Failed to remove religion' };
+            _commit('update', [characterId]);
+            return result;
         } finally {
-            _processing = false;
+            _releaseLock();
         }
     }
 
+    // =========================================================================
+    // 11. PUBLIC COMMANDS — FAMILY ORCHESTRATION
+    // =========================================================================
+
     /**
-     * Converts a character to a new religion (with history tracking)
-     * @param {string} characterId - Character ID
-     * @param {string} newReligionId - New religion ID
-     * @param {Object} options - Options { year, reason, notes }
-     * @returns {Object} Result object
+     * Sets a parent relationship. Delegates the graph mutation to
+     * FamilyCommands.
+     *
+     * @param {string} childId
+     * @param {string} parentId
+     * @param {string} parentType - 'mother' | 'father'
+     * @param {Object} [options]
+     * @returns {{ success: boolean, reason?: string }}
      */
-    function convertCharacterReligion(characterId, newReligionId, options) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processing = true;
-
+    function addChildToParent(childId, parentId, parentType, options) {
+        if (!_acquireLock()) return _alreadyProcessing();
         try {
-            var state = _getState();
-            var character = state ? state.getCharacter(characterId) : _getCharacterById(characterId);
-
-            if (!character) {
-                return { success: false, reason: 'Character not found' };
+            if (_isMissing(options)) options = {};
+            if (typeof options !== 'object' || Array.isArray(options)) {
+                return { success: false, reason: 'Options must be an object' };
             }
 
-            if (character.isDeleted === true) {
-                return { success: false, reason: 'Character is soft-deleted' };
-            }
-
-            var newReligion = _getReligion(newReligionId);
-            if (!newReligion) {
-                return { success: false, reason: 'Religion not found' };
-            }
-
-            if (newReligion.isDeprecated) {
-                return { success: false, reason: 'Cannot convert to deprecated religion' };
-            }
-
-            options = options || {};
-
-            // Use ReligionCommands.convertCharacter
-            var result = _convertCharacter(characterId, newReligionId, {
-                year: options.year || _getCurrentYear(),
-                reason: options.reason || 'personal',
-                notes: options.notes || ''
+            var result = window.FamilyCommands.setParent(childId, parentId, parentType, {
+                biological: options.biological !== false,
+                startYear: _resolveYear(options.startYear),
+                notes: _isMissing(options.notes) ? '' : options.notes
             });
 
-            if (result && result.success) {
-                _invalidateCaches();
-                _logEvent('religion', 'Religion Converted', 'Converted ' + character.name + ' to ' + newReligion.name, [character]);
-                return result;
+            if (!result || !result.success) {
+                return { success: false, reason: result ? result.reason : 'Family mutation failed' };
             }
 
-            return { success: false, reason: result ? result.reason : 'Failed to convert character' };
-
-        } catch (e) {
-            return { success: false, reason: e.message || 'Failed to convert character' };
+            _commit('update', [childId, parentId]);
+            return { success: true };
         } finally {
-            _processing = false;
+            _releaseLock();
         }
     }
 
     /**
-     * Gets a character's religion history
-     * @param {string} characterId - Character ID
-     * @returns {Array} Array of conversion events
+     * Removes a parent relationship.
+     *
+     * @param {string} childId
+     * @param {string} parentType - 'mother' | 'father'
+     * @returns {{ success: boolean, reason?: string }}
      */
-    function getCharacterReligionHistory(characterId) {
-        var state = _getState();
-        var character = state ? state.getCharacter(characterId) : _getCharacterById(characterId);
-        if (!character) return [];
-        return character.religionHistory || [];
-    }
-
-    /**
-     * Gets a character's current religion
-     * @param {string} characterId - Character ID
-     * @returns {Object|null} Religion object or null
-     */
-    function getCharacterReligion(characterId) {
-        var state = _getState();
-        var character = state ? state.getCharacter(characterId) : _getCharacterById(characterId);
-        if (!character) return null;
-        if (!character.religionId) return null;
-        return _getReligion(character.religionId);
-    }
-
-    // =========================================================================
-    // 13. UPDATE CHARACTER NAME
-    // =========================================================================
-
-    function updateCharacterName(id, name, surname) {
-        surname = (surname !== undefined) ? surname : null;
-        var state = _getState();
-        var character = state ? state.getCharacter(id) : _getCharacterById(id);
-
-        if (!character) return null;
-
-        if (character.isDeleted === true) {
-            _showToast('Cannot update soft-deleted character', 'error');
-            return null;
-        }
-
-        character.name = name;
-        if (surname !== null) character.surname = surname;
-        character.updatedAt = Date.now();
-
-        _saveCharacter(character, state);
-        _invalidateCaches();
-
-        return character;
-    }
-
-    function updateCharacterBirth(id, birthYear, birthplaceId) {
-        birthplaceId = (birthplaceId !== undefined) ? birthplaceId : null;
-        var state = _getState();
-        var character = state ? state.getCharacter(id) : _getCharacterById(id);
-
-        if (!character) return null;
-
-        if (character.isDeleted === true) {
-            _showToast('Cannot update soft-deleted character', 'error');
-            return null;
-        }
-
-        character.birthYear = birthYear;
-        if (birthplaceId !== null) character.birthplaceId = birthplaceId;
-        character.updatedAt = Date.now();
-
-        _saveCharacter(character, state);
-        _invalidateCaches();
-
-        return character;
-    }
-
-    function updateCharacterDeath(id, isDeceased, deathYear, deathCause) {
-        deathYear = (deathYear !== undefined) ? deathYear : null;
-        deathCause = (deathCause !== undefined) ? deathCause : null;
-        var state = _getState();
-        var character = state ? state.getCharacter(id) : _getCharacterById(id);
-
-        if (!character) return null;
-
-        if (character.isDeleted === true) {
-            _showToast('Cannot update soft-deleted character', 'error');
-            return null;
-        }
-
-        character.isDeceased = isDeceased;
-        character.updatedAt = Date.now();
-
-        if (isDeceased) {
-            character.deathYear = deathYear;
-            character.deathCause = deathCause || '';
-        } else {
-            character.deathYear = null;
-            character.deathCause = '';
-        }
-
-        _saveCharacter(character, state);
-        _invalidateCaches();
-
-        return character;
-    }
-
-    function updateCharacterEpithet(id, epithet) {
-        var state = _getState();
-        var character = state ? state.getCharacter(id) : _getCharacterById(id);
-
-        if (!character) return null;
-
-        if (character.isDeleted === true) {
-            _showToast('Cannot update soft-deleted character', 'error');
-            return null;
-        }
-
-        character.epithet = epithet;
-        character.updatedAt = Date.now();
-
-        _saveCharacter(character, state);
-        _invalidateCaches();
-
-        return character;
-    }
-
-    // =========================================================================
-    // 14. FAMILY-RELATED COMMANDS (NEW - Using FamilyAccessors)
-    // =========================================================================
-
-    /**
-     * Adds a child to a character using FamilyAccessors
-     * @param {string} parentId - Parent character ID
-     * @param {string} childId - Child character ID
-     * @param {string} parentType - 'father' or 'mother'
-     * @param {Object} options - Options
-     * @returns {Object} Result
-     */
-    function addChildToParent(parentId, childId, parentType, options) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processing = true;
-
+    function removeChildFromParent(childId, parentType) {
+        if (!_acquireLock()) return _alreadyProcessing();
         try {
-            options = options || {};
-            var fa = _getFamilyAccessors();
-
-            if (fa && typeof fa.setParent === 'function') {
-                var result = fa.setParent(childId, parentId, parentType, {
-                    biological: options.biological !== false,
-                    startYear: options.startYear || _getCurrentYear(),
-                    notes: options.notes || 'Added via character command'
-                });
-
-                if (result) {
-                    _invalidateCaches();
-                    return { success: true, data: result };
-                }
+            var result = window.FamilyCommands.removeParent(childId, parentType);
+            if (!result || !result.success) {
+                return { success: false, reason: result ? result.reason : 'Family mutation failed' };
             }
 
-            // Fallback: direct data access
-            var child = _getCharacterById(childId);
-            var parent = _getCharacterById(parentId);
-            if (!child || !parent) {
-                return { success: false, reason: 'Child or parent not found' };
-            }
-
-            if (parentType === 'father') {
-                child.fatherId = parentId;
-            } else if (parentType === 'mother') {
-                child.motherId = parentId;
-            } else {
-                return { success: false, reason: 'Invalid parent type' };
-            }
-
-            if (!parent.children) parent.children = [];
-            if (parent.children.indexOf(childId) === -1) {
-                parent.children.push(childId);
-            }
-
-            child.updatedAt = Date.now();
-            parent.updatedAt = Date.now();
-
-            _saveCharacter(child, _getState());
-            _saveCharacter(parent, _getState());
-            _invalidateCaches();
-
-            return { success: true, data: { child: child, parent: parent } };
-
+            _commit('update', [childId]);
+            return { success: true };
         } finally {
-            _processing = false;
-        }
-    }
-
-    /**
-     * Gets all children of a character (using FamilyAccessors if available)
-     * @param {string} characterId - Character ID
-     * @param {boolean} includeDeceased - Include deceased children
-     * @returns {Array} Array of child characters
-     */
-    function getCharacterChildren(characterId, includeDeceased) {
-        if (_processing) return [];
-        _processing = true;
-
-        try {
-            var fa = _getFamilyAccessors();
-            if (fa && typeof fa.getAllChildren === 'function') {
-                var result = fa.getAllChildren(characterId, includeDeceased || false);
-                if (result) {
-                    return result.map(function(item) { return item.character; });
-                }
-            }
-
-            // Fallback: direct data access
-            var character = _getCharacterById(characterId);
-            if (!character) return [];
-
-            var allChars = _getCharacters();
-            var children = [];
-
-            for (var i = 0; i < allChars.length; i++) {
-                var child = allChars[i];
-                if (child.id === characterId) continue;
-                if (!includeDeceased && child.isDeceased) continue;
-
-                if (child.motherId === characterId || child.fatherId === characterId) {
-                    children.push(child);
-                }
-            }
-
-            // Also check children array for backward compatibility
-            if (character.children) {
-                for (var i = 0; i < character.children.length; i++) {
-                    var child = _getCharacterById(character.children[i]);
-                    if (child && (!includeDeceased || !child.isDeceased)) {
-                        var exists = false;
-                        for (var j = 0; j < children.length; j++) {
-                            if (children[j].id === child.id) {
-                                exists = true;
-                                break;
-                            }
-                        }
-                        if (!exists) {
-                            children.push(child);
-                        }
-                    }
-                }
-            }
-
-            return children;
-        } finally {
-            _processing = false;
-        }
-    }
-
-    /**
-     * Gets parents of a character (using FamilyAccessors if available)
-     * @param {string} characterId - Character ID
-     * @returns {Object} { father, mother }
-     */
-    function getCharacterParents(characterId) {
-        if (_processing) return { father: null, mother: null };
-        _processing = true;
-
-        try {
-            var fa = _getFamilyAccessors();
-            if (fa && typeof fa.getParents === 'function') {
-                return fa.getParents(characterId);
-            }
-
-            // Fallback: direct data access
-            var character = _getCharacterById(characterId);
-            if (!character) return { father: null, mother: null };
-
-            return {
-                father: character.fatherId ? _getCharacterById(character.fatherId) : null,
-                mother: character.motherId ? _getCharacterById(character.motherId) : null
-            };
-        } finally {
-            _processing = false;
+            _releaseLock();
         }
     }
 
     // =========================================================================
-    // 15. EXPORTS
+    // 12. EXPORTS
     // =========================================================================
 
     window.CharacterCommands = {
         // Creation
         createCharacter: createCharacter,
-
-        // Random Character Generation
         createRandomCharacter: createRandomCharacter,
 
         // Update
         updateCharacter: updateCharacter,
-        updateCharacterName: updateCharacterName,
-        updateCharacterBirth: updateCharacterBirth,
-        updateCharacterDeath: updateCharacterDeath,
-        updateCharacterEpithet: updateCharacterEpithet,
 
         // Delete
         deleteCharacter: deleteCharacter,
-
-        // Soft Delete
         softDeleteCharacter: softDeleteCharacter,
         restoreSoftDeletedCharacter: restoreSoftDeletedCharacter,
-        getSoftDeletedCharacters: getSoftDeletedCharacters,
         purgeSoftDeletedCharacters: purgeSoftDeletedCharacters,
 
-        // Bulk Operations
+        // Bulk
         bulkCreateCharacters: bulkCreateCharacters,
         bulkUpdateCharacters: bulkUpdateCharacters,
         bulkDeleteCharacters: bulkDeleteCharacters,
 
-        // Profession Management
+        // Professions
         addProfession: addProfession,
         removeProfession: removeProfession,
         updateProfessionSkill: updateProfessionSkill,
@@ -2494,28 +1418,17 @@
         addProfessionSpecialization: addProfessionSpecialization,
         removeProfessionSpecialization: removeProfessionSpecialization,
 
-        // Surname History
-        getCharacterSurnameHistory: getCharacterSurnameHistory,
-        getCharacterBirthSurname: getCharacterBirthSurname,
-        getCharacterSurnameChanges: getCharacterSurnameChanges,
+        // Surname
         recordCharacterSurnameChange: recordCharacterSurnameChange,
         revertCharacterSurnameChange: revertCharacterSurnameChange,
 
-        // Religion Management
+        // Religion orchestration
         assignCharacterReligion: assignCharacterReligion,
         removeCharacterReligion: removeCharacterReligion,
-        convertCharacterReligion: convertCharacterReligion,
-        getCharacterReligionHistory: getCharacterReligionHistory,
-        getCharacterReligion: getCharacterReligion,
 
-        // Family Commands (NEW)
+        // Family orchestration
         addChildToParent: addChildToParent,
-        getCharacterChildren: getCharacterChildren,
-        getCharacterParents: getCharacterParents
+        removeChildFromParent: removeChildFromParent
     };
-
-    if (typeof module !== 'undefined' && module.exports) {
-        module.exports = window.CharacterCommands;
-    }
 
 })();

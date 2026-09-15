@@ -1,33 +1,76 @@
 /**
  * =============================================================================
- * STILL WATERS - CHARACTER LIFECYCLE js/character/character-lifecycle.js
+ * STILL WATERS - CHARACTER LIFECYCLE (js/character/character-lifecycle.js)
  * =============================================================================
- * 
- * Business logic for character lifecycle (birth, aging, death, inheritance).
- * 
- * FEATURES:
- *   - Full life stage constants (AGE_GROUPS, LIFE_STAGES, DEATH_CAUSES)
- *   - getLifeStage(), getAgeGroup() functions
- *   - killCharacter() with household inheritance integration
- *   - applyAgingMortality() with age-based risk
- *   - predictLifespan() with rank-based modifiers
- *   - triggerNaturalDeath(), triggerAccidentalDeath()
- *   - processAllPendingInheritance() with recursion guard
- *   - getLifeStageName(), isElderly()
- *   - groupCharactersByAgeGroup()
- *   - getExpectedRemainingYears()
- *   - FAMILY ACCESSORS - Uses FamilyAccessors for heir finding
- * 
- * ICON STYLE: Uses SVG icons from icons.js - NO EMOJIS
- * 
- * DEPENDENCIES:
- *   - character-state.js (CharacterState)
- *   - character-commands.js (CharacterCommands)
- *   - character-queries.js (CharacterQueries)
- *   - time.js (calculateAge, getCurrentYearSafe)
- *   - constants.js (AGE_GROUPS, LIFE_STAGES, DEATH_CAUSES)
- *   - family-accessors.js (FamilyAccessors) - NEW
- * 
+ *
+ * Lifecycle semantics for characters: aging, mortality, death transition,
+ * and the domain consequences of death.
+ *
+ * SCOPE:
+ *   - Age and life stage queries (getLifeStage, getAgeGroup, isElderly)
+ *   - Death cause selection
+ *   - The canonical death transition (killCharacter)
+ *   - Age-based mortality rolls (applyAgingMortality)
+ *   - Death event wrappers (triggerNaturalDeath, triggerAccidentalDeath)
+ *   - Orchestration of death consequences:
+ *       · relationship termination (delegated)
+ *       · rank deprecation (delegated)
+ *       · household succession (delegated)
+ *   - Pending-succession detection (delegated)
+ *
+ * OUT OF SCOPE:
+ *   - Character CRUD → CharacterCommands
+ *   - Random character generation → character-generator.js
+ *   - Family graph reads → FamilyAccessors
+ *   - Family graph mutations → FamilyCommands
+ *   - Sucession policy → succession-queries.js / succession-commands.js
+ *   - Relationship semantics → relationship-queries.js / relationship-commands.js
+ *   - Rank deprecation policy → rank-commands.js
+ *   - Constants → constants.js
+ *   - Persistence → storage.js
+ *   - UI → caller
+ *
+ * SEMANTIC RULES:
+ *   - Missing (undefined/null) optional arguments use documented defaults.
+ *   - Invalid explicit arguments are rejected. No silent clamping.
+ *   - Year 0 is preserved.
+ *   - Invalid ages return null for queries; they never become 'Ancient'
+ *     or '91+'.
+ *   - All randomness flows through randomness.js. No direct Math.random.
+ *   - killCharacter is the SINGLE canonical death transition. All death
+ *     paths (natural, accidental, aging mortality) funnel through it.
+ *   - killCharacter commits once: one markDataDirty, one characterChanged
+ *     event, one death event log entry.
+ *   - killCharacter emits exactly one event describing the death.
+ *   - Lifecycle does not mutate relationship, rank, or household state
+ *     directly. It dispatches to the domains that own those mutations.
+ *
+ * CALLBACK CONTRACT:
+ *   killCharacter calls into:
+ *     - RelationshipCommands (optional) to end active relationships
+ *     - RankCommands (optional) to deprecate death-sensitive rank
+ *       assignments
+ *     - SuccessionCommands (optional) to transfer households
+ *   Each is called only if the module exists. Their absence is not a
+ *   failure; it means that domain is not participating in lifecycle.
+ *
+ * DEPENDENCIES (REQUIRED):
+ *   - time.js:                 getCurrentYear, isValidYear, calculateAge
+ *   - randomness.js:           random, chance, pickRandom, pickWeighted
+ *   - accessors.js:            getCharacterById, getCharacters, getRankById,
+ *                              getRoles
+ *   - storage.js:              markDataDirty, masterData
+ *   - constants.js:            AGE_GROUPS, LIFE_STAGES, DEATH_CAUSES
+ *
+ * DEPENDENCIES (OPTIONAL, called only if present):
+ *   - relationship-commands.js (RelationshipCommands)
+ *   - rank-commands.js         (RankCommands)
+ *   - succession-commands.js   (SuccessionCommands)
+ *   - succession-queries.js    (SuccessionQueries)
+ *   - event-log.js             (logEvent)
+ *
+ * ICON POLICY: No emojis. No icons.
+ *
  * =============================================================================
  */
 
@@ -35,399 +78,302 @@
     'use strict';
 
     // =========================================================================
-    // 1. CONSTANTS - Use from constants.js if available
+    // 0. DEPENDENCY GUARDS
     // =========================================================================
 
-    // Use AGE_GROUPS from constants.js
-    if (typeof window.AGE_GROUPS === 'undefined') {
-        window.AGE_GROUPS = ['0-10', '11-20', '21-30', '31-40', '41-50', '51-60', '61-70', '71-80', '81-90', '91+'];
-    }
-
-    // Use AGE_GROUPS_MAP from constants.js if available (without emojis)
-    if (typeof window.AGE_GROUPS_MAP === 'undefined') {
-        window.AGE_GROUPS_MAP = {
-            '0-10': { label: '0-10 years' },
-            '11-20': { label: '11-20 years' },
-            '21-30': { label: '21-30 years' },
-            '31-40': { label: '31-40 years' },
-            '41-50': { label: '41-50 years' },
-            '51-60': { label: '51-60 years' },
-            '61-70': { label: '61-70 years' },
-            '71-80': { label: '71-80 years' },
-            '81-90': { label: '81-90 years' },
-            '91+': { label: '91+ years' }
-        };
-    }
-
-    // Use LIFE_STAGES from constants.js if available (without emojis)
-    if (typeof window.LIFE_STAGES === 'undefined') {
-        window.LIFE_STAGES = {
-            INFANT: { min: 0, max: 10, name: 'Child', group: '0-10' },
-            YOUTH: { min: 11, max: 20, name: 'Youth', group: '11-20' },
-            YOUNG_ADULT: { min: 21, max: 30, name: 'Young Adult', group: '21-30' },
-            ADULT: { min: 31, max: 40, name: 'Adult', group: '31-40' },
-            MIDDLE_ADULT: { min: 41, max: 50, name: 'Middle Adult', group: '41-50' },
-            MATURE: { min: 51, max: 60, name: 'Mature', group: '51-60' },
-            SENIOR: { min: 61, max: 70, name: 'Senior', group: '61-70' },
-            ELDER: { min: 71, max: 80, name: 'Elder', group: '71-80' },
-            AGED: { min: 81, max: 90, name: 'Aged', group: '81-90' },
-            ANCIENT: { min: 91, max: 150, name: 'Ancient', group: '91+' }
-        };
-    }
-
-    // Use DEATH_CAUSES from constants.js if available
-    if (typeof window.DEATH_CAUSES === 'undefined') {
-        window.DEATH_CAUSES = [
-            { text: "Old age", weight: 25, minAge: 60 },
-            { text: "Old age, natural causes", weight: 15, minAge: 60 },
-            { text: "Fever", weight: 12 },
-            { text: "Consumption (tuberculosis)", weight: 10 },
-            { text: "Pneumonia", weight: 8 },
-            { text: "Infection", weight: 6 },
-            { text: "Plague", weight: 8 },
-            { text: "Dysentery", weight: 5 },
-            { text: "Drowning", weight: 5 },
-            { text: "Fell from a height", weight: 4 },
-            { text: "Hunting accident", weight: 3 },
-            { text: "Fire", weight: 3 },
-            { text: "Animal attack", weight: 3 },
-            { text: "Accident", weight: 5 },
-            { text: "Childbed fever", weight: 4, minAge: 14, maxAge: 45 }
+    function _requireDependencies() {
+        var required = [
+            'getCurrentYear',
+            'isValidYear',
+            'calculateAge',
+            'random',
+            'chance',
+            'pickRandom',
+            'getCharacterById',
+            'getCharacters',
+            'getRankById',
+            'markDataDirty',
+            'masterData'
         ];
-    }
-
-    // =========================================================================
-    // 2. ICON HELPERS - Using SVG icons from icons.js
-    // =========================================================================
-
-    function _getIcon(name, fallback) {
-        if (typeof window.getIcon === 'function') {
-            return window.getIcon(name, fallback);
-        }
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
-        return fallback || '●';
-    }
-
-    function _getAgeGroupIcon(group) {
-        var iconMap = {
-            '0-10': 'CHILD',
-            '11-20': 'YOUTH',
-            '21-30': 'YOUNG_ADULT',
-            '31-40': 'ADULT',
-            '41-50': 'MIDDLE_ADULT',
-            '51-60': 'MATURE',
-            '61-70': 'SENIOR',
-            '71-80': 'ELDER',
-            '81-90': 'AGED',
-            '91+': 'ANCIENT'
-        };
-        var iconName = iconMap[group] || 'PERSON';
-        return _getIcon(iconName, '●');
-    }
-
-    function _getAgeGroupEmoji(group) {
-        // NO EMOJIS - return the icon SVG instead
-        return _getAgeGroupIcon(group);
-    }
-
-    // =========================================================================
-    // 3. FAMILY ACCESSORS WRAPPER (NEW)
-    // =========================================================================
-
-    function _getFamilyAccessors() {
-        return typeof window.FamilyAccessors !== 'undefined' ? window.FamilyAccessors : null;
-    }
-
-    function _getChildrenViaFamilyAccessors(parentId, includeDeceased) {
-        var fa = _getFamilyAccessors();
-        if (fa && typeof fa.getAllChildren === 'function') {
-            var result = fa.getAllChildren(parentId, includeDeceased || false);
-            if (result) {
-                return result.map(function(item) { return item.character; });
+        var missing = [];
+        for (var i = 0; i < required.length; i++) {
+            if (typeof window[required[i]] === 'undefined') {
+                missing.push(required[i]);
             }
         }
-        return null;
+        if (missing.length > 0) {
+            throw new Error(
+                'character-lifecycle.js: missing required dependencies: ' +
+                missing.join(', ')
+            );
+        }
+
+        // Constants
+        if (typeof window.AGE_GROUPS === 'undefined') {
+            throw new Error('character-lifecycle.js: constants.js must define AGE_GROUPS');
+        }
+        if (typeof window.LIFE_STAGES === 'undefined') {
+            throw new Error('character-lifecycle.js: constants.js must define LIFE_STAGES');
+        }
+        if (typeof window.DEATH_CAUSES === 'undefined') {
+            throw new Error('character-lifecycle.js: constants.js must define DEATH_CAUSES');
+        }
     }
 
-    function _getParentsViaFamilyAccessors(childId) {
-        var fa = _getFamilyAccessors();
-        if (fa && typeof fa.getParents === 'function') {
-            return fa.getParents(childId);
-        }
-        return null;
+    _requireDependencies();
+
+    // =========================================================================
+    // 1. INTERNAL STATE
+    // =========================================================================
+
+    var _mutationLocked = false;
+
+    function _acquireLock() {
+        if (_mutationLocked) return false;
+        _mutationLocked = true;
+        return true;
     }
 
-    function _getSiblingsViaFamilyAccessors(childId, includeHalfSiblings, includeDeceased) {
-        var fa = _getFamilyAccessors();
-        if (fa && typeof fa.getSiblings === 'function') {
-            var result = fa.getSiblings(childId, includeHalfSiblings !== false, includeDeceased || false);
-            if (result) {
-                return result.map(function(item) { return item.character; });
-            }
-        }
-        return null;
+    function _releaseLock() {
+        _mutationLocked = false;
     }
 
-    function _getFamilyStatisticsViaFamilyAccessors(characterId) {
-        var fa = _getFamilyAccessors();
-        if (fa && typeof fa.getFamilyStatistics === 'function') {
-            return fa.getFamilyStatistics(characterId);
-        }
-        return null;
+    function _alreadyProcessing() {
+        return { success: false, reason: 'Another lifecycle mutation is in progress' };
     }
 
     // =========================================================================
-    // 4. DEPENDENCY WRAPPERS
+    // 2. INTERNAL HELPERS
     // =========================================================================
 
-    function _getState() {
-        return typeof window.CharacterState !== 'undefined' ? window.CharacterState : null;
+    function _isMissing(v) {
+        return v === undefined || v === null;
     }
 
-    function _getCommands() {
-        return typeof window.CharacterCommands !== 'undefined' ? window.CharacterCommands : null;
+    function _hasId(v) {
+        return typeof v === 'string' && v.length > 0;
     }
 
-    function _getQueries() {
-        return typeof window.CharacterQueries !== 'undefined' ? window.CharacterQueries : null;
+    /**
+     * Resolves a year argument, falling back to the current year when
+     * missing. Year 0 is preserved.
+     */
+    function _resolveYear(value) {
+        if (_isMissing(value)) return window.getCurrentYear();
+        return value;
     }
 
-    function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(id);
+    /**
+     * Validates a year argument. Returns { ok, value?, reason? }.
+     */
+    function _validateYear(value, name) {
+        if (_isMissing(value)) return { ok: true, value: null };
+        if (!window.isValidYear(value)) {
+            return { ok: false, reason: name + ' must be a valid world year' };
         }
-        return null;
+        return { ok: true, value: value };
     }
 
-    function _getCharacters() {
-        if (typeof window.getCharacters === 'function') {
-            return window.getCharacters();
+    /**
+     * Validates a non-negative integer argument.
+     */
+    function _validateNonNegativeInteger(value, name) {
+        if (_isMissing(value)) return { ok: true, value: null };
+        if (typeof value !== 'number' || !Number.isFinite(value)
+            || !Number.isInteger(value) || value < 0) {
+            return { ok: false, reason: name + ' must be a non-negative integer' };
         }
-        return [];
+        return { ok: true, value: value };
     }
 
-    function _getAllHouseholds() {
-        if (typeof window.getAllHouseholds === 'function') {
-            return window.getAllHouseholds();
-        }
-        return [];
+    /**
+     * Emits one characterChanged event.
+     */
+    function _emitCharacterChanged(action, characterIds) {
+        window.markDataDirty();
+        window.dispatchEvent(new CustomEvent('characterChanged', {
+            detail: { action: action, characterIds: characterIds || [] }
+        }));
     }
 
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
-    function _calculateAge(birthYear, isDeceased, deathYear) {
-    // Delegates to time.js — do not reimplement age logic here.
-    if (typeof window.calculateAge === 'function') {
-        return window.calculateAge(birthYear, isDeceased, deathYear);
+    /**
+     * Emits one lifecycle event. Callers use this for death notifications.
+     */
+    function _emitLifecycleEvent(type, payload) {
+        window.dispatchEvent(new CustomEvent('lifecycleEvent', {
+            detail: { type: type, payload: payload || {} }
+        }));
     }
-    return null;
-}
 
+    /**
+     * Logs an event via event-log.js if loaded. No-op otherwise.
+     */
     function _logEvent(category, type, message, subjects) {
         if (typeof window.logEvent === 'function') {
             window.logEvent(category, type, message, subjects);
         }
     }
 
-    function _chance(probability) {
-        if (typeof window.chance === 'function') {
-            return window.chance(probability);
+    // =========================================================================
+    // 3. AGE AND LIFE STAGE QUERIES
+    // =========================================================================
+
+    /**
+     * Resolves an age from a character object or a numeric age.
+     * Returns null for missing or invalid input.
+     */
+    function _resolveAge(charOrAge) {
+        if (charOrAge === null || charOrAge === undefined) return null;
+
+        if (typeof charOrAge === 'object') {
+            if (!window.isValidYear(charOrAge.birthYear)) return null;
+
+            if (charOrAge.isDeceased === true && window.isValidYear(charOrAge.deathYear)) {
+                return charOrAge.deathYear - charOrAge.birthYear;
+            }
+            var currentYear = window.getCurrentYear();
+            var age = currentYear - charOrAge.birthYear;
+            return age >= 0 ? age : null;
         }
-        return Math.random() < probability;
+
+        if (typeof charOrAge === 'number' && Number.isFinite(charOrAge)
+            && Number.isInteger(charOrAge) && charOrAge >= 0) {
+            return charOrAge;
+        }
+
+        return null;
     }
 
-    function _pickRandom(array) {
-        if (typeof window.pickRandom === 'function') {
-            return window.pickRandom(array);
-        }
-        if (!array || array.length === 0) return null;
-        return array[Math.floor(Math.random() * array.length)];
-    }
+    /**
+     * Returns the life stage for a character or age.
+     *
+     * Invalid age or character returns null. Never falls back to ANCIENT.
+     *
+     * @param {Object|number} charOrAge
+     * @returns {{ key, name, min, max, group }|null}
+     */
+    function getLifeStage(charOrAge) {
+        var age = _resolveAge(charOrAge);
+        if (age === null) return null;
 
-    function _random() {
-        if (typeof window.random === 'function') {
-            return window.random();
-        }
-        return Math.random();
-    }
-
-    function _showToast(message, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(message, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
-        }
-    }
-
-    function _invalidateCaches() {
-        if (typeof window.clearFamilyCache === 'function') {
-            window.clearFamilyCache();
-        }
-        if (typeof window.invalidateWorldCache === 'function') {
-            window.invalidateWorldCache();
-        }
-        if (typeof window.invalidateAccessorCaches === 'function') {
-            window.invalidateAccessorCaches();
-        }
-        var state = _getState();
-        if (state && typeof state.invalidateCache === 'function') {
-            state.invalidateCache();
-        }
-    }
-
-    function _getRankById(rankId) {
-        if (typeof window.getRankById === 'function') {
-            return window.getRankById(rankId);
+        var stages = window.LIFE_STAGES;
+        var keys = Object.keys(stages);
+        for (var i = 0; i < keys.length; i++) {
+            var key = keys[i];
+            var stage = stages[key];
+            if (age >= stage.min && age <= stage.max) {
+                return {
+                    key: key,
+                    name: stage.name,
+                    min: stage.min,
+                    max: stage.max,
+                    group: stage.group
+                };
+            }
         }
         return null;
     }
 
-    // =========================================================================
-    // 5. RECURSION GUARD
-    // =========================================================================
-
-    var _processing = false;
-    var _processingInheritance = false;
-
-    // =========================================================================
-    // 6. DEATH CAUSES
-    // =========================================================================
-
-    var DEATH_CAUSES = window.DEATH_CAUSES;
-
-    function getRandomDeathCause(age, gender) {
-        var eligible = DEATH_CAUSES.filter(function(cause) {
-            if (cause.minAge && age < cause.minAge) return false;
-            if (cause.maxAge && age > cause.maxAge) return false;
-            if (cause.text === "Childbed fever" && gender !== 'female') return false;
-            return true;
-        });
-
-        if (eligible.length === 0) eligible = [{ text: "Natural causes", weight: 100 }];
-
-        var totalWeight = 0;
-        for (var i = 0; i < eligible.length; i++) {
-            totalWeight += eligible[i].weight;
-        }
-
-        var random = _random() * totalWeight;
-        var accumulated = 0;
-
-        for (var i = 0; i < eligible.length; i++) {
-            accumulated += eligible[i].weight;
-            if (random <= accumulated) return eligible[i].text;
-        }
-
-        return "Natural causes";
-    }
-
-    // =========================================================================
-    // 7. LIFE STAGES FUNCTIONS
-    // =========================================================================
-
-    function getLifeStage(charOrAge) {
-        var age;
-        if (typeof charOrAge === 'object' && charOrAge !== null) {
-            age = _calculateAge(charOrAge.birthYear, charOrAge.isDeceased, charOrAge.deathYear);
-        } else {
-            age = charOrAge;
-        }
-
-        var stages = window.LIFE_STAGES;
-        for (var key in stages) {
-            var stage = stages[key];
-            if (age >= stage.min && age <= stage.max) {
-                return { key: key, ...stage };
-            }
-        }
-        return { key: 'ANCIENT', name: 'Ancient', min: 91, max: 150, group: '91+' };
-    }
-
+    /**
+     * Returns the life stage name for a character or age, or null.
+     */
     function getLifeStageName(charOrAge) {
-        return getLifeStage(charOrAge).name;
+        var stage = getLifeStage(charOrAge);
+        return stage ? stage.name : null;
     }
 
+    /**
+     * Returns the age group string for a character or age, or null.
+     *
+     * @param {Object|number} charOrAge
+     * @returns {string|null}
+     */
     function getAgeGroup(charOrAge) {
-        var age;
-        if (typeof charOrAge === 'object' && charOrAge !== null) {
-            age = _calculateAge(charOrAge.birthYear, charOrAge.isDeceased, charOrAge.deathYear);
-        } else {
-            age = charOrAge;
-        }
+        var age = _resolveAge(charOrAge);
+        if (age === null) return null;
 
-        var groups = window.AGE_GROUPS || ['0-10', '11-20', '21-30', '31-40', '41-50', '51-60', '61-70', '71-80', '81-90', '91+'];
+        var groups = window.AGE_GROUPS;
         for (var i = 0; i < groups.length; i++) {
             var parts = groups[i].split('-');
-            var min = parseInt(parts[0]);
-            var max = parts[1] === '+' ? Infinity : parseInt(parts[1]);
+            var min = parseInt(parts[0], 10);
+            var max = parts[1] === '+' ? Infinity : parseInt(parts[1], 10);
             if (age >= min && age <= max) {
                 return groups[i];
             }
         }
-        return groups[groups.length - 1];
+        return null;
     }
 
-    function getAgeGroupIcon(group) {
-        return _getAgeGroupIcon(group);
-    }
-
-    function getAgeGroupEmoji(group) {
-        return _getAgeGroupIcon(group);
-    }
-
+    /**
+     * Returns all age groups in order.
+     */
     function getAllAgeGroups() {
-        return window.AGE_GROUPS ? window.AGE_GROUPS.slice() : ['0-10', '11-20', '21-30', '31-40', '41-50', '51-60', '61-70', '71-80', '81-90', '91+'];
+        return window.AGE_GROUPS.slice();
     }
 
+    /**
+     * Returns the index of an age group within the canonical list, or -1.
+     */
     function getAgeGroupIndex(group) {
-        var groups = window.AGE_GROUPS || ['0-10', '11-20', '21-30', '31-40', '41-50', '51-60', '61-70', '71-80', '81-90', '91+'];
-        return groups.indexOf(group);
+        if (typeof group !== 'string') return -1;
+        return window.AGE_GROUPS.indexOf(group);
     }
 
+    /**
+     * True if a character or age is elderly (60 or above).
+     *
+     * @returns {boolean|null} null for invalid input.
+     */
     function isElderly(charOrAge) {
-        var age;
-        if (typeof charOrAge === 'object') {
-            age = _calculateAge(charOrAge.birthYear, charOrAge.isDeceased, charOrAge.deathYear);
-        } else {
-            age = charOrAge;
-        }
+        var age = _resolveAge(charOrAge);
+        if (age === null) return null;
         return age >= 60;
     }
 
+    /**
+     * Groups characters by age group.
+     *
+     * @param {Array} characters
+     * @param {boolean} [excludeDeceased] - default true
+     * @returns {Object<string, Array>}
+     */
     function groupCharactersByAgeGroup(characters, excludeDeceased) {
-        excludeDeceased = (excludeDeceased !== undefined) ? excludeDeceased : true;
-        var groups = {};
-        var ageGroups = window.AGE_GROUPS || ['0-10', '11-20', '21-30', '31-40', '41-50', '51-60', '61-70', '71-80', '81-90', '91+'];
+        if (!Array.isArray(characters)) return {};
+        excludeDeceased = excludeDeceased !== false;
 
+        var groups = {};
+        var ageGroups = window.AGE_GROUPS;
         for (var i = 0; i < ageGroups.length; i++) {
             groups[ageGroups[i]] = [];
         }
 
-        for (var i = 0; i < characters.length; i++) {
-            var char = characters[i];
-            if (excludeDeceased && char.isDeceased) continue;
-            var age = _calculateAge(char.birthYear, false, null);
+        for (var j = 0; j < characters.length; j++) {
+            var char = characters[j];
+            if (!char) continue;
+            if (excludeDeceased && char.isDeceased === true) continue;
+
+            // Use the character's own age: current age for living, age at
+            // death for deceased (when they are included).
+            var age = _resolveAge(char);
+            if (age === null) continue;
+
             var group = getAgeGroup(age);
-            if (groups[group]) {
+            if (group && groups[group]) {
                 groups[group].push(char);
-            } else {
-                groups['0-10'].push(char);
             }
         }
 
-        // Sort each group by age
-        for (var i = 0; i < ageGroups.length; i++) {
-            var group = ageGroups[i];
-            groups[group].sort(function(a, b) {
-                var ageA = _calculateAge(a.birthYear, false, null);
-                var ageB = _calculateAge(b.birthYear, false, null);
+        // Sort each group by age ascending.
+        for (var k = 0; k < ageGroups.length; k++) {
+            var g = ageGroups[k];
+            groups[g].sort(function(a, b) {
+                var ageA = _resolveAge(a);
+                var ageB = _resolveAge(b);
+                var aValid = ageA !== null;
+                var bValid = ageB !== null;
+                if (!aValid && !bValid) return 0;
+                if (!aValid) return 1;
+                if (!bValid) return -1;
                 return ageA - ageB;
             });
         }
@@ -436,594 +382,395 @@
     }
 
     // =========================================================================
-    // 8. KILL CHARACTER (Unified with inheritance)
+    // 4. DEATH CAUSE SELECTION
     // =========================================================================
 
-    function killCharacter(character, deathYear, deathCause, options) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
+    /**
+     * Returns an eligible death cause entry, or null.
+     *
+     * Age and gender are used to filter causes. Weighted selection uses
+     * randomness.js.
+     */
+    function getRandomDeathCause(age, gender) {
+        if (typeof age !== 'number' || !Number.isFinite(age) || age < 0) {
+            return null;
         }
-        _processing = true;
 
-        try {
-            options = options || {};
+        var allCauses = window.DEATH_CAUSES;
+        var eligible = [];
 
-            if (!character || character.isDeceased) {
-                return { success: false, reason: 'Character already deceased' };
+        for (var i = 0; i < allCauses.length; i++) {
+            var cause = allCauses[i];
+            if (!cause) continue;
+
+            if (!_isMissing(cause.minAge) && age < cause.minAge) continue;
+            if (!_isMissing(cause.maxAge) && age > cause.maxAge) continue;
+            if (cause.text === 'Childbed fever' && gender !== 'female') continue;
+
+            if (typeof cause.weight !== 'number' || !Number.isFinite(cause.weight)
+                || cause.weight <= 0) {
+                continue;
             }
 
-            var currentYear = _getCurrentYear();
-            var finalDeathYear = deathYear || currentYear;
-            var characterId = character.id;
-            var characterName = character.name;
+            eligible.push(cause);
+        }
 
-            // 1. Mark as deceased
+        if (eligible.length === 0) {
+            return 'Natural causes';
+        }
+
+        // Weighted selection through randomness.js.
+        var chosen;
+        if (typeof window.pickWeighted === 'function') {
+            chosen = window.pickWeighted(eligible, function(c) { return c.weight; });
+        } else {
+            // Fallback within randomness.js: still uses window.random().
+            var total = 0;
+            for (var j = 0; j < eligible.length; j++) total += eligible[j].weight;
+            var roll = window.random() * total;
+            var accumulated = 0;
+            for (var k = 0; k < eligible.length; k++) {
+                accumulated += eligible[k].weight;
+                if (roll <= accumulated) { chosen = eligible[k]; break; }
+            }
+            if (!chosen) chosen = eligible[eligible.length - 1];
+        }
+
+        return chosen ? chosen.text : 'Natural causes';
+    }
+
+    // =========================================================================
+    // 5. DEATH TRANSITION (CANONICAL)
+    // =========================================================================
+    //
+    // killCharacter is the single canonical death transition. Every death
+    // path funnels through it. It is the only function that writes
+    // isDeceased, deathYear, and deathCause.
+
+    /**
+     * Marks a character as deceased and processes all domain consequences.
+     *
+     * Consequences are dispatched to their owning domains. Each domain
+     * mutation is optional; if a domain module isn't loaded, that
+     * consequence is skipped.
+     *
+     * @param {string|Object} characterOrId
+     * @param {number} [deathYear]
+     * @param {string} [deathCause]
+     * @param {Object} [options]
+     * @returns {{
+     *   success: boolean,
+     *   character?: Object,
+     *   deathYear?: number,
+     *   deathCause?: string,
+     *   consequences?: Object,
+     *   reason?: string
+     * }}
+     */
+    function killCharacter(characterOrId, deathYear, deathCause, options) {
+        if (!_acquireLock()) return _alreadyProcessing();
+        try {
+            if (_isMissing(options)) options = {};
+            if (typeof options !== 'object' || Array.isArray(options)) {
+                return { success: false, reason: 'Options must be an object' };
+            }
+
+            // Resolve character
+            var character;
+            if (typeof characterOrId === 'string') {
+                character = window.getCharacterById(characterOrId);
+            } else if (characterOrId && typeof characterOrId === 'object') {
+                character = window.getCharacterById(characterOrId.id);
+            }
+            if (!character) {
+                return { success: false, reason: 'Character not found' };
+            }
+            if (character.isDeceased === true) {
+                return { success: false, reason: 'Character is already deceased' };
+            }
+
+            // Validate year and cause
+            var yearResult = _validateYear(deathYear, 'deathYear');
+            if (!yearResult.ok) return { success: false, reason: yearResult.reason };
+
+            var finalDeathYear = _resolveYear(yearResult.value);
+            var finalDeathCause = _isMissing(deathCause) || typeof deathCause !== 'string'
+                ? 'Unknown'
+                : deathCause;
+
+            // Apply the canonical death transition.
             character.isDeceased = true;
             character.deathYear = finalDeathYear;
-            character.deathCause = deathCause || "Unknown";
-            if (options.notes) character.deathNotes = options.notes;
+            character.deathCause = finalDeathCause;
+            character.updatedAt = Date.now();
 
-            // 2. Update relationships to widowed
-            if (character.relationships) {
-                for (var i = 0; i < character.relationships.length; i++) {
-                    var rel = character.relationships[i];
-                    if (rel.status === 'ongoing' || rel.status === 'active') {
-                        rel.status = 'widowed';
-                        if (!rel.details) rel.details = {};
-                        rel.details.endYear = finalDeathYear;
-                        if (options.notes) rel.details.notes = options.notes;
-                    }
-                }
+            if (!_isMissing(options.notes)) {
+                character.deathNotes = options.notes;
             }
 
-            // 3. Deprecate ranks that should deprecate on death
-            if (character.rankAssignments && _getRankById) {
-                for (var i = 0; i < character.rankAssignments.length; i++) {
-                    var assignment = character.rankAssignments[i];
-                    var rank = _getRankById(assignment.rankId);
-                    if (rank && rank.deprecateOnDeath) {
-                        assignment.isDeprecated = true;
-                        assignment.isActive = false;
-                    }
-                }
-            }
+            // Dispatch domain consequences. Each domain owns its own
+            // mutation. If a domain module isn't loaded, that consequence
+            // is skipped.
+            var consequences = {
+                relationships: _dispatchRelationshipTermination(character, finalDeathYear),
+                ranks: _dispatchRankDeprecation(character),
+                succession: options.skipSuccession === true
+                    ? { applied: false, reason: 'skipped by caller' }
+                    : _dispatchSuccession(character)
+            };
 
-            // Save character
-            var state = _getState();
-            if (state) {
-                var characters = state.getAllCharacters();
-                var idx = -1;
-                for (var j = 0; j < characters.length; j++) {
-                    if (characters[j].id === character.id) {
-                        idx = j;
-                        break;
-                    }
-                }
-                if (idx !== -1) {
-                    characters[idx] = character;
-                    state._setCharacters(characters);
-                    state._emitCharacterChange('update', character);
-                }
-            } else {
-                if (typeof window.saveMasterData === 'function') {
-                    window.saveMasterData();
-                }
-            }
+            // Commit once.
+            _emitCharacterChanged('death', [character.id]);
 
-            // 4. PROCESS HOUSEHOLD INHERITANCE (UPDATED - Uses FamilyAccessors)
-            var inheritanceResults = null;
-            if (!options.skipInheritance) {
-                inheritanceResults = processHouseholdInheritance(characterId);
-            }
+            // Emit the lifecycle event describing the death.
+            _emitLifecycleEvent('characterDied', {
+                characterId: character.id,
+                deathYear: finalDeathYear,
+                deathCause: finalDeathCause
+            });
 
-            // 5. Log inheritance results
-            if (inheritanceResults && inheritanceResults.length > 0) {
-                for (var i = 0; i < inheritanceResults.length; i++) {
-                    var result = inheritanceResults[i];
-                    if (result.success && result.heir) {
-                        var heirChar = _getCharacterById(result.heir);
-                        _logEvent('inheritance', 'Household Inherited',
-                            result.heir + ' inherited ' + result.household + ' after ' + characterName + '\'s death',
-                            [character, heirChar]);
-                    } else if (!result.success && result.reason) {
-                        _logEvent('inheritance', 'Household Abandoned',
-                            result.household + ' was abandoned after ' + characterName + '\'s death (' + result.reason + ')',
-                            [character]);
-                    }
-                }
-            }
-
-            // 6. Invalidate caches
-            _invalidateCaches();
-
-            // 7. Log the death
+            // Log once.
             _logEvent('death', 'Death',
-                characterName + ' died of ' + deathCause.toLowerCase() + ' in ' + finalDeathYear,
+                character.name + ' died of ' + finalDeathCause.toLowerCase()
+                    + ' in ' + finalDeathYear,
                 [character]);
 
             return {
                 success: true,
                 character: character,
                 deathYear: finalDeathYear,
-                deathCause: deathCause,
-                inheritance: inheritanceResults
+                deathCause: finalDeathCause,
+                consequences: consequences
             };
-
         } finally {
-            _processing = false;
+            _releaseLock();
         }
     }
 
-    function killCharacterRandomCause(character, deathYear) {
-        var age = _calculateAge(character.birthYear, false, null);
-        var cause = getRandomDeathCause(age, character.gender);
-        return killCharacter(character, deathYear, cause);
-    }
-
-    // =========================================================================
-    // 9. HOUSEHOLD INHERITANCE (UPDATED - Uses FamilyAccessors)
-    // =========================================================================
-
-    function processHouseholdInheritance(characterId) {
-        if (_processingInheritance) {
-            console.warn('processHouseholdInheritance: already running, skipping');
-            return null;
-        }
-        _processingInheritance = true;
-
+    /**
+     * Kills a character, selecting a random cause appropriate to their age
+     * and gender.
+     */
+    function killCharacterRandomCause(characterOrId, deathYear) {
+        if (!_acquireLock()) return _alreadyProcessing();
         try {
-            var results = [];
-
-            // Try using the household assignment system if available
-            if (typeof window.processHouseholdInheritanceOnDeath === 'function') {
-                var result = window.processHouseholdInheritanceOnDeath(characterId);
-                if (result) return result;
+            var character;
+            if (typeof characterOrId === 'string') {
+                character = window.getCharacterById(characterOrId);
+            } else if (characterOrId && typeof characterOrId === 'object') {
+                character = window.getCharacterById(characterOrId.id);
+            }
+            if (!character) {
+                return { success: false, reason: 'Character not found' };
             }
 
-            // Fallback implementation - UPDATED to use FamilyAccessors
-            var households = _getAllHouseholds();
-            var character = _getCharacterById(characterId);
-
-            if (!character) return null;
-
-            for (var i = 0; i < households.length; i++) {
-                var household = households[i];
-                var isHead = false;
-
-                if (household.members) {
-                    for (var j = 0; j < household.members.length; j++) {
-                        if (household.members[j].characterId === characterId && household.members[j].isHead) {
-                            isHead = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (isHead) {
-                    // ============================================================
-                    // UPDATED: Find heirs using FamilyAccessors
-                    // ============================================================
-                    var heirs = [];
-
-                    // Try FamilyAccessors first
-                    var fa = _getFamilyAccessors();
-                    if (fa && typeof fa.getAllChildren === 'function') {
-                        var childrenResult = fa.getAllChildren(characterId, false);
-                        if (childrenResult) {
-                            // Children are already sorted by birth year (eldest first)
-                            for (var c = 0; c < childrenResult.length; c++) {
-                                var child = childrenResult[c].character;
-                                if (!child.isDeceased) {
-                                    heirs.push({ character: child, relationship: childrenResult[c].type });
-                                }
-                            }
-                        }
-                    }
-
-                    // Fallback: use CharacterQueries
-                    if (heirs.length === 0 && typeof window.CharacterQueries !== 'undefined') {
-                        var queries = window.CharacterQueries;
-                        if (typeof queries.getCharacterChildren === 'function') {
-                            var childChars = queries.getCharacterChildren(characterId, false);
-                            for (var c = 0; c < childChars.length; c++) {
-                                heirs.push({ character: childChars[c], relationship: 'biological' });
-                            }
-                        }
-                    }
-
-                    // Ultimate fallback: direct data access
-                    if (heirs.length === 0) {
-                        var allChars = _getCharacters();
-                        for (var c = 0; c < allChars.length; c++) {
-                            if (allChars[c].motherId === characterId || allChars[c].fatherId === characterId) {
-                                if (!allChars[c].isDeceased) {
-                                    heirs.push({ character: allChars[c], relationship: 'biological' });
-                                }
-                            }
-                        }
-                        // Sort by birth year (eldest first)
-                        heirs.sort(function(a, b) {
-                            return (a.character.birthYear || 0) - (b.character.birthYear || 0);
-                        });
-                    }
-
-                    // Additional: Check for adopted children
-                    if (character.adoptedChildren) {
-                        for (var c = 0; c < character.adoptedChildren.length; c++) {
-                            var adopted = _getCharacterById(character.adoptedChildren[c].childId);
-                            if (adopted && !adopted.isDeceased) {
-                                var exists = false;
-                                for (var h = 0; h < heirs.length; h++) {
-                                    if (heirs[h].character.id === adopted.id) {
-                                        exists = true;
-                                        break;
-                                    }
-                                }
-                                if (!exists) {
-                                    heirs.push({ character: adopted, relationship: 'adopted' });
-                                }
-                            }
-                        }
-                        // Re-sort after adding adopted children
-                        heirs.sort(function(a, b) {
-                            return (a.character.birthYear || 0) - (b.character.birthYear || 0);
-                        });
-                    }
-
-                    if (heirs.length > 0) {
-                        var heir = heirs[0].character;
-                        if (heir && typeof window.transferHouseholdToHeir === 'function') {
-                            var transferResult = window.transferHouseholdToHeir(household.id, heir.id);
-                            results.push({
-                                household: household.name,
-                                heir: heir.name,
-                                relationship: heirs[0].relationship || 'unknown',
-                                success: transferResult ? true : false
-                            });
-                        } else {
-                            // Attempt to add heir as household head directly
-                            if (typeof window.addHouseholdMember === 'function') {
-                                var added = window.addHouseholdMember(household.id, heir.id, 'family', {
-                                    role: 'Head of Household',
-                                    isHead: true,
-                                    joinedYear: _getCurrentYear(),
-                                    notes: 'Inherited from ' + character.name
-                                });
-                                results.push({
-                                    household: household.name,
-                                    heir: heir.name,
-                                    success: added ? true : false,
-                                    reason: added ? null : 'Failed to transfer'
-                                });
-                            } else {
-                                results.push({
-                                    household: household.name,
-                                    heir: heir.name,
-                                    success: false,
-                                    reason: 'Transfer function not available'
-                                });
-                            }
-                        }
-                    } else {
-                        // No heirs - mark as abandoned
-                        household.status = 'abandoned';
-                        household.abandonedYear = _getCurrentYear();
-                        if (typeof window.saveMasterData === 'function') {
-                            window.saveMasterData();
-                        }
-                        results.push({
-                            household: household.name,
-                            heir: null,
-                            success: false,
-                            reason: 'No eligible heirs found - household abandoned'
-                        });
-                    }
-                }
+            var age = _resolveAge(character);
+            if (age === null) {
+                return { success: false, reason: 'Character has no determinable age' };
             }
 
-            return results;
+            var cause = getRandomDeathCause(age, character.gender);
+            if (!cause) {
+                return { success: false, reason: 'No eligible death cause' };
+            }
 
-        } finally {
-            _processingInheritance = false;
+            // Release the lock before calling killCharacter, since
+            // killCharacter acquires it itself.
+            _releaseLock();
+            return killCharacter(character.id, deathYear, cause);
+        } catch (e) {
+            _releaseLock();
+            throw e;
         }
     }
 
-    function processAllPendingInheritance(showNotifications) {
-        showNotifications = (showNotifications !== undefined) ? showNotifications : true;
+    // =========================================================================
+    // 6. CONSEQUENCE DISPATCH
+    // =========================================================================
 
-        if (_processingInheritance) {
-            console.warn('processAllPendingInheritance: already running, skipping');
-            return null;
+    /**
+     * Asks RelationshipCommands to end a character's active relationships.
+     * Returns a result summary. Does not fail the death transition if the
+     * module is absent.
+     */
+    function _dispatchRelationshipTermination(character, deathYear) {
+        if (typeof window.RelationshipCommands === 'undefined') {
+            return { applied: false, reason: 'relationship-commands.js not loaded' };
         }
-        _processingInheritance = true;
+        if (typeof window.RelationshipCommands.endAllActiveForCharacter !== 'function') {
+            return { applied: false, reason: 'endAllActiveForCharacter not available' };
+        }
 
+        var result = window.RelationshipCommands.endAllActiveForCharacter(
+            character.id,
+            { year: deathYear, reason: 'death' }
+        );
+        if (result && result.success) {
+            return { applied: true, affected: result.affected || 0 };
+        }
+        return { applied: false, reason: result ? result.reason : 'unknown failure' };
+    }
+
+    /**
+     * Asks RankCommands to deprecate a character's death-sensitive rank
+     * assignments.
+     */
+    function _dispatchRankDeprecation(character) {
+        if (typeof window.RankCommands === 'undefined') {
+            return { applied: false, reason: 'rank-commands.js not loaded' };
+        }
+        if (typeof window.RankCommands.deprecateOnDeath !== 'function') {
+            return { applied: false, reason: 'deprecateOnDeath not available' };
+        }
+
+        var result = window.RankCommands.deprecateOnDeath(character.id);
+        if (result && result.success) {
+            return { applied: true, affected: result.affected || 0 };
+        }
+        return { applied: false, reason: result ? result.reason : 'unknown failure' };
+    }
+
+    /**
+     * Asks SuccessionCommands to transfer households headed by the
+     * deceased character.
+     */
+    function _dispatchSuccession(character) {
+        if (typeof window.SuccessionCommands === 'undefined') {
+            return { applied: false, reason: 'succession-commands.js not loaded' };
+        }
+        if (typeof window.SuccessionCommands.processOnDeath !== 'function') {
+            return { applied: false, reason: 'processOnDeath not available' };
+        }
+
+        var result = window.SuccessionCommands.processOnDeath(character.id);
+        if (result && result.success) {
+            return { applied: true, transfers: result.transfers || [] };
+        }
+        return { applied: false, reason: result ? result.reason : 'unknown failure' };
+    }
+
+    // =========================================================================
+    // 7. AGING MORTALITY
+    // =========================================================================
+
+    /**
+     * Annual mortality risk by age band. These are simulation policy, not
+     * generic randomness.
+     *
+     * The model is: annualRisk * yearsAdvanced, clamped to [0, 0.95].
+     * This treats the risk as additive over the interval, which is a
+     * deliberate simplification. If independent-event compounding is
+     * desired, replace this model.
+     */
+    function _annualMortalityRisk(age) {
+        if (age < 1) return 0.02;
+        if (age < 5) return 0.01;
+        if (age < 18) return 0.005;
+        if (age < 45) return 0.01;
+        if (age < 60) return 0.02;
+        if (age < 75) return 0.05;
+        return 0.10;
+    }
+
+    /**
+     * Applies age-based mortality to a character over a given number of
+     * years.
+     *
+     * @param {string|Object} characterOrId
+     * @param {number} [yearsAdvanced] - default 1
+     * @returns {{
+     *   success: boolean,
+     *   died?: boolean,
+     *   reason?: string
+     * }}
+     */
+    function applyAgingMortality(characterOrId, yearsAdvanced) {
+        if (!_acquireLock()) return _alreadyProcessing();
         try {
-            if (typeof window.processAllPendingInheritance === 'function' &&
-                window.processAllPendingInheritance !== processAllPendingInheritance) {
-                var results = window.processAllPendingInheritance(showNotifications);
-                return results;
+            var char;
+            if (typeof characterOrId === 'string') {
+                char = window.getCharacterById(characterOrId);
+            } else if (characterOrId && typeof characterOrId === 'object') {
+                char = window.getCharacterById(characterOrId.id);
+            }
+            if (!char) {
+                return { success: false, reason: 'Character not found' };
+            }
+            if (char.isDeceased === true) {
+                return { success: false, reason: 'Character is already deceased' };
             }
 
-            var households = _getAllHouseholds();
-            var results = [];
-            var successCount = 0;
-            var failCount = 0;
+            var yearsResult = _validateNonNegativeInteger(yearsAdvanced, 'yearsAdvanced');
+            if (!yearsResult.ok) return { success: false, reason: yearsResult.reason };
 
-            for (var i = 0; i < households.length; i++) {
-                var household = households[i];
-
-                var deceasedHead = null;
-                for (var j = 0; j < (household.members || []).length; j++) {
-                    var member = household.members[j];
-                    if (member.isHead) {
-                        var character = _getCharacterById(member.characterId);
-                        if (character && character.isDeceased) {
-                            deceasedHead = character;
-                            break;
-                        }
-                    }
-                }
-
-                if (deceasedHead) {
-                    // ============================================================
-                    // UPDATED: Find heirs using FamilyAccessors
-                    // ============================================================
-                    var heirs = [];
-
-                    // Try FamilyAccessors first
-                    var fa = _getFamilyAccessors();
-                    if (fa && typeof fa.getAllChildren === 'function') {
-                        var childrenResult = fa.getAllChildren(deceasedHead.id, false);
-                        if (childrenResult) {
-                            for (var c = 0; c < childrenResult.length; c++) {
-                                var child = childrenResult[c].character;
-                                if (!child.isDeceased) {
-                                    heirs.push({ character: child, relationship: childrenResult[c].type });
-                                }
-                            }
-                        }
-                    }
-
-                    // Fallback: use CharacterQueries
-                    if (heirs.length === 0 && typeof window.CharacterQueries !== 'undefined') {
-                        var queries = window.CharacterQueries;
-                        if (typeof queries.getCharacterChildren === 'function') {
-                            var childChars = queries.getCharacterChildren(deceasedHead.id, false);
-                            for (var c = 0; c < childChars.length; c++) {
-                                heirs.push({ character: childChars[c], relationship: 'biological' });
-                            }
-                        }
-                    }
-
-                    // Ultimate fallback: direct data access
-                    if (heirs.length === 0) {
-                        var allChars = _getCharacters();
-                        for (var c = 0; c < allChars.length; c++) {
-                            if (allChars[c].motherId === deceasedHead.id || allChars[c].fatherId === deceasedHead.id) {
-                                if (!allChars[c].isDeceased) {
-                                    heirs.push({ character: allChars[c], relationship: 'biological' });
-                                }
-                            }
-                        }
-                        heirs.sort(function(a, b) {
-                            return (a.character.birthYear || 0) - (b.character.birthYear || 0);
-                        });
-                    }
-
-                    if (heirs && heirs.length > 0) {
-                        var heir = heirs[0].character;
-                        if (typeof window.transferHouseholdToHeir === 'function') {
-                            var transferResult = window.transferHouseholdToHeir(household.id, heir.id);
-                            if (transferResult) {
-                                successCount++;
-                                results.push({
-                                    household: household.name,
-                                    heir: heir.name,
-                                    success: true,
-                                    reason: 'Succession complete'
-                                });
-                            } else {
-                                failCount++;
-                                results.push({
-                                    household: household.name,
-                                    heir: heir.name,
-                                    success: false,
-                                    reason: 'Failed to transfer'
-                                });
-                            }
-                        } else {
-                            // Attempt to add heir as household head directly
-                            if (typeof window.addHouseholdMember === 'function') {
-                                var added = window.addHouseholdMember(household.id, heir.id, 'family', {
-                                    role: 'Head of Household',
-                                    isHead: true,
-                                    joinedYear: _getCurrentYear(),
-                                    notes: 'Inherited from ' + deceasedHead.name
-                                });
-                                if (added) {
-                                    successCount++;
-                                    results.push({
-                                        household: household.name,
-                                        heir: heir.name,
-                                        success: true,
-                                        reason: 'Succession complete'
-                                    });
-                                } else {
-                                    failCount++;
-                                    results.push({
-                                        household: household.name,
-                                        heir: heir.name,
-                                        success: false,
-                                        reason: 'Failed to transfer'
-                                    });
-                                }
-                            } else {
-                                failCount++;
-                                results.push({
-                                    household: household.name,
-                                    heir: heir.name,
-                                    success: false,
-                                    reason: 'Transfer function not available'
-                                });
-                            }
-                        }
-                    } else {
-                        household.status = 'abandoned';
-                        household.abandonedYear = _getCurrentYear();
-                        if (typeof window.saveMasterData === 'function') {
-                            window.saveMasterData();
-                        }
-                        failCount++;
-                        results.push({
-                            household: household.name,
-                            heir: null,
-                            success: false,
-                            reason: 'No eligible heirs found - household abandoned'
-                        });
-                    }
-                }
+            var years = _isMissing(yearsResult.value) ? 1 : yearsResult.value;
+            if (years === 0) {
+                return { success: true, died: false, reason: 'Zero years advanced' };
             }
 
-            if (showNotifications && (successCount > 0 || failCount > 0)) {
-                var icon = _getIcon('CHECK', '✓');
-                _showToast(icon + ' Inheritance: ' + successCount + ' transferred, ' + failCount + ' abandoned',
-                    successCount > 0 ? 'success' : 'warning');
+            var age = _resolveAge(char);
+            if (age === null) {
+                return { success: false, reason: 'Character has no determinable age' };
             }
 
-            return results;
+            var annualRisk = _annualMortalityRisk(age);
+            var totalRisk = annualRisk * years;
+            if (totalRisk > 0.95) totalRisk = 0.95;
 
+            if (!window.chance(totalRisk)) {
+                return { success: true, died: false };
+            }
+
+            // Character dies. Select a cause and run the transition.
+            var cause = getRandomDeathCause(age, char.gender);
+            var year = _resolveYear(_isMissing(char.deathYear) ? null : char.deathYear);
+
+            // Release lock and call the canonical death transition.
+            _releaseLock();
+            try {
+                var result = killCharacter(char.id, year, cause);
+                return { success: result.success, died: result.success, reason: result.reason };
+            } finally {
+                _acquireLock();
+            }
         } finally {
-            _processingInheritance = false;
-        }
-    }
-
-    function hasPendingInheritance(characterId) {
-        var character = _getCharacterById(characterId);
-        if (!character || !character.isDeceased) return false;
-
-        var households = _getAllHouseholds();
-        for (var i = 0; i < households.length; i++) {
-            var household = households[i];
-            if (household.members && household.members.some(function(m) { return m.characterId === characterId; })) {
-                if (typeof window.getHouseholdHead === 'function') {
-                    var head = window.getHouseholdHead(household.id);
-                    if (head && head.id === characterId) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
-    }
-
-    // =========================================================================
-    // 10. AGING MORTALITY
-    // =========================================================================
-
-    function applyAgingMortality(character, yearsAdvanced) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processing = true;
-
-        try {
-            if (!character || character.isDeceased) {
-                return { success: false, reason: 'Character already deceased' };
-            }
-
-            var currentYear = _getCurrentYear();
-            var endAge = _calculateAge(character.birthYear, false, null);
-
-            if (endAge < 0) {
-                return { success: false, reason: 'Invalid age' };
-            }
-
-            var mortalityRisk = 0;
-            if (endAge < 1) mortalityRisk = 0.02;
-            else if (endAge < 5) mortalityRisk = 0.01;
-            else if (endAge < 18) mortalityRisk = 0.005;
-            else if (endAge < 45) mortalityRisk = 0.01 * (yearsAdvanced || 1);
-            else if (endAge < 60) mortalityRisk = 0.02 * (yearsAdvanced || 1);
-            else if (endAge < 75) mortalityRisk = 0.05 * (yearsAdvanced || 1);
-            else mortalityRisk = 0.10 * (yearsAdvanced || 1);
-
-            mortalityRisk = Math.min(mortalityRisk, 0.95);
-
-            if (_chance(mortalityRisk)) {
-                return killCharacterRandomCause(character, currentYear);
-            }
-
-            return { success: false, reason: 'Survived' };
-
-        } finally {
-            _processing = false;
+            _releaseLock();
         }
     }
 
     // =========================================================================
-    // 11. LIFESPAN PREDICTION
+    // 8. DEATH WRAPPERS
     // =========================================================================
 
-    function predictLifespan(character) {
-        if (!character) return 0;
+    /**
+     * Triggers a natural death for a character. Selects a cause from the
+     * canonical DEATH_CAUSES list.
+     */
+    function triggerNaturalDeath(characterOrId, deathYear, options) {
+        if (_isMissing(options)) options = {};
 
-        var gender = character.gender;
-        var baseExpectancy = gender === 'female' ? 45 : 40;
+        var char;
+        if (typeof characterOrId === 'string') {
+            char = window.getCharacterById(characterOrId);
+        } else if (characterOrId && typeof characterOrId === 'object') {
+            char = window.getCharacterById(characterOrId.id);
+        }
+        if (!char) return { success: false, reason: 'Character not found' };
 
-        if (character.activeRankId && _getRankById) {
-            var rank = _getRankById(character.activeRankId);
-            if (rank && rank.priority <= 2) baseExpectancy += 10;
-            else if (rank && rank.priority <= 3) baseExpectancy += 5;
+        var age = _resolveAge(char);
+        if (age === null) {
+            return { success: false, reason: 'Character has no determinable age' };
         }
 
-        var variation = Math.floor((_random() * 25) - 10);
-        var predictedAge = baseExpectancy + variation;
-
-        return Math.max(1, Math.min(predictedAge, 95));
+        var cause = getRandomDeathCause(age, char.gender);
+        return killCharacter(char.id, deathYear, cause, options);
     }
 
-    function getExpectedRemainingYears(character) {
-        if (!character || character.isDeceased) return 0;
-
-        var currentAge = _calculateAge(character.birthYear, false, null);
-        var predictedAge = predictLifespan(character);
-
-        return Math.max(0, predictedAge - currentAge);
-    }
-
-    // =========================================================================
-    // 12. DEATH EVENT WRAPPERS (Natural & Accidental)
-    // =========================================================================
-
-    function triggerNaturalDeath(character, deathYear, options) {
-        deathYear = deathYear || null;
-        options = options || {};
-
-        if (!character || character.isDeceased) {
-            return { success: false, reason: 'Character already deceased' };
-        }
-
-        var year = deathYear || _getCurrentYear();
-        var age = _calculateAge(character.birthYear, false, null);
-        var cause = getRandomDeathCause(age, character.gender);
-
-        var result = killCharacter(character, year, cause, options);
-
-        _logEvent('death', 'Natural Death',
-            character.name + ' died of ' + cause.toLowerCase() + ' at age ' + age + ' in ' + year,
-            [character]);
-
-        return result;
-    }
-
-    function triggerAccidentalDeath(character, deathYear, accidentType, options) {
-        deathYear = deathYear || null;
-        accidentType = accidentType || null;
-        options = options || {};
-
-        if (!character || character.isDeceased) {
-            return { success: false, reason: 'Character already deceased' };
-        }
+    /**
+     * Triggers an accidental death for a character.
+     */
+    function triggerAccidentalDeath(characterOrId, deathYear, accidentType, options) {
+        if (_isMissing(options)) options = {};
 
         var accidentTypes = [
             'Fell from a height', 'Drowning', 'Fire', 'Hunting accident',
@@ -1031,303 +778,169 @@
             'Building collapse', 'Tools accident', 'Poisoning accident'
         ];
 
-        var type = accidentType || _pickRandom(accidentTypes);
-        var year = deathYear || _getCurrentYear();
-        var age = _calculateAge(character.birthYear, false, null);
+        var type = _isMissing(accidentType)
+            ? window.pickRandom(accidentTypes)
+            : accidentType;
+        if (typeof type !== 'string') {
+            return { success: false, reason: 'accidentType must be a string' };
+        }
 
-        var result = killCharacter(character, year, type, {
-            notes: options.notes || 'Accidental death: ' + type.toLowerCase()
-        });
+        var merged = Object.assign({}, options);
+        merged.notes = _isMissing(options.notes)
+            ? 'Accidental death: ' + type.toLowerCase()
+            : options.notes;
 
-        _logEvent('accident', 'Accidental Death',
-            character.name + ' died in a ' + type.toLowerCase() + ' accident at age ' + age + ' in ' + year,
-            [character]);
-
-        return result;
+        return killCharacter(characterOrId, deathYear, type, merged);
     }
 
     // =========================================================================
-    // 13. FAMILY STATISTICS HELPERS (NEW - Using FamilyAccessors)
+    // 9. LIFESPAN ESTIMATION (DETERMINISTIC)
     // =========================================================================
+    //
+    // predictLifespan is a DETERMINISTIC query. It does not consume RNG.
+    // Two calls for the same character return the same number. This makes
+    // it safe to call from UI rendering paths.
+    //
+    // If you need stochastic per-character lifespans that vary, use
+    // generateLifespan() (which consumes RNG and is intended for
+    // simulation).
 
     /**
-     * Gets family statistics for a character (using FamilyAccessors if available)
-     * @param {string} characterId - Character ID
-     * @returns {Object|null} Family statistics
+     * Estimates a character's expected lifespan from their attributes.
+     * Deterministic. Does NOT consume RNG.
+     *
+     * @param {Object} character
+     * @returns {number|null}
      */
-    function getCharacterFamilyStatistics(characterId) {
-        if (_processing) return null;
-        _processing = true;
+    function predictLifespan(character) {
+        if (!character || typeof character !== 'object') return null;
 
-        try {
-            // Prefer FamilyAccessors
-            var fa = _getFamilyAccessors();
-            if (fa && typeof fa.getFamilyStatistics === 'function') {
-                return fa.getFamilyStatistics(characterId);
+        var base = character.gender === 'female' ? 45 : 40;
+
+        // Rank modifier: high-priority ranks receive a small uplift.
+        if (_hasId(character.activeRankId)) {
+            var rank = window.getRankById(character.activeRankId);
+            if (rank) {
+                if (typeof rank.priority === 'number') {
+                    if (rank.priority <= 2) base += 10;
+                    else if (rank.priority <= 3) base += 5;
+                }
             }
-
-            // Fallback: use CharacterQueries
-            if (typeof window.CharacterQueries !== 'undefined' &&
-                typeof window.CharacterQueries.getCharacterFamilyStatistics === 'function') {
-                return window.CharacterQueries.getCharacterFamilyStatistics(characterId);
-            }
-
-            return null;
-        } finally {
-            _processing = false;
         }
+
+        // Deterministic adjustment based on character identity. This
+        // spreads predictions across characters without consuming RNG.
+        if (_hasId(character.id)) {
+            var hash = 0;
+            for (var i = 0; i < character.id.length; i++) {
+                hash = (hash * 31 + character.id.charCodeAt(i)) | 0;
+            }
+            var offset = (hash % 21) - 10; // -10..+10
+            base += offset;
+        }
+
+        if (base < 1) base = 1;
+        if (base > 95) base = 95;
+        return base;
     }
 
     /**
-     * Gets the primary heir for a character (using FamilyAccessors)
-     * @param {string} characterId - Character ID
-     * @param {Object} options - Options
-     * @param {boolean} options.includeAdopted - Include adopted children (default: true)
-     * @param {boolean} options.onlyLegitimate - Only legitimate children (default: false)
-     * @param {string} options.genderPreference - 'male', 'female', or null
-     * @returns {Object|null} Heir character or null
+     * Returns a character's expected remaining years.
+     * Deterministic.
+     *
+     * @param {Object} character
+     * @returns {number|null}
      */
-    function getPrimaryHeir(characterId, options) {
-        if (_processing) return null;
-        _processing = true;
-
-        try {
-            options = options || {};
-            var fa = _getFamilyAccessors();
-
-            // Use FamilyAccessors if available
-            if (fa && typeof fa.getAllChildren === 'function') {
-                var children = fa.getAllChildren(characterId, false);
-                if (!children) return null;
-
-                // Filter by legitimacy
-                if (options.onlyLegitimate) {
-                    children = children.filter(function(c) { return c.character.isLegitimate !== false; });
-                }
-
-                // Filter by gender preference
-                if (options.genderPreference) {
-                    children = children.filter(function(c) { return c.character.gender === options.genderPreference; });
-                }
-
-                // Filter adopted if needed
-                if (!options.includeAdopted) {
-                    children = children.filter(function(c) { return c.type === 'biological'; });
-                }
-
-                if (children.length === 0) return null;
-
-                // Return eldest living child
-                for (var i = 0; i < children.length; i++) {
-                    if (!children[i].character.isDeceased) {
-                        return children[i].character;
-                    }
-                }
-
-                // If all deceased, return eldest
-                return children[0].character;
-            }
-
-            // Fallback: use CharacterQueries
-            if (typeof window.CharacterQueries !== 'undefined' &&
-                typeof window.CharacterQueries.getCharacterChildren === 'function') {
-                var children = window.CharacterQueries.getCharacterChildren(characterId, false);
-                if (!children || children.length === 0) return null;
-
-                // Filter by legitimacy
-                if (options.onlyLegitimate) {
-                    children = children.filter(function(c) { return c.isLegitimate !== false; });
-                }
-
-                // Filter by gender preference
-                if (options.genderPreference) {
-                    children = children.filter(function(c) { return c.gender === options.genderPreference; });
-                }
-
-                // Filter adopted if needed
-                if (!options.includeAdopted) {
-                    children = children.filter(function(c) {
-                        return c.motherId === characterId || c.fatherId === characterId;
-                    });
-                }
-
-                // Return eldest living child
-                for (var i = 0; i < children.length; i++) {
-                    if (!children[i].isDeceased) {
-                        return children[i];
-                    }
-                }
-
-                return children[0];
-            }
-
-            return null;
-        } finally {
-            _processing = false;
-        }
-    }
-
-    /**
-     * Gets all potential heirs for a character (including siblings and extended family)
-     * @param {string} characterId - Character ID
-     * @param {Object} options - Options
-     * @returns {Array} Array of potential heir characters with relationship info
-     */
-    function getPotentialHeirs(characterId, options) {
-        if (_processing) return [];
-        _processing = true;
-
-        try {
-            options = options || {};
-            var fa = _getFamilyAccessors();
-            var heirs = [];
-
-            // 1. Primary heirs: children
-            var children = [];
-            if (fa && typeof fa.getAllChildren === 'function') {
-                var childrenResult = fa.getAllChildren(characterId, false);
-                if (childrenResult) {
-                    children = childrenResult.map(function(c) { return { character: c.character, relationship: c.type }; });
-                }
-            } else if (typeof window.CharacterQueries !== 'undefined' &&
-                typeof window.CharacterQueries.getCharacterChildren === 'function') {
-                var childChars = window.CharacterQueries.getCharacterChildren(characterId, false);
-                children = childChars.map(function(c) { return { character: c, relationship: 'biological' }; });
-            }
-
-            // Filter children
-            if (options.onlyLegitimate) {
-                children = children.filter(function(c) { return c.character.isLegitimate !== false; });
-            }
-            if (options.genderPreference) {
-                children = children.filter(function(c) { return c.character.gender === options.genderPreference; });
-            }
-            if (!options.includeAdopted) {
-                children = children.filter(function(c) { return c.relationship !== 'adopted'; });
-            }
-
-            for (var i = 0; i < children.length; i++) {
-                heirs.push({
-                    character: children[i].character,
-                    relationship: children[i].relationship === 'biological' ? 'Child' : 'Adopted Child',
-                    priority: 1
-                });
-            }
-
-            // 2. Secondary heirs: siblings (if no children)
-            if (heirs.length === 0 || options.includeSiblings) {
-                var siblings = [];
-                if (fa && typeof fa.getSiblings === 'function') {
-                    var siblingsResult = fa.getSiblings(characterId, true, false);
-                    if (siblingsResult) {
-                        siblings = siblingsResult.map(function(s) { return s.character; });
-                    }
-                } else if (typeof window.CharacterQueries !== 'undefined' &&
-                    typeof window.CharacterQueries.getCharacterSiblings === 'function') {
-                    siblings = window.CharacterQueries.getCharacterSiblings(characterId, true, false);
-                }
-
-                for (var i = 0; i < siblings.length; i++) {
-                    heirs.push({
-                        character: siblings[i],
-                        relationship: 'Sibling',
-                        priority: 2
-                    });
-                }
-            }
-
-            // 3. Tertiary heirs: parents (if no children or siblings)
-            if (heirs.length === 0 || options.includeParents) {
-                var parents = [];
-                if (fa && typeof fa.getParents === 'function') {
-                    var parentsResult = fa.getParents(characterId);
-                    if (parentsResult) {
-                        if (parentsResult.father) parents.push(parentsResult.father);
-                        if (parentsResult.mother) parents.push(parentsResult.mother);
-                    }
-                } else if (typeof window.CharacterQueries !== 'undefined' &&
-                    typeof window.CharacterQueries.getCharacterParents === 'function') {
-                    var parentsResult = window.CharacterQueries.getCharacterParents(characterId, false);
-                    if (parentsResult.father) parents.push(parentsResult.father);
-                    if (parentsResult.mother) parents.push(parentsResult.mother);
-                }
-
-                for (var i = 0; i < parents.length; i++) {
-                    heirs.push({
-                        character: parents[i],
-                        relationship: 'Parent',
-                        priority: 3
-                    });
-                }
-            }
-
-            // Remove duplicates
-            var seenIds = {};
-            var uniqueHeirs = [];
-            for (var i = 0; i < heirs.length; i++) {
-                if (heirs[i].character && !seenIds[heirs[i].character.id]) {
-                    seenIds[heirs[i].character.id] = true;
-                    uniqueHeirs.push(heirs[i]);
-                }
-            }
-
-            // Sort by priority then birth year
-            uniqueHeirs.sort(function(a, b) {
-                if (a.priority !== b.priority) return a.priority - b.priority;
-                return (a.character.birthYear || 0) - (b.character.birthYear || 0);
-            });
-
-            return uniqueHeirs;
-        } finally {
-            _processing = false;
-        }
+    function getExpectedRemainingYears(character) {
+        if (!character || character.isDeceased === true) return null;
+        var age = _resolveAge(character);
+        if (age === null) return null;
+        var predicted = predictLifespan(character);
+        if (predicted === null) return null;
+        return Math.max(0, predicted - age);
     }
 
     // =========================================================================
-    // 14. EXPORTS
+    // 10. SUCCESSION QUERIES (DELEGATION)
+    // =========================================================================
+
+    /**
+     * Returns whether a character has pending household succession.
+     * Delegates to SuccessionQueries if loaded.
+     *
+     * @param {string} characterId
+     * @returns {boolean}
+     */
+    function hasPendingInheritance(characterId) {
+        if (typeof window.SuccessionQueries === 'undefined') return false;
+        if (typeof window.SuccessionQueries.hasPending !== 'function') return false;
+        return window.SuccessionQueries.hasPending(characterId) === true;
+    }
+
+    /**
+     * Processes succession for a single deceased character.
+     * Delegates to SuccessionCommands if loaded.
+     */
+    function processHouseholdInheritance(characterId) {
+        if (typeof window.SuccessionCommands === 'undefined') {
+            return { success: false, reason: 'succession-commands.js not loaded' };
+        }
+        if (typeof window.SuccessionCommands.processOnDeath !== 'function') {
+            return { success: false, reason: 'processOnDeath not available' };
+        }
+        return window.SuccessionCommands.processOnDeath(characterId);
+    }
+
+    /**
+     * Processes succession for all households with deceased heads.
+     * Delegates to SuccessionCommands if loaded.
+     */
+    function processAllPendingInheritance() {
+        if (typeof window.SuccessionCommands === 'undefined') {
+            return { success: false, reason: 'succession-commands.js not loaded' };
+        }
+        if (typeof window.SuccessionCommands.processAllPending !== 'function') {
+            return { success: false, reason: 'processAllPending not available' };
+        }
+        return window.SuccessionCommands.processAllPending();
+    }
+
+    // =========================================================================
+    // 11. EXPORTS
     // =========================================================================
 
     window.CharacterLifecycle = {
-        // Life stages
+        // Age and life stage
         getLifeStage: getLifeStage,
         getLifeStageName: getLifeStageName,
-        isElderly: isElderly,
         getAgeGroup: getAgeGroup,
-        getAgeGroupIcon: getAgeGroupIcon,
-        getAgeGroupEmoji: getAgeGroupEmoji,
         getAllAgeGroups: getAllAgeGroups,
         getAgeGroupIndex: getAgeGroupIndex,
+        isElderly: isElderly,
         groupCharactersByAgeGroup: groupCharactersByAgeGroup,
 
         // Death causes
         getRandomDeathCause: getRandomDeathCause,
 
-        // Death execution
+        // Death transition (canonical)
         killCharacter: killCharacter,
         killCharacterRandomCause: killCharacterRandomCause,
+
+        // Mortality
         applyAgingMortality: applyAgingMortality,
 
-        // Lifespan
-        predictLifespan: predictLifespan,
-        getExpectedRemainingYears: getExpectedRemainingYears,
-
-        // Death event wrappers
+        // Death wrappers
         triggerNaturalDeath: triggerNaturalDeath,
         triggerAccidentalDeath: triggerAccidentalDeath,
 
-        // Inheritance
-        processHouseholdInheritance: processHouseholdInheritance,
-        processAllPendingInheritance: processAllPendingInheritance,
+        // Lifespan estimation (deterministic)
+        predictLifespan: predictLifespan,
+        getExpectedRemainingYears: getExpectedRemainingYears,
+
+        // Succession delegation
         hasPendingInheritance: hasPendingInheritance,
-
-        // Family Statistics (NEW)
-        getCharacterFamilyStatistics: getCharacterFamilyStatistics,
-        getPrimaryHeir: getPrimaryHeir,
-        getPotentialHeirs: getPotentialHeirs
+        processHouseholdInheritance: processHouseholdInheritance,
+        processAllPendingInheritance: processAllPendingInheritance
     };
-
-    if (typeof module !== 'undefined' && module.exports) {
-        module.exports = window.CharacterLifecycle;
-    }
 
 })();
