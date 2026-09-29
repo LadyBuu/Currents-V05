@@ -10,6 +10,7 @@
  * 
  * DEPENDENCIES:
  *   - religion-state.js: ReligionState
+ *   - religion-format.js: ReligionFormat (display names)
  *   - crime-constants.js: CRIME_TYPES, LAW_TYPES, LAW_CATEGORIES, LAW_DOMAINS, LAW_SEVERITY
  *   - ids.js: generateId
  *   - storage.js: saveMasterData
@@ -18,12 +19,16 @@
  * 
  * =============================================================================
  * PHASE 0 STABILISATION (2026):
- *   - Removed _processingLaw re-entry guard. It was a boolean flag guarding
- *     pure compositional functions, causing composite queries to silently
- *     return empty results (getLawsByDomain, getLawsByCategory, getLawsByType,
- *     getLawsBySeverity, getEnforcedLaws, getApplicableLaws, getCrimeMappingForLaw,
- *     getEnforcedLawsByCrimeType were all broken).
- *   - Statistics now compute correctly because nested query calls succeed.
+ *   - Removed _processingLaw re-entry guard.
+ *   - Composite queries now work.
+ * 
+ * PHASE 2 VOCABULARY CONSOLIDATION (2026):
+ *   - Deleted local getLawTypeName / getLawCategoryName / getLawDomainName /
+ *     getLawSeverityName. Display names now come from ReligionFormat.
+ *   - Deleted getLawSeverityColor and getLawTypeIcon entirely. Presentation
+ *     concerns; the renderer + CSS will own them (ADR Decision 11).
+ *   - Exported helpers still exist for backward compatibility during
+ *     migration but delegate to ReligionFormat. Removed in Phase 6.
  * 
  * =============================================================================
  */
@@ -133,31 +138,26 @@
             return { success: false, reason: 'Law name is required' };
         }
 
-        // Validate domain
         var validDomains = Object.values(_LAW_DOMAINS);
         if (lawData.domain && validDomains.indexOf(lawData.domain) === -1) {
             return { success: false, reason: 'Invalid law domain: ' + lawData.domain };
         }
 
-        // Validate category
         var validCategories = Object.values(_LAW_CATEGORIES);
         if (lawData.lawCategory && validCategories.indexOf(lawData.lawCategory) === -1) {
             return { success: false, reason: 'Invalid law category: ' + lawData.lawCategory };
         }
 
-        // Validate severity
         var validSeverities = Object.values(_LAW_SEVERITY);
         if (lawData.severity && validSeverities.indexOf(lawData.severity) === -1) {
             return { success: false, reason: 'Invalid law severity: ' + lawData.severity };
         }
 
-        // Validate law type
         var validTypes = Object.values(_LAW_TYPES);
         if (lawData.type && validTypes.indexOf(lawData.type) === -1) {
             return { success: false, reason: 'Invalid law type: ' + lawData.type };
         }
 
-        // Validate crime type if provided
         if (lawData.crimeType && _CRIME_TYPES) {
             var crimeTypes = Object.values(_CRIME_TYPES);
             if (crimeTypes.indexOf(lawData.crimeType) === -1) {
@@ -206,7 +206,6 @@
     }
 
     function updateLaw(lawId, updates) {
-        // Find which religion contains this law
         var allReligions = _getAllReligions({ includeDeprecated: true });
         var targetReligion = null;
         var lawIndex = -1;
@@ -231,7 +230,6 @@
 
         var law = targetReligion.laws[lawIndex];
 
-        // Update fields
         if (updates.name !== undefined) law.name = updates.name.trim();
         if (updates.type !== undefined) {
             var validTypes = Object.values(_LAW_TYPES);
@@ -264,7 +262,6 @@
         }
         if (updates.notes !== undefined) law.notes = updates.notes;
 
-        // Update crime mapping
         if (updates.crimeMapping !== undefined) {
             if (updates.crimeMapping.crimeType !== undefined) {
                 if (updates.crimeMapping.crimeType && _CRIME_TYPES) {
@@ -599,68 +596,42 @@
     }
 
     // =========================================================================
-    // 7. HELPER FUNCTIONS
+    // 7. BACKWARD-COMPAT FORMATTING DELEGATES
     // =========================================================================
+    // These existed as local helpers before Phase 2. They now delegate to
+    // ReligionFormat. Removed in Phase 6 once consumers call ReligionFormat
+    // directly.
+    // 
+    // getLawSeverityColor() and getLawTypeIcon() were deleted entirely:
+    // they returned CSS variables and glyphs. Both are presentation concerns
+    // (ADR Decision 11) and belong in the renderer + CSS, not the domain layer.
 
     function getLawTypeName(type) {
-        var names = {
-            'law': 'Law',
-            'taboo': 'Taboo',
-            'guideline': 'Guideline'
-        };
-        return names[type] || type;
+        if (typeof window.ReligionFormat !== 'undefined') {
+            return window.ReligionFormat.getLawTypeName(type);
+        }
+        return type;
     }
 
     function getLawCategoryName(category) {
-        var names = {
-            'religious': 'Religious Law',
-            'civil': 'Civil Law',
-            'custom': 'Custom Law'
-        };
-        return names[category] || category;
+        if (typeof window.ReligionFormat !== 'undefined') {
+            return window.ReligionFormat.getLawCategoryName(category);
+        }
+        return category;
     }
 
     function getLawDomainName(domain) {
-        var names = {
-            'marriage': 'Marriage',
-            'behavior': 'Behavior',
-            'worship': 'Worship',
-            'food': 'Food',
-            'social': 'Social',
-            'economic': 'Economic',
-            'political': 'Political',
-            'sexual': 'Sexual',
-            'violence': 'Violence',
-            'death': 'Death'
-        };
-        return names[domain] || domain;
+        if (typeof window.ReligionFormat !== 'undefined') {
+            return window.ReligionFormat.getLawDomainName(domain);
+        }
+        return domain;
     }
 
     function getLawSeverityName(severity) {
-        var names = {
-            'minor': 'Minor',
-            'major': 'Major',
-            'mortal': 'Mortal'
-        };
-        return names[severity] || severity;
-    }
-
-    function getLawSeverityColor(severity) {
-        var colors = {
-            'minor': 'var(--text-dim)',
-            'major': 'var(--warning)',
-            'mortal': 'var(--error)'
-        };
-        return colors[severity] || 'var(--text)';
-    }
-
-    function getLawTypeIcon(type) {
-        var icons = {
-            'law': '◉',
-            'taboo': '✕',
-            'guideline': '○'
-        };
-        return icons[type] || '◉';
+        if (typeof window.ReligionFormat !== 'undefined') {
+            return window.ReligionFormat.getLawSeverityName(severity);
+        }
+        return severity;
     }
 
     // =========================================================================
@@ -692,13 +663,11 @@
         getLawStatistics: getLawStatistics,
         getGlobalLawStatistics: getGlobalLawStatistics,
 
-        // Helpers
+        // Formatting — delegates to ReligionFormat. Deprecated; removed in Phase 6.
         getLawTypeName: getLawTypeName,
         getLawCategoryName: getLawCategoryName,
         getLawDomainName: getLawDomainName,
         getLawSeverityName: getLawSeverityName,
-        getLawSeverityColor: getLawSeverityColor,
-        getLawTypeIcon: getLawTypeIcon,
 
         // Constants reference
         LAW_TYPES: _LAW_TYPES,
