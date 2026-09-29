@@ -7,11 +7,18 @@
  * 
  * All write operations for religion management.
  * 
+ * Commands orchestrate: validation → rules → mutation → commit.
+ * 
+ * Validation lives in ReligionValidation.
+ * Rules live in ReligionRules.
+ * This module: fetch, delegate, mutate, commit.
+ * 
  * DEPENDENCIES:
  *   - religion-state.js: ReligionState (rebuildIndexes, notify)
- *   - religion-queries.js: ReligionQueries (validation reads)
- *   - religion-constants.js: ReligionConstants
- *   - accessors.js: getCharacterById, getPlaceById, getCharacters
+ *   - religion-queries.js: ReligionQueries
+ *   - religion-validation.js: ReligionValidation
+ *   - religion-rules.js: ReligionRules
+ *   - accessors.js: getCharacterById, getPlaceById
  *   - ids.js: generateId
  *   - time.js: getCurrentYearSafe
  *   - storage.js: saveMasterData
@@ -24,32 +31,18 @@
  *   - Fixed year-zero bugs.
  * 
  * PHASE 3 BOUNDARY RESTRUCTURE (2026):
- *   - Commands mutate masterData.data.religions directly. No more calls to
- *     ReligionState._updateReligion, _addReligion, _deleteReligion,
- *     _addGodToReligion, _removeGodFromReligion, _addLawToReligion,
- *     _removeLawFromReligion. Those private mutators are gone.
- *   - Transaction sequence: mutate canonical data → rebuild indexes →
- *     request save → notify subscribers. Save is a command-layer concern.
- *   - Added reactivateReligion(religionId). Fixes the silently-failing
- *     path where the modal called updateReligion(id, { isDeprecated: false })
- *     but updateReligion's allowlist ignored the field.
- *   - updateReligion allowlist now documented: it does not accept
- *     isDeprecated / deprecatedYear. Those have dedicated commands
- *     (deprecateReligion, reactivateReligion).
- *   - Cross-domain character mutation extracted into _setCharacterReligionField.
- *     This is a placeholder for a proper CharacterCommands.setReligion;
- *     until that exists, the character record is mutated inline with a
- *     TODO marker and the boundary is documented.
- *   - updateGod clones the god before mutating rather than editing the live
- *     canonical object before persistence (ADR Decision 6).
- *   - setReligionLeader / endReligionLeaderTerm clone the leaderHistory
- *     array before pushing.
- *   - removeReligionLocation splices a cloned locations array.
+ *   - Commands mutate masterData.data.religions directly via _commit().
+ *   - Added reactivateReligion.
+ *   - Clone-before-mutate in god/leader/location updates.
  * 
- * NOTE: Place of worship CRUD still has the "ID stored, object discarded"
- * data-loss bug. ADR Decision 2 resolves this in a future phase; this file
- * documents the deferral explicitly rather than pretending the operations
- * are correct.
+ * PHASE 5 DOMAIN RULES AND VALIDATION EXTRACTION (2026):
+ *   - Deleted local _validateReligionData. Delegates to ReligionValidation.
+ *   - Deleted inline eligibility checks. Delegates to ReligionRules:
+ *     canDelete, canDeprecate, canReactivate, canSetLeader, canEndLeaderTerm,
+ *     canConvert, canAssignReligion, canRemoveReligion.
+ *   - Every rule verdict { allowed, reason } is translated into a command
+ *     result { success, reason } by a small _deny helper.
+ *   - No rule logic remains in this file. This is orchestration only.
  * 
  * =============================================================================
  */
@@ -58,21 +51,35 @@
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
+    // 1. DEPENDENCY RESOLUTION
     // =========================================================================
 
-    function _getState() {
+    function _state() {
         if (typeof window.ReligionState === 'undefined') {
             throw new Error('ReligionCommands requires ReligionState.');
         }
         return window.ReligionState;
     }
 
-    function _getQueries() {
+    function _queries() {
         if (typeof window.ReligionQueries === 'undefined') {
             throw new Error('ReligionCommands requires ReligionQueries.');
         }
         return window.ReligionQueries;
+    }
+
+    function _validation() {
+        if (typeof window.ReligionValidation === 'undefined') {
+            throw new Error('ReligionCommands requires ReligionValidation.');
+        }
+        return window.ReligionValidation;
+    }
+
+    function _rules() {
+        if (typeof window.ReligionRules === 'undefined') {
+            throw new Error('ReligionCommands requires ReligionRules.');
+        }
+        return window.ReligionRules;
     }
 
     function _getCharacterById(id) {
@@ -130,17 +137,11 @@
     // =========================================================================
     // 2. TRANSACTION BOUNDARY
     // =========================================================================
-    // Every command ends with _commit(). Sequence per ADR Decision 9:
-    //   1. (caller) mutate canonical data
-    //   2. _commit() rebuilds indexes
-    //   3. _commit() requests save
-    //   4. _commit() notifies subscribers
-    // Notify means "in-memory mutation complete", not "durably persisted".
 
     function _commit(eventType, eventData) {
-        _getState().rebuildIndexes();
+        _state().rebuildIndexes();
         _save();
-        _getState().notify({
+        _state().notify({
             type: eventType,
             data: eventData,
             timestamp: Date.now()
@@ -148,37 +149,19 @@
     }
 
     // =========================================================================
-    // 3. VALIDATION (deferred extraction to ReligionValidation in Phase 5)
+    // 3. RESULT HELPERS
     // =========================================================================
 
-    function _validateReligionData(data, isUpdate) {
-        var errors = [];
+    function _deny(reason) {
+        return { success: false, reason: reason };
+    }
 
-        if (!isUpdate) {
-            if (!data.name || data.name.trim() === '') {
-                errors.push('Religion name is required');
-            }
-        }
+    function _denyFromValidation(errors) {
+        return _deny(errors.join(', '));
+    }
 
-        if (data.name && data.name.length > 100) {
-            errors.push('Religion name cannot exceed 100 characters');
-        }
-
-        if (data.trait) {
-            var validTraits = ['monotheistic', 'polytheistic', 'syncretic', 'evangelical', 'animist'];
-            if (validTraits.indexOf(data.trait) === -1) {
-                errors.push('Invalid religious trait: ' + data.trait);
-            }
-        }
-
-        if (data.inheritanceRule && data.inheritanceRule.type) {
-            var validRules = ['mother', 'father', 'both', 'dominant', 'none'];
-            if (validRules.indexOf(data.inheritanceRule.type) === -1) {
-                errors.push('Invalid inheritance rule: ' + data.inheritanceRule.type);
-            }
-        }
-
-        return { isValid: errors.length === 0, errors: errors };
+    function _denyFromRule(verdict) {
+        return _deny(verdict.reason || 'Operation not allowed');
     }
 
     // =========================================================================
@@ -186,9 +169,9 @@
     // =========================================================================
 
     function createReligion(data) {
-        var validation = _validateReligionData(data, false);
-        if (!validation.isValid) {
-            return { success: false, reason: validation.errors.join(', ') };
+        var validation = _validation().validateReligionCreate(data);
+        if (!validation.valid) {
+            return _denyFromValidation(validation.errors);
         }
 
         var now = Date.now();
@@ -197,7 +180,6 @@
             id: _generateId('religion'),
             name: data.name.trim(),
             displayName: data.displayName || data.name.trim(),
-            // Icons stored exactly as typed. No '✦' default (ADR Decision 4).
             icon: data.icon !== undefined ? data.icon : '',
             description: data.description || '',
             trait: data.trait || 'polytheistic',
@@ -229,8 +211,7 @@
             notes: data.notes || ''
         };
 
-        var religions = _getCanonicalReligions();
-        religions.push(religion);
+        _getCanonicalReligions().push(religion);
 
         _commit('religion_added', religion);
 
@@ -238,18 +219,18 @@
     }
 
     function updateReligion(religionId, updates) {
-        var religion = _getQueries().getReligion(religionId);
+        var religion = _queries().getReligion(religionId);
         if (!religion) {
-            return { success: false, reason: 'Religion not found' };
+            return _deny('Religion not found');
         }
 
-        var validation = _validateReligionData(updates, true);
-        if (!validation.isValid) {
-            return { success: false, reason: validation.errors.join(', ') };
+        var validation = _validation().validateReligionUpdate(updates);
+        if (!validation.valid) {
+            return _denyFromValidation(validation.errors);
         }
 
-        // Allowlist. isDeprecated / deprecatedYear are NOT here by design.
-        // Those changes go through deprecateReligion / reactivateReligion.
+        // Allowlist. isDeprecated / deprecatedYear go through
+        // deprecateReligion / reactivateReligion.
         if (updates.name !== undefined) religion.name = updates.name.trim();
         if (updates.displayName !== undefined) religion.displayName = updates.displayName;
         if (updates.icon !== undefined) religion.icon = updates.icon;
@@ -278,18 +259,14 @@
     }
 
     function deleteReligion(religionId) {
-        var religion = _getQueries().getReligion(religionId);
+        var religion = _queries().getReligion(religionId);
         if (!religion) {
-            return { success: false, reason: 'Religion not found' };
+            return _deny('Religion not found');
         }
 
-        var followers = _getQueries().getFollowerCount(religionId);
-        if (followers > 0) {
-            return {
-                success: false,
-                reason: 'Cannot delete religion with ' + followers +
-                        ' followers. Deprecate it instead.'
-            };
+        var verdict = _rules().canDelete(religionId);
+        if (!verdict.allowed) {
+            return _denyFromRule(verdict);
         }
 
         var religions = _getCanonicalReligions();
@@ -301,7 +278,7 @@
             }
         }
         if (index === -1) {
-            return { success: false, reason: 'Religion not found in canonical store' };
+            return _deny('Religion not found in canonical store');
         }
 
         religions.splice(index, 1);
@@ -312,13 +289,14 @@
     }
 
     function deprecateReligion(religionId, year) {
-        var religion = _getQueries().getReligion(religionId);
+        var religion = _queries().getReligion(religionId);
         if (!religion) {
-            return { success: false, reason: 'Religion not found' };
+            return _deny('Religion not found');
         }
 
-        if (religion.isDeprecated) {
-            return { success: false, reason: 'Religion is already deprecated' };
+        var verdict = _rules().canDeprecate(religionId);
+        if (!verdict.allowed) {
+            return _denyFromRule(verdict);
         }
 
         var deprecationYear = _resolveYear(year, _getCurrentYear());
@@ -333,13 +311,14 @@
     }
 
     function reactivateReligion(religionId) {
-        var religion = _getQueries().getReligion(religionId);
+        var religion = _queries().getReligion(religionId);
         if (!religion) {
-            return { success: false, reason: 'Religion not found' };
+            return _deny('Religion not found');
         }
 
-        if (!religion.isDeprecated) {
-            return { success: false, reason: 'Religion is not deprecated' };
+        var verdict = _rules().canReactivate(religionId);
+        if (!verdict.allowed) {
+            return _denyFromRule(verdict);
         }
 
         religion.isDeprecated = false;
@@ -356,24 +335,29 @@
     // =========================================================================
 
     function setReligionLeader(religionId, characterId, options) {
-        var religion = _getQueries().getReligion(religionId);
+        var religion = _queries().getReligion(religionId);
         if (!religion) {
-            return { success: false, reason: 'Religion not found' };
-        }
-
-        var character = _getCharacterById(characterId);
-        if (!character) {
-            return { success: false, reason: 'Character not found' };
+            return _deny('Religion not found');
         }
 
         var optionsObj = options || {};
         var startYear = _resolveYear(optionsObj.startYear, _getCurrentYear());
+
+        var verdict = _rules().canSetLeader(religionId, characterId, { startYear: startYear });
+        if (!verdict.allowed) {
+            return _denyFromRule(verdict);
+        }
+
+        var character = _getCharacterById(characterId);
+        if (!character) {
+            return _deny('Character not found');
+        }
+
         var title = optionsObj.title || 'Religious Leader';
 
-        // Clone leader history before mutating (ADR Decision 6).
+        // Clone leader history before mutating.
         var leaderHistory = (religion.leaderHistory || []).slice();
 
-        // If a leader exists, close out their term.
         if (religion.leader && religion.leader.characterId) {
             leaderHistory.push({
                 characterId: religion.leader.characterId,
@@ -415,16 +399,18 @@
     }
 
     function endReligionLeaderTerm(religionId, characterId, endYear, reason) {
-        var religion = _getQueries().getReligion(religionId);
+        var religion = _queries().getReligion(religionId);
         if (!religion) {
-            return { success: false, reason: 'Religion not found' };
-        }
-
-        if (!religion.leader || religion.leader.characterId !== characterId) {
-            return { success: false, reason: 'Character is not the current religious leader' };
+            return _deny('Religion not found');
         }
 
         var endYearValue = _resolveYear(endYear, _getCurrentYear());
+
+        var verdict = _rules().canEndLeaderTerm(religionId, characterId, endYearValue);
+        if (!verdict.allowed) {
+            return _denyFromRule(verdict);
+        }
+
         var reasonText = reason || 'Term ended';
 
         var leaderHistory = (religion.leaderHistory || []).slice();
@@ -452,24 +438,18 @@
         };
     }
 
-    // NOTE: getReligionLeader / getReligionLeaderHistory are queries. They
-    // were read operations living in Commands. They now belong to
-    // ReligionQueries. Consumers should call:
-    //   ReligionQueries.getReligion(id).leader
-    //   ReligionQueries.getReligion(id).leaderHistory
-
     // =========================================================================
     // 6. GODS
     // =========================================================================
 
     function addGod(religionId, godData) {
-        var religion = _getQueries().getReligion(religionId);
+        var religion = _queries().getReligion(religionId);
         if (!religion) {
-            return { success: false, reason: 'Religion not found' };
+            return _deny('Religion not found');
         }
 
         if (!godData.name || godData.name.trim() === '') {
-            return { success: false, reason: 'God name is required' };
+            return _deny('God name is required');
         }
 
         var god = {
@@ -477,7 +457,6 @@
             name: godData.name.trim(),
             displayName: godData.displayName || godData.name.trim(),
             domain: godData.domain || 'war',
-            // Symbol stored exactly as typed. No '✦' default.
             symbol: godData.symbol !== undefined ? godData.symbol : '',
             description: godData.description || '',
             gender: godData.gender || 'neuter',
@@ -486,7 +465,6 @@
             createdAt: Date.now()
         };
 
-        // Clone gods array before mutation.
         var gods = (religion.gods || []).slice();
         gods.push(god);
         religion.gods = gods;
@@ -500,7 +478,7 @@
     function updateGod(godId, updates) {
         var religion = _findReligionByGodId(godId);
         if (!religion) {
-            return { success: false, reason: 'God not found' };
+            return _deny('God not found');
         }
 
         var godIndex = -1;
@@ -511,10 +489,9 @@
             }
         }
         if (godIndex === -1) {
-            return { success: false, reason: 'God not found in religion' };
+            return _deny('God not found in religion');
         }
 
-        // Clone the god before mutating (ADR Decision 6).
         var original = religion.gods[godIndex];
         var updated = {
             id: original.id,
@@ -540,13 +517,13 @@
     }
 
     function removeGod(religionId, godId) {
-        var religion = _getQueries().getReligion(religionId);
+        var religion = _queries().getReligion(religionId);
         if (!religion) {
-            return { success: false, reason: 'Religion not found' };
+            return _deny('Religion not found');
         }
 
         if (!religion.gods || religion.gods.length === 0) {
-            return { success: false, reason: 'Religion has no gods' };
+            return _deny('Religion has no gods');
         }
 
         var index = -1;
@@ -557,7 +534,7 @@
             }
         }
         if (index === -1) {
-            return { success: false, reason: 'God not found in religion' };
+            return _deny('God not found in religion');
         }
 
         var gods = religion.gods.slice();
@@ -572,19 +549,15 @@
 
     function _findReligionByGodId(godId) {
         if (!godId) return null;
-        var state = _getState();
-        var god = state.getGodByIdIndex(godId);
+        var god = _state().getGodByIdIndex(godId);
         if (!god) return null;
 
-        // Find owning religion via index
         var religions = _getCanonicalReligions();
         for (var i = 0; i < religions.length; i++) {
             var r = religions[i];
             if (r.gods) {
                 for (var j = 0; j < r.gods.length; j++) {
-                    if (r.gods[j].id === godId) {
-                        return r;
-                    }
+                    if (r.gods[j].id === godId) return r;
                 }
             }
         }
@@ -596,19 +569,19 @@
     // =========================================================================
 
     function addReligionLocation(religionId, locationId) {
-        var religion = _getQueries().getReligion(religionId);
+        var religion = _queries().getReligion(religionId);
         if (!religion) {
-            return { success: false, reason: 'Religion not found' };
+            return _deny('Religion not found');
         }
 
         var place = _getPlaceById(locationId);
         if (!place) {
-            return { success: false, reason: 'Location not found' };
+            return _deny('Location not found');
         }
 
         var locations = (religion.locations || []).slice();
         if (locations.indexOf(locationId) !== -1) {
-            return { success: false, reason: 'Location already associated with this religion' };
+            return _deny('Location already associated with this religion');
         }
         locations.push(locationId);
 
@@ -621,15 +594,15 @@
     }
 
     function removeReligionLocation(religionId, locationId) {
-        var religion = _getQueries().getReligion(religionId);
+        var religion = _queries().getReligion(religionId);
         if (!religion) {
-            return { success: false, reason: 'Religion not found' };
+            return _deny('Religion not found');
         }
 
         var locations = (religion.locations || []).slice();
         var index = locations.indexOf(locationId);
         if (index === -1) {
-            return { success: false, reason: 'Location not associated with this religion' };
+            return _deny('Location not associated with this religion');
         }
         locations.splice(index, 1);
 
@@ -644,10 +617,6 @@
     // =========================================================================
     // 8. CHARACTER ASSIGNMENT (cross-domain)
     // =========================================================================
-    // Character records are owned by the character domain. We mutate them
-    // here via _setCharacterReligionField. That helper is a placeholder for
-    // a proper CharacterCommands.setReligion. Until that exists, the boundary
-    // is documented rather than pretended away.
 
     function _setCharacterReligionField(character, newReligionId, historyEvent) {
         // TODO: replace with CharacterCommands.setReligion when it exists.
@@ -657,23 +626,25 @@
     }
 
     function assignReligionToCharacter(characterId, religionId, options) {
-        var character = _getCharacterById(characterId);
-        if (!character) {
-            return { success: false, reason: 'Character not found' };
+        // If the character already has a religion, this is a conversion.
+        // Route through the same command so rules apply uniformly.
+        var existing = _getCharacterById(characterId);
+        if (!existing) {
+            return _deny('Character not found');
         }
 
-        var religion = _getQueries().getReligion(religionId);
-        if (!religion) {
-            return { success: false, reason: 'Religion not found' };
-        }
-
-        if (religion.isDeprecated) {
-            return { success: false, reason: 'Cannot assign deprecated religion' };
-        }
-
-        // If character already has a religion, route through convertCharacter.
-        if (character.religionId) {
+        if (existing.religionId) {
             return convertCharacter(characterId, religionId, options);
+        }
+
+        var verdict = _rules().canAssignReligion(characterId, religionId, options);
+        if (!verdict.allowed) {
+            return _denyFromRule(verdict);
+        }
+
+        var religion = _queries().getReligion(religionId);
+        if (!religion) {
+            return _deny('Religion not found');
         }
 
         var optionsObj = options || {};
@@ -694,35 +665,30 @@
             timestamp: Date.now()
         };
 
-        _setCharacterReligionField(character, religionId, event);
+        _setCharacterReligionField(existing, religionId, event);
 
         _commit('character_religion_assigned', {
             characterId: characterId,
             religionId: religionId
         });
-
-        // Rebuild the follower index specifically, since character records
-        // changed and the religion follower index derives from them.
-        _getState().invalidateFollowerIndex();
+        _state().invalidateFollowerIndex();
 
         return {
             success: true,
-            data: { character: character, conversion: event },
+            data: { character: existing, conversion: event },
             reason: 'Religion assigned to character successfully'
         };
     }
 
     function removeReligionFromCharacter(characterId) {
+        var verdict = _rules().canRemoveReligion(characterId);
+        if (!verdict.allowed) {
+            return _denyFromRule(verdict);
+        }
+
         var character = _getCharacterById(characterId);
-        if (!character) {
-            return { success: false, reason: 'Character not found' };
-        }
 
-        if (!character.religionId) {
-            return { success: false, reason: 'Character has no religion to remove' };
-        }
-
-        var oldReligion = _getQueries().getReligion(character.religionId);
+        var oldReligion = _queries().getReligion(character.religionId);
         var oldReligionName = oldReligion ? oldReligion.name : 'Unknown';
 
         var event = {
@@ -743,42 +709,26 @@
         _setCharacterReligionField(character, null, event);
 
         _commit('character_religion_removed', { characterId: characterId });
-        _getState().invalidateFollowerIndex();
+        _state().invalidateFollowerIndex();
 
         return { success: true, data: character, reason: 'Religion removed from character successfully' };
     }
 
     function convertCharacter(characterId, newReligionId, options) {
+        var verdict = _rules().canConvert(characterId, newReligionId, options);
+        if (!verdict.allowed) {
+            return _denyFromRule(verdict);
+        }
+
         var character = _getCharacterById(characterId);
-        if (!character) {
-            return { success: false, reason: 'Character not found' };
-        }
-
-        var newReligion = _getQueries().getReligion(newReligionId);
-        if (!newReligion) {
-            return { success: false, reason: 'New religion not found' };
-        }
-
-        if (newReligion.isDeprecated) {
-            return { success: false, reason: 'Cannot convert to deprecated religion' };
-        }
-
-        if (character.religionId && character.religionId !== newReligionId) {
-            var oldReligion = _getQueries().getReligion(character.religionId);
-            if (oldReligion && !oldReligion.allowsConversion) {
-                return { success: false, reason: 'Conversion not allowed by current religion' };
-            }
-            if (!newReligion.allowsConversion) {
-                return { success: false, reason: 'Conversion not allowed by target religion' };
-            }
-        }
+        var newReligion = _queries().getReligion(newReligionId);
 
         var optionsObj = options || {};
         var year = _resolveYear(optionsObj.year, _getCurrentYear());
         var reason = optionsObj.reason || 'personal';
 
         var oldReligion = character.religionId
-            ? _getQueries().getReligion(character.religionId)
+            ? _queries().getReligion(character.religionId)
             : null;
         var oldReligionName = oldReligion ? oldReligion.name : 'None';
         var oldReligionId = character.religionId || null;
@@ -805,7 +755,7 @@
             fromReligionId: oldReligionId,
             toReligionId: newReligionId
         });
-        _getState().invalidateFollowerIndex();
+        _state().invalidateFollowerIndex();
 
         return {
             success: true,
@@ -822,21 +772,17 @@
     // =========================================================================
     // 9. PLACES OF WORSHIP
     // =========================================================================
-    // NOTE: data-loss bug. createPlaceOfWorship builds a place object, pushes
-    // its ID into religion.placesOfWorship, and returns the object to the
-    // caller. The object is not stored anywhere. updatePlaceOfWorship cannot
-    // find the place. calculateTitheIncome fabricates baseTithe = 1. ADR
-    // Decision 2 resolves this in a future phase. For now, the operations
-    // are documented as partial rather than pretended correct.
+    // Still partial: place records are not canonically stored. ADR Decision 2
+    // resolves this in a future phase. Operations documented as partial.
 
     function createPlaceOfWorship(data) {
         if (!data.name || data.name.trim() === '') {
-            return { success: false, reason: 'Place name is required' };
+            return _deny('Place name is required');
         }
 
-        var religion = _getQueries().getReligion(data.religionId);
+        var religion = _queries().getReligion(data.religionId);
         if (!religion) {
-            return { success: false, reason: 'Religion not found' };
+            return _deny('Religion not found');
         }
 
         var place = {
@@ -883,10 +829,11 @@
     function updatePlaceOfWorship(placeId, updates) {
         var owner = _findReligionByPlaceId(placeId);
         if (!owner) {
-            return { success: false, reason: 'Place of worship not found' };
+            return _deny('Place of worship not found');
         }
 
-        // Cannot apply updates: place data has no canonical store yet.
+        // Partial: updates cannot be applied until places have a canonical
+        // store. See ADR Decision 2.
         owner.updatedAt = Date.now();
         _commit('religion_place_updated', { religionId: owner.id, placeId: placeId });
 
@@ -896,13 +843,13 @@
     function deletePlaceOfWorship(placeId) {
         var owner = _findReligionByPlaceId(placeId);
         if (!owner) {
-            return { success: false, reason: 'Place of worship not found' };
+            return _deny('Place of worship not found');
         }
 
         var placesOfWorship = (owner.placesOfWorship || []).slice();
         var index = placesOfWorship.indexOf(placeId);
         if (index === -1) {
-            return { success: false, reason: 'Place of worship not associated with religion' };
+            return _deny('Place of worship not associated with religion');
         }
         placesOfWorship.splice(index, 1);
         owner.placesOfWorship = placesOfWorship;
@@ -917,9 +864,9 @@
         var owner = _findReligionByPlaceId(placeId);
         if (!owner) return 0;
 
-        // Place data has no canonical store yet; baseTithe is unavailable.
-        // Placeholder until ADR Decision 2 is implemented.
-        var followers = _getQueries().getFollowerCount(owner.id);
+        // Partial: baseTithe not retrievable until places have a canonical
+        // store. Documented placeholder.
+        var followers = _queries().getFollowerCount(owner.id);
         return followers * 1;
     }
 
@@ -927,14 +874,9 @@
         var income = calculateTitheIncome(placeId);
         var resolvedYear = _resolveYear(year, _getCurrentYear());
 
-        // No mutation possible yet: no place record to update.
         return {
             success: true,
-            data: {
-                placeId: placeId,
-                year: resolvedYear,
-                amount: income
-            },
+            data: { placeId: placeId, year: resolvedYear, amount: income },
             reason: 'Tithes collected successfully'
         };
     }
@@ -990,9 +932,7 @@
     };
 
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            ReligionCommands: window.ReligionCommands
-        };
+        module.exports = { ReligionCommands: window.ReligionCommands };
     }
 
 })();
