@@ -15,19 +15,24 @@
  * DEPENDENCIES:
  *   - religion-state.js: ReligionState
  *   - religion-queries.js: ReligionQueries
+ *   - religion-constants.js: ReligionConstants (INHERITANCE_RULES)
+ *   - religion-format.js: ReligionFormat (display names)
  *   - accessors.js: getCharacterById
  * 
  * ICON POLICY: No emojis. No icons in confirm/cancel buttons.
  * 
  * =============================================================================
  * PHASE 0 STABILISATION (2026):
- *   - Removed _processingInheritance re-entry guard. It was a boolean flag
- *     guarding pure compositional functions. The bug: inheritReligionForChild
- *     set the guard, then called getInheritedReligion, which saw the guard and
- *     immediately returned null. The batch inheritance operation never worked.
- *   - Fixed year-zero bug: optionsObj.year || (child.birthYear || 0) treated
- *     year 0 as missing. Now uses explicit undefined/null check.
- *   - Fixed falsy priority: rule.priority || null treated '' and 0 as missing.
+ *   - Removed _processingInheritance re-entry guard.
+ *   - Fixed year-zero bug in inheritReligionForChild.
+ * 
+ * PHASE 2 VOCABULARY CONSOLIDATION (2026):
+ *   - Deleted local INHERITANCE_RULES fallback. Now reads from
+ *     ReligionConstants.INHERITANCE_RULES.
+ *   - Deleted local getInheritanceRuleName. Delegates to ReligionFormat.
+ *   - Note: the "parent's rule governs in one-parent case" behaviour is
+ *     still the pre-Phase-5 implementation. Phase 5 will verify it against
+ *     the ADR's explicit rule matrix and may adjust the semantics.
  * 
  * =============================================================================
  */
@@ -68,7 +73,8 @@
             return window.ReligionQueries.getDominantReligion(locationId);
         }
 
-        // Fallback: find dominant manually
+        // Fallback: find dominant manually. Phase 3 removes this once the
+        // dependency is required.
         if (!locationId) return null;
 
         var allReligions = _getAllReligions({ includeDeprecated: false });
@@ -104,20 +110,39 @@
     // =========================================================================
     // 2. INHERITANCE RULES REFERENCE
     // =========================================================================
+    // Reads from ReligionConstants. No local fallback map — that was deleted
+    // in Phase 2 because it duplicated the canonical vocabulary.
+    // If ReligionConstants is missing, that is a load-order bug and should
+    // surface loudly (ADR Decision 8).
 
-    var INHERITANCE_RULES = window.INHERITANCE_RULES || {
-        MOTHER: 'mother',
-        FATHER: 'father',
-        BOTH: 'both',
-        DOMINANT: 'dominant',
-        NONE: 'none'
-    };
+    function _getInheritanceRules() {
+        if (typeof window.ReligionConstants === 'undefined' ||
+            !window.ReligionConstants.INHERITANCE_RULES) {
+            throw new Error(
+                'ReligionInheritance requires ReligionConstants.INHERITANCE_RULES. ' +
+                'Check script order in index.html.'
+            );
+        }
+        return window.ReligionConstants.INHERITANCE_RULES;
+    }
+
+    // Cached at first use so we don't do the typeof dance on every call.
+    var INHERITANCE_RULES = null;
+
+    function _rules() {
+        if (INHERITANCE_RULES === null) {
+            INHERITANCE_RULES = _getInheritanceRules();
+        }
+        return INHERITANCE_RULES;
+    }
 
     // =========================================================================
     // 3. CORE INHERITANCE FUNCTION
     // =========================================================================
 
     function getInheritedReligion(childId, motherId, fatherId, locationId) {
+        var RULES = _rules();
+
         var mother = motherId ? _getCharacterById(motherId) : null;
         var father = fatherId ? _getCharacterById(fatherId) : null;
 
@@ -137,8 +162,8 @@
 
         // Only mother has a religion
         if (motherReligion && !fatherReligion) {
-            var motherRule = motherReligion.inheritanceRule || { type: INHERITANCE_RULES.MOTHER };
-            if (motherRule.type === INHERITANCE_RULES.NONE) {
+            var motherRule = motherReligion.inheritanceRule || { type: RULES.MOTHER };
+            if (motherRule.type === RULES.NONE) {
                 if (locationId) {
                     var dominant = _getDominantReligion(locationId);
                     if (dominant && !dominant.isDeprecated) {
@@ -152,8 +177,8 @@
 
         // Only father has a religion
         if (fatherReligion && !motherReligion) {
-            var fatherRule = fatherReligion.inheritanceRule || { type: INHERITANCE_RULES.FATHER };
-            if (fatherRule.type === INHERITANCE_RULES.NONE) {
+            var fatherRule = fatherReligion.inheritanceRule || { type: RULES.FATHER };
+            if (fatherRule.type === RULES.NONE) {
                 if (locationId) {
                     var dominant = _getDominantReligion(locationId);
                     if (dominant && !dominant.isDeprecated) {
@@ -178,19 +203,19 @@
     // =========================================================================
 
     function _applyInheritanceRules(motherReligion, fatherReligion, locationId) {
-        var motherRule = motherReligion.inheritanceRule || { type: INHERITANCE_RULES.MOTHER };
-        var fatherRule = fatherReligion.inheritanceRule || { type: INHERITANCE_RULES.FATHER };
+        var RULES = _rules();
+        var motherRule = motherReligion.inheritanceRule || { type: RULES.MOTHER };
+        var fatherRule = fatherReligion.inheritanceRule || { type: RULES.FATHER };
 
         // If both religions have the same rule type, follow it
         if (motherRule.type === fatherRule.type) {
             return _applyRule(motherReligion, fatherReligion, motherRule.type, locationId);
         }
 
-        // Different rules - check which one to follow.
-        // Priority: Mother's rule takes precedence (historical default),
-        // but NONE on either side is respected.
-        if (motherRule.type === INHERITANCE_RULES.NONE) {
-            if (fatherRule.type === INHERITANCE_RULES.NONE) {
+        // Different rules - mother's rule governs (historical default, will
+        // be confirmed against the ADR rule matrix in Phase 5).
+        if (motherRule.type === RULES.NONE) {
+            if (fatherRule.type === RULES.NONE) {
                 if (locationId) {
                     var dominant = _getDominantReligion(locationId);
                     if (dominant && !dominant.isDeprecated) {
@@ -202,7 +227,7 @@
             return _applyRule(motherReligion, fatherReligion, fatherRule.type, locationId);
         }
 
-        if (fatherRule.type === INHERITANCE_RULES.NONE) {
+        if (fatherRule.type === RULES.NONE) {
             return _applyRule(motherReligion, fatherReligion, motherRule.type, locationId);
         }
 
@@ -215,32 +240,34 @@
     // =========================================================================
 
     function _applyRule(motherReligion, fatherReligion, ruleType, locationId) {
+        var RULES = _rules();
+
         switch (ruleType) {
-            case INHERITANCE_RULES.MOTHER:
+            case RULES.MOTHER:
                 return motherReligion;
 
-            case INHERITANCE_RULES.FATHER:
+            case RULES.FATHER:
                 return fatherReligion;
 
-            case INHERITANCE_RULES.BOTH:
+            case RULES.BOTH:
                 if (motherReligion.id === fatherReligion.id) {
                     return motherReligion;
                 }
 
-                var motherRule = motherReligion.inheritanceRule || { priority: INHERITANCE_RULES.MOTHER };
+                var motherRule = motherReligion.inheritanceRule || { priority: RULES.MOTHER };
                 var priority = motherRule.priority !== undefined && motherRule.priority !== null
                     ? motherRule.priority
-                    : INHERITANCE_RULES.MOTHER;
+                    : RULES.MOTHER;
 
-                if (priority === INHERITANCE_RULES.MOTHER) {
+                if (priority === RULES.MOTHER) {
                     return motherReligion;
-                } else if (priority === INHERITANCE_RULES.FATHER) {
+                } else if (priority === RULES.FATHER) {
                     return fatherReligion;
                 }
 
                 return motherReligion;
 
-            case INHERITANCE_RULES.DOMINANT:
+            case RULES.DOMINANT:
                 if (locationId) {
                     var dominant = _getDominantReligion(locationId);
                     if (dominant && !dominant.isDeprecated) {
@@ -249,7 +276,7 @@
                 }
                 return motherReligion;
 
-            case INHERITANCE_RULES.NONE:
+            case RULES.NONE:
             default:
                 return null;
         }
@@ -260,14 +287,11 @@
     // =========================================================================
 
     function getInheritanceRuleName(ruleType) {
-        var names = {
-            'mother': 'Mother\'s Religion',
-            'father': 'Father\'s Religion',
-            'both': 'Both Parents (if same)',
-            'dominant': 'Location\'s Dominant Religion',
-            'none': 'No Inheritance'
-        };
-        return names[ruleType] || ruleType;
+        if (typeof window.ReligionFormat !== 'undefined' &&
+            typeof window.ReligionFormat.getInheritanceRuleName === 'function') {
+            return window.ReligionFormat.getInheritanceRuleName(ruleType);
+        }
+        return ruleType;
     }
 
     function getInheritanceSource(motherId, fatherId, inheritedReligionId) {
@@ -287,13 +311,14 @@
     }
 
     function getInheritanceDescription(religionId) {
+        var RULES = _rules();
         var religion = _getReligion(religionId);
         if (!religion) return 'No inheritance rules set';
 
-        var rule = religion.inheritanceRule || { type: INHERITANCE_RULES.MOTHER };
+        var rule = religion.inheritanceRule || { type: RULES.MOTHER };
         var ruleName = getInheritanceRuleName(rule.type);
 
-        if (rule.type === INHERITANCE_RULES.BOTH && rule.priority) {
+        if (rule.type === RULES.BOTH && rule.priority) {
             var priorityName = getInheritanceRuleName(rule.priority);
             return ruleName + ' (priority: ' + priorityName + ')';
         }
@@ -302,10 +327,11 @@
     }
 
     function getInheritanceSummary(religionId) {
+        var RULES = _rules();
         var religion = _getReligion(religionId);
         if (!religion) return null;
 
-        var rule = religion.inheritanceRule || { type: INHERITANCE_RULES.MOTHER };
+        var rule = religion.inheritanceRule || { type: RULES.MOTHER };
 
         return {
             religionId: religion.id,
@@ -343,7 +369,7 @@
             };
         }
 
-        // Determine the year: explicit missing check, year 0 is valid.
+        // Year: explicit missing check, year 0 is valid.
         var resolvedYear;
         if (optionsObj.year !== undefined && optionsObj.year !== null) {
             resolvedYear = optionsObj.year;
@@ -427,10 +453,11 @@
     // =========================================================================
 
     function getInheritanceStatistics(religionId) {
+        var RULES = _rules();
         var religion = _getReligion(religionId);
         if (!religion) return null;
 
-        var rule = religion.inheritanceRule || { type: INHERITANCE_RULES.MOTHER };
+        var rule = religion.inheritanceRule || { type: RULES.MOTHER };
 
         return {
             religionId: religion.id,
@@ -477,8 +504,10 @@
         getInheritanceStatistics: getInheritanceStatistics,
         getAllInheritanceSummaries: getAllInheritanceSummaries,
 
-        // Constants reference
-        INHERITANCE_RULES: INHERITANCE_RULES
+        // Constants reference (delegates to ReligionConstants on access)
+        get INHERITANCE_RULES() {
+            return _rules();
+        }
     };
 
     if (typeof module !== 'undefined' && module.exports) {
