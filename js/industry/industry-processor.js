@@ -2,17 +2,24 @@
  * =============================================================================
  * STILL WATERS - INDUSTRY PROCESSOR (industry-processor.js)
  * =============================================================================
- * 
+ *
  * LOCATION: js/core/industry/industry-processor.js
- * 
- * Annual processing for enterprises.
- * 
- * DEPENDENCIES:
- *   - industry-state.js (IndustryState)
- *   - industry-commands.js (IndustryCommands)
- *   - industry-queries.js (IndustryQueries)
- *   - time.js (getCurrentYearSafe)
- * 
+ *
+ * Annual processing orchestration.
+ *
+ * ARCHITECTURAL RULES (Phase 1):
+ *   - No recursion guards. Composition is expected.
+ *   - No fabricated dependency fallbacks.
+ *   - No defaults for missing economic values.
+ *   - No direct mutation. All mutations go through IndustryCommands.
+ *   - No State dependency.
+ *   - No UI notifications.
+ *
+ * RESPONSIBILITIES:
+ *   - Decide which enterprises are eligible for processing.
+ *   - Delegate economic calculation to IndustryEconomics.
+ *   - Delegate commit to IndustryCommands.applyAnnualProcessing().
+ *
  * =============================================================================
  */
 
@@ -20,179 +27,210 @@
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
+    // 1. DEPENDENCY ACCESS
     // =========================================================================
 
-    function _getState() {
-        return typeof window.IndustryState !== 'undefined' ? window.IndustryState : null;
-    }
-
-    function _getCommands() {
-        return typeof window.IndustryCommands !== 'undefined' ? window.IndustryCommands : null;
-    }
-
-    function _getQueries() {
-        return typeof window.IndustryQueries !== 'undefined' ? window.IndustryQueries : null;
-    }
-
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
-    function _modifyHouseholdWealth(householdId, amount, reason) {
-        if (typeof window.modifyHouseholdWealth === 'function') {
-            return window.modifyHouseholdWealth(householdId, amount, reason);
+    function _requireQueries() {
+        var q = window.IndustryQueries;
+        if (!q) {
+            throw new Error('IndustryProcessor: IndustryQueries dependency missing');
         }
-        return null;
+        return q;
+    }
+
+    function _requireCommands() {
+        var c = window.IndustryCommands;
+        if (!c) {
+            throw new Error('IndustryProcessor: IndustryCommands dependency missing');
+        }
+        return c;
+    }
+
+    function _requireEconomics() {
+        var e = window.IndustryEconomics;
+        if (!e) {
+            throw new Error('IndustryProcessor: IndustryEconomics dependency missing');
+        }
+        return e;
+    }
+
+    function _requireCurrentYear() {
+        if (typeof window.getCurrentYearSafe !== 'function') {
+            throw new Error('IndustryProcessor: getCurrentYearSafe dependency missing');
+        }
+        return window.getCurrentYearSafe();
     }
 
     // =========================================================================
-    // 2. RECURSION GUARD
+    // 2. ELIGIBILITY
     // =========================================================================
 
-    var _processing = false;
+    function _isEligibleForProcessing(enterprise) {
+        if (!enterprise) return false;
+        if (enterprise.status !== 'active') return false;
+        return true;
+    }
 
     // =========================================================================
-    // 3. ANNUAL PROCESSING
+    // 3. SINGLE ENTERPRISE PROCESSING
     // =========================================================================
 
+    /**
+     * Processes one enterprise's annual economics.
+     *
+     * Flow:
+     *   read → calculate → commit
+     *
+     * @param {string} enterpriseId
+     * @returns {Object} — success or failure with reason
+     */
     function processAnnualEnterprise(enterpriseId) {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
+        if (!enterpriseId) {
+            return { success: false, reason: 'Enterprise id is required' };
         }
-        _processing = true;
 
-        try {
-            var state = _getState();
-            var commands = _getCommands();
-            var queries = _getQueries();
+        var queries = _requireQueries();
+        var commands = _requireCommands();
+        var economics = _requireEconomics();
 
-            if (!state || !commands || !queries) {
-                return { success: false, reason: 'Industry system not available' };
-            }
+        var enterprise = queries.getEnterprise(enterpriseId);
+        if (!enterprise) {
+            return { success: false, reason: 'Enterprise not found' };
+        }
 
-            var enterprise = queries.getEnterprise(enterpriseId);
-            if (!enterprise) {
-                return { success: false, reason: 'Enterprise not found' };
-            }
+        if (!_isEligibleForProcessing(enterprise)) {
+            return {
+                success: false,
+                reason: 'Enterprise is not eligible for processing (status: ' + enterprise.status + ')'
+            };
+        }
 
-            if (enterprise.status === 'inactive' || enterprise.status === 'bankrupt') {
-                return { success: false, reason: 'Enterprise is ' + enterprise.status };
-            }
+        var currentYear = _requireCurrentYear();
 
-            var currentYear = _getCurrentYear();
-            var yearDiff = Math.max(1, currentYear - (enterprise.lastProcessedYear || enterprise.foundedYear));
+        var transition = economics.calculateAnnualTransition(enterprise, currentYear);
+        if (!transition.ok) {
+            return { success: false, reason: transition.reason };
+        }
 
-            var annualIncome = enterprise.income || 10;
-
-            var totalWages = 0;
-            if (enterprise.workerWages) {
-                for (var workerId in enterprise.workerWages) {
-                    if (enterprise.workerWages.hasOwnProperty(workerId)) {
-                        totalWages += enterprise.workerWages[workerId] || 0;
-                    }
-                }
-            } else {
-                totalWages = (enterprise.workerCount || 0) * (enterprise.wages || 8);
-            }
-
-            var annualExpenses = (enterprise.expenses || 5) + totalWages;
-            var netProfit = annualIncome - annualExpenses;
-            var totalProfit = netProfit * yearDiff;
-
-            var newWealth = (enterprise.wealth || 0) + totalProfit;
-
-            // Apply debt interest
-            var newDebt = enterprise.debt || 0;
-            if (newDebt > 0) {
-                var interest = Math.floor(newDebt * 0.05 * yearDiff);
-                newWealth -= interest;
-                newDebt += interest;
-            }
-
-            // Update wealth and debt
-            commands.updateEnterpriseWealth(enterpriseId, totalProfit - (newDebt - (enterprise.debt || 0)), 'Annual processing');
-
-            // Update debt
-            if (newDebt !== (enterprise.debt || 0)) {
-                commands.updateEnterpriseDebt(enterpriseId, newDebt - (enterprise.debt || 0), 'Annual interest');
-            }
-
-            // Update status if bankrupt
-            if (newWealth < -100) {
-                commands.updateEnterprise(enterpriseId, { status: 'bankrupt' });
-            }
-
-            // Update last processed year
-            commands.updateEnterprise(enterpriseId, { lastProcessedYear: currentYear });
-
-            // Transfer profit/loss to household
-            if (enterprise.ownerType === 'household' && enterprise.ownerId && totalProfit !== 0) {
-                _modifyHouseholdWealth(enterprise.ownerId, totalProfit,
-                    'Enterprise profit/loss: ' + enterprise.name);
-            }
-
+        // If nothing to process, short-circuit. No command, no commit.
+        if (transition.yearsProcessed === 0) {
             return {
                 success: true,
+                skipped: true,
                 enterpriseId: enterprise.id,
                 enterpriseName: enterprise.name,
                 year: currentYear,
-                yearsProcessed: yearDiff,
-                annualIncome: annualIncome,
-                annualExpenses: annualExpenses,
-                totalWages: totalWages,
-                netProfit: netProfit,
-                totalProfit: totalProfit,
-                newWealth: newWealth,
-                debt: newDebt,
-                status: newWealth < -100 ? 'bankrupt' : enterprise.status
+                yearsProcessed: 0,
+                reason: 'Already processed for year ' + currentYear
             };
-
-        } finally {
-            _processing = false;
         }
-    }
 
-    function processAllEnterprises() {
-        if (_processing) {
-            return { success: false, reason: 'Already processing' };
+        // Determine household transfer, if applicable.
+        // Transfer amount is the enterprise's totalProfit when the owner is a household.
+        var householdTransfer = null;
+        var householdId = null;
+        var householdReason = null;
+
+        if (enterprise.ownerType === 'household' && enterprise.ownerId) {
+            householdTransfer = transition.totalProfit;
+            householdId = enterprise.ownerId;
+            householdReason = 'Enterprise profit/loss: ' + enterprise.name;
         }
-        _processing = true;
 
-        try {
-            var queries = _getQueries();
-            if (!queries) {
-                return { success: false, reason: 'Industry queries not available' };
-            }
+        var applyResult = commands.applyAnnualProcessing(enterpriseId, {
+            currentYear: currentYear,
+            yearsProcessed: transition.yearsProcessed,
+            newWealth: transition.newWealth,
+            newDebt: transition.newDebt,
+            nextStatus: transition.nextStatus,
+            historyEntries: transition.historyEntries,
+            householdTransfer: householdTransfer,
+            householdId: householdId,
+            householdReason: householdReason
+        });
 
-            var all = queries.getAllEnterprises();
-            var results = [];
-
-            for (var i = 0; i < all.length; i++) {
-                if (all[i].status === 'active' || all[i].status === 'inactive') {
-                    var result = processAnnualEnterprise(all[i].id);
-                    if (result && result.success) {
-                        results.push(result);
-                    }
-                }
-            }
-
+        if (!applyResult || !applyResult.success) {
             return {
-                success: true,
-                processed: results.length,
-                results: results
+                success: false,
+                reason: applyResult ? applyResult.reason : 'Annual processing command failed'
             };
-
-        } finally {
-            _processing = false;
         }
+
+        return {
+            success: true,
+            enterpriseId: enterprise.id,
+            enterpriseName: enterprise.name,
+            year: currentYear,
+            yearsProcessed: transition.yearsProcessed,
+            annualIncome: transition.annualIncome,
+            annualExpenses: transition.annualExpenses,
+            totalWages: transition.totalWages,
+            netProfit: transition.netProfit,
+            totalProfit: transition.totalProfit,
+            interest: transition.interest,
+            newWealth: transition.newWealth,
+            newDebt: transition.newDebt,
+            status: transition.nextStatus
+        };
     }
 
     // =========================================================================
-    // 4. EXPORTS
+    // 4. BATCH PROCESSING
+    // =========================================================================
+
+    /**
+     * Processes all eligible enterprises.
+     *
+     * NOTE: This is a thin orchestrator. Each enterprise is processed
+     * individually through processAnnualEnterprise(), which commits its own
+     * transaction. Persistence is coalesced by the save queue.
+     *
+     * A future world-tick transaction could batch this further, but for
+     * Phase 1, per-enterprise transactions match the existing save model.
+     *
+     * @returns {Object}
+     */
+    function processAllEnterprises() {
+        var queries = _requireQueries();
+        var all = queries.getAllEnterprises();
+
+        var results = [];
+        var failures = [];
+        var skipped = 0;
+
+        for (var i = 0; i < all.length; i++) {
+            if (!_isEligibleForProcessing(all[i])) {
+                continue;
+            }
+
+            var result = processAnnualEnterprise(all[i].id);
+            if (result.success) {
+                if (result.skipped) {
+                    skipped++;
+                } else {
+                    results.push(result);
+                }
+            } else {
+                failures.push({
+                    enterpriseId: all[i].id,
+                    enterpriseName: all[i].name,
+                    reason: result.reason
+                });
+            }
+        }
+
+        return {
+            success: failures.length === 0,
+            processed: results.length,
+            skipped: skipped,
+            failed: failures.length,
+            results: results,
+            failures: failures
+        };
+    }
+
+    // =========================================================================
+    // 5. EXPORTS
     // =========================================================================
 
     window.IndustryProcessor = {
