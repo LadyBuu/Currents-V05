@@ -16,20 +16,30 @@
  * ICON POLICY: No emojis. No icons in confirm/cancel buttons.
  * 
  * =============================================================================
+ * PHASE 0 STABILISATION (2026):
+ *   - Removed _processingState re-entry guard. It was a boolean flag guarding
+ *     idempotent load/persist operations. Nested operations silently no-oped.
+ *   - Fixed _init / DOMContentLoaded race. Previously _initialized was set at
+ *     the end of _init, so the deferred load handler never ran when masterData
+ *     wasn't ready at module-load time.
+ *   - Removed silent error swallowing in _loadData. A load failure no longer
+ *     presents itself as "there are zero religions".
+ *   - Removed silent error swallowing in _persistState. A failed save now
+ *     logs to console.error (full propagation comes in Phase 3 with the
+ *     proper transaction boundary).
+ * 
+ * NOTE: This file still owns too much (canonical data aliasing, indexes,
+ *       queries, persistence, UI state). Phase 3 restructures the boundary.
+ *       Phase 0 only fixes the load-bearing bugs.
+ * 
+ * =============================================================================
  */
 
 (function() {
     'use strict';
 
     // =========================================================================
-    // 1. RECURSION GUARD
-    // =========================================================================
-
-    var _processingState = false;
-    var _initialized = false;
-
-    // =========================================================================
-    // 2. STATE STRUCTURE
+    // 1. STATE STRUCTURE
     // =========================================================================
 
     var _state = {
@@ -48,8 +58,10 @@
         laws: new Map()
     };
 
+    var _initialized = false;
+
     // =========================================================================
-    // 3. DEPENDENCY WRAPPERS
+    // 2. DEPENDENCY WRAPPERS
     // =========================================================================
 
     function _getCharacters() {
@@ -100,38 +112,32 @@
     }
 
     // =========================================================================
-    // 4. DATA LOADING
+    // 3. DATA LOADING
     // =========================================================================
 
     function _loadData() {
-        if (_processingState) return;
+        var masterData = window.masterData;
 
-        _processingState = true;
-
-        try {
-            var masterData = window.masterData;
-
-            if (masterData && masterData.data) {
-                if (masterData.data.religions) {
-                    _state.religions = masterData.data.religions;
-                } else {
-                    _state.religions = [];
-                    masterData.data.religions = [];
-                }
-
-                _rebuildCaches();
-            }
-
-            _initialized = true;
-        } catch (e) {
-            _state.religions = [];
-        } finally {
-            _processingState = false;
+        if (!masterData || !masterData.data) {
+            // masterData not ready yet. Caller (or _init's DOMContentLoaded
+            // handler) will retry. Do NOT overwrite existing state.
+            return false;
         }
+
+        if (Array.isArray(masterData.data.religions)) {
+            _state.religions = masterData.data.religions;
+        } else {
+            _state.religions = [];
+            masterData.data.religions = [];
+        }
+
+        _rebuildCaches();
+        _initialized = true;
+        return true;
     }
 
     // =========================================================================
-    // 5. CACHE MANAGEMENT
+    // 4. CACHE MANAGEMENT
     // =========================================================================
 
     function _rebuildCaches() {
@@ -228,34 +234,30 @@
     }
 
     // =========================================================================
-    // 6. PERSISTENCE
+    // 5. PERSISTENCE
     // =========================================================================
 
     function _persistState() {
-        if (_processingState) return;
+        if (!window.masterData || !window.masterData.data) {
+            console.error('[ReligionState] Cannot persist: masterData not available');
+            return;
+        }
 
-        _processingState = true;
+        window.masterData.data.religions = _state.religions;
 
         try {
-            if (window.masterData && window.masterData.data) {
-                window.masterData.data.religions = _state.religions;
-            }
-
             _saveMasterData();
             _invalidateAccessorCaches();
-
             _rebuildCaches();
-
             _notifySubscribers({ type: 'state_updated', timestamp: Date.now() });
         } catch (e) {
-            // Silent fail
-        } finally {
-            _processingState = false;
+            console.error('[ReligionState] Persistence failed:', e);
+            throw e;
         }
     }
 
     // =========================================================================
-    // 7. SUBSCRIPTIONS
+    // 6. SUBSCRIPTIONS
     // =========================================================================
 
     function subscribe(callback) {
@@ -276,13 +278,13 @@
             try {
                 _state.subscribers[i](event);
             } catch (e) {
-                // Silent fail
+                console.error('[ReligionState] Subscriber error:', e);
             }
         }
     }
 
     // =========================================================================
-    // 8. REFRESH
+    // 7. REFRESH
     // =========================================================================
 
     function refreshFromMasterData() {
@@ -292,7 +294,7 @@
     }
 
     // =========================================================================
-    // 9. STATE ACCESSORS
+    // 8. STATE ACCESSORS
     // =========================================================================
 
     function _getState() {
@@ -303,11 +305,13 @@
     }
 
     function isProcessing() {
-        return _processingState;
+        // Kept for API compatibility. No longer meaningful — Phase 0 removed
+        // the re-entry guard that this reported on.
+        return false;
     }
 
     // =========================================================================
-    // 10. RELIGION QUERIES
+    // 9. RELIGION QUERIES
     // =========================================================================
 
     function getReligion(id) {
@@ -531,7 +535,7 @@
     }
 
     // =========================================================================
-    // 11. UI STATE
+    // 10. UI STATE
     // =========================================================================
 
     var _uiState = {
@@ -599,7 +603,7 @@
     }
 
     // =========================================================================
-    // 12. INTERNAL MUTATORS (For Commands)
+    // 11. INTERNAL MUTATORS (For Commands)
     // =========================================================================
 
     function _addReligion(religion) {
@@ -733,32 +737,39 @@
     }
 
     // =========================================================================
-    // 13. INITIALIZATION
+    // 12. INITIALIZATION
     // =========================================================================
 
     function _init() {
         if (_initialized) return;
 
-        _loadData();
+        var loaded = _loadData();
 
-        if (typeof window !== 'undefined') {
+        if (!loaded) {
+            // masterData wasn't ready at module-load time. Wait for DOM ready
+            // and try again, then also try once more on window load as a
+            // fallback for very slow storage initialization.
             if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', function() {
-                    if (!_initialized) {
-                        _loadData();
-                    }
-                });
+                document.addEventListener('DOMContentLoaded', _init);
+            } else {
+                // DOM already ready but masterData still missing — defer once.
+                setTimeout(_init, 0);
             }
         }
-
-        _initialized = true;
     }
 
     // Auto-initialize
     _init();
 
+    // Expose a manual reload for callers that know masterData is ready.
+    window.addEventListener('load', function() {
+        if (!_initialized) {
+            _loadData();
+        }
+    });
+
     // =========================================================================
-    // 14. EXPORTS
+    // 13. EXPORTS
     // =========================================================================
 
     // State access
