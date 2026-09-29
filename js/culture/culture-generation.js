@@ -1,23 +1,48 @@
 /**
  * =============================================================================
- * STILL WATERS - CULTURE GENERATION js/culture/culture-generation.js
+ * STILL WATERS - CULTURE GENERATION
+ * js/culture/culture-generation.js
  * =============================================================================
- * 
- * Weighted appearance generation from culture templates.
- * 
- * FEATURES:
- *   - Weighted random selection from culture appearance options
- *   - Full appearance generation for a character
- *   - Height calculation with gender-specific ranges
- *   - Location-based culture lookup
- *   - Fallback to default appearance if no culture found
- *   - Recursion guard
- * 
- * DEPENDENCIES:
- *   - culture-state.js (CultureState)
- *   - culture-queries.js (CultureQueries)
- *   - randomness.js (pickWeighted, randomInt, pickRandom)
- * 
+ *
+ * Deterministic-under-seed appearance generation from culture data.
+ *
+ * Two layers live in this file, and they have deliberately different
+ * dependency profiles:
+ *
+ *   PURE CORE
+ *       rollWeightedValue(options, rng)
+ *       rollWeightedValues(options, count, rng)
+ *       rollHeight(config, gender, rng)
+ *       generateAppearanceFromCulture(culture, gender, opts, rng)
+ *
+ *       No window lookups. No CultureQueries. No CultureState. No
+ *       masterData. Given the same inputs and the same RNG, these produce
+ *       the same output. This is what unit tests use.
+ *
+ *   QUERY-INTEGRATED WRAPPERS
+ *       generateAppearance(cultureId, gender, opts, rng)
+ *       generateAppearanceForLocation(locationId, gender, opts, rng)
+ *       generateAppearanceWithRandomCulture(gender, opts, rng)
+ *
+ *       These resolve a culture through CultureQueries and then delegate
+ *       to the pure core. They are the only functions that require the
+ *       Culture subsystem to be present.
+ *
+ * The module does NOT:
+ *   - read canonical data directly
+ *   - read CultureState directly
+ *   - read masterData
+ *   - mutate anything
+ *   - emit events
+ *   - persist
+ *   - decide which culture applies to a location (that is CultureQueries)
+ *
+ * RNG contract:
+ *   The randomness source is a required argument, not a hidden global.
+ *   Callers pass `window.randomness` (or any object exposing the same
+ *   API) explicitly. This makes generation testable and removes the
+ *   "fallback to a local Math.random implementation" habit.
+ *
  * =============================================================================
  */
 
@@ -25,415 +50,306 @@
     'use strict';
 
     // =========================================================================
-    // 1. RECURSION GUARD
+    // 1. DEPENDENCY REQUIREMENT
     // =========================================================================
 
-    var _processing = false;
-
-    // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
-    // =========================================================================
-
-    function _getState() {
-        return typeof window.CultureState !== 'undefined' ? window.CultureState : null;
+    function _requireQueries() {
+        if (!window.CultureQueries) {
+            throw new Error(
+                'CultureGeneration requires CultureQueries for culture resolution.'
+            );
+        }
+        return window.CultureQueries;
     }
 
-    function _getQueries() {
-        return typeof window.CultureQueries !== 'undefined' ? window.CultureQueries : null;
+    /**
+     * Requires an RNG provider.
+     *
+     * The provider must expose:
+     *     pickWeighted(items)
+     *     randomInt(min, max)
+     *     pickRandom(arr)
+     *
+     * If a caller does not supply one, `window.randomness` is used.
+     * If neither exists, this throws. There is no local Math.random
+     * fallback, because a silent difference in RNG semantics is exactly
+     * the kind of bug that hides for years.
+     */
+    function _resolveRng(rng) {
+        if (rng) return _assertRngShape(rng);
+        if (window.randomness) return _assertRngShape(window.randomness);
+        throw new Error(
+            'CultureGeneration requires a randomness provider. ' +
+            'Pass one explicitly, or expose window.randomness.'
+        );
     }
 
-    function _pickWeighted(items) {
-        if (typeof window.pickWeighted === 'function') {
-            return window.pickWeighted(items);
+    function _assertRngShape(rng) {
+        if (typeof rng.pickWeighted !== 'function' ||
+            typeof rng.randomInt !== 'function' ||
+            typeof rng.pickRandom !== 'function') {
+            throw new Error(
+                'RNG provider must expose pickWeighted, randomInt, and pickRandom.'
+            );
         }
-        if (!items || items.length === 0) return null;
+        return rng;
+    }
 
-        var totalWeight = 0;
-        for (var i = 0; i < items.length; i++) {
-            totalWeight += items[i].weight || 1;
+    // =========================================================================
+    // 2. OPTION HELPERS
+    // =========================================================================
+
+    /**
+     * Reads an option using explicit missing-value semantics.
+     *
+     *     readOption({ commonFeatureCount: 0 }, 'commonFeatureCount', 2)
+     *         -> 0
+     *
+     *     readOption({}, 'commonFeatureCount', 2)
+     *         -> 2
+     *
+     *     readOption({ commonFeatureCount: null }, 'commonFeatureCount', 2)
+     *         -> null
+     */
+    function _readOption(options, key, fallback) {
+        if (!options) return fallback;
+        if (!Object.prototype.hasOwnProperty.call(options, key)) return fallback;
+        return options[key];
+    }
+
+    // =========================================================================
+    // 3. PURE CORE — WEIGHTED ROLLS
+    // =========================================================================
+
+    /**
+     * Rolls a single value from a weighted option list.
+     *
+     * @param {Array} options   [{ value, weight }, ...]
+     * @param {Object} rng
+     * @returns {*} The selected `.value`, or undefined if the list is empty.
+     */
+    function rollWeightedValue(options, rng) {
+        if (!Array.isArray(options) || options.length === 0) return undefined;
+        var rngImpl = _resolveRng(rng);
+        var selected = rngImpl.pickWeighted(options);
+        return selected ? selected.value : undefined;
+    }
+
+    /**
+     * Rolls N distinct values from a weighted option list.
+     *
+     * @param {Array} options
+     * @param {number} count
+     * @param {Object} rng
+     * @returns {Array}
+     */
+    function rollWeightedValues(options, count, rng) {
+        if (!Array.isArray(options) || options.length === 0) return [];
+        if (typeof count !== 'number' || count <= 0) return [];
+
+        var rngImpl = _resolveRng(rng);
+        var remaining = options.slice();
+        var results = [];
+        var take = Math.min(count, remaining.length);
+
+        for (var i = 0; i < take; i++) {
+            var selected = rngImpl.pickWeighted(remaining);
+            if (!selected) break;
+            results.push(selected.value);
+            var idx = remaining.indexOf(selected);
+            if (idx !== -1) remaining.splice(idx, 1);
         }
+        return results;
+    }
 
-        if (totalWeight === 0) {
-            return items[Math.floor(Math.random() * items.length)];
-        }
+    /**
+     * Rolls a height within a gender-specific range.
+     *
+     * @param {Object} heightConfig { male: { min, max }, female: { min, max } }
+     * @param {string} gender       'male' or 'female'
+     * @param {Object} rng
+     * @param {Object} [fallback]   { min, max } used when heightConfig is
+     *                              absent. If neither the config nor the
+     *                              fallback supplies a range, returns null.
+     * @returns {number|null}
+     */
+    function rollHeight(heightConfig, gender, rng, fallback) {
+        var rngImpl = _resolveRng(rng);
+        var range = _resolveHeightRange(heightConfig, gender, fallback);
+        if (!range) return null;
+        return rngImpl.randomInt(range.min, range.max);
+    }
 
-        var roll = Math.random() * totalWeight;
-        var accumulated = 0;
-        for (var i = 0; i < items.length; i++) {
-            accumulated += items[i].weight || 1;
-            if (roll <= accumulated) {
-                return items[i];
+    function _resolveHeightRange(heightConfig, gender, fallback) {
+        if (heightConfig && typeof heightConfig === 'object') {
+            var genderRange = gender ? heightConfig[gender] : null;
+            if (genderRange &&
+                typeof genderRange.min === 'number' &&
+                typeof genderRange.max === 'number') {
+                return genderRange;
+            }
+            // Some cultures may store a single flat range rather than
+            // per-gender ranges. Accept that shape only if both bounds
+            // exist as numbers.
+            if (typeof heightConfig.min === 'number' &&
+                typeof heightConfig.max === 'number') {
+                return heightConfig;
             }
         }
-        return items[items.length - 1];
-    }
 
-    function _randomInt(min, max) {
-        if (typeof window.randomInt === 'function') {
-            return window.randomInt(min, max);
+        if (fallback &&
+            typeof fallback.min === 'number' &&
+            typeof fallback.max === 'number') {
+            return fallback;
         }
-        return Math.floor(Math.random() * (max - min + 1)) + min;
-    }
 
-    function _pickRandom(arr) {
-        if (typeof window.pickRandom === 'function') {
-            return window.pickRandom(arr);
-        }
-        if (!arr || arr.length === 0) return null;
-        return arr[Math.floor(Math.random() * arr.length)];
-    }
-
-    function _getLocationTypePriority(typeId) {
-        if (typeof window.getLocationTypePriority === 'function') {
-            return window.getLocationTypePriority(typeId);
-        }
-        return 5;
-    }
-
-    function _getPlaceById(id) {
-        if (typeof window.getPlaceById === 'function') {
-            return window.getPlaceById(id);
-        }
         return null;
     }
 
-    function _getPlaces() {
-        if (typeof window.getPlaces === 'function') {
-            return window.getPlaces();
-        }
-        return [];
-    }
+    // =========================================================================
+    // 4. PURE CORE — FULL APPEARANCE
+    // =========================================================================
 
-    function _getDefaultAppearance() {
-        return window.CULTURE_DEFAULT_APPEARANCE || {
-            skinTones: [
-                { value: 'Pale', weight: 20 },
-                { value: 'Fair', weight: 25 },
-                { value: 'Olive', weight: 25 },
-                { value: 'Tan', weight: 15 },
-                { value: 'Dark', weight: 10 },
-                { value: 'Deep Brown', weight: 5 }
-            ],
-            eyeColors: [
-                { value: 'Blue', weight: 20 },
-                { value: 'Green', weight: 15 },
-                { value: 'Hazel', weight: 20 },
-                { value: 'Brown', weight: 35 },
-                { value: 'Gray', weight: 10 }
-            ],
-            hairColors: [
-                { value: 'Blonde', weight: 20 },
-                { value: 'Brown', weight: 30 },
-                { value: 'Black', weight: 25 },
-                { value: 'Red', weight: 10 },
-                { value: 'Auburn', weight: 10 },
-                { value: 'White', weight: 5 }
-            ],
-            hairTypes: [
-                { value: 'Straight', weight: 40 },
-                { value: 'Wavy', weight: 30 },
-                { value: 'Curly', weight: 20 },
-                { value: 'Kinky', weight: 10 }
-            ],
-            buildTypes: [
-                { value: 'Slim', weight: 20 },
-                { value: 'Average', weight: 40 },
-                { value: 'Athletic', weight: 20 },
-                { value: 'Stocky', weight: 15 },
-                { value: 'Heavy', weight: 5 }
-            ],
-            height: {
-                male: { min: 155, max: 200 },
-                female: { min: 145, max: 185 }
-            },
-            commonFeatures: [
-                { value: 'High cheekbones', weight: 20 },
-                { value: 'Strong jawline', weight: 20 },
-                { value: 'Prominent nose', weight: 15 },
-                { value: 'Full lips', weight: 15 },
-                { value: 'Wide eyes', weight: 10 },
-                { value: 'Freckles', weight: 10 },
-                { value: 'Dimples', weight: 10 }
-            ]
+    /**
+     * Generates a complete appearance object from a culture.
+     *
+     * @param {Object} culture      canonical culture record (or null)
+     * @param {string} gender       'male' or 'female'
+     * @param {Object} [options]    generation options
+     * @param {Object} rng
+     * @returns {Object} appearance
+     */
+    function generateAppearanceFromCulture(culture, gender, options, rng) {
+        options = options || {};
+        var rngImpl = _resolveRng(rng);
+
+        var appearance = culture && culture.appearance ? culture.appearance : {};
+
+        var featureCount = _readOption(options, 'commonFeatureCount', undefined);
+        if (featureCount === undefined) {
+            featureCount = rngImpl.randomInt(1, 2);
+        }
+
+        var commonFeatures = rollWeightedValues(
+            appearance.commonFeatures,
+            featureCount,
+            rngImpl
+        );
+
+        return {
+            skinTone: rollWeightedValue(appearance.skinTones, rngImpl),
+            eyeColor: rollWeightedValue(appearance.eyeColors, rngImpl),
+            hairColor: rollWeightedValue(appearance.hairColors, rngImpl),
+            hairType: rollWeightedValue(appearance.hairTypes, rngImpl),
+            build: rollWeightedValue(appearance.buildTypes, rngImpl),
+            height: rollHeight(appearance.height, gender, rngImpl, options.heightFallback),
+            commonFeatures: commonFeatures
         };
     }
 
     // =========================================================================
-    // 3. WEIGHTED ROLL FUNCTIONS
+    // 5. QUERY-INTEGRATED WRAPPERS
     // =========================================================================
 
     /**
-     * Rolls a weighted value from a list of options
-     * @param {Array} options - Array of { value, weight } objects
-     * @param {*} defaultValue - Default value if no options
-     * @returns {*} Selected value
+     * Generates appearance for a culture by ID.
+     *
+     * If the culture is not found, this throws. Callers who want a
+     * generic appearance should pass a culture object to the pure core
+     * directly, or use generateAppearanceWithRandomCulture.
+     *
+     * @param {string} cultureId
+     * @param {string} gender
+     * @param {Object} [options]
+     * @param {Object} [rng]
+     * @returns {Object} appearance
      */
-    function rollWeightedValue(options, defaultValue) {
-        if (_processing) return defaultValue;
-        _processing = true;
-        try {
-            if (!options || options.length === 0) {
-                return defaultValue;
-            }
-            var selected = _pickWeighted(options);
-            return selected ? selected.value : defaultValue;
-        } finally {
-            _processing = false;
+    function generateAppearance(cultureId, gender, options, rng) {
+        if (!cultureId) {
+            throw new Error(
+                'generateAppearance requires a cultureId. ' +
+                'To generate without a culture, call generateAppearanceFromCulture directly.'
+            );
         }
+
+        var queries = _requireQueries();
+        var culture = queries.getCultureById(cultureId);
+        if (!culture) {
+            throw new Error('Culture not found: ' + cultureId);
+        }
+
+        return generateAppearanceFromCulture(culture, gender, options, rng);
     }
 
     /**
-     * Rolls multiple weighted values from a list of options
-     * @param {Array} options - Array of { value, weight } objects
-     * @param {number} count - Number of values to roll
-     * @param {*} defaultValue - Default value if no options
-     * @returns {Array} Array of selected values
+     * Generates appearance for a location using its primary culture.
+     *
+     * If no primary culture applies to the location (or its ancestors),
+     * this throws. Callers who want a "best effort" behaviour should
+     * call getPrimaryCultureForLocation themselves and decide.
+     *
+     * @param {string} locationId
+     * @param {string} gender
+     * @param {Object} [options]
+     * @param {Object} [rng]
+     * @returns {Object} appearance
      */
-    function rollWeightedValues(options, count, defaultValue) {
-        if (_processing) return [];
-        _processing = true;
-        try {
-            if (!options || options.length === 0) {
-                return [];
-            }
-            var results = [];
-            var available = options.slice();
-            for (var i = 0; i < count; i++) {
-                if (available.length === 0) break;
-                var selected = _pickWeighted(available);
-                if (selected) {
-                    results.push(selected.value);
-                    // Remove selected to avoid duplicates
-                    var index = available.indexOf(selected);
-                    if (index !== -1) {
-                        available.splice(index, 1);
-                    }
-                }
-            }
-            return results;
-        } finally {
-            _processing = false;
+    function generateAppearanceForLocation(locationId, gender, options, rng) {
+        if (!locationId) {
+            throw new Error('generateAppearanceForLocation requires a locationId.');
         }
+
+        var queries = _requireQueries();
+        var culture = queries.getPrimaryCultureForLocation(locationId);
+        if (!culture) {
+            throw new Error(
+                'No primary culture applies to location: ' + locationId
+            );
+        }
+
+        return generateAppearanceFromCulture(culture, gender, options, rng);
     }
 
     /**
-     * Rolls a height within gender-specific ranges
-     * @param {Object} heightConfig - { male: { min, max }, female: { min, max } }
-     * @param {string} gender - 'male' or 'female'
-     * @param {number} defaultMin - Default minimum height
-     * @param {number} defaultMax - Default maximum height
-     * @returns {number} Rolled height in cm
+     * Generates appearance from a randomly selected culture.
+     *
+     * @param {string} gender
+     * @param {Object} [options]
+     * @param {Object} [rng]
+     * @returns {{ culture: Object, appearance: Object }}
      */
-    function rollHeight(heightConfig, gender, defaultMin, defaultMax) {
-        if (_processing) return 170;
-        _processing = true;
-        try {
-            defaultMin = defaultMin || 150;
-            defaultMax = defaultMax || 190;
+    function generateAppearanceWithRandomCulture(gender, options, rng) {
+        var rngImpl = _resolveRng(rng);
+        var queries = _requireQueries();
 
-            if (!heightConfig) {
-                return _randomInt(defaultMin, defaultMax);
-            }
-
-            var config = heightConfig[gender] || heightConfig;
-            var min = config.min || defaultMin;
-            var max = config.max || defaultMax;
-
-            return _randomInt(min, max);
-        } finally {
-            _processing = false;
+        var cultures = queries.getAllCultures();
+        if (cultures.length === 0) {
+            throw new Error(
+                'No cultures available. Cannot generate appearance with a random culture.'
+            );
         }
+
+        var culture = rngImpl.pickRandom(cultures);
+        var appearance = generateAppearanceFromCulture(culture, gender, options, rngImpl);
+
+        return { culture: culture, appearance: appearance };
     }
 
     // =========================================================================
-    // 4. FULL APPEARANCE GENERATION
-    // =========================================================================
-
-    /**
-     * Generates a full appearance object from a culture
-     * @param {Object} culture - Culture object
-     * @param {string} gender - 'male' or 'female'
-     * @param {Object} options - Additional options
-     * @returns {Object} Appearance object
-     */
-    function generateAppearanceFromCulture(culture, gender, options) {
-        if (_processing) return null;
-        _processing = true;
-        try {
-            options = options || {};
-
-            if (!culture) {
-                culture = { appearance: _getDefaultAppearance() };
-            }
-
-            var appearance = culture.appearance || _getDefaultAppearance();
-
-            var result = {
-                skinTone: rollWeightedValue(appearance.skinTones, options.defaultSkinTone || 'Fair'),
-                eyeColor: rollWeightedValue(appearance.eyeColors, options.defaultEyeColor || 'Brown'),
-                hairColor: rollWeightedValue(appearance.hairColors, options.defaultHairColor || 'Brown'),
-                hairType: rollWeightedValue(appearance.hairTypes, options.defaultHairType || 'Straight'),
-                build: rollWeightedValue(appearance.buildTypes, options.defaultBuild || 'Average'),
-                height: rollHeight(appearance.height, gender, options.defaultHeightMin || 150, options.defaultHeightMax || 190),
-                commonFeatures: rollWeightedValues(appearance.commonFeatures, options.commonFeatureCount || 2, [])
-            };
-
-            // Add a few random common features
-            if (appearance.commonFeatures && appearance.commonFeatures.length > 0) {
-                var featureCount = options.commonFeatureCount || Math.floor(Math.random() * 2) + 1;
-                var features = rollWeightedValues(appearance.commonFeatures, featureCount, []);
-                if (features.length > 0) {
-                    result.commonFeatures = features;
-                }
-            }
-
-            return result;
-        } finally {
-            _processing = false;
-        }
-    }
-
-    /**
-     * Generates a full appearance object from a culture ID
-     * @param {string} cultureId - Culture ID
-     * @param {string} gender - 'male' or 'female'
-     * @param {Object} options - Additional options
-     * @returns {Object} Appearance object
-     */
-    function generateAppearance(cultureId, gender, options) {
-        if (_processing) return null;
-        _processing = true;
-        try {
-            var state = _getState();
-            if (!state) {
-                return generateAppearanceFromCulture(null, gender, options);
-            }
-
-            var culture = cultureId ? state.getCulture(cultureId) : null;
-            return generateAppearanceFromCulture(culture, gender, options);
-        } finally {
-            _processing = false;
-        }
-    }
-
-    /**
-     * Generates a full appearance object for a location
-     * @param {string} locationId - Location ID
-     * @param {string} gender - 'male' or 'female'
-     * @param {Object} options - Additional options
-     * @returns {Object} Appearance object
-     */
-    function generateAppearanceForLocation(locationId, gender, options) {
-        if (_processing) return null;
-        _processing = true;
-        try {
-            var queries = _getQueries();
-            if (!queries) {
-                return generateAppearance(null, gender, options);
-            }
-
-            var culture = queries.getCultureByLocation(locationId);
-            return generateAppearanceFromCulture(culture, gender, options);
-        } finally {
-            _processing = false;
-        }
-    }
-
-    /**
-     * Generates a full appearance object with a randomly selected culture
-     * @param {string} gender - 'male' or 'female'
-     * @param {Object} options - Additional options
-     * @returns {Object} { culture, appearance }
-     */
-    function generateAppearanceWithRandomCulture(gender, options) {
-        if (_processing) return null;
-        _processing = true;
-        try {
-            var state = _getState();
-            if (!state) {
-                return {
-                    culture: null,
-                    appearance: generateAppearance(null, gender, options)
-                };
-            }
-
-            var cultures = state.getAllCultures();
-            if (cultures.length === 0) {
-                return {
-                    culture: null,
-                    appearance: generateAppearance(null, gender, options)
-                };
-            }
-
-            var culture = _pickRandom(cultures);
-            return {
-                culture: culture,
-                appearance: generateAppearanceFromCulture(culture, gender, options)
-            };
-        } finally {
-            _processing = false;
-        }
-    }
-
-    // =========================================================================
-    // 5. FIND CULTURE FOR LOCATION (Helper)
-    // =========================================================================
-
-    /**
-     * Finds the most appropriate culture for a location by walking up the hierarchy
-     * @param {string} locationId - Location ID
-     * @returns {Object|null} Culture object or null
-     */
-    function findCultureForLocation(locationId) {
-        if (_processing) return null;
-        _processing = true;
-        try {
-            var queries = _getQueries();
-            if (!queries) return null;
-
-            return queries.getCultureByLocation(locationId);
-        } finally {
-            _processing = false;
-        }
-    }
-
-    /**
-     * Gets all cultures that could apply to a location (including inherited)
-     * @param {string} locationId - Location ID
-     * @returns {Array} Array of culture objects
-     */
-    function findAllCulturesForLocation(locationId) {
-        if (_processing) return [];
-        _processing = true;
-        try {
-            var queries = _getQueries();
-            if (!queries) return [];
-
-            return queries.getAllCulturesByLocation(locationId);
-        } finally {
-            _processing = false;
-        }
-    }
-
-    // =========================================================================
-    // 6. EXPORTS
+    // 6. PUBLIC API
     // =========================================================================
 
     window.CultureGeneration = {
-        // Weighted rolls
+        // Pure core
         rollWeightedValue: rollWeightedValue,
         rollWeightedValues: rollWeightedValues,
         rollHeight: rollHeight,
-
-        // Appearance generation
         generateAppearanceFromCulture: generateAppearanceFromCulture,
+
+        // Query-integrated
         generateAppearance: generateAppearance,
         generateAppearanceForLocation: generateAppearanceForLocation,
-        generateAppearanceWithRandomCulture: generateAppearanceWithRandomCulture,
-
-        // Location culture helpers
-        findCultureForLocation: findCultureForLocation,
-        findAllCulturesForLocation: findAllCulturesForLocation
+        generateAppearanceWithRandomCulture: generateAppearanceWithRandomCulture
     };
 
     if (typeof module !== 'undefined' && module.exports) {
