@@ -12,16 +12,10 @@
  *   - Calls the pure rule engine (ReligionRules.resolveInheritance)
  *   - Delegates character assignment to ReligionCommands
  * 
- * This module does NOT contain rule logic. The rule matrix lives in
- * ReligionRules and is unit-tested there. This module is the concrete
- * adapter between "I have character and location IDs" and "I have a
- * verdict and an assignment."
- * 
  * DEPENDENCIES:
  *   - religion-rules.js: ReligionRules
  *   - religion-queries.js: ReligionQueries
  *   - religion-commands.js: ReligionCommands
- *   - religion-format.js: ReligionFormat
  *   - accessors.js: getCharacterById
  * 
  * ICON POLICY: No emojis. No icons in confirm/cancel buttons.
@@ -32,23 +26,25 @@
  *   - Fixed year-zero bug.
  * 
  * PHASE 2 VOCABULARY CONSOLIDATION (2026):
- *   - Delegated to ReligionFormat for display names.
+ *   - Delegated display names to ReligionFormat.
  * 
  * PHASE 3 BOUNDARY RESTRUCTURE (2026):
- *   - Removed direct character mutation. All assignment goes through
- *     ReligionCommands.
+ *   - Removed direct character mutation.
  *   - Removed local _getDominantReligion fallback.
  * 
  * PHASE 5 DOMAIN RULES AND VALIDATION EXTRACTION (2026):
- *   - Deleted _applyInheritanceRules, _applyRule, and the one-parent and
- *     both-parent resolution logic. Those are the rule engine and now live
- *     in ReligionRules.resolveInheritance.
- *   - Deleted local INHERITANCE_RULES accessor (was cached at first use).
- *     This module no longer needs the constants directly.
- *   - This module is now a thin adapter: fetch facts → call rules →
- *     delegate assignment.
- *   - getInheritanceDescription, getInheritanceSummary remain for now;
- *     Phase 5 file 4 moves them to ReligionQueries.
+ *   - Rule logic moved to ReligionRules.resolveInheritance.
+ *   - This file became a thin adapter.
+ * 
+ * PHASE 6 CLEANUP (2026):
+ *   - Deleted getInheritanceSummary and getInheritanceDescription wrappers.
+ *     ReligionQueries owns inheritance summaries and descriptions now.
+ *   - Deleted getInheritanceRuleName wrapper. ReligionFormat owns display
+ *     names.
+ *   - Deleted the module-private _sourcePhrase helper's export surface
+ *     dependency by inlining its use. Only inheritReligionForChild uses it.
+ *   - This file is now: fetch facts → call rules → delegate assignment.
+ *     Nothing else.
  * 
  * =============================================================================
  */
@@ -81,13 +77,6 @@
         return window.ReligionCommands;
     }
 
-    function _format() {
-        if (typeof window.ReligionFormat === 'undefined') {
-            throw new Error('ReligionInheritance requires ReligionFormat.');
-        }
-        return window.ReligionFormat;
-    }
-
     function _getCharacterById(id) {
         if (typeof window.getCharacterById !== 'function') {
             throw new Error('ReligionInheritance requires accessors.getCharacterById.');
@@ -96,26 +85,22 @@
     }
 
     // =========================================================================
-    // 2. FACT GATHERING
+    // 2. RESOLUTION (delegates to rules)
     // =========================================================================
 
     /**
-     * Resolve inheritance for a child given parent and location IDs.
+     * Resolve the inherited religion for a child.
+     * Returns: { religionId, source, rule }
      * 
-     * Returns the same shape as ReligionRules.resolveInheritance:
-     *   { religionId, source, rule }
-     * 
-     * Callers who only want to know "what should this child inherit" use
-     * this. Callers who want to assign it use inheritReligionForChild.
+     * Callers who only want to know what the child should inherit use this.
+     * Callers who want to assign it use inheritReligionForChild.
      */
     function getInheritedReligion(childId, motherId, fatherId, locationId) {
-        // childId is accepted for API symmetry but not used by the rule
-        // engine, which resolves purely from parent religions and location.
         return _rules().resolveInheritanceForChild(childId, motherId, fatherId, locationId);
     }
 
     // =========================================================================
-    // 3. ASSIGNMENT
+    // 3. ASSIGNMENT (delegates to commands)
     // =========================================================================
 
     /**
@@ -124,11 +109,11 @@
      * Returns:
      *   {
      *     success: boolean,
-     *     inherited: boolean,   // false when no religion resolves
+     *     inherited: boolean,
      *     religion: object|null,
      *     source: 'mother'|'father'|'both'|'location'|null,
      *     rule: 'mother'|'father'|'both'|'dominant'|'none',
-     *     data: object|null,    // command result payload
+     *     data: object|null,
      *     reason: string
      *   }
      */
@@ -177,7 +162,7 @@
             };
         }
 
-        // Resolve year with explicit missing-value checks. Year 0 is valid.
+        // Year: explicit missing-value checks. Year 0 is valid.
         var resolvedYear;
         if (options.year !== undefined && options.year !== null) {
             resolvedYear = options.year;
@@ -221,18 +206,13 @@
     }
 
     // =========================================================================
-    // 4. FORMATTING (delegates to ReligionFormat)
+    // 4. PROVENANCE HELPER
     // =========================================================================
-
-    function getInheritanceRuleName(ruleType) {
-        return _format().getInheritanceRuleName(ruleType);
-    }
+    // Answers "given the current state of the parents and a resulting religion,
+    // where did it come from?" Distinct from the rule engine, which answers
+    // "what should the child inherit?" This function is a post-hoc observer.
 
     function getInheritanceSource(motherId, fatherId, inheritedReligionId) {
-        // Provenance helper for callers who only have IDs, not the resolution.
-        // Returns 'mother', 'father', 'both', or 'location'. Does not consult
-        // the rule engine because it is answering a purely observational
-        // question about the current state of the parents.
         if (!inheritedReligionId) return null;
 
         var mother = motherId ? _getCharacterById(motherId) : null;
@@ -248,60 +228,16 @@
     }
 
     // =========================================================================
-    // 5. SUMMARY HELPERS (moving to ReligionQueries in file 4)
-    // =========================================================================
-
-    function getInheritanceDescription(religionId) {
-        var religion = _queries().getReligion(religionId);
-        if (!religion) return 'No inheritance rules set';
-
-        var rule = religion.inheritanceRule || { type: 'mother' };
-        var ruleName = getInheritanceRuleName(rule.type);
-
-        if (rule.type === 'both' && rule.priority) {
-            var priorityName = getInheritanceRuleName(rule.priority);
-            return ruleName + ' (priority: ' + priorityName + ')';
-        }
-
-        return ruleName;
-    }
-
-    function getInheritanceSummary(religionId) {
-        var religion = _queries().getReligion(religionId);
-        if (!religion) return null;
-
-        var rule = religion.inheritanceRule || { type: 'mother' };
-
-        return {
-            religionId: religion.id,
-            religionName: religion.name,
-            ruleType: rule.type,
-            ruleName: getInheritanceRuleName(rule.type),
-            priority: (rule.priority !== undefined && rule.priority !== null) ? rule.priority : null,
-            priorityName: rule.priority ? getInheritanceRuleName(rule.priority) : null,
-            notes: rule.notes || '',
-            description: getInheritanceDescription(religionId)
-        };
-    }
-
-    // =========================================================================
-    // 6. EXPORTS
+    // 5. EXPORTS
     // =========================================================================
 
     window.ReligionInheritance = {
-        // Core
+        // Core adapter
         getInheritedReligion: getInheritedReligion,
         inheritReligionForChild: inheritReligionForChild,
 
         // Provenance
-        getInheritanceSource: getInheritanceSource,
-
-        // Formatting (delegates to ReligionFormat)
-        getInheritanceRuleName: getInheritanceRuleName,
-
-        // Summaries (moving to ReligionQueries in file 4)
-        getInheritanceDescription: getInheritanceDescription,
-        getInheritanceSummary: getInheritanceSummary
+        getInheritanceSource: getInheritanceSource
     };
 
     if (typeof module !== 'undefined' && module.exports) {
