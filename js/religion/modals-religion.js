@@ -36,19 +36,28 @@
  * ICON POLICY: No emojis. No icons in confirm/cancel buttons.
  * 
  * =============================================================================
+ * PHASE 0 STABILISATION (2026):
+ *   - Removed _openingModal re-entry guard. Modal flows that nest (details ->
+ *     edit, etc.) are already handled explicitly via _closeTopModal + setTimeout,
+ *     and the guard could make legitimate transitions silently fail.
+ *   - Fixed year-zero bugs: parseInt(...) || currentYear treated year 0 as
+ *     missing. Now uses explicit undefined/NaN checks.
+ *   - Removed ⚠️ emoji from delete modal (icon policy violation). Replaced with
+ *     text styling already used elsewhere.
+ * 
+ * NOTE: This module still has many responsibilities that belong in Queries /
+ *       Commands / Format (fallback dependency wrappers, duplicated constants,
+ *       fallback current-year logic). Phase 4 will restructure it. Phase 0
+ *       only fixes the load-bearing bugs.
+ * 
+ * =============================================================================
  */
 
 (function() {
     'use strict';
 
     // =========================================================================
-    // 1. RECURSION GUARD
-    // =========================================================================
-
-    var _openingModal = false;
-
-    // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
+    // 1. DEPENDENCY WRAPPERS
     // =========================================================================
 
     function _openModal(options) {
@@ -99,11 +108,20 @@
     }
 
     function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
+        // Delegates to time.js — do not add fallback logic here.
+        return typeof window.getCurrentYearSafe === 'function'
+            ? window.getCurrentYearSafe()
+            : 1250;
+    }
+
+    // Resolve a parsed year value. Year 0 is valid.
+    function _resolveParsedYear(inputValue) {
+        var parsed = parseInt(inputValue, 10);
+        if (Number.isNaN(parsed)) {
+            return _getCurrentYear();
+        }
+        return parsed;
+    }
 
     function _getCharacterById(id) {
         if (typeof window.getCharacterById === 'function') {
@@ -308,1465 +326,1385 @@
     }
 
     // =========================================================================
-    // 3. CREATE RELIGION MODAL
+    // 2. CREATE RELIGION MODAL
     // =========================================================================
 
     function openCreateReligionModal(options) {
-        if (_openingModal) return null;
-        _openingModal = true;
+        options = options || {};
+        var onSuccess = options.onSuccess || null;
 
-        try {
-            options = options || {};
-            var onSuccess = options.onSuccess || null;
-
-            var traits = _getReligiousTraits();
-            var traitOptions = '';
-            for (var i = 0; i < traits.length; i++) {
-                traitOptions += '<option value="' + traits[i] + '">' + _escapeHtml(_getReligiousTraitName(traits[i])) + '</option>';
-            }
-
-            var inheritanceRules = _getInheritanceRules();
-            var inheritanceOptions = '';
-            for (var key in inheritanceRules) {
-                if (inheritanceRules.hasOwnProperty(key)) {
-                    var value = inheritanceRules[key];
-                    inheritanceOptions += '<option value="' + value + '">' + _escapeHtml(_getInheritanceRuleName(value)) + '</option>';
-                }
-            }
-
-            var content = 
-                '<div class="religion-form" style="display:flex;flex-direction:column;gap:12px;">' +
-
-                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Religion Name *</label>' +
-                '<input type="text" id="religionName" placeholder="e.g., The Old Gods" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Display Name</label>' +
-                '<input type="text" id="religionDisplayName" placeholder="e.g., The Old Gods of the North" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
-                '</div>' +
-                '</div>' +
-
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Description (Lore)</label>' +
-                '<textarea id="religionDescription" rows="3" placeholder="Describe the religion\'s beliefs, origins, and practices..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;resize:vertical;"></textarea>' +
-                '</div>' +
-
-                '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Trait</label>' +
-                '<select id="religionTrait" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                traitOptions +
-                '</select>' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Inheritance Rule</label>' +
-                '<select id="religionInheritance" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                inheritanceOptions +
-                '</select>' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Icon</label>' +
-                '<input type="text" id="religionIcon" placeholder="✦" value="✦" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
-                '</div>' +
-                '</div>' +
-
-                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-                '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
-                '<input type="checkbox" id="religionOrganized" style="width:16px;height:16px;">' +
-                '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Organized Religion (has hierarchy/clergy)</label>' +
-                '</div>' +
-                '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
-                '<input type="checkbox" id="religionAllowsConversion" checked style="width:16px;height:16px;">' +
-                '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Allows Conversion</label>' +
-                '</div>' +
-                '</div>' +
-
-                '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
-                '<input type="checkbox" id="religionProselytizes" style="width:16px;height:16px;">' +
-                '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Proselytizes (actively seeks converts)</label>' +
-                '</div>' +
-
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Notes</label>' +
-                '<input type="text" id="religionNotes" placeholder="Additional notes..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                '</div>' +
-
-                '</div>';
-
-            var modal = _openModal({
-                title: 'Create New Religion',
-                content: content,
-                confirmText: 'Create',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var name = document.getElementById('religionName').value.trim();
-                    if (!name) {
-                        _showToast('Religion name is required', 'error');
-                        return;
-                    }
-
-                    var data = {
-                        name: name,
-                        displayName: document.getElementById('religionDisplayName').value.trim() || name,
-                        description: document.getElementById('religionDescription').value.trim(),
-                        trait: document.getElementById('religionTrait').value,
-                        icon: document.getElementById('religionIcon').value.trim() || '✦',
-                        isOrganized: document.getElementById('religionOrganized').checked,
-                        allowsConversion: document.getElementById('religionAllowsConversion').checked,
-                        proselytizes: document.getElementById('religionProselytizes').checked,
-                        inheritanceRule: {
-                            type: document.getElementById('religionInheritance').value
-                        },
-                        notes: document.getElementById('religionNotes').value.trim()
-                    };
-
-                    if (typeof window.ReligionCommands !== 'undefined' &&
-                        typeof window.ReligionCommands.createReligion === 'function') {
-                        var result = window.ReligionCommands.createReligion(data);
-                        if (result.success) {
-                            _showToast('Religion created: ' + result.data.name, 'success');
-                            _closeTopModal();
-                            if (onSuccess) onSuccess(result.data);
-                        } else {
-                            _showToast('Failed to create religion: ' + result.reason, 'error');
-                        }
-                    } else {
-                        _showToast('ReligionCommands not available', 'error');
-                    }
-                }
-            });
-
-            return modal;
-
-        } finally {
-            _openingModal = false;
+        var traits = _getReligiousTraits();
+        var traitOptions = '';
+        for (var i = 0; i < traits.length; i++) {
+            traitOptions += '<option value="' + traits[i] + '">' + _escapeHtml(_getReligiousTraitName(traits[i])) + '</option>';
         }
+
+        var inheritanceRules = _getInheritanceRules();
+        var inheritanceOptions = '';
+        for (var key in inheritanceRules) {
+            if (inheritanceRules.hasOwnProperty(key)) {
+                var value = inheritanceRules[key];
+                inheritanceOptions += '<option value="' + value + '">' + _escapeHtml(_getInheritanceRuleName(value)) + '</option>';
+            }
+        }
+
+        var content = 
+            '<div class="religion-form" style="display:flex;flex-direction:column;gap:12px;">' +
+
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Religion Name *</label>' +
+            '<input type="text" id="religionName" placeholder="e.g., The Old Gods" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Display Name</label>' +
+            '<input type="text" id="religionDisplayName" placeholder="e.g., The Old Gods of the North" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '</div>' +
+
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Description (Lore)</label>' +
+            '<textarea id="religionDescription" rows="3" placeholder="Describe the religion\'s beliefs, origins, and practices..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;resize:vertical;"></textarea>' +
+            '</div>' +
+
+            '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Trait</label>' +
+            '<select id="religionTrait" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            traitOptions +
+            '</select>' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Inheritance Rule</label>' +
+            '<select id="religionInheritance" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            inheritanceOptions +
+            '</select>' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Icon</label>' +
+            '<input type="text" id="religionIcon" placeholder="✦" value="✦" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '</div>' +
+
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
+            '<input type="checkbox" id="religionOrganized" style="width:16px;height:16px;">' +
+            '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Organized Religion (has hierarchy/clergy)</label>' +
+            '</div>' +
+            '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
+            '<input type="checkbox" id="religionAllowsConversion" checked style="width:16px;height:16px;">' +
+            '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Allows Conversion</label>' +
+            '</div>' +
+            '</div>' +
+
+            '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
+            '<input type="checkbox" id="religionProselytizes" style="width:16px;height:16px;">' +
+            '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Proselytizes (actively seeks converts)</label>' +
+            '</div>' +
+
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Notes</label>' +
+            '<input type="text" id="religionNotes" placeholder="Additional notes..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '</div>' +
+
+            '</div>';
+
+        var modal = _openModal({
+            title: 'Create New Religion',
+            content: content,
+            confirmText: 'Create',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var name = document.getElementById('religionName').value.trim();
+                if (!name) {
+                    _showToast('Religion name is required', 'error');
+                    return;
+                }
+
+                var data = {
+                    name: name,
+                    displayName: document.getElementById('religionDisplayName').value.trim() || name,
+                    description: document.getElementById('religionDescription').value.trim(),
+                    trait: document.getElementById('religionTrait').value,
+                    icon: document.getElementById('religionIcon').value.trim() || '✦',
+                    isOrganized: document.getElementById('religionOrganized').checked,
+                    allowsConversion: document.getElementById('religionAllowsConversion').checked,
+                    proselytizes: document.getElementById('religionProselytizes').checked,
+                    inheritanceRule: {
+                        type: document.getElementById('religionInheritance').value
+                    },
+                    notes: document.getElementById('religionNotes').value.trim()
+                };
+
+                if (typeof window.ReligionCommands !== 'undefined' &&
+                    typeof window.ReligionCommands.createReligion === 'function') {
+                    var result = window.ReligionCommands.createReligion(data);
+                    if (result.success) {
+                        _showToast('Religion created: ' + result.data.name, 'success');
+                        _closeTopModal();
+                        if (onSuccess) onSuccess(result.data);
+                    } else {
+                        _showToast('Failed to create religion: ' + result.reason, 'error');
+                    }
+                } else {
+                    _showToast('ReligionCommands not available', 'error');
+                }
+            }
+        });
+
+        return modal;
     }
 
     // =========================================================================
-    // 4. EDIT RELIGION MODAL
+    // 3. EDIT RELIGION MODAL
     // =========================================================================
 
     function openEditReligionModal(religionId, options) {
-        if (_openingModal) return null;
-        _openingModal = true;
+        options = options || {};
+        var onSuccess = options.onSuccess || null;
 
-        try {
-            options = options || {};
-            var onSuccess = options.onSuccess || null;
-
-            var religion = _getReligion(religionId);
-            if (!religion) {
-                _showToast('Religion not found', 'error');
-                return null;
-            }
-
-            var traits = _getReligiousTraits();
-            var traitOptions = '';
-            for (var i = 0; i < traits.length; i++) {
-                var selected = (religion.trait === traits[i]) ? 'selected' : '';
-                traitOptions += '<option value="' + traits[i] + '" ' + selected + '>' + _escapeHtml(_getReligiousTraitName(traits[i])) + '</option>';
-            }
-
-            var inheritanceRules = _getInheritanceRules();
-            var inheritanceOptions = '';
-            var currentRule = religion.inheritanceRule ? religion.inheritanceRule.type : 'mother';
-            for (var key in inheritanceRules) {
-                if (inheritanceRules.hasOwnProperty(key)) {
-                    var value = inheritanceRules[key];
-                    var selected = (currentRule === value) ? 'selected' : '';
-                    inheritanceOptions += '<option value="' + value + '" ' + selected + '>' + _escapeHtml(_getInheritanceRuleName(value)) + '</option>';
-                }
-            }
-
-            var isDeprecated = religion.isDeprecated || false;
-
-            var content = 
-                '<div class="religion-form" style="display:flex;flex-direction:column;gap:12px;">' +
-
-                (isDeprecated ? '<div style="padding:8px 12px;background:rgba(181,74,74,0.1);border:1px solid #b54a4a;border-radius:4px;font-size:0.65rem;color:#b54a4a;">This religion is deprecated. Edit is limited.</div>' : '') +
-
-                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Religion Name *</label>' +
-                '<input type="text" id="religionName" value="' + _escapeHtml(religion.name) + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Display Name</label>' +
-                '<input type="text" id="religionDisplayName" value="' + _escapeHtml(religion.displayName || religion.name) + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
-                '</div>' +
-                '</div>' +
-
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Description (Lore)</label>' +
-                '<textarea id="religionDescription" rows="3" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;resize:vertical;">' + _escapeHtml(religion.description || '') + '</textarea>' +
-                '</div>' +
-
-                '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Trait</label>' +
-                '<select id="religionTrait" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                traitOptions +
-                '</select>' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Inheritance Rule</label>' +
-                '<select id="religionInheritance" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                inheritanceOptions +
-                '</select>' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Icon</label>' +
-                '<input type="text" id="religionIcon" value="' + _escapeHtml(religion.icon || '✦') + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
-                '</div>' +
-                '</div>' +
-
-                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-                '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
-                '<input type="checkbox" id="religionOrganized" ' + (religion.isOrganized ? 'checked' : '') + ' style="width:16px;height:16px;">' +
-                '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Organized Religion</label>' +
-                '</div>' +
-                '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
-                '<input type="checkbox" id="religionAllowsConversion" ' + (religion.allowsConversion ? 'checked' : '') + ' style="width:16px;height:16px;">' +
-                '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Allows Conversion</label>' +
-                '</div>' +
-                '</div>' +
-
-                '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
-                '<input type="checkbox" id="religionProselytizes" ' + (religion.proselytizes ? 'checked' : '') + ' style="width:16px;height:16px;">' +
-                '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Proselytizes</label>' +
-                '</div>' +
-
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Notes</label>' +
-                '<input type="text" id="religionNotes" value="' + _escapeHtml(religion.notes || '') + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                '</div>' +
-
-                '</div>';
-
-            var modal = _openModal({
-                title: 'Edit Religion: ' + religion.name,
-                content: content,
-                confirmText: 'Save',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var name = document.getElementById('religionName').value.trim();
-                    if (!name) {
-                        _showToast('Religion name is required', 'error');
-                        return;
-                    }
-
-                    var updates = {
-                        name: name,
-                        displayName: document.getElementById('religionDisplayName').value.trim() || name,
-                        description: document.getElementById('religionDescription').value.trim(),
-                        trait: document.getElementById('religionTrait').value,
-                        icon: document.getElementById('religionIcon').value.trim() || '✦',
-                        isOrganized: document.getElementById('religionOrganized').checked,
-                        allowsConversion: document.getElementById('religionAllowsConversion').checked,
-                        proselytizes: document.getElementById('religionProselytizes').checked,
-                        inheritanceRule: {
-                            type: document.getElementById('religionInheritance').value
-                        },
-                        notes: document.getElementById('religionNotes').value.trim()
-                    };
-
-                    if (typeof window.ReligionCommands !== 'undefined' &&
-                        typeof window.ReligionCommands.updateReligion === 'function') {
-                        var result = window.ReligionCommands.updateReligion(religionId, updates);
-                        if (result.success) {
-                            _showToast('Religion updated: ' + result.data.name, 'success');
-                            _closeTopModal();
-                            if (onSuccess) onSuccess(result.data);
-                        } else {
-                            _showToast('Failed to update religion: ' + result.reason, 'error');
-                        }
-                    } else {
-                        _showToast('ReligionCommands not available', 'error');
-                    }
-                }
-            });
-
-            return modal;
-
-        } finally {
-            _openingModal = false;
+        var religion = _getReligion(religionId);
+        if (!religion) {
+            _showToast('Religion not found', 'error');
+            return null;
         }
+
+        var traits = _getReligiousTraits();
+        var traitOptions = '';
+        for (var i = 0; i < traits.length; i++) {
+            var selected = (religion.trait === traits[i]) ? 'selected' : '';
+            traitOptions += '<option value="' + traits[i] + '" ' + selected + '>' + _escapeHtml(_getReligiousTraitName(traits[i])) + '</option>';
+        }
+
+        var inheritanceRules = _getInheritanceRules();
+        var inheritanceOptions = '';
+        var currentRule = religion.inheritanceRule ? religion.inheritanceRule.type : 'mother';
+        for (var key in inheritanceRules) {
+            if (inheritanceRules.hasOwnProperty(key)) {
+                var value = inheritanceRules[key];
+                var selected = (currentRule === value) ? 'selected' : '';
+                inheritanceOptions += '<option value="' + value + '" ' + selected + '>' + _escapeHtml(_getInheritanceRuleName(value)) + '</option>';
+            }
+        }
+
+        var isDeprecated = religion.isDeprecated || false;
+
+        var content = 
+            '<div class="religion-form" style="display:flex;flex-direction:column;gap:12px;">' +
+
+            (isDeprecated ? '<div style="padding:8px 12px;background:rgba(181,74,74,0.1);border:1px solid #b54a4a;border-radius:4px;font-size:0.65rem;color:#b54a4a;">This religion is deprecated. Edit is limited.</div>' : '') +
+
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Religion Name *</label>' +
+            '<input type="text" id="religionName" value="' + _escapeHtml(religion.name) + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Display Name</label>' +
+            '<input type="text" id="religionDisplayName" value="' + _escapeHtml(religion.displayName || religion.name) + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '</div>' +
+
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Description (Lore)</label>' +
+            '<textarea id="religionDescription" rows="3" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;resize:vertical;">' + _escapeHtml(religion.description || '') + '</textarea>' +
+            '</div>' +
+
+            '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Trait</label>' +
+            '<select id="religionTrait" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            traitOptions +
+            '</select>' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Inheritance Rule</label>' +
+            '<select id="religionInheritance" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            inheritanceOptions +
+            '</select>' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Icon</label>' +
+            '<input type="text" id="religionIcon" value="' + _escapeHtml(religion.icon || '✦') + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '</div>' +
+
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
+            '<input type="checkbox" id="religionOrganized" ' + (religion.isOrganized ? 'checked' : '') + ' style="width:16px;height:16px;">' +
+            '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Organized Religion</label>' +
+            '</div>' +
+            '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
+            '<input type="checkbox" id="religionAllowsConversion" ' + (religion.allowsConversion ? 'checked' : '') + ' style="width:16px;height:16px;">' +
+            '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Allows Conversion</label>' +
+            '</div>' +
+            '</div>' +
+
+            '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
+            '<input type="checkbox" id="religionProselytizes" ' + (religion.proselytizes ? 'checked' : '') + ' style="width:16px;height:16px;">' +
+            '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Proselytizes</label>' +
+            '</div>' +
+
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Notes</label>' +
+            '<input type="text" id="religionNotes" value="' + _escapeHtml(religion.notes || '') + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '</div>' +
+
+            '</div>';
+
+        var modal = _openModal({
+            title: 'Edit Religion: ' + religion.name,
+            content: content,
+            confirmText: 'Save',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var name = document.getElementById('religionName').value.trim();
+                if (!name) {
+                    _showToast('Religion name is required', 'error');
+                    return;
+                }
+
+                var updates = {
+                    name: name,
+                    displayName: document.getElementById('religionDisplayName').value.trim() || name,
+                    description: document.getElementById('religionDescription').value.trim(),
+                    trait: document.getElementById('religionTrait').value,
+                    icon: document.getElementById('religionIcon').value.trim() || '✦',
+                    isOrganized: document.getElementById('religionOrganized').checked,
+                    allowsConversion: document.getElementById('religionAllowsConversion').checked,
+                    proselytizes: document.getElementById('religionProselytizes').checked,
+                    inheritanceRule: {
+                        type: document.getElementById('religionInheritance').value
+                    },
+                    notes: document.getElementById('religionNotes').value.trim()
+                };
+
+                if (typeof window.ReligionCommands !== 'undefined' &&
+                    typeof window.ReligionCommands.updateReligion === 'function') {
+                    var result = window.ReligionCommands.updateReligion(religionId, updates);
+                    if (result.success) {
+                        _showToast('Religion updated: ' + result.data.name, 'success');
+                        _closeTopModal();
+                        if (onSuccess) onSuccess(result.data);
+                    } else {
+                        _showToast('Failed to update religion: ' + result.reason, 'error');
+                    }
+                } else {
+                    _showToast('ReligionCommands not available', 'error');
+                }
+            }
+        });
+
+        return modal;
     }
 
     // =========================================================================
-    // 5. DELETE RELIGION MODAL
+    // 4. DELETE RELIGION MODAL
     // =========================================================================
 
     function openDeleteReligionModal(religionId, options) {
-        if (_openingModal) return null;
-        _openingModal = true;
+        options = options || {};
+        var onSuccess = options.onSuccess || null;
 
-        try {
-            options = options || {};
-            var onSuccess = options.onSuccess || null;
-
-            var religion = _getReligion(religionId);
-            if (!religion) {
-                _showToast('Religion not found', 'error');
-                return null;
-            }
-
-            var followerCount = _getFollowerCount(religionId);
-
-            var content = 
-                '<div style="display:flex;flex-direction:column;gap:12px;">' +
-                '<p style="font-size:0.75rem;">Are you sure you want to delete <strong>' + _escapeHtml(religion.name) + '</strong>?</p>';
-
-            if (followerCount > 0) {
-                content += 
-                    '<div style="padding:8px 12px;background:rgba(181,74,74,0.1);border:1px solid #b54a4a;border-radius:4px;font-size:0.65rem;color:#b54a4a;">' +
-                    '⚠️ This religion has ' + followerCount + ' followers. It cannot be deleted while it has followers. Consider deprecating it instead.' +
-                    '</div>';
-            } else {
-                content +=
-                    '<p style="font-size:0.65rem;color:var(--dim);">This action cannot be undone. All gods, laws, and places of worship associated with this religion will also be removed.</p>';
-            }
-
-            content += '</div>';
-
-            var modal = _openModal({
-                title: 'Delete Religion',
-                content: content,
-                confirmText: followerCount > 0 ? 'Cannot Delete' : 'Delete',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    if (followerCount > 0) {
-                        _showToast('Cannot delete religion with followers. Deprecate it instead.', 'error');
-                        return;
-                    }
-
-                    if (typeof window.ReligionCommands !== 'undefined' &&
-                        typeof window.ReligionCommands.deleteReligion === 'function') {
-                        var result = window.ReligionCommands.deleteReligion(religionId);
-                        if (result.success) {
-                            _showToast('Religion deleted: ' + religion.name, 'success');
-                            _closeTopModal();
-                            if (onSuccess) onSuccess();
-                        } else {
-                            _showToast('Failed to delete religion: ' + result.reason, 'error');
-                        }
-                    } else {
-                        _showToast('ReligionCommands not available', 'error');
-                    }
-                }
-            });
-
-            return modal;
-
-        } finally {
-            _openingModal = false;
+        var religion = _getReligion(religionId);
+        if (!religion) {
+            _showToast('Religion not found', 'error');
+            return null;
         }
+
+        var followerCount = _getFollowerCount(religionId);
+
+        var content = 
+            '<div style="display:flex;flex-direction:column;gap:12px;">' +
+            '<p style="font-size:0.75rem;">Are you sure you want to delete <strong>' + _escapeHtml(religion.name) + '</strong>?</p>';
+
+        if (followerCount > 0) {
+            content += 
+                '<div style="padding:8px 12px;background:rgba(181,74,74,0.1);border:1px solid #b54a4a;border-radius:4px;font-size:0.65rem;color:#b54a4a;">' +
+                'This religion has ' + followerCount + ' followers. It cannot be deleted while it has followers. Consider deprecating it instead.' +
+                '</div>';
+        } else {
+            content +=
+                '<p style="font-size:0.65rem;color:var(--dim);">This action cannot be undone. All gods, laws, and places of worship associated with this religion will also be removed.</p>';
+        }
+
+        content += '</div>';
+
+        var modal = _openModal({
+            title: 'Delete Religion',
+            content: content,
+            confirmText: followerCount > 0 ? 'Cannot Delete' : 'Delete',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                if (followerCount > 0) {
+                    _showToast('Cannot delete religion with followers. Deprecate it instead.', 'error');
+                    return;
+                }
+
+                if (typeof window.ReligionCommands !== 'undefined' &&
+                    typeof window.ReligionCommands.deleteReligion === 'function') {
+                    var result = window.ReligionCommands.deleteReligion(religionId);
+                    if (result.success) {
+                        _showToast('Religion deleted: ' + religion.name, 'success');
+                        _closeTopModal();
+                        if (onSuccess) onSuccess();
+                    } else {
+                        _showToast('Failed to delete religion: ' + result.reason, 'error');
+                    }
+                } else {
+                    _showToast('ReligionCommands not available', 'error');
+                }
+            }
+        });
+
+        return modal;
     }
 
     // =========================================================================
-    // 6. DEPRECATE RELIGION MODAL
+    // 5. DEPRECATE RELIGION MODAL
     // =========================================================================
 
     function openDeprecateReligionModal(religionId, options) {
-        if (_openingModal) return null;
-        _openingModal = true;
+        options = options || {};
+        var onSuccess = options.onSuccess || null;
 
-        try {
-            options = options || {};
-            var onSuccess = options.onSuccess || null;
-
-            var religion = _getReligion(religionId);
-            if (!religion) {
-                _showToast('Religion not found', 'error');
-                return null;
-            }
-
-            if (religion.isDeprecated) {
-                _showToast('Religion is already deprecated', 'info');
-                return null;
-            }
-
-            var content = 
-                '<div style="display:flex;flex-direction:column;gap:12px;">' +
-                '<p style="font-size:0.75rem;">Deprecate <strong>' + _escapeHtml(religion.name) + '</strong>?</p>' +
-                '<p style="font-size:0.65rem;color:var(--dim);">Deprecating a religion marks it as no longer active. Existing followers will keep it, but new followers cannot be assigned.</p>' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Year of Deprecation</label>' +
-                '<input type="number" id="deprecateYear" value="' + _getCurrentYear() + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
-                '</div>' +
-                '</div>';
-
-            var modal = _openModal({
-                title: 'Deprecate Religion',
-                content: content,
-                confirmText: 'Deprecate',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var year = parseInt(document.getElementById('deprecateYear').value) || _getCurrentYear();
-
-                    if (typeof window.ReligionCommands !== 'undefined' &&
-                        typeof window.ReligionCommands.deprecateReligion === 'function') {
-                        var result = window.ReligionCommands.deprecateReligion(religionId, year);
-                        if (result.success) {
-                            _showToast('Religion deprecated: ' + result.data.name, 'warning');
-                            _closeTopModal();
-                            if (onSuccess) onSuccess(result.data);
-                        } else {
-                            _showToast('Failed to deprecate religion: ' + result.reason, 'error');
-                        }
-                    } else {
-                        _showToast('ReligionCommands not available', 'error');
-                    }
-                }
-            });
-
-            return modal;
-
-        } finally {
-            _openingModal = false;
+        var religion = _getReligion(religionId);
+        if (!religion) {
+            _showToast('Religion not found', 'error');
+            return null;
         }
+
+        if (religion.isDeprecated) {
+            _showToast('Religion is already deprecated', 'info');
+            return null;
+        }
+
+        var content = 
+            '<div style="display:flex;flex-direction:column;gap:12px;">' +
+            '<p style="font-size:0.75rem;">Deprecate <strong>' + _escapeHtml(religion.name) + '</strong>?</p>' +
+            '<p style="font-size:0.65rem;color:var(--dim);">Deprecating a religion marks it as no longer active. Existing followers will keep it, but new followers cannot be assigned.</p>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Year of Deprecation</label>' +
+            '<input type="number" id="deprecateYear" value="' + _getCurrentYear() + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '</div>';
+
+        var modal = _openModal({
+            title: 'Deprecate Religion',
+            content: content,
+            confirmText: 'Deprecate',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                // Year-zero fix: explicit missing check.
+                var year = _resolveParsedYear(document.getElementById('deprecateYear').value);
+
+                if (typeof window.ReligionCommands !== 'undefined' &&
+                    typeof window.ReligionCommands.deprecateReligion === 'function') {
+                    var result = window.ReligionCommands.deprecateReligion(religionId, year);
+                    if (result.success) {
+                        _showToast('Religion deprecated: ' + result.data.name, 'warning');
+                        _closeTopModal();
+                        if (onSuccess) onSuccess(result.data);
+                    } else {
+                        _showToast('Failed to deprecate religion: ' + result.reason, 'error');
+                    }
+                } else {
+                    _showToast('ReligionCommands not available', 'error');
+                }
+            }
+        });
+
+        return modal;
     }
 
     // =========================================================================
-    // 7. RELIGION DETAILS MODAL
+    // 6. RELIGION DETAILS MODAL
     // =========================================================================
 
     function openReligionDetailsModal(religionId, options) {
-        if (_openingModal) return null;
-        _openingModal = true;
+        options = options || {};
+        var onRefresh = options.onRefresh || null;
 
-        try {
-            options = options || {};
-            var onRefresh = options.onRefresh || null;
+        var religion = _getReligion(religionId);
+        if (!religion) {
+            _showToast('Religion not found', 'error');
+            return null;
+        }
 
-            var religion = _getReligion(religionId);
-            if (!religion) {
-                _showToast('Religion not found', 'error');
-                return null;
+        var followerCount = _getFollowerCount(religionId);
+        var gods = _getGodsByReligion(religionId);
+        var laws = _getLawsByReligion(religionId);
+        var places = _getPlacesOfWorshipByReligion(religionId);
+        var traitName = _getReligiousTraitName(religion.trait);
+        var inheritanceName = _getInheritanceRuleName(religion.inheritanceRule ? religion.inheritanceRule.type : 'mother');
+
+        var leaderName = religion.leader ? _getCharacterName(religion.leader.characterId) : 'None';
+        var leaderTitle = religion.leader ? religion.leader.title : '';
+
+        var locationNames = [];
+        if (religion.locations) {
+            for (var i = 0; i < religion.locations.length; i++) {
+                locationNames.push(_getPlaceName(religion.locations[i]));
             }
+        }
 
-            var followerCount = _getFollowerCount(religionId);
-            var gods = _getGodsByReligion(religionId);
-            var laws = _getLawsByReligion(religionId);
-            var places = _getPlacesOfWorshipByReligion(religionId);
-            var traitName = _getReligiousTraitName(religion.trait);
-            var inheritanceName = _getInheritanceRuleName(religion.inheritanceRule ? religion.inheritanceRule.type : 'mother');
+        var isDeprecated = religion.isDeprecated || false;
 
-            var leaderName = religion.leader ? _getCharacterName(religion.leader.characterId) : 'None';
-            var leaderTitle = religion.leader ? religion.leader.title : '';
+        var content = 
+            '<div style="display:flex;flex-direction:column;gap:12px;">' +
 
-            var locationNames = [];
-            if (religion.locations) {
-                for (var i = 0; i < religion.locations.length; i++) {
-                    locationNames.push(_getPlaceName(religion.locations[i]));
-                }
-            }
+            // Header
+            '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+            '<div style="display:flex;align-items:center;gap:10px;">' +
+            '<span style="font-size:1.5rem;">' + _escapeHtml(religion.icon || '✦') + '</span>' +
+            '<div>' +
+            '<div style="font-size:1rem;font-weight:bold;">' + _escapeHtml(religion.displayName || religion.name) + '</div>' +
+            '<div style="font-size:0.6rem;color:var(--dim);">' + _escapeHtml(religion.name) + '</div>' +
+            '</div>' +
+            '</div>' +
+            '<div style="display:flex;gap:4px;">' +
+            (isDeprecated ? '<span style="font-size:0.5rem;padding:2px 8px;border:1px solid #b54a4a;border-radius:4px;color:#b54a4a;">Deprecated</span>' : '<span style="font-size:0.5rem;padding:2px 8px;border:1px solid #4a9e6a;border-radius:4px;color:#4a9e6a;">Active</span>') +
+            '</div>' +
+            '</div>' +
 
-            var isDeprecated = religion.isDeprecated || false;
+            // Stats grid
+            '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:10px;background:var(--bg);border-radius:4px;">' +
+            '<div style="text-align:center;"><div style="font-size:0.55rem;color:var(--dim);">Followers</div><div style="font-size:0.9rem;font-weight:bold;">' + followerCount + '</div></div>' +
+            '<div style="text-align:center;"><div style="font-size:0.55rem;color:var(--dim);">Gods</div><div style="font-size:0.9rem;font-weight:bold;">' + gods.length + '</div></div>' +
+            '<div style="text-align:center;"><div style="font-size:0.55rem;color:var(--dim);">Laws</div><div style="font-size:0.9rem;font-weight:bold;">' + laws.length + '</div></div>' +
+            '<div style="text-align:center;"><div style="font-size:0.55rem;color:var(--dim);">Places</div><div style="font-size:0.9rem;font-weight:bold;">' + places.length + '</div></div>' +
+            '</div>' +
 
-            var content = 
-                '<div style="display:flex;flex-direction:column;gap:12px;">' +
+            // Description
+            (religion.description ? '<div style="font-size:0.7rem;color:var(--dim);padding:6px 0;">' + _escapeHtml(religion.description) + '</div>' : '') +
 
-                // Header
-                '<div style="display:flex;justify-content:space-between;align-items:center;">' +
-                '<div style="display:flex;align-items:center;gap:10px;">' +
-                '<span style="font-size:1.5rem;">' + _escapeHtml(religion.icon || '✦') + '</span>' +
-                '<div>' +
-                '<div style="font-size:1rem;font-weight:bold;">' + _escapeHtml(religion.displayName || religion.name) + '</div>' +
-                '<div style="font-size:0.6rem;color:var(--dim);">' + _escapeHtml(religion.name) + '</div>' +
-                '</div>' +
-                '</div>' +
-                '<div style="display:flex;gap:4px;">' +
-                (isDeprecated ? '<span style="font-size:0.5rem;padding:2px 8px;border:1px solid #b54a4a;border-radius:4px;color:#b54a4a;">Deprecated</span>' : '<span style="font-size:0.5rem;padding:2px 8px;border:1px solid #4a9e6a;border-radius:4px;color:#4a9e6a;">Active</span>') +
-                '</div>' +
-                '</div>' +
+            // Details
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:0.65rem;">' +
+            '<div><span style="color:var(--dim);">Trait:</span> ' + _escapeHtml(traitName) + '</div>' +
+            '<div><span style="color:var(--dim);">Inheritance:</span> ' + _escapeHtml(inheritanceName) + '</div>' +
+            '<div><span style="color:var(--dim);">Organized:</span> ' + (religion.isOrganized ? 'Yes' : 'No') + '</div>' +
+            '<div><span style="color:var(--dim);">Allows Conversion:</span> ' + (religion.allowsConversion ? 'Yes' : 'No') + '</div>' +
+            '<div><span style="color:var(--dim);">Proselytizes:</span> ' + (religion.proselytizes ? 'Yes' : 'No') + '</div>' +
+            '<div><span style="color:var(--dim);">Leader:</span> ' + _escapeHtml(leaderName) + (leaderTitle ? ' (' + _escapeHtml(leaderTitle) + ')' : '') + '</div>' +
+            '</div>' +
 
-                // Stats grid
-                '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:10px;background:var(--bg);border-radius:4px;">' +
-                '<div style="text-align:center;"><div style="font-size:0.55rem;color:var(--dim);">Followers</div><div style="font-size:0.9rem;font-weight:bold;">' + followerCount + '</div></div>' +
-                '<div style="text-align:center;"><div style="font-size:0.55rem;color:var(--dim);">Gods</div><div style="font-size:0.9rem;font-weight:bold;">' + gods.length + '</div></div>' +
-                '<div style="text-align:center;"><div style="font-size:0.55rem;color:var(--dim);">Laws</div><div style="font-size:0.9rem;font-weight:bold;">' + laws.length + '</div></div>' +
-                '<div style="text-align:center;"><div style="font-size:0.55rem;color:var(--dim);">Places</div><div style="font-size:0.9rem;font-weight:bold;">' + places.length + '</div></div>' +
-                '</div>' +
+            // Locations
+            (locationNames.length > 0 ? '<div style="font-size:0.65rem;color:var(--dim);">Locations: ' + locationNames.join(', ') + '</div>' : '') +
 
-                // Description
-                (religion.description ? '<div style="font-size:0.7rem;color:var(--dim);padding:6px 0;">' + _escapeHtml(religion.description) + '</div>' : '') +
+            // Action Buttons
+            '<div style="display:flex;flex-wrap:wrap;gap:6px;padding-top:8px;border-top:1px solid var(--border-light);">';
 
-                // Details
-                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:0.65rem;">' +
-                '<div><span style="color:var(--dim);">Trait:</span> ' + _escapeHtml(traitName) + '</div>' +
-                '<div><span style="color:var(--dim);">Inheritance:</span> ' + _escapeHtml(inheritanceName) + '</div>' +
-                '<div><span style="color:var(--dim);">Organized:</span> ' + (religion.isOrganized ? 'Yes' : 'No') + '</div>' +
-                '<div><span style="color:var(--dim);">Allows Conversion:</span> ' + (religion.allowsConversion ? 'Yes' : 'No') + '</div>' +
-                '<div><span style="color:var(--dim);">Proselytizes:</span> ' + (religion.proselytizes ? 'Yes' : 'No') + '</div>' +
-                '<div><span style="color:var(--dim);">Leader:</span> ' + _escapeHtml(leaderName) + (leaderTitle ? ' (' + _escapeHtml(leaderTitle) + ')' : '') + '</div>' +
-                '</div>' +
-
-                // Locations
-                (locationNames.length > 0 ? '<div style="font-size:0.65rem;color:var(--dim);">Locations: ' + locationNames.join(', ') + '</div>' : '') +
-
-                // Action Buttons
-                '<div style="display:flex;flex-wrap:wrap;gap:6px;padding-top:8px;border-top:1px solid var(--border-light);">';
-
-            if (!isDeprecated) {
-                content +=
-                    '<button class="btn edit-religion-btn" data-religion-id="' + religionId + '" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 12px;border-radius:4px;font-size:0.6rem;cursor:pointer;">Edit Religion</button>' +
-                    '<button class="btn set-leader-btn" data-religion-id="' + religionId + '" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 12px;border-radius:4px;font-size:0.6rem;cursor:pointer;">Set Leader</button>' +
-                    '<button class="btn add-god-btn" data-religion-id="' + religionId + '" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 12px;border-radius:4px;font-size:0.6rem;cursor:pointer;">Add God</button>' +
-                    '<button class="btn add-law-btn" data-religion-id="' + religionId + '" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 12px;border-radius:4px;font-size:0.6rem;cursor:pointer;">Add Law</button>' +
-                    '<button class="btn create-place-btn" data-religion-id="' + religionId + '" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 12px;border-radius:4px;font-size:0.6rem;cursor:pointer;">Create Place of Worship</button>';
-            }
-
+        if (!isDeprecated) {
             content +=
-                '<button class="btn deprecate-religion-btn" data-religion-id="' + religionId + '" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 12px;border-radius:4px;font-size:0.6rem;cursor:pointer;">' + (isDeprecated ? 'Reactivate' : 'Deprecate') + '</button>' +
-                '<button class="btn delete-religion-btn" data-religion-id="' + religionId + '" style="background:var(--bg3);border:1px solid #b54a4a;color:#b54a4a;padding:4px 12px;border-radius:4px;font-size:0.6rem;cursor:pointer;">Delete</button>' +
-                '</div>' +
+                '<button class="btn edit-religion-btn" data-religion-id="' + religionId + '" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 12px;border-radius:4px;font-size:0.6rem;cursor:pointer;">Edit Religion</button>' +
+                '<button class="btn set-leader-btn" data-religion-id="' + religionId + '" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 12px;border-radius:4px;font-size:0.6rem;cursor:pointer;">Set Leader</button>' +
+                '<button class="btn add-god-btn" data-religion-id="' + religionId + '" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 12px;border-radius:4px;font-size:0.6rem;cursor:pointer;">Add God</button>' +
+                '<button class="btn add-law-btn" data-religion-id="' + religionId + '" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 12px;border-radius:4px;font-size:0.6rem;cursor:pointer;">Add Law</button>' +
+                '<button class="btn create-place-btn" data-religion-id="' + religionId + '" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 12px;border-radius:4px;font-size:0.6rem;cursor:pointer;">Create Place of Worship</button>';
+        }
 
-                // Gods list
-                (gods.length > 0 ? '<div style="font-size:0.65rem;margin-top:8px;"><div style="font-weight:bold;margin-bottom:4px;">Gods:</div><ul style="margin:0;padding-left:16px;list-style:none;">' +
-                gods.map(function(g) {
-                    return '<li style="padding:2px 0;">' + _escapeHtml(g.symbol || '✦') + ' ' + _escapeHtml(g.displayName || g.name) + ' (' + _escapeHtml(g.domain) + ')</li>';
-                }).join('') +
-                '</ul></div>' : '') +
+        content +=
+            '<button class="btn deprecate-religion-btn" data-religion-id="' + religionId + '" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 12px;border-radius:4px;font-size:0.6rem;cursor:pointer;">' + (isDeprecated ? 'Reactivate' : 'Deprecate') + '</button>' +
+            '<button class="btn delete-religion-btn" data-religion-id="' + religionId + '" style="background:var(--bg3);border:1px solid #b54a4a;color:#b54a4a;padding:4px 12px;border-radius:4px;font-size:0.6rem;cursor:pointer;">Delete</button>' +
+            '</div>' +
 
-                // Laws list
-                (laws.length > 0 ? '<div style="font-size:0.65rem;margin-top:8px;"><div style="font-weight:bold;margin-bottom:4px;">Laws:</div><ul style="margin:0;padding-left:16px;list-style:none;">' +
-                laws.map(function(l) {
-                    return '<li style="padding:2px 0;">' + _escapeHtml(l.name) + ' (' + _escapeHtml(l.type) + ', ' + _escapeHtml(l.domain) + ')</li>';
-                }).join('') +
-                '</ul></div>' : '') +
+            // Gods list
+            (gods.length > 0 ? '<div style="font-size:0.65rem;margin-top:8px;"><div style="font-weight:bold;margin-bottom:4px;">Gods:</div><ul style="margin:0;padding-left:16px;list-style:none;">' +
+            gods.map(function(g) {
+                return '<li style="padding:2px 0;">' + _escapeHtml(g.symbol || '✦') + ' ' + _escapeHtml(g.displayName || g.name) + ' (' + _escapeHtml(g.domain) + ')</li>';
+            }).join('') +
+            '</ul></div>' : '') +
 
-                (religion.notes ? '<div style="font-size:0.55rem;color:var(--dim);margin-top:8px;">Notes: ' + _escapeHtml(religion.notes) + '</div>' : '') +
+            // Laws list
+            (laws.length > 0 ? '<div style="font-size:0.65rem;margin-top:8px;"><div style="font-weight:bold;margin-bottom:4px;">Laws:</div><ul style="margin:0;padding-left:16px;list-style:none;">' +
+            laws.map(function(l) {
+                return '<li style="padding:2px 0;">' + _escapeHtml(l.name) + ' (' + _escapeHtml(l.type) + ', ' + _escapeHtml(l.domain) + ')</li>';
+            }).join('') +
+            '</ul></div>' : '') +
 
-                '</div>';
+            (religion.notes ? '<div style="font-size:0.55rem;color:var(--dim);margin-top:8px;">Notes: ' + _escapeHtml(religion.notes) + '</div>' : '') +
 
-            var modal = _openModal({
-                title: 'Religion Details',
-                content: content,
-                confirmText: 'Close',
-                cancelText: '',
-                onOpen: function() {
-                    // Attach button handlers
-                    var container = document.querySelector('.modal-body');
+            '</div>';
 
-                    // Edit Religion
-                    var editBtn = container.querySelector('.edit-religion-btn');
-                    if (editBtn) {
-                        editBtn.addEventListener('click', function() {
-                            var id = this.dataset.religionId;
-                            _closeTopModal();
-                            setTimeout(function() {
-                                openEditReligionModal(id);
-                            }, 100);
-                        });
-                    }
+        var modal = _openModal({
+            title: 'Religion Details',
+            content: content,
+            confirmText: 'Close',
+            cancelText: '',
+            onOpen: function() {
+                // Attach button handlers
+                var container = document.querySelector('.modal-body');
 
-                    // Set Leader
-                    var leaderBtn = container.querySelector('.set-leader-btn');
-                    if (leaderBtn) {
-                        leaderBtn.addEventListener('click', function() {
-                            var id = this.dataset.religionId;
-                            _closeTopModal();
-                            setTimeout(function() {
-                                openSetLeaderModal(id);
-                            }, 100);
-                        });
-                    }
+                // Edit Religion
+                var editBtn = container.querySelector('.edit-religion-btn');
+                if (editBtn) {
+                    editBtn.addEventListener('click', function() {
+                        var id = this.dataset.religionId;
+                        _closeTopModal();
+                        setTimeout(function() {
+                            openEditReligionModal(id);
+                        }, 100);
+                    });
+                }
 
-                    // Add God
-                    var godBtn = container.querySelector('.add-god-btn');
-                    if (godBtn) {
-                        godBtn.addEventListener('click', function() {
-                            var id = this.dataset.religionId;
-                            _closeTopModal();
-                            setTimeout(function() {
-                                openAddGodModal(id);
-                            }, 100);
-                        });
-                    }
+                // Set Leader
+                var leaderBtn = container.querySelector('.set-leader-btn');
+                if (leaderBtn) {
+                    leaderBtn.addEventListener('click', function() {
+                        var id = this.dataset.religionId;
+                        _closeTopModal();
+                        setTimeout(function() {
+                            openSetLeaderModal(id);
+                        }, 100);
+                    });
+                }
 
-                    // Add Law
-                    var lawBtn = container.querySelector('.add-law-btn');
-                    if (lawBtn) {
-                        lawBtn.addEventListener('click', function() {
-                            var id = this.dataset.religionId;
-                            _closeTopModal();
-                            setTimeout(function() {
-                                openAddLawModal(id);
-                            }, 100);
-                        });
-                    }
+                // Add God
+                var godBtn = container.querySelector('.add-god-btn');
+                if (godBtn) {
+                    godBtn.addEventListener('click', function() {
+                        var id = this.dataset.religionId;
+                        _closeTopModal();
+                        setTimeout(function() {
+                            openAddGodModal(id);
+                        }, 100);
+                    });
+                }
 
-                    // Create Place of Worship
-                    var placeBtn = container.querySelector('.create-place-btn');
-                    if (placeBtn) {
-                        placeBtn.addEventListener('click', function() {
-                            var id = this.dataset.religionId;
-                            _closeTopModal();
-                            setTimeout(function() {
-                                openCreatePlaceOfWorshipModal(id);
-                            }, 100);
-                        });
-                    }
+                // Add Law
+                var lawBtn = container.querySelector('.add-law-btn');
+                if (lawBtn) {
+                    lawBtn.addEventListener('click', function() {
+                        var id = this.dataset.religionId;
+                        _closeTopModal();
+                        setTimeout(function() {
+                            openAddLawModal(id);
+                        }, 100);
+                    });
+                }
 
-                    // Deprecate/Reactivate
-                    var deprecateBtn = container.querySelector('.deprecate-religion-btn');
-                    if (deprecateBtn) {
-                        deprecateBtn.addEventListener('click', function() {
-                            var id = this.dataset.religionId;
-                            var religion = _getReligion(id);
-                            _closeTopModal();
-                            setTimeout(function() {
-                                if (religion && religion.isDeprecated) {
-                                    // Reactivate - set deprecated to false
-                                    if (typeof window.ReligionCommands !== 'undefined' &&
-                                        typeof window.ReligionCommands.updateReligion === 'function') {
-                                        var result = window.ReligionCommands.updateReligion(id, {
-                                            isDeprecated: false,
-                                            deprecatedYear: null
-                                        });
-                                        if (result.success) {
-                                            _showToast('Religion reactivated', 'success');
-                                            if (onRefresh) onRefresh();
-                                        }
-                                    }
-                                } else {
-                                    openDeprecateReligionModal(id, {
-                                        onSuccess: function() {
-                                            if (onRefresh) onRefresh();
-                                        }
+                // Create Place of Worship
+                var placeBtn = container.querySelector('.create-place-btn');
+                if (placeBtn) {
+                    placeBtn.addEventListener('click', function() {
+                        var id = this.dataset.religionId;
+                        _closeTopModal();
+                        setTimeout(function() {
+                            openCreatePlaceOfWorshipModal(id);
+                        }, 100);
+                    });
+                }
+
+                // Deprecate/Reactivate
+                var deprecateBtn = container.querySelector('.deprecate-religion-btn');
+                if (deprecateBtn) {
+                    deprecateBtn.addEventListener('click', function() {
+                        var id = this.dataset.religionId;
+                        var religion = _getReligion(id);
+                        _closeTopModal();
+                        setTimeout(function() {
+                            if (religion && religion.isDeprecated) {
+                                // Reactivate - set deprecated to false
+                                if (typeof window.ReligionCommands !== 'undefined' &&
+                                    typeof window.ReligionCommands.updateReligion === 'function') {
+                                    var result = window.ReligionCommands.updateReligion(id, {
+                                        isDeprecated: false,
+                                        deprecatedYear: null
                                     });
+                                    if (result.success) {
+                                        _showToast('Religion reactivated', 'success');
+                                        if (onRefresh) onRefresh();
+                                    }
                                 }
-                            }, 100);
-                        });
-                    }
-
-                    // Delete
-                    var deleteBtn = container.querySelector('.delete-religion-btn');
-                    if (deleteBtn) {
-                        deleteBtn.addEventListener('click', function() {
-                            var id = this.dataset.religionId;
-                            _closeTopModal();
-                            setTimeout(function() {
-                                openDeleteReligionModal(id, {
+                            } else {
+                                openDeprecateReligionModal(id, {
                                     onSuccess: function() {
                                         if (onRefresh) onRefresh();
                                     }
                                 });
-                            }, 100);
-                        });
-                    }
+                            }
+                        }, 100);
+                    });
                 }
-            });
 
-            return modal;
+                // Delete
+                var deleteBtn = container.querySelector('.delete-religion-btn');
+                if (deleteBtn) {
+                    deleteBtn.addEventListener('click', function() {
+                        var id = this.dataset.religionId;
+                        _closeTopModal();
+                        setTimeout(function() {
+                            openDeleteReligionModal(id, {
+                                onSuccess: function() {
+                                    if (onRefresh) onRefresh();
+                                }
+                            });
+                        }, 100);
+                    });
+                }
+            }
+        });
 
-        } finally {
-            _openingModal = false;
-        }
+        return modal;
     }
 
     // =========================================================================
-    // 8. SET LEADER MODAL
+    // 7. SET LEADER MODAL
     // =========================================================================
 
     function openSetLeaderModal(religionId, options) {
-        if (_openingModal) return null;
-        _openingModal = true;
+        options = options || {};
+        var onSuccess = options.onSuccess || null;
 
-        try {
-            options = options || {};
-            var onSuccess = options.onSuccess || null;
-
-            var religion = _getReligion(religionId);
-            if (!religion) {
-                _showToast('Religion not found', 'error');
-                return null;
-            }
-
-            var currentLeader = religion.leader;
-            var currentName = currentLeader ? _getCharacterName(currentLeader.characterId) : 'None';
-
-            var content = 
-                '<div style="display:flex;flex-direction:column;gap:12px;">' +
-                '<p style="font-size:0.7rem;">Current Leader: <strong>' + _escapeHtml(currentName) + '</strong></p>' +
-                '<button id="selectLeaderBtn" class="btn" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:4px;font-size:0.65rem;cursor:pointer;width:100%;">Select Character</button>' +
-                '<div id="selectedLeaderDisplay" style="font-size:0.65rem;color:var(--dim);text-align:center;">No character selected</div>' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Title</label>' +
-                '<input type="text" id="leaderTitle" placeholder="e.g., High Priest, Archbishop" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Start Year</label>' +
-                '<input type="number" id="leaderStartYear" value="' + _getCurrentYear() + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Notes</label>' +
-                '<input type="text" id="leaderNotes" placeholder="Additional notes..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                '</div>' +
-                '</div>';
-
-            var selectedCharacterId = null;
-
-            var modal = _openModal({
-                title: 'Set Religious Leader: ' + religion.name,
-                content: content,
-                confirmText: 'Set Leader',
-                cancelText: 'Cancel',
-                onOpen: function() {
-                    var selectBtn = document.getElementById('selectLeaderBtn');
-                    var display = document.getElementById('selectedLeaderDisplay');
-
-                    if (selectBtn) {
-                        selectBtn.addEventListener('click', function() {
-                            _openCharacterSelector({
-                                title: 'Select Religious Leader',
-                                preset: 'elder',
-                                filters: {
-                                    showDeceased: false
-                                },
-                                onSelect: function(character) {
-                                    selectedCharacterId = character.id;
-                                    display.textContent = 'Selected: ' + character.name + (character.surname ? ' ' + character.surname : '');
-                                    display.style.color = 'var(--accent)';
-                                }
-                            });
-                        });
-                    }
-                },
-                onConfirm: function() {
-                    if (!selectedCharacterId) {
-                        _showToast('Please select a character', 'error');
-                        return;
-                    }
-
-                    var title = document.getElementById('leaderTitle').value.trim() || 'Religious Leader';
-                    var startYear = parseInt(document.getElementById('leaderStartYear').value) || _getCurrentYear();
-                    var notes = document.getElementById('leaderNotes').value.trim();
-
-                    if (typeof window.ReligionCommands !== 'undefined' &&
-                        typeof window.ReligionCommands.setReligionLeader === 'function') {
-                        var result = window.ReligionCommands.setReligionLeader(
-                            religionId,
-                            selectedCharacterId,
-                            {
-                                title: title,
-                                startYear: startYear,
-                                notes: notes
-                            }
-                        );
-                        if (result.success) {
-                            _showToast('Religious leader appointed: ' + _getCharacterName(selectedCharacterId), 'success');
-                            _closeTopModal();
-                            if (onSuccess) onSuccess(result.data);
-                        } else {
-                            _showToast('Failed to set leader: ' + result.reason, 'error');
-                        }
-                    } else {
-                        _showToast('ReligionCommands not available', 'error');
-                    }
-                }
-            });
-
-            return modal;
-
-        } finally {
-            _openingModal = false;
+        var religion = _getReligion(religionId);
+        if (!religion) {
+            _showToast('Religion not found', 'error');
+            return null;
         }
+
+        var currentLeader = religion.leader;
+        var currentName = currentLeader ? _getCharacterName(currentLeader.characterId) : 'None';
+
+        var content = 
+            '<div style="display:flex;flex-direction:column;gap:12px;">' +
+            '<p style="font-size:0.7rem;">Current Leader: <strong>' + _escapeHtml(currentName) + '</strong></p>' +
+            '<button id="selectLeaderBtn" class="btn" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:4px;font-size:0.65rem;cursor:pointer;width:100%;">Select Character</button>' +
+            '<div id="selectedLeaderDisplay" style="font-size:0.65rem;color:var(--dim);text-align:center;">No character selected</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Title</label>' +
+            '<input type="text" id="leaderTitle" placeholder="e.g., High Priest, Archbishop" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Start Year</label>' +
+            '<input type="number" id="leaderStartYear" value="' + _getCurrentYear() + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Notes</label>' +
+            '<input type="text" id="leaderNotes" placeholder="Additional notes..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '</div>' +
+            '</div>';
+
+        var selectedCharacterId = null;
+
+        var modal = _openModal({
+            title: 'Set Religious Leader: ' + religion.name,
+            content: content,
+            confirmText: 'Set Leader',
+            cancelText: 'Cancel',
+            onOpen: function() {
+                var selectBtn = document.getElementById('selectLeaderBtn');
+                var display = document.getElementById('selectedLeaderDisplay');
+
+                if (selectBtn) {
+                    selectBtn.addEventListener('click', function() {
+                        _openCharacterSelector({
+                            title: 'Select Religious Leader',
+                            preset: 'elder',
+                            filters: {
+                                showDeceased: false
+                            },
+                            onSelect: function(character) {
+                                selectedCharacterId = character.id;
+                                display.textContent = 'Selected: ' + character.name + (character.surname ? ' ' + character.surname : '');
+                                display.style.color = 'var(--accent)';
+                            }
+                        });
+                    });
+                }
+            },
+            onConfirm: function() {
+                if (!selectedCharacterId) {
+                    _showToast('Please select a character', 'error');
+                    return;
+                }
+
+                var title = document.getElementById('leaderTitle').value.trim() || 'Religious Leader';
+                // Year-zero fix.
+                var startYear = _resolveParsedYear(document.getElementById('leaderStartYear').value);
+                var notes = document.getElementById('leaderNotes').value.trim();
+
+                if (typeof window.ReligionCommands !== 'undefined' &&
+                    typeof window.ReligionCommands.setReligionLeader === 'function') {
+                    var result = window.ReligionCommands.setReligionLeader(
+                        religionId,
+                        selectedCharacterId,
+                        {
+                            title: title,
+                            startYear: startYear,
+                            notes: notes
+                        }
+                    );
+                    if (result.success) {
+                        _showToast('Religious leader appointed: ' + _getCharacterName(selectedCharacterId), 'success');
+                        _closeTopModal();
+                        if (onSuccess) onSuccess(result.data);
+                    } else {
+                        _showToast('Failed to set leader: ' + result.reason, 'error');
+                    }
+                } else {
+                    _showToast('ReligionCommands not available', 'error');
+                }
+            }
+        });
+
+        return modal;
     }
 
     // =========================================================================
-    // 9. END LEADER TERM MODAL
+    // 8. END LEADER TERM MODAL
     // =========================================================================
 
     function openEndLeaderTermModal(religionId, options) {
-        if (_openingModal) return null;
-        _openingModal = true;
+        options = options || {};
+        var onSuccess = options.onSuccess || null;
 
-        try {
-            options = options || {};
-            var onSuccess = options.onSuccess || null;
-
-            var religion = _getReligion(religionId);
-            if (!religion) {
-                _showToast('Religion not found', 'error');
-                return null;
-            }
-
-            if (!religion.leader) {
-                _showToast('No leader to end', 'info');
-                return null;
-            }
-
-            var leaderName = _getCharacterName(religion.leader.characterId);
-
-            var content = 
-                '<div style="display:flex;flex-direction:column;gap:12px;">' +
-                '<p style="font-size:0.75rem;">End the term of <strong>' + _escapeHtml(leaderName) + '</strong> as leader of ' + _escapeHtml(religion.name) + '?</p>' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">End Year</label>' +
-                '<input type="number" id="endYear" value="' + _getCurrentYear() + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Reason</label>' +
-                '<input type="text" id="endReason" placeholder="e.g., Resignation, Death, Removal" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                '</div>' +
-                '</div>';
-
-            var modal = _openModal({
-                title: 'End Leader Term',
-                content: content,
-                confirmText: 'End Term',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var endYear = parseInt(document.getElementById('endYear').value) || _getCurrentYear();
-                    var reason = document.getElementById('endReason').value.trim() || 'Term ended';
-
-                    if (typeof window.ReligionCommands !== 'undefined' &&
-                        typeof window.ReligionCommands.endReligionLeaderTerm === 'function') {
-                        var result = window.ReligionCommands.endReligionLeaderTerm(
-                            religionId,
-                            religion.leader.characterId,
-                            endYear,
-                            reason
-                        );
-                        if (result.success) {
-                            _showToast('Leader term ended', 'success');
-                            _closeTopModal();
-                            if (onSuccess) onSuccess(result.data);
-                        } else {
-                            _showToast('Failed to end leader term: ' + result.reason, 'error');
-                        }
-                    } else {
-                        _showToast('ReligionCommands not available', 'error');
-                    }
-                }
-            });
-
-            return modal;
-
-        } finally {
-            _openingModal = false;
+        var religion = _getReligion(religionId);
+        if (!religion) {
+            _showToast('Religion not found', 'error');
+            return null;
         }
+
+        if (!religion.leader) {
+            _showToast('No leader to end', 'info');
+            return null;
+        }
+
+        var leaderName = _getCharacterName(religion.leader.characterId);
+
+        var content = 
+            '<div style="display:flex;flex-direction:column;gap:12px;">' +
+            '<p style="font-size:0.75rem;">End the term of <strong>' + _escapeHtml(leaderName) + '</strong> as leader of ' + _escapeHtml(religion.name) + '?</p>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">End Year</label>' +
+            '<input type="number" id="endYear" value="' + _getCurrentYear() + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Reason</label>' +
+            '<input type="text" id="endReason" placeholder="e.g., Resignation, Death, Removal" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '</div>' +
+            '</div>';
+
+        var modal = _openModal({
+            title: 'End Leader Term',
+            content: content,
+            confirmText: 'End Term',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                // Year-zero fix.
+                var endYear = _resolveParsedYear(document.getElementById('endYear').value);
+                var reason = document.getElementById('endReason').value.trim() || 'Term ended';
+
+                if (typeof window.ReligionCommands !== 'undefined' &&
+                    typeof window.ReligionCommands.endReligionLeaderTerm === 'function') {
+                    var result = window.ReligionCommands.endReligionLeaderTerm(
+                        religionId,
+                        religion.leader.characterId,
+                        endYear,
+                        reason
+                    );
+                    if (result.success) {
+                        _showToast('Leader term ended', 'success');
+                        _closeTopModal();
+                        if (onSuccess) onSuccess(result.data);
+                    } else {
+                        _showToast('Failed to end leader term: ' + result.reason, 'error');
+                    }
+                } else {
+                    _showToast('ReligionCommands not available', 'error');
+                }
+            }
+        });
+
+        return modal;
     }
 
     // =========================================================================
-    // 10. ADD GOD MODAL
+    // 9. ADD GOD MODAL
     // =========================================================================
 
     function openAddGodModal(religionId, options) {
-        if (_openingModal) return null;
-        _openingModal = true;
+        options = options || {};
+        var onSuccess = options.onSuccess || null;
 
-        try {
-            options = options || {};
-            var onSuccess = options.onSuccess || null;
-
-            var religion = _getReligion(religionId);
-            if (!religion) {
-                _showToast('Religion not found', 'error');
-                return null;
-            }
-
-            var domains = ['war', 'fertility', 'wisdom', 'death', 'love', 'justice', 'craft', 'nature', 'sky', 'sea', 'fire', 'earth'];
-
-            var domainOptions = '';
-            for (var i = 0; i < domains.length; i++) {
-                domainOptions += '<option value="' + domains[i] + '">' + domains[i].charAt(0).toUpperCase() + domains[i].slice(1) + '</option>';
-            }
-
-            var genders = ['male', 'female', 'neuter'];
-            var genderOptions = '';
-            for (var i = 0; i < genders.length; i++) {
-                genderOptions += '<option value="' + genders[i] + '">' + genders[i].charAt(0).toUpperCase() + genders[i].slice(1) + '</option>';
-            }
-
-            var alignments = ['good', 'neutral', 'evil', 'chaotic', 'lawful'];
-            var alignmentOptions = '';
-            for (var i = 0; i < alignments.length; i++) {
-                alignmentOptions += '<option value="' + alignments[i] + '">' + alignments[i].charAt(0).toUpperCase() + alignments[i].slice(1) + '</option>';
-            }
-
-            var content = 
-                '<div style="display:flex;flex-direction:column;gap:12px;">' +
-                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">God Name *</label>' +
-                '<input type="text" id="godName" placeholder="e.g., Thor" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Display Name</label>' +
-                '<input type="text" id="godDisplayName" placeholder="e.g., Thor, God of Thunder" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
-                '</div>' +
-                '</div>' +
-
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Description</label>' +
-                '<textarea id="godDescription" rows="2" placeholder="Describe the god..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;resize:vertical;"></textarea>' +
-                '</div>' +
-
-                '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Domain</label>' +
-                '<select id="godDomain" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                domainOptions +
-                '</select>' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Symbol</label>' +
-                '<input type="text" id="godSymbol" placeholder="✦" value="✦" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Gender</label>' +
-                '<select id="godGender" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                genderOptions +
-                '</select>' +
-                '</div>' +
-                '</div>' +
-
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Alignment</label>' +
-                '<select id="godAlignment" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                alignmentOptions +
-                '</select>' +
-                '</div>' +
-
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Parent God ID (optional)</label>' +
-                '<input type="text" id="godParent" placeholder="ID of parent god" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                '</div>' +
-                '</div>';
-
-            var modal = _openModal({
-                title: 'Add God to ' + religion.name,
-                content: content,
-                confirmText: 'Add God',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var name = document.getElementById('godName').value.trim();
-                    if (!name) {
-                        _showToast('God name is required', 'error');
-                        return;
-                    }
-
-                    var data = {
-                        name: name,
-                        displayName: document.getElementById('godDisplayName').value.trim() || name,
-                        description: document.getElementById('godDescription').value.trim(),
-                        domain: document.getElementById('godDomain').value,
-                        symbol: document.getElementById('godSymbol').value.trim() || '✦',
-                        gender: document.getElementById('godGender').value,
-                        alignment: document.getElementById('godAlignment').value,
-                        parentGodId: document.getElementById('godParent').value.trim() || null
-                    };
-
-                    if (typeof window.ReligionCommands !== 'undefined' &&
-                        typeof window.ReligionCommands.addGod === 'function') {
-                        var result = window.ReligionCommands.addGod(religionId, data);
-                        if (result.success) {
-                            _showToast('God added: ' + result.data.name, 'success');
-                            _closeTopModal();
-                            if (onSuccess) onSuccess(result.data);
-                        } else {
-                            _showToast('Failed to add god: ' + result.reason, 'error');
-                        }
-                    } else {
-                        _showToast('ReligionCommands not available', 'error');
-                    }
-                }
-            });
-
-            return modal;
-
-        } finally {
-            _openingModal = false;
+        var religion = _getReligion(religionId);
+        if (!religion) {
+            _showToast('Religion not found', 'error');
+            return null;
         }
+
+        var domains = ['war', 'fertility', 'wisdom', 'death', 'love', 'justice', 'craft', 'nature', 'sky', 'sea', 'fire', 'earth'];
+
+        var domainOptions = '';
+        for (var i = 0; i < domains.length; i++) {
+            domainOptions += '<option value="' + domains[i] + '">' + domains[i].charAt(0).toUpperCase() + domains[i].slice(1) + '</option>';
+        }
+
+        var genders = ['male', 'female', 'neuter'];
+        var genderOptions = '';
+        for (var i = 0; i < genders.length; i++) {
+            genderOptions += '<option value="' + genders[i] + '">' + genders[i].charAt(0).toUpperCase() + genders[i].slice(1) + '</option>';
+        }
+
+        var alignments = ['good', 'neutral', 'evil', 'chaotic', 'lawful'];
+        var alignmentOptions = '';
+        for (var i = 0; i < alignments.length; i++) {
+            alignmentOptions += '<option value="' + alignments[i] + '">' + alignments[i].charAt(0).toUpperCase() + alignments[i].slice(1) + '</option>';
+        }
+
+        var content = 
+            '<div style="display:flex;flex-direction:column;gap:12px;">' +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">God Name *</label>' +
+            '<input type="text" id="godName" placeholder="e.g., Thor" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Display Name</label>' +
+            '<input type="text" id="godDisplayName" placeholder="e.g., Thor, God of Thunder" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '</div>' +
+
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Description</label>' +
+            '<textarea id="godDescription" rows="2" placeholder="Describe the god..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;resize:vertical;"></textarea>' +
+            '</div>' +
+
+            '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Domain</label>' +
+            '<select id="godDomain" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            domainOptions +
+            '</select>' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Symbol</label>' +
+            '<input type="text" id="godSymbol" placeholder="✦" value="✦" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Gender</label>' +
+            '<select id="godGender" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            genderOptions +
+            '</select>' +
+            '</div>' +
+            '</div>' +
+
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Alignment</label>' +
+            '<select id="godAlignment" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            alignmentOptions +
+            '</select>' +
+            '</div>' +
+
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Parent God ID (optional)</label>' +
+            '<input type="text" id="godParent" placeholder="ID of parent god" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '</div>' +
+            '</div>';
+
+        var modal = _openModal({
+            title: 'Add God to ' + religion.name,
+            content: content,
+            confirmText: 'Add God',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var name = document.getElementById('godName').value.trim();
+                if (!name) {
+                    _showToast('God name is required', 'error');
+                    return;
+                }
+
+                var data = {
+                    name: name,
+                    displayName: document.getElementById('godDisplayName').value.trim() || name,
+                    description: document.getElementById('godDescription').value.trim(),
+                    domain: document.getElementById('godDomain').value,
+                    symbol: document.getElementById('godSymbol').value.trim() || '✦',
+                    gender: document.getElementById('godGender').value,
+                    alignment: document.getElementById('godAlignment').value,
+                    parentGodId: document.getElementById('godParent').value.trim() || null
+                };
+
+                if (typeof window.ReligionCommands !== 'undefined' &&
+                    typeof window.ReligionCommands.addGod === 'function') {
+                    var result = window.ReligionCommands.addGod(religionId, data);
+                    if (result.success) {
+                        _showToast('God added: ' + result.data.name, 'success');
+                        _closeTopModal();
+                        if (onSuccess) onSuccess(result.data);
+                    } else {
+                        _showToast('Failed to add god: ' + result.reason, 'error');
+                    }
+                } else {
+                    _showToast('ReligionCommands not available', 'error');
+                }
+            }
+        });
+
+        return modal;
     }
 
     // =========================================================================
-    // 11. ADD LAW MODAL
+    // 10. ADD LAW MODAL
     // =========================================================================
 
     function openAddLawModal(religionId, options) {
-        if (_openingModal) return null;
-        _openingModal = true;
+        options = options || {};
+        var onSuccess = options.onSuccess || null;
 
-        try {
-            options = options || {};
-            var onSuccess = options.onSuccess || null;
-
-            var religion = _getReligion(religionId);
-            if (!religion) {
-                _showToast('Religion not found', 'error');
-                return null;
-            }
-
-            var lawTypes = window.LAW_TYPES || {
-                LAW: 'law',
-                TABOO: 'taboo',
-                GUIDELINE: 'guideline'
-            };
-
-            var lawCategories = window.LAW_CATEGORIES || {
-                RELIGIOUS: 'religious',
-                CIVIL: 'civil',
-                CUSTOM: 'custom'
-            };
-
-            var lawDomains = window.LAW_DOMAINS || {
-                MARRIAGE: 'marriage',
-                BEHAVIOR: 'behavior',
-                WORSHIP: 'worship',
-                FOOD: 'food',
-                SOCIAL: 'social',
-                ECONOMIC: 'economic',
-                POLITICAL: 'political',
-                SEXUAL: 'sexual',
-                VIOLENCE: 'violence',
-                DEATH: 'death'
-            };
-
-            var lawSeverity = window.LAW_SEVERITY || {
-                MINOR: 'minor',
-                MAJOR: 'major',
-                MORTAL: 'mortal'
-            };
-
-            var crimeTypes = window.CRIME_TYPES || {};
-
-            var typeOptions = '';
-            for (var key in lawTypes) {
-                if (lawTypes.hasOwnProperty(key)) {
-                    var val = lawTypes[key];
-                    var label = val.charAt(0).toUpperCase() + val.slice(1);
-                    typeOptions += '<option value="' + val + '">' + label + '</option>';
-                }
-            }
-
-            var categoryOptions = '';
-            for (var key in lawCategories) {
-                if (lawCategories.hasOwnProperty(key)) {
-                    var val = lawCategories[key];
-                    var label = val.charAt(0).toUpperCase() + val.slice(1);
-                    categoryOptions += '<option value="' + val + '">' + label + '</option>';
-                }
-            }
-
-            var domainOptions = '';
-            for (var key in lawDomains) {
-                if (lawDomains.hasOwnProperty(key)) {
-                    var val = lawDomains[key];
-                    var label = val.charAt(0).toUpperCase() + val.slice(1);
-                    domainOptions += '<option value="' + val + '">' + label + '</option>';
-                }
-            }
-
-            var severityOptions = '';
-            for (var key in lawSeverity) {
-                if (lawSeverity.hasOwnProperty(key)) {
-                    var val = lawSeverity[key];
-                    var label = val.charAt(0).toUpperCase() + val.slice(1);
-                    severityOptions += '<option value="' + val + '">' + label + '</option>';
-                }
-            }
-
-            var crimeTypeOptions = '<option value="">None</option>';
-            for (var key in crimeTypes) {
-                if (crimeTypes.hasOwnProperty(key)) {
-                    var val = crimeTypes[key];
-                    crimeTypeOptions += '<option value="' + val + '">' + val.charAt(0).toUpperCase() + val.slice(1) + '</option>';
-                }
-            }
-
-            var content = 
-                '<div style="display:flex;flex-direction:column;gap:12px;">' +
-                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Law Name *</label>' +
-                '<input type="text" id="lawName" placeholder="e.g., No Marriage Outside Faith" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Type</label>' +
-                '<select id="lawType" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                typeOptions +
-                '</select>' +
-                '</div>' +
-                '</div>' +
-
-                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Category</label>' +
-                '<select id="lawCategory" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                categoryOptions +
-                '</select>' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Domain</label>' +
-                '<select id="lawDomain" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                domainOptions +
-                '</select>' +
-                '</div>' +
-                '</div>' +
-
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Description</label>' +
-                '<textarea id="lawDescription" rows="2" placeholder="Describe the law or taboo..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;resize:vertical;"></textarea>' +
-                '</div>' +
-
-                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Severity</label>' +
-                '<select id="lawSeverity" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                severityOptions +
-                '</select>' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Crime Type (for enforcement)</label>' +
-                '<select id="lawCrimeType" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                crimeTypeOptions +
-                '</select>' +
-                '</div>' +
-                '</div>' +
-
-                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-                '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
-                '<input type="checkbox" id="lawEnforced" style="width:16px;height:16px;">' +
-                '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Is Enforced</label>' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Default Punishment</label>' +
-                '<input type="text" id="lawPunishment" placeholder="e.g., Excommunication, Fine, Execution" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                '</div>' +
-                '</div>' +
-
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Notes</label>' +
-                '<input type="text" id="lawNotes" placeholder="Additional notes..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                '</div>' +
-                '</div>';
-
-            var modal = _openModal({
-                title: 'Add Law to ' + religion.name,
-                content: content,
-                confirmText: 'Add Law',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var name = document.getElementById('lawName').value.trim();
-                    if (!name) {
-                        _showToast('Law name is required', 'error');
-                        return;
-                    }
-
-                    var data = {
-                        name: name,
-                        type: document.getElementById('lawType').value,
-                        lawCategory: document.getElementById('lawCategory').value,
-                        domain: document.getElementById('lawDomain').value,
-                        description: document.getElementById('lawDescription').value.trim(),
-                        severity: document.getElementById('lawSeverity').value,
-                        crimeType: document.getElementById('lawCrimeType').value || null,
-                        isEnforced: document.getElementById('lawEnforced').checked,
-                        punishment: document.getElementById('lawPunishment').value.trim() || null,
-                        notes: document.getElementById('lawNotes').value.trim()
-                    };
-
-                    if (typeof window.ReligionLaws !== 'undefined' &&
-                        typeof window.ReligionLaws.addLaw === 'function') {
-                        var result = window.ReligionLaws.addLaw(religionId, data);
-                        if (result.success) {
-                            _showToast('Law added: ' + result.data.name, 'success');
-                            _closeTopModal();
-                            if (onSuccess) onSuccess(result.data);
-                        } else {
-                            _showToast('Failed to add law: ' + result.reason, 'error');
-                        }
-                    } else {
-                        _showToast('ReligionLaws not available', 'error');
-                    }
-                }
-            });
-
-            return modal;
-
-        } finally {
-            _openingModal = false;
+        var religion = _getReligion(religionId);
+        if (!religion) {
+            _showToast('Religion not found', 'error');
+            return null;
         }
+
+        var lawTypes = window.LAW_TYPES || {
+            LAW: 'law',
+            TABOO: 'taboo',
+            GUIDELINE: 'guideline'
+        };
+
+        var lawCategories = window.LAW_CATEGORIES || {
+            RELIGIOUS: 'religious',
+            CIVIL: 'civil',
+            CUSTOM: 'custom'
+        };
+
+        var lawDomains = window.LAW_DOMAINS || {
+            MARRIAGE: 'marriage',
+            BEHAVIOR: 'behavior',
+            WORSHIP: 'worship',
+            FOOD: 'food',
+            SOCIAL: 'social',
+            ECONOMIC: 'economic',
+            POLITICAL: 'political',
+            SEXUAL: 'sexual',
+            VIOLENCE: 'violence',
+            DEATH: 'death'
+        };
+
+        var lawSeverity = window.LAW_SEVERITY || {
+            MINOR: 'minor',
+            MAJOR: 'major',
+            MORTAL: 'mortal'
+        };
+
+        var crimeTypes = window.CRIME_TYPES || {};
+
+        var typeOptions = '';
+        for (var key in lawTypes) {
+            if (lawTypes.hasOwnProperty(key)) {
+                var val = lawTypes[key];
+                var label = val.charAt(0).toUpperCase() + val.slice(1);
+                typeOptions += '<option value="' + val + '">' + label + '</option>';
+            }
+        }
+
+        var categoryOptions = '';
+        for (var key in lawCategories) {
+            if (lawCategories.hasOwnProperty(key)) {
+                var val = lawCategories[key];
+                var label = val.charAt(0).toUpperCase() + val.slice(1);
+                categoryOptions += '<option value="' + val + '">' + label + '</option>';
+            }
+        }
+
+        var domainOptions = '';
+        for (var key in lawDomains) {
+            if (lawDomains.hasOwnProperty(key)) {
+                var val = lawDomains[key];
+                var label = val.charAt(0).toUpperCase() + val.slice(1);
+                domainOptions += '<option value="' + val + '">' + label + '</option>';
+            }
+        }
+
+        var severityOptions = '';
+        for (var key in lawSeverity) {
+            if (lawSeverity.hasOwnProperty(key)) {
+                var val = lawSeverity[key];
+                var label = val.charAt(0).toUpperCase() + val.slice(1);
+                severityOptions += '<option value="' + val + '">' + label + '</option>';
+            }
+        }
+
+        var crimeTypeOptions = '<option value="">None</option>';
+        for (var key in crimeTypes) {
+            if (crimeTypes.hasOwnProperty(key)) {
+                var val = crimeTypes[key];
+                crimeTypeOptions += '<option value="' + val + '">' + val.charAt(0).toUpperCase() + val.slice(1) + '</option>';
+            }
+        }
+
+        var content = 
+            '<div style="display:flex;flex-direction:column;gap:12px;">' +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Law Name *</label>' +
+            '<input type="text" id="lawName" placeholder="e.g., No Marriage Outside Faith" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Type</label>' +
+            '<select id="lawType" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            typeOptions +
+            '</select>' +
+            '</div>' +
+            '</div>' +
+
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Category</label>' +
+            '<select id="lawCategory" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            categoryOptions +
+            '</select>' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Domain</label>' +
+            '<select id="lawDomain" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            domainOptions +
+            '</select>' +
+            '</div>' +
+            '</div>' +
+
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Description</label>' +
+            '<textarea id="lawDescription" rows="2" placeholder="Describe the law or taboo..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;resize:vertical;"></textarea>' +
+            '</div>' +
+
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Severity</label>' +
+            '<select id="lawSeverity" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            severityOptions +
+            '</select>' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Crime Type (for enforcement)</label>' +
+            '<select id="lawCrimeType" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            crimeTypeOptions +
+            '</select>' +
+            '</div>' +
+            '</div>' +
+
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
+            '<input type="checkbox" id="lawEnforced" style="width:16px;height:16px;">' +
+            '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Is Enforced</label>' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Default Punishment</label>' +
+            '<input type="text" id="lawPunishment" placeholder="e.g., Excommunication, Fine, Execution" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '</div>' +
+            '</div>' +
+
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Notes</label>' +
+            '<input type="text" id="lawNotes" placeholder="Additional notes..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '</div>' +
+            '</div>';
+
+        var modal = _openModal({
+            title: 'Add Law to ' + religion.name,
+            content: content,
+            confirmText: 'Add Law',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var name = document.getElementById('lawName').value.trim();
+                if (!name) {
+                    _showToast('Law name is required', 'error');
+                    return;
+                }
+
+                var data = {
+                    name: name,
+                    type: document.getElementById('lawType').value,
+                    lawCategory: document.getElementById('lawCategory').value,
+                    domain: document.getElementById('lawDomain').value,
+                    description: document.getElementById('lawDescription').value.trim(),
+                    severity: document.getElementById('lawSeverity').value,
+                    crimeType: document.getElementById('lawCrimeType').value || null,
+                    isEnforced: document.getElementById('lawEnforced').checked,
+                    punishment: document.getElementById('lawPunishment').value.trim() || null,
+                    notes: document.getElementById('lawNotes').value.trim()
+                };
+
+                if (typeof window.ReligionLaws !== 'undefined' &&
+                    typeof window.ReligionLaws.addLaw === 'function') {
+                    var result = window.ReligionLaws.addLaw(religionId, data);
+                    if (result.success) {
+                        _showToast('Law added: ' + result.data.name, 'success');
+                        _closeTopModal();
+                        if (onSuccess) onSuccess(result.data);
+                    } else {
+                        _showToast('Failed to add law: ' + result.reason, 'error');
+                    }
+                } else {
+                    _showToast('ReligionLaws not available', 'error');
+                }
+            }
+        });
+
+        return modal;
     }
 
     // =========================================================================
-    // 12. CREATE PLACE OF WORSHIP MODAL
+    // 11. CREATE PLACE OF WORSHIP MODAL
     // =========================================================================
 
     function openCreatePlaceOfWorshipModal(religionId, options) {
-        if (_openingModal) return null;
-        _openingModal = true;
+        options = options || {};
+        var onSuccess = options.onSuccess || null;
 
-        try {
-            options = options || {};
-            var onSuccess = options.onSuccess || null;
-
-            var religion = _getReligion(religionId);
-            if (!religion) {
-                _showToast('Religion not found', 'error');
-                return null;
-            }
-
-            var worshipTypes = window.WORSHIP_TYPES || {
-                TEMPLE: 'temple',
-                CHURCH: 'church',
-                SHRINE: 'shrine',
-                MOSQUE: 'mosque',
-                SYNAGOGUE: 'synagogue',
-                MONASTERY: 'monastery',
-                GROVE: 'grove'
-            };
-
-            var typeOptions = '';
-            for (var key in worshipTypes) {
-                if (worshipTypes.hasOwnProperty(key)) {
-                    var val = worshipTypes[key];
-                    var label = val.charAt(0).toUpperCase() + val.slice(1);
-                    typeOptions += '<option value="' + val + '">' + label + '</option>';
-                }
-            }
-
-            var locationOptions = _getLocationOptions(null);
-
-            var content = 
-                '<div style="display:flex;flex-direction:column;gap:12px;">' +
-                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Place Name *</label>' +
-                '<input type="text" id="placeName" placeholder="e.g., The Great Temple" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Type</label>' +
-                '<select id="placeType" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                typeOptions +
-                '</select>' +
-                '</div>' +
-                '</div>' +
-
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Location</label>' +
-                '<select id="placeLocation" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                locationOptions +
-                '</select>' +
-                '</div>' +
-
-                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Base Tithe (per follower)</label>' +
-                '<input type="number" id="placeTithe" value="1" min="0" step="0.5" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Founded Year</label>' +
-                '<input type="number" id="placeFoundedYear" value="' + _getCurrentYear() + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
-                '</div>' +
-                '</div>' +
-
-                '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
-                '<input type="checkbox" id="placeProducesIncome" checked style="width:16px;height:16px;">' +
-                '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Produces Income (Collects Tithes)</label>' +
-                '</div>' +
-
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Notes</label>' +
-                '<input type="text" id="placeNotes" placeholder="Additional notes..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                '</div>' +
-                '</div>';
-
-            var modal = _openModal({
-                title: 'Create Place of Worship for ' + religion.name,
-                content: content,
-                confirmText: 'Create',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var name = document.getElementById('placeName').value.trim();
-                    if (!name) {
-                        _showToast('Place name is required', 'error');
-                        return;
-                    }
-
-                    var locationId = document.getElementById('placeLocation').value;
-                    if (!locationId) {
-                        _showToast('Please select a location', 'error');
-                        return;
-                    }
-
-                    var data = {
-                        name: name,
-                        religionId: religionId,
-                        locationId: locationId,
-                        locationName: _getPlaceName(locationId),
-                        type: document.getElementById('placeType').value,
-                        baseTithe: parseFloat(document.getElementById('placeTithe').value) || 1,
-                        foundedYear: parseInt(document.getElementById('placeFoundedYear').value) || _getCurrentYear(),
-                        producesIncome: document.getElementById('placeProducesIncome').checked,
-                        notes: document.getElementById('placeNotes').value.trim()
-                    };
-
-                    if (typeof window.ReligionCommands !== 'undefined' &&
-                        typeof window.ReligionCommands.createPlaceOfWorship === 'function') {
-                        var result = window.ReligionCommands.createPlaceOfWorship(data);
-                        if (result.success) {
-                            _showToast('Place of worship created: ' + result.data.name, 'success');
-                            _closeTopModal();
-                            if (onSuccess) onSuccess(result.data);
-                        } else {
-                            _showToast('Failed to create place of worship: ' + result.reason, 'error');
-                        }
-                    } else {
-                        _showToast('ReligionCommands not available', 'error');
-                    }
-                }
-            });
-
-            return modal;
-
-        } finally {
-            _openingModal = false;
+        var religion = _getReligion(religionId);
+        if (!religion) {
+            _showToast('Religion not found', 'error');
+            return null;
         }
+
+        var worshipTypes = window.WORSHIP_TYPES || {
+            TEMPLE: 'temple',
+            CHURCH: 'church',
+            SHRINE: 'shrine',
+            MOSQUE: 'mosque',
+            SYNAGOGUE: 'synagogue',
+            MONASTERY: 'monastery',
+            GROVE: 'grove'
+        };
+
+        var typeOptions = '';
+        for (var key in worshipTypes) {
+            if (worshipTypes.hasOwnProperty(key)) {
+                var val = worshipTypes[key];
+                var label = val.charAt(0).toUpperCase() + val.slice(1);
+                typeOptions += '<option value="' + val + '">' + label + '</option>';
+            }
+        }
+
+        var locationOptions = _getLocationOptions(null);
+
+        var content = 
+            '<div style="display:flex;flex-direction:column;gap:12px;">' +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Place Name *</label>' +
+            '<input type="text" id="placeName" placeholder="e.g., The Great Temple" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Type</label>' +
+            '<select id="placeType" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            typeOptions +
+            '</select>' +
+            '</div>' +
+            '</div>' +
+
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Location</label>' +
+            '<select id="placeLocation" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            locationOptions +
+            '</select>' +
+            '</div>' +
+
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Base Tithe (per follower)</label>' +
+            '<input type="number" id="placeTithe" value="1" min="0" step="0.5" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Founded Year</label>' +
+            '<input type="number" id="placeFoundedYear" value="' + _getCurrentYear() + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '</div>' +
+
+            '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
+            '<input type="checkbox" id="placeProducesIncome" checked style="width:16px;height:16px;">' +
+            '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Produces Income (Collects Tithes)</label>' +
+            '</div>' +
+
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Notes</label>' +
+            '<input type="text" id="placeNotes" placeholder="Additional notes..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '</div>' +
+            '</div>';
+
+        var modal = _openModal({
+            title: 'Create Place of Worship for ' + religion.name,
+            content: content,
+            confirmText: 'Create',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var name = document.getElementById('placeName').value.trim();
+                if (!name) {
+                    _showToast('Place name is required', 'error');
+                    return;
+                }
+
+                var locationId = document.getElementById('placeLocation').value;
+                if (!locationId) {
+                    _showToast('Please select a location', 'error');
+                    return;
+                }
+
+                var titheValue = parseFloat(document.getElementById('placeTithe').value);
+                if (Number.isNaN(titheValue)) titheValue = 1;
+
+                var data = {
+                    name: name,
+                    religionId: religionId,
+                    locationId: locationId,
+                    locationName: _getPlaceName(locationId),
+                    type: document.getElementById('placeType').value,
+                    baseTithe: titheValue,
+                    // Year-zero fix.
+                    foundedYear: _resolveParsedYear(document.getElementById('placeFoundedYear').value),
+                    producesIncome: document.getElementById('placeProducesIncome').checked,
+                    notes: document.getElementById('placeNotes').value.trim()
+                };
+
+                if (typeof window.ReligionCommands !== 'undefined' &&
+                    typeof window.ReligionCommands.createPlaceOfWorship === 'function') {
+                    var result = window.ReligionCommands.createPlaceOfWorship(data);
+                    if (result.success) {
+                        _showToast('Place of worship created: ' + result.data.name, 'success');
+                        _closeTopModal();
+                        if (onSuccess) onSuccess(result.data);
+                    } else {
+                        _showToast('Failed to create place of worship: ' + result.reason, 'error');
+                    }
+                } else {
+                    _showToast('ReligionCommands not available', 'error');
+                }
+            }
+        });
+
+        return modal;
     }
 
     // =========================================================================
-    // 13. ASSIGN CHARACTER RELIGION MODAL
+    // 12. ASSIGN CHARACTER RELIGION MODAL
     // =========================================================================
 
     function openAssignCharacterReligionModal(characterId, options) {
-        if (_openingModal) return null;
-        _openingModal = true;
+        options = options || {};
+        var onSuccess = options.onSuccess || null;
 
-        try {
-            options = options || {};
-            var onSuccess = options.onSuccess || null;
-
-            var character = _getCharacterById(characterId);
-            if (!character) {
-                _showToast('Character not found', 'error');
-                return null;
-            }
-
-            var religions = _getAllReligions({ includeDeprecated: false });
-            if (religions.length === 0) {
-                _showToast('No active religions available', 'error');
-                return null;
-            }
-
-            var currentReligion = character.religionId ? _getReligion(character.religionId) : null;
-            var currentName = currentReligion ? currentReligion.name : 'None';
-
-            var religionOptions = '';
-            for (var i = 0; i < religions.length; i++) {
-                var selected = (currentReligion && currentReligion.id === religions[i].id) ? 'selected' : '';
-                religionOptions += '<option value="' + religions[i].id + '" ' + selected + '>' + _escapeHtml(religions[i].displayName || religions[i].name) + '</option>';
-            }
-
-            var conversionReasons = _getConversionReasons();
-            var reasonOptions = '';
-            for (var key in conversionReasons) {
-                if (conversionReasons.hasOwnProperty(key)) {
-                    var val = conversionReasons[key];
-                    var label = _getConversionReasonName(val);
-                    reasonOptions += '<option value="' + val + '">' + label + '</option>';
-                }
-            }
-
-            var charName = character.name + (character.surname ? ' ' + character.surname : '');
-
-            var content = 
-                '<div style="display:flex;flex-direction:column;gap:12px;">' +
-                '<p style="font-size:0.7rem;">Assign a religion to <strong>' + _escapeHtml(charName) + '</strong></p>' +
-                '<p style="font-size:0.6rem;color:var(--dim);">Current: ' + _escapeHtml(currentName) + '</p>' +
-
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Religion</label>' +
-                '<select id="assignReligion" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                religionOptions +
-                '</select>' +
-                '</div>' +
-
-                (currentReligion ? '<div style="padding:8px 12px;background:rgba(181,164,74,0.1);border:1px solid #c87040;border-radius:4px;font-size:0.6rem;color:#c87040;">This will record a conversion in the character\'s history.</div>' : '') +
-
-                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Year</label>' +
-                '<input type="number" id="assignYear" value="' + _getCurrentYear() + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Reason</label>' +
-                '<select id="assignReason" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                reasonOptions +
-                '</select>' +
-                '</div>' +
-                '</div>' +
-
-                '<div class="form-group">' +
-                '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Notes</label>' +
-                '<input type="text" id="assignNotes" placeholder="Additional notes..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-                '</div>' +
-                '</div>';
-
-            var modal = _openModal({
-                title: 'Assign Religion to Character',
-                content: content,
-                confirmText: 'Assign',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var religionId = document.getElementById('assignReligion').value;
-                    if (!religionId) {
-                        _showToast('Please select a religion', 'error');
-                        return;
-                    }
-
-                    var year = parseInt(document.getElementById('assignYear').value) || _getCurrentYear();
-                    var reason = document.getElementById('assignReason').value;
-                    var notes = document.getElementById('assignNotes').value.trim();
-
-                    var options = {
-                        year: year,
-                        reason: reason,
-                        notes: notes
-                    };
-
-                    if (typeof window.ReligionCommands !== 'undefined' &&
-                        typeof window.ReligionCommands.convertCharacter === 'function') {
-                        var result = window.ReligionCommands.convertCharacter(characterId, religionId, options);
-                        if (result.success) {
-                            _showToast('Character converted to: ' + result.data.toReligion, 'success');
-                            _closeTopModal();
-                            if (onSuccess) onSuccess(result.data);
-                        } else {
-                            _showToast('Failed to assign religion: ' + result.reason, 'error');
-                        }
-                    } else if (typeof window.ReligionCommands !== 'undefined' &&
-                               typeof window.ReligionCommands.assignReligionToCharacter === 'function') {
-                        var result = window.ReligionCommands.assignReligionToCharacter(characterId, religionId, options);
-                        if (result.success) {
-                            _showToast('Religion assigned to character', 'success');
-                            _closeTopModal();
-                            if (onSuccess) onSuccess(result.data);
-                        } else {
-                            _showToast('Failed to assign religion: ' + result.reason, 'error');
-                        }
-                    } else {
-                        _showToast('ReligionCommands not available', 'error');
-                    }
-                }
-            });
-
-            return modal;
-
-        } finally {
-            _openingModal = false;
+        var character = _getCharacterById(characterId);
+        if (!character) {
+            _showToast('Character not found', 'error');
+            return null;
         }
+
+        var religions = _getAllReligions({ includeDeprecated: false });
+        if (religions.length === 0) {
+            _showToast('No active religions available', 'error');
+            return null;
+        }
+
+        var currentReligion = character.religionId ? _getReligion(character.religionId) : null;
+        var currentName = currentReligion ? currentReligion.name : 'None';
+
+        var religionOptions = '';
+        for (var i = 0; i < religions.length; i++) {
+            var selected = (currentReligion && currentReligion.id === religions[i].id) ? 'selected' : '';
+            religionOptions += '<option value="' + religions[i].id + '" ' + selected + '>' + _escapeHtml(religions[i].displayName || religions[i].name) + '</option>';
+        }
+
+        var conversionReasons = _getConversionReasons();
+        var reasonOptions = '';
+        for (var key in conversionReasons) {
+            if (conversionReasons.hasOwnProperty(key)) {
+                var val = conversionReasons[key];
+                var label = _getConversionReasonName(val);
+                reasonOptions += '<option value="' + val + '">' + label + '</option>';
+            }
+        }
+
+        var charName = character.name + (character.surname ? ' ' + character.surname : '');
+
+        var content = 
+            '<div style="display:flex;flex-direction:column;gap:12px;">' +
+            '<p style="font-size:0.7rem;">Assign a religion to <strong>' + _escapeHtml(charName) + '</strong></p>' +
+            '<p style="font-size:0.6rem;color:var(--dim);">Current: ' + _escapeHtml(currentName) + '</p>' +
+
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Religion</label>' +
+            '<select id="assignReligion" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            religionOptions +
+            '</select>' +
+            '</div>' +
+
+            (currentReligion ? '<div style="padding:8px 12px;background:rgba(181,164,74,0.1);border:1px solid #c87040;border-radius:4px;font-size:0.6rem;color:#c87040;">This will record a conversion in the character\'s history.</div>' : '') +
+
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Year</label>' +
+            '<input type="number" id="assignYear" value="' + _getCurrentYear() + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Reason</label>' +
+            '<select id="assignReason" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            reasonOptions +
+            '</select>' +
+            '</div>' +
+            '</div>' +
+
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Notes</label>' +
+            '<input type="text" id="assignNotes" placeholder="Additional notes..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '</div>' +
+            '</div>';
+
+        var modal = _openModal({
+            title: 'Assign Religion to Character',
+            content: content,
+            confirmText: 'Assign',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var religionId = document.getElementById('assignReligion').value;
+                if (!religionId) {
+                    _showToast('Please select a religion', 'error');
+                    return;
+                }
+
+                // Year-zero fix.
+                var year = _resolveParsedYear(document.getElementById('assignYear').value);
+                var reason = document.getElementById('assignReason').value;
+                var notes = document.getElementById('assignNotes').value.trim();
+
+                var opts = {
+                    year: year,
+                    reason: reason,
+                    notes: notes
+                };
+
+                if (typeof window.ReligionCommands !== 'undefined' &&
+                    typeof window.ReligionCommands.convertCharacter === 'function') {
+                    var result = window.ReligionCommands.convertCharacter(characterId, religionId, opts);
+                    if (result.success) {
+                        _showToast('Character converted to: ' + result.data.toReligion, 'success');
+                        _closeTopModal();
+                        if (onSuccess) onSuccess(result.data);
+                    } else {
+                        _showToast('Failed to assign religion: ' + result.reason, 'error');
+                    }
+                } else if (typeof window.ReligionCommands !== 'undefined' &&
+                           typeof window.ReligionCommands.assignReligionToCharacter === 'function') {
+                    var result = window.ReligionCommands.assignReligionToCharacter(characterId, religionId, opts);
+                    if (result.success) {
+                        _showToast('Religion assigned to character', 'success');
+                        _closeTopModal();
+                        if (onSuccess) onSuccess(result.data);
+                    } else {
+                        _showToast('Failed to assign religion: ' + result.reason, 'error');
+                    }
+                } else {
+                    _showToast('ReligionCommands not available', 'error');
+                }
+            }
+        });
+
+        return modal;
     }
 
     // =========================================================================
-    // 14. EXPORTS
+    // 13. EXPORTS
     // =========================================================================
 
     window.openCreateReligionModal = openCreateReligionModal;
