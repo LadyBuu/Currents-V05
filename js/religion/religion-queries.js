@@ -9,6 +9,7 @@
  * 
  * DEPENDENCIES:
  *   - religion-state.js: ReligionState (indexes only)
+ *   - religion-format.js: ReligionFormat (display labels)
  *   - accessors.js: getCharacterById, getCharacters, getPlaceById, getPlaces
  *   - time.js: getCurrentYearSafe
  * 
@@ -19,26 +20,21 @@
  *   - Removed _processingQuery re-entry guard.
  * 
  * PHASE 3 BOUNDARY RESTRUCTURE (2026):
- *   - No delegation to ReligionState for semantic operations. State now
- *     provides indexes only; Queries owns read semantics.
- *   - getReligion / getGodsByReligion / getLawsByReligion / getFollowers /
- *     getFollowerCount read directly from canonical data + State indexes.
- *   - Statistics (getReligionStatistics, getGlobalReligionStatistics,
- *     getReligionGrowth, getConversionStats) computed here from canonical
- *     data + character records. Previously delegated to State.
- *   - Fixed getConversionStats to accept an actual year range instead of a
- *     duration. (The old implementation passed a duration to
- *     getReligionGrowth, which independently chose its own start year —
- *     a range request for 1000–1100 could produce data for a different
- *     range entirely.)
- *   - getReligionGrowth now takes explicit startYear, endYear.
- *   - getPlacesOfWorshipByLocation no longer conflates "religions associated
- *     with a location" with "places of worship at a location". The former
- *     was misleading: it returned places belonging to any religion whose
- *     locations list contained the location. Until places have their own
- *     location field, this query returns places whose owning religion
- *     includes the location, and documents that assumption.
- *   - getDominantReligion and getReligiousBreakdown use the follower index.
+ *   - Queries owns read semantics. Reads State indexes + canonical data.
+ *   - Range-based growth queries. Year-zero preserved.
+ * 
+ * PHASE 5 DOMAIN RULES AND VALIDATION EXTRACTION (2026):
+ *   - Absorbed inheritance summary/statistics queries:
+ *     getInheritanceSummary, getInheritanceDescription, getInheritanceStatistics,
+ *     getAllInheritanceSummaries.
+ *   - Deleted getApplicableLaws stub. Applicable-law resolution is a Rules
+ *     concern; it lives in ReligionRules (or will once the character-aware
+ *     version exists).
+ *   - Rewrote isReligiouslyPermitted to read structured law fields. No more
+ *     lowercase substring matching on law names.
+ *   - isReligiouslyPermitted now returns a reason mentioning the specific
+ *     law that produced the restriction, using structured data rather than
+ *     name matching.
  * 
  * =============================================================================
  */
@@ -52,12 +48,16 @@
 
     function _getState() {
         if (typeof window.ReligionState === 'undefined') {
-            throw new Error(
-                'ReligionQueries requires ReligionState to be loaded. ' +
-                'Check script order in index.html.'
-            );
+            throw new Error('ReligionQueries requires ReligionState.');
         }
         return window.ReligionState;
+    }
+
+    function _getFormat() {
+        if (typeof window.ReligionFormat === 'undefined') {
+            throw new Error('ReligionQueries requires ReligionFormat.');
+        }
+        return window.ReligionFormat;
     }
 
     function _getCanonicalReligions() {
@@ -80,30 +80,11 @@
         return window.getCharacters();
     }
 
-    function _getPlaceById(id) {
-        if (typeof window.getPlaceById !== 'function') {
-            throw new Error('ReligionQueries requires accessors.getPlaceById.');
-        }
-        return window.getPlaceById(id);
-    }
-
-    function _getPlaces() {
-        if (typeof window.getPlaces !== 'function') {
-            throw new Error('ReligionQueries requires accessors.getPlaces.');
-        }
-        return window.getPlaces();
-    }
-
     function _getCurrentYear() {
-        // Delegates to time.js — do not add fallback logic here.
         if (typeof window.getCurrentYearSafe !== 'function') {
             throw new Error('ReligionQueries requires time.getCurrentYearSafe.');
         }
         return window.getCurrentYearSafe();
-    }
-
-    function _getIndexes() {
-        return _getState().getIndexes();
     }
 
     // =========================================================================
@@ -200,8 +181,7 @@
     }
 
     function getGodCount(religionId) {
-        var gods = getGodsByReligion(religionId);
-        return gods.length;
+        return getGodsByReligion(religionId).length;
     }
 
     // =========================================================================
@@ -245,11 +225,11 @@
         return result;
     }
 
-    function getApplicableLaws(religionId, characterId, domain) {
-        // Stub: character filtering not yet implemented. Phase 5 will
-        // replace this with ReligionRules.getApplicableLaws.
-        return getLawsByDomain(religionId, domain);
-    }
+    // NOTE: getApplicableLaws was a stub here. It has been removed.
+    // Applicable-law resolution depends on character state (current religion,
+    // location, membership) and is a Rules concern. See ReligionRules and
+    // the future ReligionRules.getApplicableLaws for character-aware
+    // resolution.
 
     // =========================================================================
     // 5. FOLLOWER QUERIES
@@ -345,7 +325,6 @@
             total += count;
         }
 
-        // Unaffiliated
         var locationCharacters = [];
         if (typeof window.getCharactersByLocation === 'function') {
             locationCharacters = window.getCharactersByLocation(locationId);
@@ -411,7 +390,7 @@
     }
 
     // =========================================================================
-    // 7. STATISTICS QUERIES
+    // 7. RELIGION STATISTICS
     // =========================================================================
 
     function getReligionStatistics(religionId) {
@@ -482,14 +461,80 @@
     }
 
     // =========================================================================
-    // 8. GROWTH QUERIES (range-based)
+    // 8. INHERITANCE QUERIES
+    // =========================================================================
+    // Absorbed from religion-inheritance.js per ADR Decision 15.
+
+    function getInheritanceDescription(religionId) {
+        var religion = getReligion(religionId);
+        if (!religion) return 'No inheritance rules set';
+
+        var rule = religion.inheritanceRule || { type: 'mother' };
+        var format = _getFormat();
+        var ruleName = format.getInheritanceRuleName(rule.type);
+
+        if (rule.type === 'both' && rule.priority) {
+            var priorityName = format.getInheritanceRuleName(rule.priority);
+            return ruleName + ' (priority: ' + priorityName + ')';
+        }
+
+        return ruleName;
+    }
+
+    function getInheritanceSummary(religionId) {
+        var religion = getReligion(religionId);
+        if (!religion) return null;
+
+        var rule = religion.inheritanceRule || { type: 'mother' };
+        var format = _getFormat();
+
+        return {
+            religionId: religion.id,
+            religionName: religion.name,
+            ruleType: rule.type,
+            ruleName: format.getInheritanceRuleName(rule.type),
+            priority: (rule.priority !== undefined && rule.priority !== null) ? rule.priority : null,
+            priorityName: rule.priority ? format.getInheritanceRuleName(rule.priority) : null,
+            notes: rule.notes || '',
+            description: getInheritanceDescription(religionId)
+        };
+    }
+
+    function getInheritanceStatistics(religionId) {
+        var summary = getInheritanceSummary(religionId);
+        if (!summary) return null;
+
+        // Follower count is a religion-level statistic and lives in
+        // getReligionStatistics. This function returns inheritance-rule
+        // metadata only.
+        return {
+            religionId: summary.religionId,
+            religionName: summary.religionName,
+            ruleType: summary.ruleType,
+            ruleName: summary.ruleName,
+            priority: summary.priority,
+            priorityName: summary.priorityName
+        };
+    }
+
+    function getAllInheritanceSummaries() {
+        var allReligions = getAllReligions({ includeDeprecated: false });
+        var summaries = [];
+        for (var i = 0; i < allReligions.length; i++) {
+            var summary = getInheritanceSummary(allReligions[i].id);
+            if (summary) summaries.push(summary);
+        }
+        return summaries;
+    }
+
+    // =========================================================================
+    // 9. GROWTH QUERIES (range-based)
     // =========================================================================
 
     function getReligionGrowth(religionId, startYear, endYear) {
         var religion = getReligion(religionId);
         if (!religion) return null;
 
-        // Resolve range with explicit missing-value checks. Year 0 is valid.
         var currentYear = _getCurrentYear();
         var resolvedStart = (startYear === undefined || startYear === null)
             ? currentYear - 10
@@ -526,12 +571,8 @@
                 if (!yearData[event.year]) {
                     yearData[event.year] = { to: 0, from: 0 };
                 }
-                if (event.toReligionId === religionId) {
-                    yearData[event.year].to++;
-                }
-                if (event.fromReligionId === religionId) {
-                    yearData[event.year].from++;
-                }
+                if (event.toReligionId === religionId) yearData[event.year].to++;
+                if (event.fromReligionId === religionId) yearData[event.year].from++;
             }
         }
 
@@ -580,14 +621,11 @@
     }
 
     // =========================================================================
-    // 9. PLACE OF WORSHIP QUERIES
+    // 10. PLACE OF WORSHIP QUERIES
     // =========================================================================
 
     function getPlaceOfWorship(placeId) {
         if (!placeId) return null;
-        // Index stores { religionId, religionName }. Phase 3/ADR Decision 2
-        // will eventually move place records to masterData.data.places; at
-        // that point this query resolves through the place domain.
         return _getState().getPlaceOfWorshipByIdIndex(placeId);
     }
 
@@ -600,10 +638,7 @@
     function getPlacesOfWorshipByLocation(locationId) {
         if (!locationId) return [];
 
-        // NOTE: places do not currently carry a location field. This query
-        // returns place IDs belonging to religions whose locations list
-        // includes locationId. This is a documented approximation; ADR
-        // Decision 2 will resolve it once places have real location data.
+        // Documented approximation. See ADR Decision 2.
         var religions = getReligionsByLocation(locationId);
         var result = [];
 
@@ -630,8 +665,9 @@
     }
 
     // =========================================================================
-    // 10. COMPATIBILITY QUERIES (Flavor only)
+    // 11. COMPATIBILITY QUERIES
     // =========================================================================
+    // Structured-data checks. No text matching on law names.
 
     function isCulturallyCompatible(characterIdA, characterIdB) {
         return {
@@ -641,17 +677,17 @@
     }
 
     function isReligiouslyPermitted(characterIdA, characterIdB) {
-        // NOTE: text-matching on law names is a placeholder. Phase 5 will
-        // replace this with structured rule checks via ReligionRules.
         var charA = _getCharacterById(characterIdA);
         var charB = _getCharacterById(characterIdB);
 
         if (!charA || !charB) {
             return { permitted: false, reason: 'One or both characters not found' };
         }
+
         if (!charA.religionId || !charB.religionId) {
             return { permitted: true, reason: 'One or both characters have no religion' };
         }
+
         if (charA.religionId === charB.religionId) {
             return { permitted: true, reason: 'Same religion' };
         }
@@ -659,31 +695,45 @@
         var religionA = getReligion(charA.religionId);
         var religionB = getReligion(charB.religionId);
 
-        var lawsA = religionA ? (religionA.laws || []) : [];
-        var lawsB = religionB ? (religionB.laws || []) : [];
-
-        for (var i = 0; i < lawsA.length; i++) {
-            if (lawsA[i].domain === 'marriage' && lawsA[i].name.toLowerCase().indexOf('interfaith') !== -1) {
-                return {
-                    permitted: false,
-                    reason: 'Restricted by ' + religionA.name + ' law: ' + lawsA[i].name
-                };
-            }
+        var restrictionA = _findInterfaithRestriction(religionA);
+        if (restrictionA) {
+            return { permitted: false, reason: restrictionA };
         }
-        for (var i = 0; i < lawsB.length; i++) {
-            if (lawsB[i].domain === 'marriage' && lawsB[i].name.toLowerCase().indexOf('interfaith') !== -1) {
-                return {
-                    permitted: false,
-                    reason: 'Restricted by ' + religionB.name + ' law: ' + lawsB[i].name
-                };
-            }
+
+        var restrictionB = _findInterfaithRestriction(religionB);
+        if (restrictionB) {
+            return { permitted: false, reason: restrictionB };
         }
 
         return { permitted: true, reason: 'No restrictions found' };
     }
 
+    function _findInterfaithRestriction(religion) {
+        if (!religion) return null;
+
+        var laws = religion.laws || [];
+        for (var i = 0; i < laws.length; i++) {
+            var law = laws[i];
+            if (law.domain !== 'marriage') continue;
+            if (!law.crimeMapping || !law.crimeMapping.isEnforced) continue;
+
+            // Structured check: laws that prohibit interfaith marriage carry
+            // an enforced crimeMapping whose crimeType is registered as
+            // 'interfaith_marriage'. Until the Crime System exposes that
+            // enum, we accept either:
+            //   - crimeType === 'interfaith_marriage'
+            //   - the law's description explicitly declares the restriction
+            //     via a structured field (future)
+            if (law.crimeMapping.crimeType === 'interfaith_marriage') {
+                return 'Restricted by ' + religion.name + ' law: ' + law.name;
+            }
+        }
+
+        return null;
+    }
+
     // =========================================================================
-    // 11. EXPORTS
+    // 12. EXPORTS
     // =========================================================================
 
     window.ReligionQueries = {
@@ -707,7 +757,6 @@
         getLawsByReligion: getLawsByReligion,
         getLawsByDomain: getLawsByDomain,
         getLawsByCategory: getLawsByCategory,
-        getApplicableLaws: getApplicableLaws,
 
         // Followers
         getFollowers: getFollowers,
@@ -723,9 +772,17 @@
         getCharactersByReligion: getCharactersByReligion,
         getCharactersByReligionAndLocation: getCharactersByReligionAndLocation,
 
-        // Statistics
+        // Religion statistics
         getReligionStatistics: getReligionStatistics,
         getGlobalReligionStatistics: getGlobalReligionStatistics,
+
+        // Inheritance
+        getInheritanceDescription: getInheritanceDescription,
+        getInheritanceSummary: getInheritanceSummary,
+        getInheritanceStatistics: getInheritanceStatistics,
+        getAllInheritanceSummaries: getAllInheritanceSummaries,
+
+        // Growth
         getReligionGrowth: getReligionGrowth,
         getConversionStats: getConversionStats,
 
@@ -741,9 +798,7 @@
     };
 
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            ReligionQueries: window.ReligionQueries
-        };
+        module.exports = { ReligionQueries: window.ReligionQueries };
     }
 
 })();
