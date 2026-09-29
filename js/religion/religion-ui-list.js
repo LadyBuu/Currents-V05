@@ -10,10 +10,26 @@
  * DEPENDENCIES:
  *   - religion-state.js: ReligionState
  *   - religion-queries.js: ReligionQueries
+ *   - religion-format.js: ReligionFormat (display names)
  *   - formatting.js: escapeHtml
  *   - icons.js: Icons
  * 
  * ICON POLICY: No emojis. No icons in confirm/cancel buttons.
+ * 
+ * =============================================================================
+ * PHASE 2 VOCABULARY CONSOLIDATION (2026):
+ *   - Deleted local _getReligiousTraitName. Delegates to ReligionFormat.
+ *   - Deleted _getTraitColor. Trait colors now emitted as CSS classes:
+ *     religion-trait--<traitId>. CSS owns the visual mapping.
+ *   - Deleted _getTraitIcon. Trait decoration is presentation; if a caller
+ *     wants a glyph, they emit a CSS class and let CSS handle it via ::before.
+ *   - Deleted _getStatusBadge HTML builder. Status is now emitted as a class:
+ *     religion-status--active / religion-status--deprecated. CSS owns styling.
+ *   - Deleted '✦' fallback for religion.icon. Per ADR Decision 4, icons are
+ *     user-authored world data; empty renders empty.
+ * 
+ * PHASE 4 will restructure the file further (view models, event delegation,
+ * CSS extraction). Phase 2 only consolidates vocabulary.
  * 
  * =============================================================================
  */
@@ -106,17 +122,11 @@
     }
 
     function _getReligiousTraitName(trait) {
-        if (typeof window.getReligiousTraitName === 'function') {
-            return window.getReligiousTraitName(trait);
+        if (typeof window.ReligionFormat !== 'undefined' &&
+            typeof window.ReligionFormat.getReligiousTraitName === 'function') {
+            return window.ReligionFormat.getReligiousTraitName(trait);
         }
-        var names = {
-            'monotheistic': 'Monotheistic',
-            'polytheistic': 'Polytheistic',
-            'syncretic': 'Syncretic',
-            'evangelical': 'Evangelical',
-            'animist': 'Animist'
-        };
-        return names[trait] || trait;
+        return trait;
     }
 
     function _getCharacterName(id) {
@@ -153,36 +163,24 @@
     }
 
     // =========================================================================
-    // 3. TRAIT STYLING
+    // 3. PRESENTATION HELPERS
     // =========================================================================
+    // Vocabulary has moved to ReligionFormat. Visual styling is now emitted
+    // as CSS classes. The renderer never returns colors or glyphs.
 
-    function _getTraitColor(trait) {
-        var colors = {
-            'monotheistic': '#4a7db5',
-            'polytheistic': '#b58a4a',
-            'syncretic': '#6a9e6a',
-            'evangelical': '#b54a4a',
-            'animist': '#6a6a8a'
-        };
-        return colors[trait] || '#6a7d8a';
+    function _traitClass(traitId) {
+        if (!traitId) return 'religion-trait';
+        return 'religion-trait religion-trait--' + traitId;
     }
 
-    function _getTraitIcon(trait) {
-        var icons = {
-            'monotheistic': '◉',
-            'polytheistic': '✦',
-            'syncretic': '⌇',
-            'evangelical': '✧',
-            'animist': '⌂'
-        };
-        return icons[trait] || '◉';
+    function _statusClass(religion) {
+        var isDeprecated = religion && religion.isDeprecated;
+        return isDeprecated ? 'religion-status religion-status--deprecated'
+                            : 'religion-status religion-status--active';
     }
 
-    function _getStatusBadge(religion) {
-        if (religion.isDeprecated) {
-            return '<span style="color:#b54a4a;font-size:0.6rem;padding:2px 8px;border:1px solid #b54a4a;border-radius:12px;">Deprecated</span>';
-        }
-        return '<span style="color:#4a9e6a;font-size:0.6rem;padding:2px 8px;border:1px solid #4a9e6a;border-radius:12px;">Active</span>';
+    function _statusLabel(religion) {
+        return (religion && religion.isDeprecated) ? 'Deprecated' : 'Active';
     }
 
     // =========================================================================
@@ -213,7 +211,6 @@
                 return true;
             }
 
-            // Sort by follower count (descending) if not specified
             if (!options.sortBy) {
                 religions = religions.slice().sort(function(a, b) {
                     return _getFollowerCount(b.id) - _getFollowerCount(a.id);
@@ -240,8 +237,7 @@
                 var lawCount = _getLawCount(religion.id);
                 var placeCount = _getPlaceCount(religion.id);
                 var traitName = _getReligiousTraitName(religion.trait);
-                var traitColor = _getTraitColor(religion.trait);
-                var traitIcon = _getTraitIcon(religion.trait);
+                var traitClass = _traitClass(religion.trait);
 
                 var isSelected = (selectedId === religion.id);
                 var isDeprecated = religion.isDeprecated || false;
@@ -269,7 +265,12 @@
                     style += 'opacity:0.5;';
                 }
 
-                html += '<div class="religion-item" data-religion-id="' + religion.id + '" style="' +
+                var itemClass = 'religion-item';
+                if (isSelected) itemClass += ' religion-item--selected';
+                if (isDeprecated) itemClass += ' religion-item--deprecated';
+                if (rowClass) itemClass += ' ' + rowClass;
+
+                html += '<div class="' + itemClass + '" data-religion-id="' + religion.id + '" style="' +
                     'display:flex;' +
                     'align-items:center;' +
                     'justify-content:space-between;' +
@@ -285,14 +286,17 @@
                 // Left: Name, Trait, Status
                 html += '<div style="display:flex;align-items:center;gap:12px;flex:1;min-width:0;">';
 
-                // Icon
-                html += '<span style="font-size:1.2rem;">' + _escapeHtml(religion.icon || '✦') + '</span>';
+                // Icon — no fallback. Empty renders empty.
+                var iconDisplay = religion.icon || '';
+                if (iconDisplay) {
+                    html += '<span style="font-size:1.2rem;">' + _escapeHtml(iconDisplay) + '</span>';
+                }
 
                 // Name and details
                 html += '<div style="min-width:0;">';
                 html += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">';
                 html += '<span style="font-weight:bold;font-size:0.9rem;">' + _escapeHtml(religion.displayName || religion.name) + '</span>';
-                html += _getStatusBadge(religion);
+                html += '<span class="' + _statusClass(religion) + '">' + _escapeHtml(_statusLabel(religion)) + '</span>';
 
                 if (religion.isOrganized) {
                     html += '<span style="font-size:0.5rem;padding:1px 6px;border:1px solid var(--border);border-radius:4px;color:var(--dim);">Organized</span>';
@@ -301,7 +305,7 @@
                 html += '</div>';
 
                 html += '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:0.6rem;color:var(--dim);margin-top:2px;">';
-                html += '<span style="color:' + traitColor + ';">' + traitIcon + ' ' + _escapeHtml(traitName) + '</span>';
+                html += '<span class="' + traitClass + '">' + _escapeHtml(traitName) + '</span>';
 
                 if (religion.leader) {
                     html += '<span>◉ ' + _escapeHtml(leaderName) + '</span>';
@@ -321,10 +325,10 @@
 
                 if (showStats) {
                     html += '<div style="display:flex;gap:12px;font-size:0.55rem;color:var(--dim);">';
-                    html += '<span title="Followers">👤 ' + followerCount + '</span>';
-                    html += '<span title="Gods">◉ ' + godCount + '</span>';
-                    html += '<span title="Laws">⌇ ' + lawCount + '</span>';
-                    html += '<span title="Places of Worship">⌂ ' + placeCount + '</span>';
+                    html += '<span title="Followers">' + followerCount + '</span>';
+                    html += '<span title="Gods">' + godCount + '</span>';
+                    html += '<span title="Laws">' + lawCount + '</span>';
+                    html += '<span title="Places of Worship">' + placeCount + '</span>';
                     html += '</div>';
                 }
 
@@ -363,13 +367,11 @@
 
             container.innerHTML = html;
 
-            // Attach click handlers
             if (onSelect) {
                 var items = container.querySelectorAll('.religion-item');
                 for (var i = 0; i < items.length; i++) {
                     (function(item) {
                         item.addEventListener('click', function(e) {
-                            // Ignore clicks on buttons
                             if (e.target.closest('button')) return;
                             var id = this.dataset.religionId;
                             var religion = _getAllReligions({ includeDeprecated: true }).find(function(r) {
@@ -383,7 +385,6 @@
                 }
             }
 
-            // Attach view button handlers
             var viewBtns = container.querySelectorAll('.view-religion-btn');
             for (var i = 0; i < viewBtns.length; i++) {
                 (function(btn) {
@@ -397,7 +398,6 @@
                 })(viewBtns[i]);
             }
 
-            // Attach edit button handlers
             var editBtns = container.querySelectorAll('.edit-religion-btn');
             for (var i = 0; i < editBtns.length; i++) {
                 (function(btn) {
@@ -445,8 +445,7 @@
             var lawCount = _getLawCount(religion.id);
             var placeCount = _getPlaceCount(religion.id);
             var traitName = _getReligiousTraitName(religion.trait);
-            var traitColor = _getTraitColor(religion.trait);
-            var traitIcon = _getTraitIcon(religion.trait);
+            var traitClass = _traitClass(religion.trait);
 
             var leaderName = religion.leader ? _getCharacterName(religion.leader.characterId) : 'None';
             var locationNames = _getLocationIds(religion.locations || []);
@@ -471,19 +470,20 @@
             // Header
             html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;">';
             html += '<div style="display:flex;align-items:center;gap:10px;">';
-            html += '<span style="font-size:' + (compact ? '1.2rem' : '1.5rem') + ';">' + _escapeHtml(religion.icon || '✦') + '</span>';
+
+            var iconDisplay = religion.icon || '';
+            if (iconDisplay) {
+                html += '<span style="font-size:' + (compact ? '1.2rem' : '1.5rem') + ';">' + _escapeHtml(iconDisplay) + '</span>';
+            }
+
             html += '<div>';
             html += '<div style="font-weight:bold;font-size:' + (compact ? '0.9rem' : '1.1rem') + ';">' + _escapeHtml(religion.displayName || religion.name) + '</div>';
-            html += '<div style="font-size:0.6rem;color:var(--dim);">' + _escapeHtml(religion.trait ? traitName : 'No trait') + '</div>';
+            html += '<div class="' + traitClass + '" style="font-size:0.6rem;">' + _escapeHtml(traitName) + '</div>';
             html += '</div>';
             html += '</div>';
 
             html += '<div style="display:flex;gap:4px;">';
-            if (religion.isDeprecated) {
-                html += '<span style="font-size:0.5rem;padding:2px 8px;border:1px solid #b54a4a;border-radius:4px;color:#b54a4a;">Deprecated</span>';
-            } else {
-                html += '<span style="font-size:0.5rem;padding:2px 8px;border:1px solid #4a9e6a;border-radius:4px;color:#4a9e6a;">Active</span>';
-            }
+            html += '<span class="' + _statusClass(religion) + '">' + _escapeHtml(_statusLabel(religion)) + '</span>';
             html += '</div>';
             html += '</div>';
 
@@ -494,11 +494,11 @@
 
             // Stats
             html += '<div style="display:flex;flex-wrap:wrap;gap:' + (compact ? '8px' : '12px') + ';font-size:0.6rem;color:var(--dim);border-top:1px solid var(--border-light);padding-top:' + (compact ? '6px' : '10px') + ';">';
-            html += '<span>👤 ' + followerCount + ' followers</span>';
-            html += '<span>◉ ' + godCount + ' gods</span>';
-            html += '<span>⌇ ' + lawCount + ' laws</span>';
-            html += '<span>⌂ ' + placeCount + ' places</span>';
-            html += '<span>◉ ' + _escapeHtml(leaderName) + '</span>';
+            html += '<span>' + followerCount + ' followers</span>';
+            html += '<span>' + godCount + ' gods</span>';
+            html += '<span>' + lawCount + ' laws</span>';
+            html += '<span>' + placeCount + ' places</span>';
+            html += '<span>' + _escapeHtml(leaderName) + '</span>';
             html += '</div>';
 
             // Locations
@@ -624,12 +624,16 @@
 
                     switch (col) {
                         case 'name':
-                            html += _escapeHtml(religion.icon || '✦') + ' ' + _escapeHtml(religion.displayName || religion.name);
+                            var iconDisplay = religion.icon || '';
+                            if (iconDisplay) {
+                                html += _escapeHtml(iconDisplay) + ' ';
+                            }
+                            html += _escapeHtml(religion.displayName || religion.name);
                             break;
                         case 'trait':
                             var traitName = _getReligiousTraitName(religion.trait);
-                            var traitColor = _getTraitColor(religion.trait);
-                            html += '<span style="color:' + traitColor + ';">' + _escapeHtml(traitName) + '</span>';
+                            var traitClass = _traitClass(religion.trait);
+                            html += '<span class="' + traitClass + '">' + _escapeHtml(traitName) + '</span>';
                             break;
                         case 'followers':
                             html += _getFollowerCount(religion.id);
@@ -652,14 +656,10 @@
                             break;
                         case 'locations':
                             var locationNames = _getLocationIds(religion.locations || []);
-                            html += locationNames.length > 0 ? locationNames.join(', ') : 'None';
+                            html += locationNames.length > 0 ? _escapeHtml(locationNames.join(', ')) : 'None';
                             break;
                         case 'status':
-                            if (religion.isDeprecated) {
-                                html += '<span style="color:#b54a4a;">Deprecated</span>';
-                            } else {
-                                html += '<span style="color:#4a9e6a;">Active</span>';
-                            }
+                            html += '<span class="' + _statusClass(religion) + '">' + _escapeHtml(_statusLabel(religion)) + '</span>';
                             break;
                         default:
                             html += '—';
@@ -741,11 +741,13 @@
         refreshReligionList: refreshReligionList,
         debouncedRefresh: debouncedRefresh,
 
-        // Helpers
-        getTraitColor: _getTraitColor,
-        getTraitIcon: _getTraitIcon,
-        getTraitName: _getReligiousTraitName,
-        getStatusBadge: _getStatusBadge
+        // Presentation helpers (return CSS classes, not colors/icons)
+        getTraitClass: _traitClass,
+        getStatusClass: _statusClass,
+        getStatusLabel: _statusLabel,
+
+        // Vocabulary (delegates to ReligionFormat)
+        getTraitName: _getReligiousTraitName
     };
 
     if (typeof module !== 'undefined' && module.exports) {
