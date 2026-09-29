@@ -18,8 +18,13 @@
  * 
  * =============================================================================
  * PHASE 2 VOCABULARY CONSOLIDATION (2026):
- *   - New module. Display-name lookups from religion-constants.js,
- *     religion-laws.js, and religion-inheritance.js all consolidate here.
+ *   - New module. Display-name lookups consolidated here.
+ * 
+ * PHASE 6 CLEANUP (2026):
+ *   - Deleted legacy global aliases (window.getReligiousTraitName,
+ *     window.getWorshipTypeName, window.getInheritanceRuleName,
+ *     window.getConversionReasonName). Canonical access is
+ *     ReligionFormat.* only.
  * 
  * =============================================================================
  */
@@ -30,8 +35,6 @@
     // =========================================================================
     // 1. DEPENDENCY RESOLUTION
     // =========================================================================
-    // Requires ReligionConstants to be loaded. No fallback vocabulary maps.
-    // See ADR Decision 8: required dependencies fail loudly.
 
     function _getConstants() {
         if (typeof window.ReligionConstants === 'undefined') {
@@ -49,39 +52,31 @@
 
     function getReligiousTraitName(traitId) {
         if (traitId === undefined || traitId === null || traitId === '') return '';
-        var constants = _getConstants();
-        var names = constants.RELIGIOUS_TRAIT_NAMES;
+        var names = _getConstants().RELIGIOUS_TRAIT_NAMES;
         return names[traitId] || traitId;
     }
 
     function getWorshipTypeName(typeId) {
         if (typeId === undefined || typeId === null || typeId === '') return '';
-        var constants = _getConstants();
-        var names = constants.WORSHIP_TYPE_NAMES;
+        var names = _getConstants().WORSHIP_TYPE_NAMES;
         return names[typeId] || typeId;
     }
 
     function getInheritanceRuleName(ruleId) {
         if (ruleId === undefined || ruleId === null || ruleId === '') return '';
-        var constants = _getConstants();
-        var names = constants.INHERITANCE_RULE_NAMES;
+        var names = _getConstants().INHERITANCE_RULE_NAMES;
         return names[ruleId] || ruleId;
     }
 
     function getConversionReasonName(reasonId) {
         if (reasonId === undefined || reasonId === null || reasonId === '') return '';
-        var constants = _getConstants();
-        var names = constants.CONVERSION_REASON_NAMES;
+        var names = _getConstants().CONVERSION_REASON_NAMES;
         return names[reasonId] || reasonId;
     }
 
     // =========================================================================
     // 3. LAW VOCABULARY
     // =========================================================================
-    // Law enums currently live on the window global (LAW_TYPES, etc.) rather
-    // than in ReligionConstants. Phase 3 will decide whether to migrate them.
-    // For now, this module reads them from window, matching the current
-    // reality without adding a second vocabulary source.
 
     var LAW_TYPE_NAMES = {
         'law': 'Law',
@@ -137,8 +132,6 @@
     // =========================================================================
     // 4. GENERIC HELPERS
     // =========================================================================
-    // Capitalize-first-word helper, used by renderers that need a sensible
-    // fallback label for an enum value with no explicit display name.
 
     function humanize(value) {
         if (value === undefined || value === null || value === '') return '';
@@ -168,33 +161,11 @@
     };
 
     // =========================================================================
-    // 6. LEGACY GLOBAL ALIASES
-    // =========================================================================
-    // Restore the four globals that religion-constants.js stopped defining in
-    // Phase 2 file 1. Consumers currently calling window.getReligiousTraitName
-    // etc. will keep working through Phase 2–5. Removed in Phase 6.
-
-    if (typeof window.getReligiousTraitName === 'undefined') {
-        window.getReligiousTraitName = getReligiousTraitName;
-    }
-    if (typeof window.getWorshipTypeName === 'undefined') {
-        window.getWorshipTypeName = getWorshipTypeName;
-    }
-    if (typeof window.getInheritanceRuleName === 'undefined') {
-        window.getInheritanceRuleName = getInheritanceRuleName;
-    }
-    if (typeof window.getConversionReasonName === 'undefined') {
-        window.getConversionReasonName = getConversionReasonName;
-    }
-
-    // =========================================================================
-    // 7. COMMONJS EXPORT
+    // 6. COMMONJS EXPORT
     // =========================================================================
 
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            ReligionFormat: window.ReligionFormat
-        };
+        module.exports = { ReligionFormat: window.ReligionFormat };
     }
 
 })();
