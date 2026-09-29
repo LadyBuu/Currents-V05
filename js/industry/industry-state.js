@@ -2,15 +2,23 @@
  * =============================================================================
  * STILL WATERS - INDUSTRY STATE (industry-state.js)
  * =============================================================================
- * 
- * Single source of truth for all enterprise data.
- * Manages caching, subscriptions, and data persistence.
- * 
- * DEPENDENCIES:
- *   - storage.js (masterData, saveMasterData)
- *   - ids.js (generateId)
- *   - accessors.js (getPlaceById)
- * 
+ *
+ * LOCATION: js/core/industry/industry-state.js
+ *
+ * Derived indexes and subscriptions over canonical industry data.
+ *
+ * ARCHITECTURAL RULES (Phase 1):
+ *   - Canonical data lives in masterData.data.enterprises and
+ *     masterData.data.enterpriseTypes. State does not own records.
+ *   - State does not persist. Commands own save.
+ *   - State does not generate IDs. Commands do.
+ *   - State does not migrate, normalize, or default. Migration is explicit.
+ *   - State does not resolve places, characters, or households.
+ *   - State does not calculate summaries.
+ *   - State does not expose mutation methods.
+ *   - State does not have a processing guard.
+ *   - Indexes are rebuilt from canonical data on demand.
+ *
  * =============================================================================
  */
 
@@ -18,70 +26,66 @@
     'use strict';
 
     // =========================================================================
-    // 1. RECURSION GUARDS
+    // 1. DEPENDENCY ACCESS
     // =========================================================================
 
-    var _processingState = false;
-    var _initialized = false;
+    function _requireMasterData() {
+        var md = window.masterData;
+        if (!md) {
+            throw new Error('IndustryState: masterData dependency missing');
+        }
+        return md;
+    }
+
+    function _getCanonicalEnterprises() {
+        var md = _requireMasterData();
+        if (!md.data) return [];
+        return md.data.enterprises || [];
+    }
+
+    function _getCanonicalEnterpriseTypes() {
+        var md = _requireMasterData();
+        if (!md.data) return [];
+        return md.data.enterpriseTypes || [];
+    }
 
     // =========================================================================
-    // 2. INTERNAL STATE
+    // 2. INTERNAL STATE (indexes + subscribers only)
     // =========================================================================
 
-    var _state = {
-        enterprises: [],
-        enterpriseTypes: [],
-        cache: {
-            byId: new Map(),
-            byOwner: new Map(),
-            byLocation: new Map(),
-            byStatus: new Map(),
-            byType: new Map(),
-            byOwnershipType: new Map(),
-            summary: new Map()
-        },
-        subscribers: [],
-        _processingState: false,
-        _initialized: false
+    var _indexes = {
+        byId: new Map(),
+        byOwner: new Map(),
+        byLocation: new Map(),
+        byStatus: new Map(),
+        byType: new Map(),
+        byOwnershipType: new Map(),
+
+        typesById: new Map(),
+        typesByCategory: new Map()
     };
 
-    // =========================================================================
-    // 3. DEPENDENCY WRAPPERS
-    // =========================================================================
-
-    function _getPlaceById(id) {
-        if (typeof window.getPlaceById === 'function') {
-            return window.getPlaceById(id);
-        }
-        return null;
-    }
-
-    function _generateId(prefix) {
-        if (typeof window.generateId === 'function') {
-            return window.generateId(prefix);
-        }
-        return prefix + '_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
-    }
-
-    function _getMasterData() {
-        if (typeof window.masterData !== 'undefined') {
-            return window.masterData;
-        }
-        return null;
-    }
-
-    function _saveMasterData() {
-        if (typeof window.saveMasterData === 'function') {
-            window.saveMasterData();
-        }
-    }
+    var _subscribers = [];
 
     // =========================================================================
-    // 4. NOTIFICATION SYSTEM
+    // 3. SUBSCRIPTIONS
     // =========================================================================
 
-    function _notifySubscribers(eventType, data) {
-        var subscribers = _state.subscribers.slice();
+    function subscribe(callback) {
+        if (typeof callback !== 'function') {
+            return function() {};
+        }
+        _subscribers.push(callback);
+        return function() {
+            var index = _subscribers.indexOf(callback);
+            if (index !== -1) {
+                _subscribers.splice(index, 1);
+            }
+        };
+    }
+
+    function notify(eventType, data) {
+        var subscribers = _subscribers.slice();
         for (var i = 0; i < subscribers.length; i++) {
             try {
                 subscribers[i]({
@@ -90,541 +94,205 @@
                     timestamp: Date.now()
                 });
             } catch (e) {
-                // Ignore subscriber errors
-            }
-        }
-    }
-
-    function subscribe(callback) {
-        if (typeof callback !== 'function') {
-            return function() {};
-        }
-        _state.subscribers.push(callback);
-        return function() {
-            var index = _state.subscribers.indexOf(callback);
-            if (index !== -1) {
-                _state.subscribers.splice(index, 1);
-            }
-        };
-    }
-
-    // =========================================================================
-    // 5. CACHE MANAGEMENT
-    // =========================================================================
-
-    function _rebuildCaches() {
-        if (_processingState) return;
-        _processingState = true;
-
-        try {
-            var enterprises = _state.enterprises;
-
-            // Clear all caches
-            _state.cache.byId.clear();
-            _state.cache.byOwner.clear();
-            _state.cache.byLocation.clear();
-            _state.cache.byStatus.clear();
-            _state.cache.byType.clear();
-            _state.cache.byOwnershipType.clear();
-            _state.cache.summary.clear();
-
-            // Rebuild caches
-            for (var i = 0; i < enterprises.length; i++) {
-                var e = enterprises[i];
-                if (!e) continue;
-
-                // byId
-                _state.cache.byId.set(e.id, e);
-
-                // byOwner
-                if (e.ownerId) {
-                    var ownerKey = e.ownerId + '|' + (e.ownerType || 'unknown');
-                    if (!_state.cache.byOwner.has(ownerKey)) {
-                        _state.cache.byOwner.set(ownerKey, []);
-                    }
-                    _state.cache.byOwner.get(ownerKey).push(e);
+                if (typeof window.reportError === 'function') {
+                    window.reportError(e, 'IndustryState subscriber');
+                } else {
+                    // Re-throw asynchronously so one broken subscriber
+                    // doesn't halt notification for others, but the error
+                    // remains observable.
+                    setTimeout(function() { throw e; }, 0);
                 }
-
-                // byLocation
-                if (e.locationId) {
-                    if (!_state.cache.byLocation.has(e.locationId)) {
-                        _state.cache.byLocation.set(e.locationId, []);
-                    }
-                    _state.cache.byLocation.get(e.locationId).push(e);
-                }
-
-                // byStatus
-                var status = e.status || 'active';
-                if (!_state.cache.byStatus.has(status)) {
-                    _state.cache.byStatus.set(status, []);
-                }
-                _state.cache.byStatus.get(status).push(e);
-
-                // byType
-                if (e.typeId) {
-                    if (!_state.cache.byType.has(e.typeId)) {
-                        _state.cache.byType.set(e.typeId, []);
-                    }
-                    _state.cache.byType.get(e.typeId).push(e);
-                }
-
-                // byOwnershipType
-                var ownershipType = e.ownershipType || 'private';
-                if (!_state.cache.byOwnershipType.has(ownershipType)) {
-                    _state.cache.byOwnershipType.set(ownershipType, []);
-                }
-                _state.cache.byOwnershipType.get(ownershipType).push(e);
-
-                // summary
-                _state.cache.summary.set(e.id, _buildSummary(e));
-            }
-
-        } finally {
-            _processingState = false;
-        }
-    }
-
-    function _buildSummary(enterprise) {
-        if (!enterprise) return null;
-
-        var totalWages = 0;
-        if (enterprise.workerWages) {
-            for (var workerId in enterprise.workerWages) {
-                if (enterprise.workerWages.hasOwnProperty(workerId)) {
-                    totalWages += enterprise.workerWages[workerId] || 0;
-                }
-            }
-        }
-
-        return {
-            id: enterprise.id,
-            name: enterprise.name,
-            type: enterprise.typeName || enterprise.typeId || 'Unknown',
-            category: enterprise.category || 'Unknown',
-            ownershipType: enterprise.ownershipType || 'private',
-            isPublic: (enterprise.ownershipType === 'public'),
-            ownerType: enterprise.ownerType || 'none',
-            ownerId: enterprise.ownerId || null,
-            ownerName: enterprise.ownerName || 'None',
-            locationId: enterprise.locationId || null,
-            locationName: enterprise.locationName || 'Unknown',
-            wealth: enterprise.wealth || 0,
-            debt: enterprise.debt || 0,
-            income: enterprise.income || 0,
-            expenses: enterprise.expenses || 0,
-            wages: enterprise.wages || 0,
-            totalWages: totalWages,
-            workerCount: enterprise.workerCount || 0,
-            maxWorkers: enterprise.maxWorkers || 0,
-            annualProfit: (enterprise.income || 0) - (enterprise.expenses || 0) - totalWages,
-            status: enterprise.status || 'active',
-            foundedYear: enterprise.foundedYear || 0,
-            lastProcessedYear: enterprise.lastProcessedYear || 0,
-            notes: enterprise.notes || ''
-        };
-    }
-
-    function invalidateCache() {
-        _rebuildCaches();
-    }
-
-    // =========================================================================
-    // 6. DATA LOADING
-    // =========================================================================
-
-    function _loadData() {
-        if (_processingState) return;
-        _processingState = true;
-
-        try {
-            var masterData = _getMasterData();
-            if (!masterData) return;
-
-            // Load enterprises
-            if (masterData.data && masterData.data.enterprises) {
-                _state.enterprises = masterData.data.enterprises.slice();
-            } else if (masterData.enterprises) {
-                _state.enterprises = masterData.enterprises.slice();
-            } else {
-                _state.enterprises = [];
-            }
-
-            // Load enterprise types
-            if (masterData.data && masterData.data.enterpriseTypes) {
-                _state.enterpriseTypes = masterData.data.enterpriseTypes.slice();
-            } else if (masterData.enterpriseTypes) {
-                _state.enterpriseTypes = masterData.enterpriseTypes.slice();
-            } else {
-                _state.enterpriseTypes = [];
-            }
-
-            // Initialize enterprise fields if needed
-            for (var i = 0; i < _state.enterprises.length; i++) {
-                _ensureEnterpriseInitialized(_state.enterprises[i]);
-            }
-
-            _rebuildCaches();
-            _initialized = true;
-
-        } finally {
-            _processingState = false;
-        }
-    }
-
-    function _ensureEnterpriseInitialized(enterprise) {
-        if (!enterprise) return;
-
-        // Ownership fields
-        if (enterprise.ownershipType === undefined) {
-            enterprise.ownershipType = 'private';
-        }
-        if (enterprise.isPublic === undefined) {
-            enterprise.isPublic = (enterprise.ownershipType === 'public');
-        }
-        if (enterprise.ownerType === undefined) {
-            enterprise.ownerType = enterprise.ownerId ? 'character' : 'none';
-        }
-
-        // Financial fields
-        if (enterprise.wealth === undefined) enterprise.wealth = 0;
-        if (enterprise.debt === undefined) enterprise.debt = 0;
-        if (enterprise.income === undefined) enterprise.income = 0;
-        if (enterprise.expenses === undefined) enterprise.expenses = 0;
-        if (enterprise.wages === undefined) enterprise.wages = 0;
-
-        // Worker fields
-        if (enterprise.workerCount === undefined) enterprise.workerCount = 0;
-        if (enterprise.maxWorkers === undefined) enterprise.maxWorkers = 0;
-        if (enterprise.workerList === undefined) enterprise.workerList = [];
-        if (enterprise.workerWages === undefined) enterprise.workerWages = {};
-
-        // Status fields
-        if (enterprise.status === undefined) enterprise.status = 'active';
-        if (enterprise.foundedYear === undefined) enterprise.foundedYear = 0;
-        if (enterprise.lastProcessedYear === undefined) enterprise.lastProcessedYear = 0;
-
-        // History
-        if (enterprise.history === undefined) enterprise.history = [];
-
-        // Metadata
-        if (enterprise.notes === undefined) enterprise.notes = '';
-        if (enterprise.createdAt === undefined) enterprise.createdAt = Date.now();
-        if (enterprise.updatedAt === undefined) enterprise.updatedAt = Date.now();
-
-        // Location fields
-        if (!enterprise.locationName && enterprise.locationId) {
-            var place = _getPlaceById(enterprise.locationId);
-            if (place) {
-                enterprise.locationName = place.displayName || 'Unknown';
             }
         }
     }
 
     // =========================================================================
-    // 7. ENTERPRISE ACCESSORS
+    // 4. INDEX REBUILD
+    // =========================================================================
+
+    function rebuildIndexes() {
+        var enterprises = _getCanonicalEnterprises();
+        var types = _getCanonicalEnterpriseTypes();
+
+        _rebuildEnterpriseIndexes(enterprises);
+        _rebuildTypeIndexes(types);
+    }
+
+    function _rebuildEnterpriseIndexes(enterprises) {
+        _indexes.byId.clear();
+        _indexes.byOwner.clear();
+        _indexes.byLocation.clear();
+        _indexes.byStatus.clear();
+        _indexes.byType.clear();
+        _indexes.byOwnershipType.clear();
+
+        for (var i = 0; i < enterprises.length; i++) {
+            var e = enterprises[i];
+            if (!e || !e.id) continue;
+
+            _indexes.byId.set(e.id, e);
+
+            if (e.ownerId !== undefined && e.ownerId !== null &&
+                e.ownerType !== undefined && e.ownerType !== null) {
+                var ownerKey = e.ownerId + '|' + e.ownerType;
+                _pushToIndex(_indexes.byOwner, ownerKey, e);
+            }
+
+            if (e.locationId !== undefined && e.locationId !== null) {
+                _pushToIndex(_indexes.byLocation, e.locationId, e);
+            }
+
+            if (e.status !== undefined && e.status !== null) {
+                _pushToIndex(_indexes.byStatus, e.status, e);
+            }
+
+            if (e.typeId !== undefined && e.typeId !== null) {
+                _pushToIndex(_indexes.byType, e.typeId, e);
+            }
+
+            if (e.ownershipType !== undefined && e.ownershipType !== null) {
+                _pushToIndex(_indexes.byOwnershipType, e.ownershipType, e);
+            }
+        }
+    }
+
+    function _rebuildTypeIndexes(types) {
+        _indexes.typesById.clear();
+        _indexes.typesByCategory.clear();
+
+        for (var i = 0; i < types.length; i++) {
+            var t = types[i];
+            if (!t || !t.id) continue;
+
+            _indexes.typesById.set(t.id, t);
+
+            if (t.category !== undefined && t.category !== null) {
+                _pushToIndex(_indexes.typesByCategory, t.category, t);
+            }
+        }
+    }
+
+    function _pushToIndex(map, key, value) {
+        var list = map.get(key);
+        if (!list) {
+            list = [];
+            map.set(key, list);
+        }
+        list.push(value);
+    }
+
+    // =========================================================================
+    // 5. ENTERPRISE INDEX ACCESSORS
     // =========================================================================
 
     function getEnterprise(id) {
         if (!id) return null;
-        return _state.cache.byId.get(id) || null;
+        return _indexes.byId.get(id) || null;
     }
 
     function getAllEnterprises() {
-        return _state.enterprises.slice();
+        return _getCanonicalEnterprises().slice();
     }
 
     function getEnterprisesByOwner(ownerId, ownerType) {
-        if (!ownerId) return [];
-        var key = ownerId + '|' + (ownerType || 'unknown');
-        var results = _state.cache.byOwner.get(key);
-        return results ? results.slice() : [];
+        if (!ownerId || ownerType === undefined || ownerType === null) return [];
+        var key = ownerId + '|' + ownerType;
+        var list = _indexes.byOwner.get(key);
+        return list ? list.slice() : [];
     }
 
     function getEnterprisesByLocation(locationId) {
         if (!locationId) return [];
-        var results = _state.cache.byLocation.get(locationId);
-        return results ? results.slice() : [];
+        var list = _indexes.byLocation.get(locationId);
+        return list ? list.slice() : [];
     }
 
     function getEnterprisesByType(typeId) {
         if (!typeId) return [];
-        var results = _state.cache.byType.get(typeId);
-        return results ? results.slice() : [];
+        var list = _indexes.byType.get(typeId);
+        return list ? list.slice() : [];
     }
 
     function getEnterprisesByStatus(status) {
         if (!status) return [];
-        var results = _state.cache.byStatus.get(status);
-        return results ? results.slice() : [];
+        var list = _indexes.byStatus.get(status);
+        return list ? list.slice() : [];
     }
-
-    // =========================================================================
-    // 8. OWNERSHIP TYPE ACCESSORS
-    // =========================================================================
 
     function getEnterprisesByOwnershipType(ownershipType) {
         if (!ownershipType) return [];
-        var results = _state.cache.byOwnershipType.get(ownershipType);
-        return results ? results.slice() : [];
-    }
-
-    function getPublicEnterprises(locationId) {
-        var results = getEnterprisesByOwnershipType('public');
-        if (locationId) {
-            results = results.filter(function(e) {
-                return e.locationId === locationId;
-            });
-        }
-        return results;
-    }
-
-    function getPrivateEnterprises(locationId) {
-        var results = getEnterprisesByOwnershipType('private');
-        if (locationId) {
-            results = results.filter(function(e) {
-                return e.locationId === locationId;
-            });
-        }
-        return results;
+        var list = _indexes.byOwnershipType.get(ownershipType);
+        return list ? list.slice() : [];
     }
 
     // =========================================================================
-    // 9. ENTERPRISE TYPE ACCESSORS
+    // 6. TYPE INDEX ACCESSORS
     // =========================================================================
 
     function getEnterpriseTypes() {
-        return _state.enterpriseTypes.slice();
+        return _getCanonicalEnterpriseTypes().slice();
     }
 
     function getEnterpriseTypeById(id) {
         if (!id) return null;
-        for (var i = 0; i < _state.enterpriseTypes.length; i++) {
-            if (_state.enterpriseTypes[i].id === id) {
-                return _state.enterpriseTypes[i];
-            }
-        }
-        return null;
+        return _indexes.typesById.get(id) || null;
+    }
+
+    function getEnterpriseTypesByCategory(category) {
+        if (!category) return [];
+        var list = _indexes.typesByCategory.get(category);
+        return list ? list.slice() : [];
     }
 
     // =========================================================================
-    // 10. INTERNAL STATE MUTATORS
+    // 7. LIFECYCLE
     // =========================================================================
 
-    function _setEnterprises(enterprises) {
-        if (_processingState) return;
-        _processingState = true;
-
-        try {
-            _state.enterprises = enterprises.slice();
-            for (var i = 0; i < _state.enterprises.length; i++) {
-                _ensureEnterpriseInitialized(_state.enterprises[i]);
-            }
-            _rebuildCaches();
-            _persistState();
-            _notifySubscribers('enterprises_updated', { count: _state.enterprises.length });
-        } finally {
-            _processingState = false;
-        }
-    }
-
-    function _setEnterpriseTypes(types) {
-        if (_processingState) return;
-        _processingState = true;
-
-        try {
-            _state.enterpriseTypes = types.slice();
-            _persistState();
-            _notifySubscribers('enterprise_types_updated', { count: _state.enterpriseTypes.length });
-        } finally {
-            _processingState = false;
-        }
-    }
-
-    function _addEnterprise(enterprise) {
-        if (_processingState) return null;
-        _processingState = true;
-
-        try {
-            _ensureEnterpriseInitialized(enterprise);
-            if (!enterprise.id) {
-                enterprise.id = _generateId('ent');
-            }
-            _state.enterprises.push(enterprise);
-            _rebuildCaches();
-            _persistState();
-            _notifySubscribers('enterprise_added', { enterprise: enterprise });
-            return enterprise;
-        } finally {
-            _processingState = false;
-        }
-    }
-
-    function _updateEnterprise(id, updates) {
-        if (_processingState) return null;
-        _processingState = true;
-
-        try {
-            var enterprise = getEnterprise(id);
-            if (!enterprise) return null;
-
-            // Apply updates
-            for (var key in updates) {
-                if (updates.hasOwnProperty(key)) {
-                    enterprise[key] = updates[key];
-                }
-            }
-
-            enterprise.updatedAt = Date.now();
-            _ensureEnterpriseInitialized(enterprise);
-            _rebuildCaches();
-            _persistState();
-            _notifySubscribers('enterprise_updated', { enterprise: enterprise });
-            return enterprise;
-        } finally {
-            _processingState = false;
-        }
-    }
-
-    function _deleteEnterprise(id) {
-        if (_processingState) return false;
-        _processingState = true;
-
-        try {
-            var index = -1;
-            for (var i = 0; i < _state.enterprises.length; i++) {
-                if (_state.enterprises[i].id === id) {
-                    index = i;
-                    break;
-                }
-            }
-            if (index === -1) return false;
-
-            _state.enterprises.splice(index, 1);
-            _rebuildCaches();
-            _persistState();
-            _notifySubscribers('enterprise_deleted', { id: id });
-            return true;
-        } finally {
-            _processingState = false;
-        }
+    function refreshFromMasterData() {
+        rebuildIndexes();
     }
 
     // =========================================================================
-    // 11. PERSISTENCE
+    // 8. INITIALIZATION
     // =========================================================================
 
-    function _persistState() {
-        try {
-            var masterData = _getMasterData();
-            if (!masterData) return;
-
-            if (!masterData.data) masterData.data = {};
-            masterData.data.enterprises = _state.enterprises.slice();
-            masterData.data.enterpriseTypes = _state.enterpriseTypes.slice();
-
-            _saveMasterData();
-        } catch (e) {
-            // Ignore persistence errors
-        }
+    function _initialize() {
+        if (!window.masterData) return;
+        rebuildIndexes();
     }
 
-    // =========================================================================
-    // 12. STATE QUERIES
-    // =========================================================================
-
-    function _getState() {
-        return _state;
-    }
-
-    function isProcessing() {
-        return _processingState;
-    }
-
-    function isInitialized() {
-        return _initialized;
-    }
+    _initialize();
 
     // =========================================================================
-    // 13. INITIALIZATION
-    // =========================================================================
-
-    function _initializeState() {
-        if (_initialized) return;
-        _loadData();
-        if (!_initialized) {
-            _initialized = true;
-        }
-    }
-
-    // Initialize on load
-    _initializeState();
-
-    // =========================================================================
-    // 14. EXPORTS
+    // 9. EXPORTS
     // =========================================================================
 
     window.IndustryState = {
-        // Enterprise accessors
+        // Enterprise indexes
         getEnterprise: getEnterprise,
         getAllEnterprises: getAllEnterprises,
         getEnterprisesByOwner: getEnterprisesByOwner,
         getEnterprisesByLocation: getEnterprisesByLocation,
         getEnterprisesByType: getEnterprisesByType,
         getEnterprisesByStatus: getEnterprisesByStatus,
-
-        // Ownership type accessors
         getEnterprisesByOwnershipType: getEnterprisesByOwnershipType,
-        getPublicEnterprises: getPublicEnterprises,
-        getPrivateEnterprises: getPrivateEnterprises,
 
-        // Enterprise type accessors
+        // Type indexes
         getEnterpriseTypes: getEnterpriseTypes,
         getEnterpriseTypeById: getEnterpriseTypeById,
+        getEnterpriseTypesByCategory: getEnterpriseTypesByCategory,
 
-        // Cache
-        invalidateCache: invalidateCache,
+        // Lifecycle
+        rebuildIndexes: rebuildIndexes,
+        refreshFromMasterData: refreshFromMasterData,
 
         // Subscriptions
         subscribe: subscribe,
-
-        // Internal methods (for commands)
-        _setEnterprises: _setEnterprises,
-        _setEnterpriseTypes: _setEnterpriseTypes,
-        _addEnterprise: _addEnterprise,
-        _updateEnterprise: _updateEnterprise,
-        _deleteEnterprise: _deleteEnterprise,
-        _loadData: _loadData,
-        _getState: _getState,
-        _initializeState: _initializeState,
-        isProcessing: isProcessing,
-        isInitialized: isInitialized
+        notify: notify
     };
-
-    // Legacy aliases
-    window._getIndustryState = function() {
-        return _getState();
-    };
-    window._getAllEnterprises = getAllEnterprises;
-    window._getEnterprise = getEnterprise;
-    window._getEnterprisesByOwner = getEnterprisesByOwner;
-    window._getEnterprisesByLocation = getEnterprisesByLocation;
 
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            getEnterprise: getEnterprise,
-            getAllEnterprises: getAllEnterprises,
-            getEnterprisesByOwner: getEnterprisesByOwner,
-            getEnterprisesByLocation: getEnterprisesByLocation,
-            getEnterprisesByType: getEnterprisesByType,
-            getEnterprisesByStatus: getEnterprisesByStatus,
-            getEnterprisesByOwnershipType: getEnterprisesByOwnershipType,
-            getPublicEnterprises: getPublicEnterprises,
-            getPrivateEnterprises: getPrivateEnterprises,
-            getEnterpriseTypes: getEnterpriseTypes,
-            getEnterpriseTypeById: getEnterpriseTypeById,
-            invalidateCache: invalidateCache,
-            subscribe: subscribe
-        };
+        module.exports = window.IndustryState;
     }
 
 })();
