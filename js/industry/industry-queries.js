@@ -2,20 +2,17 @@
  * =============================================================================
  * STILL WATERS - INDUSTRY QUERIES (industry-queries.js)
  * =============================================================================
- * 
+ *
  * LOCATION: js/core/industry/industry-queries.js
- * 
- * All read operations for the industry system.
- * 
- * UPDATED: Added getPublicEnterprises() and getPrivateEnterprises()
- *          Added getEnterpriseOwnershipType()
- *          Updated getEnterpriseSummary() to include ownership type
- * 
- * DEPENDENCIES:
- *   - industry-state.js (IndustryState)
- *   - accessors.js (getCharacterById, getPlaceById, getHouseholdById)
- *   - time.js (getCurrentYearSafe)
- * 
+ *
+ * Read operations for the industry system.
+ *
+ * ARCHITECTURAL RULES (Phase 1):
+ *   - No recursion guards. Composition is expected.
+ *   - No fabricated dependency fallbacks. Missing deps are failures.
+ *   - No domain defaults. Missing data stays missing.
+ *   - No silent catches. Errors propagate.
+ *
  * =============================================================================
  */
 
@@ -23,395 +20,312 @@
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY REFERENCES
+    // 1. DEPENDENCY ACCESS
     // =========================================================================
+    //
+    // These are read lazily on each call so that tests can install stubs.
+    // Missing dependencies are NOT silently tolerated — callers will see
+    // the resulting error.
 
-    // All functions are available globally from accessors.js and time.js
-    // No wrapper functions needed - use them directly!
+    function _requireState() {
+        var state = window.IndustryState;
+        if (!state) {
+            throw new Error('IndustryQueries: IndustryState dependency missing');
+        }
+        return state;
+    }
+
+    function _requireTime() {
+        if (typeof window.getCurrentYearSafe !== 'function') {
+            throw new Error('IndustryQueries: time dependency missing (getCurrentYearSafe)');
+        }
+        return window.getCurrentYearSafe();
+    }
+
+    function _requireCharacterAccessor() {
+        if (typeof window.getCharacterById !== 'function') {
+            throw new Error('IndustryQueries: character accessor missing (getCharacterById)');
+        }
+        return window.getCharacterById;
+    }
+
+    function _requireHouseholdAccessor() {
+        if (typeof window.getHouseholdById === 'function') {
+            return window.getHouseholdById;
+        }
+        if (typeof window.getHousehold === 'function') {
+            return window.getHousehold;
+        }
+        throw new Error('IndustryQueries: household accessor missing');
+    }
+
+    function _requirePlaceAccessor() {
+        if (typeof window.getPlaceById !== 'function') {
+            throw new Error('IndustryQueries: place accessor missing (getPlaceById)');
+        }
+        return window.getPlaceById;
+    }
 
     // =========================================================================
-    // 2. RECURSION GUARD
-    // =========================================================================
-
-    var _processing = false;
-
-    // =========================================================================
-    // 3. ENTERPRISE QUERIES
+    // 2. ENTERPRISE QUERIES
     // =========================================================================
 
     function getEnterprise(id) {
-        if (_processing) return null;
-        _processing = true;
-        try {
-            var state = window.IndustryState;
-            if (!state) return null;
-            return state.getEnterprise(id);
-        } finally {
-            _processing = false;
-        }
+        if (!id) return null;
+        return _requireState().getEnterprise(id);
     }
 
     function getAllEnterprises() {
-        if (_processing) return [];
-        _processing = true;
-        try {
-            var state = window.IndustryState;
-            if (!state) return [];
-            return state.getAllEnterprises();
-        } finally {
-            _processing = false;
-        }
+        return _requireState().getAllEnterprises();
     }
 
     function getEnterprisesByOwner(ownerId, ownerType) {
-        if (_processing) return [];
-        _processing = true;
-        try {
-            var state = window.IndustryState;
-            if (!state) return [];
-            return state.getEnterprisesByOwner(ownerId, ownerType);
-        } finally {
-            _processing = false;
+        if (!ownerId) return [];
+        if (ownerType === undefined || ownerType === null) {
+            throw new Error('IndustryQueries.getEnterprisesByOwner: ownerType is required');
         }
+        return _requireState().getEnterprisesByOwner(ownerId, ownerType);
     }
 
     function getEnterprisesByLocation(locationId) {
-        if (_processing) return [];
-        _processing = true;
-        try {
-            var state = window.IndustryState;
-            if (!state) return [];
-            return state.getEnterprisesByLocation(locationId);
-        } finally {
-            _processing = false;
-        }
+        if (!locationId) return [];
+        return _requireState().getEnterprisesByLocation(locationId);
     }
 
     function getEnterprisesByCategory(category) {
-        if (_processing) return [];
-        _processing = true;
-        try {
-            var state = window.IndustryState;
-            if (!state) return [];
-            var all = state.getAllEnterprises();
-            var result = [];
-            for (var i = 0; i < all.length; i++) {
-                if (all[i].category === category) {
-                    result.push(all[i]);
-                }
+        if (!category) return [];
+        var all = _requireState().getAllEnterprises();
+        var result = [];
+        for (var i = 0; i < all.length; i++) {
+            if (all[i].category === category) {
+                result.push(all[i]);
             }
-            return result;
-        } finally {
-            _processing = false;
         }
+        return result;
     }
 
     function getEnterprisesByStatus(status) {
-        if (_processing) return [];
-        _processing = true;
-        try {
-            var state = window.IndustryState;
-            if (!state) return [];
-            return state.getEnterprisesByStatus(status);
-        } finally {
-            _processing = false;
-        }
+        if (!status) return [];
+        return _requireState().getEnterprisesByStatus(status);
     }
 
     function getStateEnterprises(locationId) {
-        if (_processing) return [];
-        _processing = true;
-        try {
-            var state = window.IndustryState;
-            if (!state) return [];
-            var all = state.getAllEnterprises();
-            var result = [];
-            for (var i = 0; i < all.length; i++) {
-                if (all[i].ownerType === 'state' && all[i].ownerId === locationId) {
-                    result.push(all[i]);
-                }
+        if (!locationId) return [];
+        var all = _requireState().getAllEnterprises();
+        var result = [];
+        for (var i = 0; i < all.length; i++) {
+            if (all[i].ownerType === 'state' && all[i].ownerId === locationId) {
+                result.push(all[i]);
             }
-            return result;
-        } finally {
-            _processing = false;
         }
-    }
-
-    function getWorkerWage(enterpriseId, workerId) {
-        if (_processing) return 0;
-        _processing = true;
-        try {
-            var enterprise = getEnterprise(enterpriseId);
-            if (!enterprise || !enterprise.workerWages) return enterprise ? enterprise.wages || 0 : 0;
-            return enterprise.workerWages[workerId] || enterprise.wages || 0;
-        } finally {
-            _processing = false;
-        }
+        return result;
     }
 
     // =========================================================================
-    // 4. OWNERSHIP TYPE QUERIES (NEW)
+    // 3. OWNERSHIP TYPE QUERIES
     // =========================================================================
 
-    /**
-     * Gets enterprises by ownership type (public or private)
-     * @param {string} ownershipType - 'public' or 'private'
-     * @param {string} locationId - Optional location filter
-     * @returns {Array} Array of enterprises
-     */
     function getEnterprisesByOwnershipType(ownershipType, locationId) {
-        if (_processing) return [];
-        _processing = true;
-        try {
-            var state = window.IndustryState;
-            if (!state) return [];
-            var enterprises = state.getEnterprisesByOwnershipType(ownershipType);
-            if (locationId) {
-                return enterprises.filter(function(e) { return e.locationId === locationId; });
-            }
-            return enterprises;
-        } finally {
-            _processing = false;
+        if (!ownershipType) return [];
+        var enterprises = _requireState().getEnterprisesByOwnershipType(ownershipType);
+        if (locationId !== undefined && locationId !== null) {
+            return enterprises.filter(function(e) { return e.locationId === locationId; });
         }
+        return enterprises;
     }
 
-    /**
-     * Gets public enterprises
-     * @param {string} locationId - Optional location filter
-     * @returns {Array} Array of public enterprises
-     */
     function getPublicEnterprises(locationId) {
-        if (_processing) return [];
-        _processing = true;
-        try {
-            var state = window.IndustryState;
-            if (!state) return [];
-            return state.getPublicEnterprises(locationId);
-        } finally {
-            _processing = false;
-        }
+        return getEnterprisesByOwnershipType('public', locationId);
     }
 
-    /**
-     * Gets private enterprises
-     * @param {string} locationId - Optional location filter
-     * @returns {Array} Array of private enterprises
-     */
     function getPrivateEnterprises(locationId) {
-        if (_processing) return [];
-        _processing = true;
-        try {
-            var state = window.IndustryState;
-            if (!state) return [];
-            return state.getPrivateEnterprises(locationId);
-        } finally {
-            _processing = false;
-        }
+        return getEnterprisesByOwnershipType('private', locationId);
     }
 
-    /**
-     * Gets the ownership type of an enterprise
-     * @param {string} enterpriseId - Enterprise ID
-     * @returns {string} 'public' or 'private'
-     */
     function getEnterpriseOwnershipType(enterpriseId) {
-        if (_processing) return 'private';
-        _processing = true;
-        try {
-            var enterprise = getEnterprise(enterpriseId);
-            if (!enterprise) return 'private';
-            return enterprise.ownershipType || 'private';
-        } finally {
-            _processing = false;
-        }
+        var enterprise = getEnterprise(enterpriseId);
+        if (!enterprise) return null;
+        return enterprise.ownershipType;
     }
 
     // =========================================================================
-    // 5. ENTERPRISE SUMMARY (UPDATED with ownership type)
+    // 4. ENTERPRISE SUMMARY
     // =========================================================================
 
     function getEnterpriseSummary(enterpriseId) {
-        if (_processing) return null;
-        _processing = true;
-        try {
-            var enterprise = getEnterprise(enterpriseId);
-            if (!enterprise) return null;
+        var enterprise = getEnterprise(enterpriseId);
+        if (!enterprise) return null;
 
-            var totalWages = 0;
-            var workerCount = enterprise.workerList ? enterprise.workerList.length : 0;
-            if (enterprise.workerWages) {
-                for (var workerId in enterprise.workerWages) {
-                    if (enterprise.workerWages.hasOwnProperty(workerId)) {
-                        totalWages += enterprise.workerWages[workerId] || 0;
-                    }
-                }
-            } else {
-                totalWages = workerCount * (enterprise.wages || 8);
-            }
+        var workerList = enterprise.workerList || [];
+        var workerCount = workerList.length;
+        var totalWages = _calculateTotalWages(enterprise, workerList);
 
-            var annualProfit = (enterprise.income || 0) - (enterprise.expenses || 0) - totalWages;
+        var annualProfit = (enterprise.income || 0)
+            - (enterprise.expenses || 0)
+            - totalWages;
 
-            var ownerName = enterprise.ownerName;
-            var owner = null;
-            if (enterprise.ownerId) {
-                if (enterprise.ownerType === 'character') {
-                    owner = window.getCharacterById(enterprise.ownerId);
-                    ownerName = owner ? owner.name + ' ' + (owner.surname || '') : ownerName;
-                } else if (enterprise.ownerType === 'household') {
-                    var household = window.getHouseholdById(enterprise.ownerId);
-                    ownerName = household ? household.name : ownerName;
-                } else if (enterprise.ownerType === 'state' || enterprise.ownerType === 'settlement') {
-                    var place = window.getPlaceById(enterprise.ownerId);
-                    ownerName = place ? place.displayName : ownerName;
-                }
-            }
+        var ownerName = _resolveOwnerName(enterprise);
 
-            // ================================================================
-            // UPDATED: Include ownership type in summary
-            // ================================================================
-            var ownershipType = enterprise.ownershipType || 'private';
+        return {
+            id: enterprise.id,
+            name: enterprise.name,
+            type: enterprise.typeName,
+            category: enterprise.category,
+            ownershipType: enterprise.ownershipType,
+            isPublic: enterprise.ownershipType === 'public',
+            ownerType: enterprise.ownerType,
+            ownerId: enterprise.ownerId,
+            ownerName: ownerName,
+            locationId: enterprise.locationId,
+            locationName: enterprise.locationName,
+            wealth: enterprise.wealth,
+            debt: enterprise.debt,
+            income: enterprise.income,
+            expenses: enterprise.expenses,
+            wages: enterprise.wages,
+            totalWages: totalWages,
+            workerCount: workerCount,
+            maxWorkers: enterprise.maxWorkers,
+            annualProfit: annualProfit,
+            status: enterprise.status,
+            foundedYear: enterprise.foundedYear,
+            lastProcessedYear: enterprise.lastProcessedYear,
+            notes: enterprise.notes
+        };
+    }
 
-            return {
-                id: enterprise.id,
-                name: enterprise.name,
-                type: enterprise.typeName,
-                category: enterprise.category,
-                ownershipType: ownershipType,
-                isPublic: ownershipType === 'public',
-                ownerType: enterprise.ownerType,
-                ownerId: enterprise.ownerId,
-                ownerName: ownerName || 'None',
-                locationId: enterprise.locationId,
-                locationName: enterprise.locationName || 'Unknown',
-                wealth: enterprise.wealth || 0,
-                debt: enterprise.debt || 0,
-                income: enterprise.income || 0,
-                expenses: enterprise.expenses || 0,
-                wages: enterprise.wages || 0,
-                totalWages: totalWages,
-                workerCount: workerCount,
-                maxWorkers: enterprise.maxWorkers || 10,
-                annualProfit: annualProfit,
-                status: enterprise.status || 'active',
-                foundedYear: enterprise.foundedYear,
-                lastProcessedYear: enterprise.lastProcessedYear,
-                notes: enterprise.notes || ''
-            };
-        } finally {
-            _processing = false;
+    function _calculateTotalWages(enterprise, workerList) {
+        var total = 0;
+        var overrides = enterprise.workerWages || {};
+        var baseWage = enterprise.wages;
+        if (baseWage === undefined || baseWage === null) {
+            baseWage = 0;
         }
+        for (var i = 0; i < workerList.length; i++) {
+            var workerId = workerList[i];
+            var override = overrides[workerId];
+            if (override === undefined || override === null) {
+                total += baseWage;
+            } else {
+                total += override;
+            }
+        }
+        return total;
+    }
+
+    function _resolveOwnerName(enterprise) {
+        if (!enterprise.ownerId || !enterprise.ownerType) return null;
+
+        if (enterprise.ownerType === 'character') {
+            var getChar = _requireCharacterAccessor();
+            var char = getChar(enterprise.ownerId);
+            if (!char) return null;
+            return char.name + (char.surname ? ' ' + char.surname : '');
+        }
+        if (enterprise.ownerType === 'household') {
+            var getHH = _requireHouseholdAccessor();
+            var hh = getHH(enterprise.ownerId);
+            return hh ? hh.name : null;
+        }
+        if (enterprise.ownerType === 'state' || enterprise.ownerType === 'settlement') {
+            var getPlace = _requirePlaceAccessor();
+            var place = getPlace(enterprise.ownerId);
+            return place ? place.displayName : null;
+        }
+        return null;
     }
 
     function getOwnerEnterprisesSummary(ownerId, ownerType) {
-        if (_processing) return [];
-        _processing = true;
-        try {
-            var enterprises = getEnterprisesByOwner(ownerId, ownerType);
-            var result = [];
-            for (var i = 0; i < enterprises.length; i++) {
-                result.push(getEnterpriseSummary(enterprises[i].id));
-            }
-            return result;
-        } finally {
-            _processing = false;
+        var enterprises = getEnterprisesByOwner(ownerId, ownerType);
+        var result = [];
+        for (var i = 0; i < enterprises.length; i++) {
+            result.push(getEnterpriseSummary(enterprises[i].id));
         }
+        return result;
     }
 
     function getLocationEnterprisesSummary(locationId) {
-        if (_processing) return [];
-        _processing = true;
-        try {
-            var enterprises = getEnterprisesByLocation(locationId);
-            var result = [];
-            for (var i = 0; i < enterprises.length; i++) {
-                result.push(getEnterpriseSummary(enterprises[i].id));
-            }
-            return result;
-        } finally {
-            _processing = false;
+        var enterprises = getEnterprisesByLocation(locationId);
+        var result = [];
+        for (var i = 0; i < enterprises.length; i++) {
+            result.push(getEnterpriseSummary(enterprises[i].id));
         }
-    }
-
-    function searchEnterprises(query) {
-        if (_processing) return [];
-        _processing = true;
-        try {
-            var all = getAllEnterprises();
-            if (!query || query.trim() === '') return all;
-
-            var lowerQuery = query.toLowerCase().trim();
-            var result = [];
-            for (var i = 0; i < all.length; i++) {
-                var e = all[i];
-                if (e.name && e.name.toLowerCase().indexOf(lowerQuery) !== -1) {
-                    result.push(e);
-                } else if (e.typeName && e.typeName.toLowerCase().indexOf(lowerQuery) !== -1) {
-                    result.push(e);
-                } else if (e.ownerName && e.ownerName.toLowerCase().indexOf(lowerQuery) !== -1) {
-                    result.push(e);
-                }
-            }
-            return result;
-        } finally {
-            _processing = false;
-        }
-    }
-
-    function getEnterpriseStatistics() {
-        if (_processing) return null;
-        _processing = true;
-        try {
-            var all = getAllEnterprises();
-            var stats = {
-                total: all.length,
-                byStatus: {},
-                byCategory: {},
-                byOwnerType: {},
-                byOwnershipType: {}, // NEW
-                totalWealth: 0,
-                totalDebt: 0,
-                totalWorkers: 0,
-                profitable: 0,
-                unprofitable: 0,
-                publicCount: 0,
-                privateCount: 0
-            };
-
-            for (var i = 0; i < all.length; i++) {
-                var e = all[i];
-                var summary = getEnterpriseSummary(e.id);
-
-                stats.byStatus[e.status || 'active'] = (stats.byStatus[e.status || 'active'] || 0) + 1;
-                stats.byCategory[e.category || 'other'] = (stats.byCategory[e.category || 'other'] || 0) + 1;
-                stats.byOwnerType[e.ownerType || 'character'] = (stats.byOwnerType[e.ownerType || 'character'] || 0) + 1;
-
-                // ============================================================
-                // NEW: Track by ownership type
-                // ============================================================
-                var ownershipType = e.ownershipType || 'private';
-                stats.byOwnershipType[ownershipType] = (stats.byOwnershipType[ownershipType] || 0) + 1;
-                if (ownershipType === 'public') {
-                    stats.publicCount++;
-                } else {
-                    stats.privateCount++;
-                }
-
-                stats.totalWealth += summary.wealth;
-                stats.totalDebt += summary.debt;
-                stats.totalWorkers += summary.workerCount;
-
-                if (summary.annualProfit > 0) stats.profitable++;
-                else if (summary.annualProfit < 0) stats.unprofitable++;
-            }
-
-            return stats;
-        } finally {
-            _processing = false;
-        }
+        return result;
     }
 
     // =========================================================================
-    // 6. EXPORTS
+    // 5. SEARCH
+    // =========================================================================
+
+    function searchEnterprises(query) {
+        var all = getAllEnterprises();
+        if (!query || query.trim() === '') return all;
+
+        var lowerQuery = query.toLowerCase().trim();
+        var result = [];
+        for (var i = 0; i < all.length; i++) {
+            var e = all[i];
+            if (e.name && e.name.toLowerCase().indexOf(lowerQuery) !== -1) {
+                result.push(e);
+            } else if (e.typeName && e.typeName.toLowerCase().indexOf(lowerQuery) !== -1) {
+                result.push(e);
+            }
+        }
+        return result;
+    }
+
+    // =========================================================================
+    // 6. STATISTICS
+    // =========================================================================
+
+    function getEnterpriseStatistics() {
+        var all = getAllEnterprises();
+        var stats = {
+            total: all.length,
+            byStatus: {},
+            byCategory: {},
+            byOwnerType: {},
+            byOwnershipType: {},
+            totalWealth: 0,
+            totalDebt: 0,
+            totalWorkers: 0,
+            profitable: 0,
+            unprofitable: 0,
+            publicCount: 0,
+            privateCount: 0
+        };
+
+        for (var i = 0; i < all.length; i++) {
+            var e = all[i];
+            var summary = getEnterpriseSummary(e.id);
+            if (!summary) continue;
+
+            _increment(stats.byStatus, e.status);
+            _increment(stats.byCategory, e.category);
+            _increment(stats.byOwnerType, e.ownerType);
+            _increment(stats.byOwnershipType, e.ownershipType);
+
+            if (e.ownershipType === 'public') stats.publicCount++;
+            else if (e.ownershipType === 'private') stats.privateCount++;
+
+            stats.totalWealth += summary.wealth || 0;
+            stats.totalDebt += summary.debt || 0;
+            stats.totalWorkers += summary.workerCount;
+
+            if (summary.annualProfit > 0) stats.profitable++;
+            else if (summary.annualProfit < 0) stats.unprofitable++;
+        }
+
+        return stats;
+    }
+
+    function _increment(obj, key) {
+        if (key === undefined || key === null) return;
+        obj[key] = (obj[key] || 0) + 1;
+    }
+
+    // =========================================================================
+    // 7. EXPORTS
     // =========================================================================
 
     window.IndustryQueries = {
@@ -422,13 +336,11 @@
         getEnterprisesByCategory: getEnterprisesByCategory,
         getEnterprisesByStatus: getEnterprisesByStatus,
         getStateEnterprises: getStateEnterprises,
-        getWorkerWage: getWorkerWage,
         getEnterpriseSummary: getEnterpriseSummary,
         getOwnerEnterprisesSummary: getOwnerEnterprisesSummary,
         getLocationEnterprisesSummary: getLocationEnterprisesSummary,
         searchEnterprises: searchEnterprises,
         getEnterpriseStatistics: getEnterpriseStatistics,
-        // NEW: Ownership type queries
         getEnterprisesByOwnershipType: getEnterprisesByOwnershipType,
         getPublicEnterprises: getPublicEnterprises,
         getPrivateEnterprises: getPrivateEnterprises,
