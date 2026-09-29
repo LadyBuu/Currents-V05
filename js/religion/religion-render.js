@@ -7,31 +7,25 @@
  * 
  * Pure renderer for religion lists, cards, and tables.
  * 
- * Consumes prepared view models from ReligionViewModels.
- * Does NOT call ReligionQueries, ReligionState, accessors, or any domain
- * module. Does NOT format enums. Does NOT count followers. Does NOT look up
- * characters or places. Does NOT emit inline CSS.
+ * Consumes prepared view models from ReligionViewModels. Does NOT call
+ * ReligionQueries, ReligionState, accessors, or any domain module. Does NOT
+ * format enums. Does NOT emit inline CSS.
  * 
  * DEPENDENCIES:
- *   - religion-view-models.js: ReligionViewModels (for row shape reference only)
  *   - formatting.js: escapeHtml
  * 
  * ICON POLICY: No emojis. No icons in confirm/cancel buttons.
  * 
  * =============================================================================
  * PHASE 4 UI BOUNDARY (2026):
- *   - Renamed from religion-ui-list.js to religion-render.js. The name now
- *     reflects what it does: render. Data fetching lives in view models.
- *   - Removed _rendering re-entry guard.
- *   - Removed all domain dependency wrappers (_getAllReligions, _getFollowerCount,
- *     _getGodCount, _getLawCount, _getPlaceCount, _getReligiousTraitName,
- *     _getCharacterName, _getPlaceName, _getLocationIds, _getIcon).
- *   - Removed sort logic (moved to ReligionViewModels.sortRows).
- *   - Removed data fetching inside renderReligionList (caller supplies rows).
- *   - Removed all inline style="..." attributes.
- *   - Removed trait color maps, status badge HTML builders, glyph emissions.
- *   - Event delegation: one listener per container instead of per element.
- *   - Per-container refresh timers instead of a single global debounce.
+ *   - Renamed from religion-ui-list.js. Pure renderer. Event delegation.
+ *     Per-container refresh. No inline styles.
+ * 
+ * PHASE 6 CLEANUP (2026):
+ *   - Deleted ReligionRender.getTraitName alias. Consumers call
+ *     ReligionFormat.getReligiousTraitName directly.
+ *   - Kept window.ReligionUI alias. Marked for removal once external
+ *     consumers are migrated.
  * 
  * =============================================================================
  */
@@ -62,7 +56,6 @@
     // =========================================================================
     // 2. CSS CLASS HELPERS
     // =========================================================================
-    // Returns class-name fragments. CSS owns the visuals.
 
     function _traitClass(traitId) {
         return traitId ? ('religion-trait religion-trait--' + traitId) : 'religion-trait';
@@ -81,8 +74,6 @@
     // =========================================================================
     // 3. RENDER RELIGION LIST
     // =========================================================================
-    // Signature: renderReligionList(container, rows, options)
-    // Caller provides the container element and prepared rows.
 
     function renderReligionList(container, rows, options) {
         if (!container) {
@@ -130,7 +121,6 @@
         var html = '<div class="' + itemClasses.join(' ') + '"' +
             ' data-religion-id="' + _escapeHtml(row.id) + '">';
 
-        // Left block: icon, name, trait, status, leader, locations
         html += '<div class="religion-item__main">';
 
         if (row.icon) {
@@ -166,7 +156,6 @@
         html += '</div>';
         html += '</div>';
 
-        // Right block: stats and actions
         html += '<div class="religion-item__aside">';
 
         if (opts.showStats) {
@@ -196,7 +185,6 @@
     // =========================================================================
     // 4. RENDER RELIGION CARD
     // =========================================================================
-    // Signature: renderReligionCard(row, options) → HTML string
 
     function renderReligionCard(row, options) {
         if (!row) return '';
@@ -267,7 +255,6 @@
     // =========================================================================
     // 5. RENDER RELIGION TABLE
     // =========================================================================
-    // Signature: renderReligionTable(rows, options) → HTML string
 
     var _COLUMN_LABELS = {
         name: 'Name',
@@ -386,14 +373,12 @@
     // =========================================================================
     // 7. EVENT BINDING (delegated)
     // =========================================================================
-    // One listener per container. Handlers receive the religion id.
 
     var _boundContainers = typeof WeakSet !== 'undefined' ? new WeakSet() : null;
 
     function bindReligionListEvents(container, handlers) {
         if (!container || !handlers) return;
 
-        // Guard against double-binding using WeakSet when available.
         if (_boundContainers) {
             if (_boundContainers.has(container)) return;
             _boundContainers.add(container);
@@ -473,26 +458,22 @@
     // =========================================================================
 
     window.ReligionRender = {
-        // Renderers
         renderReligionList: renderReligionList,
         renderReligionCard: renderReligionCard,
         renderReligionTable: renderReligionTable,
         renderEmptyState: renderEmptyState,
-
-        // Events
         bindReligionListEvents: bindReligionListEvents,
-
-        // Refresh
         refreshReligionList: refreshReligionList
     };
 
-    // Legacy alias — old code called window.ReligionUI. Kept during migration.
-    window.ReligionUI = window.ReligionRender;
+    // Legacy alias. Kept during migration. Removed once external consumers
+    // are confirmed migrated.
+    if (typeof window.ReligionUI === 'undefined') {
+        window.ReligionUI = window.ReligionRender;
+    }
 
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            ReligionRender: window.ReligionRender
-        };
+        module.exports = { ReligionRender: window.ReligionRender };
     }
 
 })();
