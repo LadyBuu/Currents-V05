@@ -2,1419 +2,1427 @@
  * =============================================================================
  * STILL WATERS - INDUSTRY MODALS (modals-industry.js)
  * =============================================================================
- * 
- * This file provides modal dialogs for enterprise management.
- * 
- * UPDATED: Uses IndustryState, IndustryCommands, IndustryQueries, IndustryTypes
- * UPDATED: Uses openCharacterSelector from modals-charSelect.js
- * UPDATED: Uses buildLocationDropdown from modals-core.js
- * UPDATED: Uses icons from icons.js (no emojis)
- * UPDATED: No icons in confirm/cancel buttons
- * UPDATED: No console logs
- * 
+ *
+ * LOCATION: js/core/industry/modals-industry.js
+ *
+ * Modal dialogs for enterprise management.
+ *
+ * ARCHITECTURAL RULES (Phase 1):
+ *   - Modals gather input, call Commands, render Views.
+ *   - Modals do NOT persist. Commands do.
+ *   - Modals do NOT invalidate caches. Commands do.
+ *   - Modals do NOT fabricate dependencies. Missing deps = fail loudly.
+ *   - Modals do NOT decide domain defaults.
+ *   - Toasts are shown here based on command results.
+ *   - No icons in confirm/cancel buttons.
+ *
  * =============================================================================
  */
 
-// =============================================================================
-// 1. DEPENDENCY WRAPPERS (FIXED - NO RECURSION)
-// =============================================================================
+(function() {
+    'use strict';
 
-function _getQueries() {
-    return typeof window.IndustryQueries !== 'undefined' ? window.IndustryQueries : null;
-}
+    // =========================================================================
+    // 1. DEPENDENCY ACCESS
+    // =========================================================================
 
-function _getCommands() {
-    return typeof window.IndustryCommands !== 'undefined' ? window.IndustryCommands : null;
-}
-
-function _getTypes() {
-    return typeof window.IndustryTypes !== 'undefined' ? window.IndustryTypes : null;
-}
-
-function _getState() {
-    return typeof window.IndustryState !== 'undefined' ? window.IndustryState : null;
-}
-
-function _getCharacterById(id) {
-    return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
-}
-
-function _getCharacters() {
-    return typeof window.getCharacters === 'function' ? window.getCharacters() : [];
-}
-
-function _getAllHouseholds() {
-    return typeof window.getAllHouseholds === 'function' ? window.getAllHouseholds() : [];
-}
-
-function _getHousehold(id) {
-    return typeof window.getHousehold === 'function' ? window.getHousehold(id) : null;
-}
-
-function _getPlaceById(id) {
-    return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
-}
-
-function _getPlaces() {
-    return typeof window.getPlaces === 'function' ? window.getPlaces() : [];
-}
-
-function _escapeHtml(str) {
-    if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-    if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
-    if (!str) return '';
-    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
-
-// =============================================================================
-// FIXED: _showToast - No recursion! Uses direct function references
-// =============================================================================
-
-function _showToast(msg, type) {
-    // Try each toast function directly
-    if (typeof window._showToast === 'function' && window._showToast !== _showToast) {
-        window._showToast(msg, type);
-        return;
-    }
-    if (typeof window.showToast === 'function') {
-        window.showToast(msg, type);
-        return;
-    }
-    if (typeof window.showToastMessage === 'function') {
-        window.showToastMessage(msg, type);
-        return;
-    }
-    // Last resort - console log
-    console.log('[Toast] ' + msg + ' (' + (type || 'info') + ')');
-}
-
-function _openModal(options) {
-    if (typeof window.openModal === 'function') {
-        return window.openModal(options);
-    }
-    _showToast('Modal system not available', 'error');
-    return null;
-}
-
-function _closeTopModal() {
-    if (typeof window.closeTopModal === 'function') {
-        window.closeTopModal();
-    }
-}
-
-function _confirmDialog(message, title, onConfirm) {
-    if (typeof window.confirmDialog === 'function') {
-        return window.confirmDialog(message, title, onConfirm);
-    }
-    if (confirm(message)) {
-        onConfirm();
-    }
-}
-
-function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
-function _saveMasterData() {
-    if (typeof window.saveMasterData === 'function') {
-        window.saveMasterData();
-    }
-}
-
-function _invalidateCaches() {
-    var state = _getState();
-    if (state && typeof state.invalidateCache === 'function') {
-        state.invalidateCache();
-    }
-    if (typeof window.invalidateAccessorCaches === 'function') {
-        window.invalidateAccessorCaches();
-    }
-    if (typeof window.invalidateEnterpriseCache === 'function') {
-        window.invalidateEnterpriseCache();
-    }
-}
-
-function _getIcon(name) {
-    if (window.Icons && window.Icons[name]) {
-        return window.Icons[name];
-    }
-    return '';
-}
-
-// =============================================================================
-// 2. CHARACTER SELECTOR - Uses unified selector
-// =============================================================================
-
-function _openCharacterSelectorForIndustry(title, onSelect, options) {
-    options = options || {};
-
-    if (typeof window.openCharacterSelector === 'function') {
-        window.openCharacterSelector({
-            title: title || 'Select Character',
-            targetId: options.targetId || null,
-            onSelect: onSelect,
-            filters: {
-                gender: options.gender || 'all',
-                status: options.status || 'all',
-                showDeceased: options.showDeceased || false,
-                location: options.locationFilter || 'all'
-            },
-            preset: options.preset || null
-        });
-        return true;
+    function _requireQueries() {
+        var q = window.IndustryQueries;
+        if (!q) throw new Error('IndustryModals: IndustryQueries dependency missing');
+        return q;
     }
 
-    if (typeof window.openUnifiedCharacterSelector === 'function') {
-        window.openUnifiedCharacterSelector({
-            title: title || 'Select Character',
-            targetId: options.targetId || null,
-            onSelect: onSelect,
-            filters: {
-                gender: options.gender || 'all',
-                status: options.status || 'all',
-                showDeceased: options.showDeceased || false,
-                location: options.locationFilter || 'all'
-            },
-            preset: options.preset || null
-        });
-        return true;
+    function _requireCommands() {
+        var c = window.IndustryCommands;
+        if (!c) throw new Error('IndustryModals: IndustryCommands dependency missing');
+        return c;
     }
 
-    _showToast('Character selector not available', 'warning');
-    return false;
-}
-
-// =============================================================================
-// 3. LOCATION DROPDOWN - Uses unified builder
-// =============================================================================
-
-function _getLocationOptions(selectedId, placeholderText, includeAll) {
-    placeholderText = placeholderText || '-- Select location --';
-    includeAll = includeAll !== undefined ? includeAll : false;
-
-    if (typeof window.buildLocationDropdown === 'function') {
-        return window.buildLocationDropdown(selectedId, placeholderText, includeAll);
+    function _requireTypeQueries() {
+        var t = window.IndustryTypes;
+        if (!t) throw new Error('IndustryModals: IndustryTypes dependency missing');
+        return t;
     }
 
-    // Fallback
-    var places = _getPlaces();
-    var html = '';
-    if (placeholderText) {
-        html += '<option value="">' + _escapeHtml(placeholderText) + '</option>';
-    }
-    if (includeAll) {
-        html += '<option value="all">All Locations</option>';
-    }
-    for (var i = 0; i < places.length; i++) {
-        var selected = (selectedId === places[i].id) ? 'selected' : '';
-        html += '<option value="' + places[i].id + '" ' + selected + '>' +
-            '⌂ ' + _escapeHtml(places[i].displayName) + '</option>';
-    }
-    return html;
-}
-
-// =============================================================================
-// 4. HOUSEHOLD SELECTOR
-// =============================================================================
-
-function _openHouseholdSelector(title, onSelect) {
-    if (typeof window.openHouseholdSelector === 'function') {
-        window.openHouseholdSelector({
-            title: title || 'Select Household',
-            targetId: null,
-            onSelect: onSelect
-        });
-        return true;
+    function _requireTypeCommands() {
+        var t = window.IndustryTypeCommands;
+        if (!t) throw new Error('IndustryModals: IndustryTypeCommands dependency missing');
+        return t;
     }
 
-    var households = _getAllHouseholds();
-    if (households.length === 0) {
-        _showToast('No households available', 'warning');
-        return false;
-    }
-
-    var householdOptions = '';
-    for (var i = 0; i < households.length; i++) {
-        householdOptions += '<option value="' + households[i].id + '">' + _escapeHtml(households[i].name) + '</option>';
-    }
-
-    var content = `
-        <div style="padding: 8px;">
-            <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Select Household</label>
-            <select id="hhSelect" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">
-                ${householdOptions}
-            </select>
-        </div>
-    `;
-
-    _openModal({
-        title: title || 'Select Household',
-        content: content,
-        confirmText: 'Select',
-        cancelText: 'Cancel',
-        onConfirm: function() {
-            var hhId = document.getElementById('hhSelect').value;
-            var hh = _getHousehold(hhId);
-            if (hh && onSelect) {
-                onSelect(hh);
-                return true;
-            }
-            return false;
+    function _requireModalCore() {
+        if (typeof window.openModal !== 'function') {
+            throw new Error('IndustryModals: openModal dependency missing');
         }
-    });
-
-    return true;
-}
-
-// =============================================================================
-// 5. CREATE ENTERPRISE MODAL
-// =============================================================================
-
-function openCreateEnterpriseModal(onSuccess, defaultData) {
-    var queries = _getQueries();
-    var types = _getTypes();
-    var commands = _getCommands();
-
-    if (!queries || !types || !commands) {
-        _showToast('Industry system not available', 'error');
-        return;
+        if (typeof window.closeTopModal !== 'function') {
+            throw new Error('IndustryModals: closeTopModal dependency missing');
+        }
+        return {
+            open: window.openModal,
+            close: window.closeTopModal
+        };
     }
 
-    defaultData = defaultData || {};
-
-    var allTypes = types.getEnterpriseTypes();
-    var categories = types.getEnterpriseCategories();
-
-    var categoryOptions = '<option value="">All Categories</option>';
-    for (var cat in categories) {
-        categoryOptions += '<option value="' + cat + '">' + _escapeHtml(cat.charAt(0).toUpperCase() + cat.slice(1)) + '</option>';
+    function _requireEscapeHtml() {
+        var fn = window.escapeHtml || window._escapeHtml;
+        if (typeof fn !== 'function') {
+            throw new Error('IndustryModals: escapeHtml dependency missing');
+        }
+        return fn;
     }
 
-    var typeOptions = '<option value="">Select type...</option>';
-    for (var i = 0; i < allTypes.length; i++) {
-        typeOptions += '<option value="' + allTypes[i].id + '">' + _escapeHtml(allTypes[i].name) + ' (' + _escapeHtml(allTypes[i].category) + ')</option>';
+    function _requireToast() {
+        var fn = window._showToast || window.showToast;
+        if (typeof fn !== 'function') {
+            throw new Error('IndustryModals: toast dependency missing');
+        }
+        return fn;
     }
 
-    var placeOptions = _getLocationOptions(defaultData.locationId, 'No Location', false);
+    function _requireCharacterSelector() {
+        var fn = window.openCharacterSelector || window.openUnifiedCharacterSelector;
+        if (typeof fn !== 'function') {
+            throw new Error('IndustryModals: character selector dependency missing');
+        }
+        return fn;
+    }
 
-    var ownerTypeSelected = {
-        character: defaultData.ownerType === 'character' ? 'selected' : '',
-        household: defaultData.ownerType === 'household' ? 'selected' : '',
-        none: (!defaultData.ownerType || defaultData.ownerType === 'none') ? 'selected' : ''
-    };
+    function _requireHouseholdSelector() {
+        var fn = window.openHouseholdSelector;
+        if (typeof fn !== 'function') {
+            throw new Error('IndustryModals: household selector dependency missing');
+        }
+        return fn;
+    }
 
-    var content = `
-        <div style="max-height: 500px; overflow-y: auto; padding: 4px;">
-            <div class="form-group" style="margin-bottom: 12px;">
-                <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Enterprise Name</label>
-                <input type="text" id="entName" value="${_escapeHtml(defaultData.name || '')}" placeholder="Enter enterprise name" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">
-            </div>
+    function _requireLocationDropdown() {
+        if (typeof window.buildLocationDropdown !== 'function') {
+            throw new Error('IndustryModals: buildLocationDropdown dependency missing');
+        }
+        return window.buildLocationDropdown;
+    }
 
-            <div class="form-group" style="margin-bottom: 12px;">
-                <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Category</label>
-                <select id="entCategory" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">
-                    ${categoryOptions}
-                </select>
-            </div>
+    function _requireCharacterById() {
+        if (typeof window.getCharacterById !== 'function') {
+            throw new Error('IndustryModals: getCharacterById dependency missing');
+        }
+        return window.getCharacterById;
+    }
 
-            <div class="form-group" style="margin-bottom: 12px;">
-                <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Type</label>
-                <select id="entType" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">
-                    ${typeOptions}
-                </select>
-            </div>
+    function _requireCurrentYear() {
+        if (typeof window.getCurrentYearSafe !== 'function') {
+            throw new Error('IndustryModals: getCurrentYearSafe dependency missing');
+        }
+        return window.getCurrentYearSafe();
+    }
 
-            <div style="margin-bottom: 12px; border-top: 1px solid var(--border); padding-top: 12px;">
-                <div style="font-size: 0.7rem; color: var(--accent); margin-bottom: 8px;">Owner</div>
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-                    <div>
-                        <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Owner Type</label>
-                        <select id="entOwnerType" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
-                            <option value="character" ${ownerTypeSelected.character}>Character</option>
-                            <option value="household" ${ownerTypeSelected.household}>Household</option>
-                            <option value="none" ${ownerTypeSelected.none}>None (Settlement Owned)</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Owner</label>
-                        <div style="display: flex; gap: 6px;">
-                            <input type="text" id="entOwnerDisplay" placeholder="Select owner..." value="${_escapeHtml(defaultData.ownerName || '')}" readonly style="flex: 1; padding: 6px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem; cursor: pointer;">
-                            <input type="hidden" id="entOwnerId" value="${_escapeHtml(defaultData.ownerId || '')}">
-                            <input type="hidden" id="entOwnerTypeHidden" value="${_escapeHtml(defaultData.ownerType || '')}">
-                            <button id="selectOwnerBtn" class="btn" style="font-size: 0.6rem; padding: 4px 10px;">Select</button>
-                            <button id="clearOwnerBtn" class="btn" style="font-size: 0.6rem; padding: 4px 8px;">Clear</button>
+    function _requireConfirmDialog() {
+        if (typeof window.confirmDialog === 'function') {
+            return window.confirmDialog;
+        }
+        // Fallback to native confirm — acceptable for UI, not for domain.
+        return function(message, title, onConfirm) {
+            if (window.confirm(message)) onConfirm();
+        };
+    }
+
+    // =========================================================================
+    // 2. HELPERS
+    // =========================================================================
+
+    /**
+     * Fires after the current modal's DOM has been rendered.
+     *
+     * ASSUMPTION: modal infrastructure creates DOM synchronously. If your
+     * openModal() calls are async, replace this with a proper lifecycle hook.
+     *
+     * For Phase 1, we keep the setTimeout but make it visible and centralized
+     * so it can be replaced with a real hook later.
+     */
+    function _afterRender(fn) {
+        setTimeout(fn, 0);
+    }
+
+    /**
+     * Reads an optional integer input. Returns undefined for empty string,
+     * otherwise the parsed integer. Returns undefined for NaN.
+     */
+    function _readOptionalInt(element) {
+        if (!element) return undefined;
+        var raw = element.value;
+        if (raw === '' || raw === null || raw === undefined) return undefined;
+        var n = parseInt(raw, 10);
+        if (isNaN(n)) return undefined;
+        return n;
+    }
+
+    /**
+     * Reads a required integer input. Returns undefined if missing or invalid.
+     */
+    function _readRequiredInt(element) {
+        if (!element) return undefined;
+        var raw = element.value;
+        if (raw === '' || raw === null || raw === undefined) return undefined;
+        var n = parseInt(raw, 10);
+        if (isNaN(n)) return undefined;
+        return n;
+    }
+
+    // =========================================================================
+    // 3. CREATE ENTERPRISE MODAL
+    // =========================================================================
+
+    function openCreateEnterpriseModal(onSuccess, defaultData) {
+        var queries = _requireQueries();
+        var commands = _requireCommands();
+        var types = _requireTypeQueries();
+        var modal = _requireModalCore();
+        var esc = _requireEscapeHtml();
+        var toast = _requireToast();
+        var buildLocations = _requireLocationDropdown();
+
+        defaultData = defaultData || {};
+
+        var allTypes = types.getEnterpriseTypes();
+        var categories = types.getEnterpriseCategories();
+
+        var categoryOptions = '<option value="">All Categories</option>';
+        var catKeys = Object.keys(categories).sort();
+        for (var ci = 0; ci < catKeys.length; ci++) {
+            var cat = catKeys[ci];
+            var label = cat.charAt(0).toUpperCase() + cat.slice(1);
+            categoryOptions += '<option value="' + esc(cat) + '">' + esc(label) + '</option>';
+        }
+
+        var typeOptions = '<option value="">Select type...</option>';
+        for (var ti = 0; ti < allTypes.length; ti++) {
+            var t = allTypes[ti];
+            typeOptions += '<option value="' + esc(t.id) + '">' +
+                esc(t.name) + ' (' + esc(t.category) + ')</option>';
+        }
+
+        var placeOptions = buildLocations(defaultData.locationId || '', 'No Location', false);
+
+        var ownerTypes = [
+            { value: 'character', label: 'Character' },
+            { value: 'household', label: 'Household' },
+            { value: 'none', label: 'None (Settlement Owned)' }
+        ];
+        var ownerTypeOptions = '';
+        for (var oi = 0; oi < ownerTypes.length; oi++) {
+            var selected = (defaultData.ownerType || 'none') === ownerTypes[oi].value ? 'selected' : '';
+            ownerTypeOptions += '<option value="' + esc(ownerTypes[oi].value) + '" ' + selected + '>' +
+                esc(ownerTypes[oi].label) + '</option>';
+        }
+
+        var content = `
+            <div style="max-height: 500px; overflow-y: auto; padding: 4px;">
+                <div class="form-group">
+                    <label class="form-label">Enterprise Name</label>
+                    <input type="text" id="entName" class="form-input" value="${esc(defaultData.name || '')}" placeholder="Enter enterprise name">
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Category</label>
+                    <select id="entCategory" class="form-input">${categoryOptions}</select>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Type</label>
+                    <select id="entType" class="form-input">${typeOptions}</select>
+                </div>
+
+                <div class="form-section">
+                    <div class="form-section-title">Owner</div>
+                    <div class="form-grid-2">
+                        <div>
+                            <label class="form-label-sm">Owner Type</label>
+                            <select id="entOwnerType" class="form-input">${ownerTypeOptions}</select>
+                        </div>
+                        <div>
+                            <label class="form-label-sm">Owner</label>
+                            <div class="form-row">
+                                <input type="text" id="entOwnerDisplay" class="form-input" placeholder="Select owner..." value="${esc(defaultData.ownerName || '')}" readonly>
+                                <input type="hidden" id="entOwnerId" value="${esc(defaultData.ownerId || '')}">
+                                <button id="selectOwnerBtn" class="btn">Select</button>
+                                <button id="clearOwnerBtn" class="btn">Clear</button>
+                            </div>
                         </div>
                     </div>
                 </div>
-            </div>
 
-            <div class="form-group" style="margin-bottom: 12px;">
-                <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Location</label>
-                <select id="entLocation" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">
-                    ${placeOptions}
-                </select>
-            </div>
+                <div class="form-group">
+                    <label class="form-label">Location</label>
+                    <select id="entLocation" class="form-input">${placeOptions}</select>
+                </div>
 
-            <div style="margin-bottom: 12px; border-top: 1px solid var(--border); padding-top: 12px;">
-                <div style="font-size: 0.7rem; color: var(--accent); margin-bottom: 8px;">Financial Details</div>
-                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
-                    <div>
-                        <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Initial Wealth</label>
-                        <input type="number" id="entWealth" value="${defaultData.wealth || 0}" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
-                    </div>
-                    <div>
-                        <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Initial Debt</label>
-                        <input type="number" id="entDebt" value="${defaultData.debt || 0}" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
-                    </div>
-                    <div>
-                        <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Workers</label>
-                        <input type="number" id="entWorkers" value="${defaultData.workerCount || 2}" min="0" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
+                <div class="form-section">
+                    <div class="form-section-title">Financial Details</div>
+                    <div class="form-grid-3">
+                        <div>
+                            <label class="form-label-sm">Initial Wealth</label>
+                            <input type="number" id="entWealth" class="form-input" value="${defaultData.wealth !== undefined ? defaultData.wealth : 0}">
+                        </div>
+                        <div>
+                            <label class="form-label-sm">Initial Debt</label>
+                            <input type="number" id="entDebt" class="form-input" value="${defaultData.debt !== undefined ? defaultData.debt : 0}">
+                        </div>
+                        <div>
+                            <label class="form-label-sm">Max Workers</label>
+                            <input type="number" id="entMaxWorkers" class="form-input" value="${defaultData.maxWorkers !== undefined ? defaultData.maxWorkers : ''}" placeholder="Type default">
+                        </div>
                     </div>
                 </div>
-            </div>
 
-            <div style="margin-bottom: 12px;">
-                <div style="font-size: 0.7rem; color: var(--accent); margin-bottom: 8px;">Custom Values (override defaults)</div>
-                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
-                    <div>
-                        <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Income / year</label>
-                        <input type="number" id="entIncome" value="${defaultData.income || ''}" placeholder="Default" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
-                    </div>
-                    <div>
-                        <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Expenses / year</label>
-                        <input type="number" id="entExpenses" value="${defaultData.expenses || ''}" placeholder="Default" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
-                    </div>
-                    <div>
-                        <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Wages / worker</label>
-                        <input type="number" id="entWages" value="${defaultData.wages || ''}" placeholder="Default" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
+                <div class="form-section">
+                    <div class="form-section-title">Custom Values (leave blank to use type defaults)</div>
+                    <div class="form-grid-3">
+                        <div>
+                            <label class="form-label-sm">Income / year</label>
+                            <input type="number" id="entIncome" class="form-input" value="${defaultData.income !== undefined ? defaultData.income : ''}" placeholder="Type default">
+                        </div>
+                        <div>
+                            <label class="form-label-sm">Expenses / year</label>
+                            <input type="number" id="entExpenses" class="form-input" value="${defaultData.expenses !== undefined ? defaultData.expenses : ''}" placeholder="Type default">
+                        </div>
+                        <div>
+                            <label class="form-label-sm">Wages / worker</label>
+                            <input type="number" id="entWages" class="form-input" value="${defaultData.wages !== undefined ? defaultData.wages : ''}" placeholder="Type default">
+                        </div>
                     </div>
                 </div>
+
+                <div class="form-group">
+                    <label class="form-label">Notes</label>
+                    <textarea id="entNotes" class="form-input" rows="2" placeholder="Additional notes...">${esc(defaultData.notes || '')}</textarea>
+                </div>
+
+                <div class="form-hint">
+                    Fields left blank will use default values from the enterprise type. All fields can be edited later.
+                </div>
             </div>
+        `;
 
-            <div class="form-group" style="margin-bottom: 12px;">
-                <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes</label>
-                <textarea id="entNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;" placeholder="Additional notes...">${_escapeHtml(defaultData.notes || '')}</textarea>
-            </div>
+        modal.open({
+            title: 'Create Enterprise',
+            content: content,
+            confirmText: 'Create',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var name = document.getElementById('entName').value.trim();
+                if (!name) {
+                    toast('Enterprise name is required', 'error');
+                    return false;
+                }
 
-            <div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">
-                Fields left blank will use default values from the enterprise type. All fields can be edited later.
-            </div>
-        </div>
-    `;
+                var typeId = document.getElementById('entType').value;
+                if (!typeId) {
+                    toast('Please select an enterprise type', 'error');
+                    return false;
+                }
 
-    _openModal({
-        title: 'Create Enterprise',
-        content: content,
-        confirmText: 'Create',
-        cancelText: 'Cancel',
-        onConfirm: function() {
-            var name = document.getElementById('entName').value.trim();
-            if (!name) {
-                _showToast('Enterprise name is required', 'error');
-                return false;
-            }
+                var ownerType = document.getElementById('entOwnerType').value;
+                var ownerId = document.getElementById('entOwnerId').value || null;
+                var ownerName = document.getElementById('entOwnerDisplay').value || null;
 
-            var typeId = document.getElementById('entType').value;
-            if (!typeId) {
-                _showToast('Please select an enterprise type', 'error');
-                return false;
-            }
+                if (ownerType === 'none') {
+                    ownerId = null;
+                    ownerName = null;
+                } else if (!ownerId) {
+                    toast('Please select an owner or set owner type to None', 'error');
+                    return false;
+                }
 
-            var ownerType = document.getElementById('entOwnerType').value;
-            var ownerId = document.getElementById('entOwnerId').value || null;
-            var ownerName = document.getElementById('entOwnerDisplay').value || null;
+                var locationId = document.getElementById('entLocation').value || null;
 
-            if (ownerType === 'none') {
-                ownerType = 'none';
-                ownerId = null;
-                ownerName = null;
-            }
+                var data = {
+                    name: name,
+                    typeId: typeId,
+                    ownerType: ownerType,
+                    ownerId: ownerId,
+                    ownerName: ownerName,
+                    locationId: locationId,
+                    notes: document.getElementById('entNotes').value,
+                    foundedYear: _requireCurrentYear()
+                };
 
-            var locationId = document.getElementById('entLocation').value || null;
+                var wealth = _readOptionalInt(document.getElementById('entWealth'));
+                if (wealth !== undefined) data.wealth = wealth;
 
-            var data = {
-                name: name,
-                typeId: typeId,
-                ownerType: ownerType,
-                ownerId: ownerId,
-                ownerName: ownerName,
-                locationId: locationId,
-                notes: document.getElementById('entNotes').value,
-                foundedYear: _getCurrentYear()
-            };
+                var debt = _readOptionalInt(document.getElementById('entDebt'));
+                if (debt !== undefined) data.debt = debt;
 
-            var wealth = parseInt(document.getElementById('entWealth').value);
-            if (!isNaN(wealth)) data.wealth = wealth;
+                var maxWorkers = _readOptionalInt(document.getElementById('entMaxWorkers'));
+                if (maxWorkers !== undefined) data.maxWorkers = maxWorkers;
 
-            var debt = parseInt(document.getElementById('entDebt').value);
-            if (!isNaN(debt)) data.debt = debt;
+                var income = _readOptionalInt(document.getElementById('entIncome'));
+                if (income !== undefined) data.income = income;
 
-            var workers = parseInt(document.getElementById('entWorkers').value);
-            if (!isNaN(workers) && workers >= 0) data.workerCount = workers;
+                var expenses = _readOptionalInt(document.getElementById('entExpenses'));
+                if (expenses !== undefined) data.expenses = expenses;
 
-            var income = document.getElementById('entIncome').value;
-            if (income !== '') {
-                var val = parseInt(income);
-                if (!isNaN(val)) data.income = val;
-            }
+                var wages = _readOptionalInt(document.getElementById('entWages'));
+                if (wages !== undefined) data.wages = wages;
 
-            var expenses = document.getElementById('entExpenses').value;
-            if (expenses !== '') {
-                var val = parseInt(expenses);
-                if (!isNaN(val)) data.expenses = val;
-            }
+                var result = commands.createEnterprise(data);
+                if (!result.success) {
+                    toast('Failed to create enterprise: ' + result.reason, 'error');
+                    return false;
+                }
 
-            var wages = document.getElementById('entWages').value;
-            if (wages !== '') {
-                var val = parseInt(wages);
-                if (!isNaN(val)) data.wages = val;
-            }
-
-            var result = commands.createEnterprise(data);
-
-            if (result && result.success) {
-                _saveMasterData();
-                _invalidateCaches();
-                _showToast('Enterprise created: ' + result.data.name, 'success');
-                _closeTopModal();
+                toast('Enterprise created: ' + result.data.name, 'success');
+                modal.close();
                 if (onSuccess) onSuccess(result.data);
                 return true;
-            } else {
-                _showToast('Failed to create enterprise: ' + (result ? result.reason : 'Unknown error'), 'error');
-                return false;
             }
-        }
-    });
+        });
 
-    setTimeout(function() {
+        _afterRender(function() {
+            _wireCategoryFilter();
+            _wireOwnerSelector(ownerTypeOptions.indexOf('selected') !== -1);
+        });
+    }
+
+    function _wireCategoryFilter() {
         var categorySelect = document.getElementById('entCategory');
         var typeSelect = document.getElementById('entType');
+        if (!categorySelect || !typeSelect) return;
 
-        if (categorySelect && typeSelect) {
-            categorySelect.addEventListener('change', function() {
-                var cat = this.value;
-                typeSelect.innerHTML = '<option value="">Select type...</option>';
-                if (cat) {
-                    var types = _getTypes();
-                    if (types) {
-                        var typeList = types.getEnterpriseTypesByCategory(cat);
-                        for (var i = 0; i < typeList.length; i++) {
-                            var t = typeList[i];
-                            var opt = document.createElement('option');
-                            opt.value = t.id;
-                            opt.textContent = t.name + ' (Income: ' + t.baseIncome + ', Workers: ' + t.baseWorkers + ')';
-                            typeSelect.appendChild(opt);
-                        }
-                    }
-                }
-            });
-        }
+        var types = _requireTypeQueries();
+        var esc = _requireEscapeHtml();
 
+        categorySelect.addEventListener('change', function() {
+            var cat = this.value;
+            var typeList = cat ? types.getEnterpriseTypesByCategory(cat) : types.getEnterpriseTypes();
+            var html = '<option value="">Select type...</option>';
+            for (var i = 0; i < typeList.length; i++) {
+                var t = typeList[i];
+                html += '<option value="' + esc(t.id) + '">' +
+                    esc(t.name) + ' (Income: ' + t.baseIncome + ', Workers: ' + t.baseWorkers + ')</option>';
+            }
+            typeSelect.innerHTML = html;
+        });
+    }
+
+    function _wireOwnerSelector() {
         var selectBtn = document.getElementById('selectOwnerBtn');
-        if (selectBtn) {
-            selectBtn.addEventListener('click', function() {
-                var ownerType = document.getElementById('entOwnerType').value;
-
-                if (ownerType === 'character') {
-                    _openCharacterSelectorForIndustry(
-                        'Select Owner',
-                        function(character) {
-                            if (character) {
-                                document.getElementById('entOwnerDisplay').value = character.name + (character.surname ? ' ' + character.surname : '');
-                                document.getElementById('entOwnerId').value = character.id;
-                                document.getElementById('entOwnerTypeHidden').value = 'character';
-                                _showToast('Selected: ' + character.name, 'success');
-                            }
-                        },
-                        {
-                            gender: 'all',
-                            status: 'all',
-                            peers: false,
-                            showDeceased: false
-                        }
-                    );
-                } else if (ownerType === 'household') {
-                    _openHouseholdSelector('Select Household Owner', function(household) {
-                        if (household) {
-                            document.getElementById('entOwnerDisplay').value = household.name;
-                            document.getElementById('entOwnerId').value = household.id;
-                            document.getElementById('entOwnerTypeHidden').value = 'household';
-                            _showToast('Selected: ' + household.name, 'success');
-                        }
-                    });
-                } else {
-                    _showToast('Select an owner type first (Character or Household)', 'warning');
-                }
-            });
-        }
-
         var clearBtn = document.getElementById('clearOwnerBtn');
+        var ownerTypeSelect = document.getElementById('entOwnerType');
+        if (!selectBtn || !ownerTypeSelect) return;
+
+        var esc = _requireEscapeHtml();
+        var toast = _requireToast();
+
+        selectBtn.addEventListener('click', function() {
+            var ownerType = ownerTypeSelect.value;
+
+            if (ownerType === 'character') {
+                _openCharacterSelector('Select Owner', function(character) {
+                    if (!character) return;
+                    document.getElementById('entOwnerDisplay').value =
+                        character.name + (character.surname ? ' ' + character.surname : '');
+                    document.getElementById('entOwnerId').value = character.id;
+                    toast('Selected: ' + character.name, 'success');
+                });
+            } else if (ownerType === 'household') {
+                _openHouseholdSelector('Select Household Owner', function(household) {
+                    if (!household) return;
+                    document.getElementById('entOwnerDisplay').value = household.name;
+                    document.getElementById('entOwnerId').value = household.id;
+                    toast('Selected: ' + household.name, 'success');
+                });
+            } else {
+                toast('Select an owner type first (Character or Household)', 'warning');
+            }
+        });
+
         if (clearBtn) {
             clearBtn.addEventListener('click', function() {
                 document.getElementById('entOwnerDisplay').value = '';
                 document.getElementById('entOwnerId').value = '';
-                document.getElementById('entOwnerTypeHidden').value = '';
-                _showToast('Owner cleared', 'info');
+                toast('Owner cleared', 'info');
             });
         }
-    }, 100);
-}
-
-// =============================================================================
-// 6. ENTERPRISE DETAILS MODAL
-// =============================================================================
-
-function openEnterpriseDetailsModal(enterpriseId, onSuccess) {
-    var queries = _getQueries();
-    var commands = _getCommands();
-
-    if (!queries || !commands) {
-        _showToast('Industry system not available', 'error');
-        return;
     }
 
-    var enterprise = queries.getEnterprise(enterpriseId);
-    if (!enterprise) {
-        _showToast('Enterprise not found', 'error');
-        return;
+    // =========================================================================
+    // 4. CHARACTER / HOUSEHOLD SELECTOR WRAPPERS
+    // =========================================================================
+
+    function _openCharacterSelector(title, onSelect) {
+        var open = _requireCharacterSelector();
+        open({
+            title: title,
+            targetId: null,
+            onSelect: onSelect,
+            filters: {
+                gender: 'all',
+                status: 'all',
+                showDeceased: false,
+                location: 'all'
+            }
+        });
     }
 
-    var summary = queries.getEnterpriseSummary(enterpriseId);
-    if (!summary) {
-        _showToast('Enterprise summary not available', 'error');
-        return;
+    function _openHouseholdSelector(title, onSelect) {
+        var open = _requireHouseholdSelector();
+        open({
+            title: title,
+            targetId: null,
+            onSelect: onSelect
+        });
     }
 
-    var workers = enterprise.workerList || [];
+    // =========================================================================
+    // 5. ENTERPRISE DETAILS MODAL
+    // =========================================================================
 
-    var content = `
-        <div style="max-height: 500px; overflow-y: auto; padding: 4px;">
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
-                <div style="background: var(--bg2); padding: 12px; border-radius: 8px;">
-                    <div style="font-size: 0.6rem; color: var(--dim);">Name</div>
-                    <div style="font-size: 0.9rem; font-weight: bold;">${_escapeHtml(enterprise.name)}</div>
-                    <div style="font-size: 0.65rem; color: var(--dim);">${_escapeHtml(enterprise.typeName)} (${_escapeHtml(enterprise.category)})</div>
-                </div>
-                <div style="background: var(--bg2); padding: 12px; border-radius: 8px;">
-                    <div style="font-size: 0.6rem; color: var(--dim);">Status</div>
-                    <div style="font-size: 0.9rem; font-weight: bold; color: ${enterprise.status === 'active' ? 'var(--success)' : enterprise.status === 'bankrupt' ? 'var(--danger)' : 'var(--warn)'};">${_escapeHtml(enterprise.status.charAt(0).toUpperCase() + enterprise.status.slice(1))}</div>
-                    <div style="font-size: 0.65rem; color: var(--dim);">Founded: ${enterprise.foundedYear}</div>
-                </div>
-            </div>
+    function openEnterpriseDetailsModal(enterpriseId, onSuccess) {
+        var queries = _requireQueries();
+        var commands = _requireCommands();
+        var modal = _requireModalCore();
+        var esc = _requireEscapeHtml();
+        var toast = _requireToast();
+        var confirm = _requireConfirmDialog();
+        var getChar = _requireCharacterById();
 
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
-                <div style="background: var(--bg2); padding: 12px; border-radius: 8px;">
-                    <div style="font-size: 0.6rem; color: var(--dim);">Owner</div>
-                    <div style="font-size: 0.85rem; font-weight: bold;">${_escapeHtml(enterprise.ownerName || 'None')}</div>
-                    <div style="font-size: 0.65rem; color: var(--dim);">${_escapeHtml(enterprise.ownerType)}</div>
-                </div>
-                <div style="background: var(--bg2); padding: 12px; border-radius: 8px;">
-                    <div style="font-size: 0.6rem; color: var(--dim);">Location</div>
-                    <div style="font-size: 0.85rem;">${_escapeHtml(enterprise.locationName || 'None')}</div>
-                </div>
-            </div>
-
-            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 12px;">
-                <div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center;">
-                    <div style="font-size: 0.6rem; color: var(--dim);">Wealth</div>
-                    <div style="font-size: 1.1rem; font-weight: bold; color: ${enterprise.wealth >= 0 ? 'var(--success)' : 'var(--danger)'};">${enterprise.wealth || 0}</div>
-                </div>
-                <div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center;">
-                    <div style="font-size: 0.6rem; color: var(--dim);">Debt</div>
-                    <div style="font-size: 1.1rem; font-weight: bold; color: ${enterprise.debt > 0 ? 'var(--danger)' : 'var(--dim)'};">${enterprise.debt || 0}</div>
-                </div>
-                <div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center;">
-                    <div style="font-size: 0.6rem; color: var(--dim);">Annual Profit</div>
-                    <div style="font-size: 1.1rem; font-weight: bold; color: ${summary && summary.annualProfit >= 0 ? 'var(--success)' : 'var(--danger)'};">${summary ? summary.annualProfit : 0}</div>
-                </div>
-            </div>
-
-            <div style="background: var(--bg2); padding: 12px; border-radius: 8px; margin-bottom: 12px;">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div style="font-size: 0.7rem; color: var(--accent);">Workers (${workers.length} / ${enterprise.maxWorkers || 10})</div>
-                    <button id="manageWorkersBtn" class="btn" style="font-size: 0.6rem; padding: 4px 10px;">Manage Workers</button>
-                </div>
-                <div style="max-height: 100px; overflow-y: auto; margin-top: 4px;">
-                    ${workers.length === 0 ? '<div style="text-align:center;padding:8px;color:var(--dim);font-size:0.6rem;">No workers</div>' :
-                        workers.map(function(w) {
-                            var char = _getCharacterById(w);
-                            var name = char ? char.name + ' ' + (char.surname || '') : 'Unknown';
-                            var wage = enterprise.workerWages ? enterprise.workerWages[w] || enterprise.wages || 8 : enterprise.wages || 8;
-                            return '<div style="padding:2px 8px;font-size:0.6rem;border-bottom:1px solid var(--border2);">' +
-                                _escapeHtml(name) + ' <span style="float:right;color:var(--dim);">Wage: ' + wage + '</span></div>';
-                        }).join('')
-                    }
-                </div>
-            </div>
-
-            <div style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
-                <button id="editEnterpriseBtn" class="btn primary" style="font-size: 0.7rem; padding: 4px 12px;">Edit</button>
-                <button id="processYearBtn" class="btn" style="font-size: 0.7rem; padding: 4px 12px;">Process Year</button>
-                <button id="deleteEnterpriseBtn" class="btn danger" style="font-size: 0.7rem; padding: 4px 12px;">Delete</button>
-            </div>
-        </div>
-    `;
-
-    _openModal({
-        title: 'Enterprise Details',
-        content: content,
-        confirmText: 'Close',
-        cancelText: '',
-        onConfirm: function() {}
-    });
-
-    setTimeout(function() {
-        var editBtn = document.getElementById('editEnterpriseBtn');
-        if (editBtn) {
-            editBtn.addEventListener('click', function() {
-                _closeTopModal();
-                openEditEnterpriseModal(enterpriseId, onSuccess);
-            });
+        var enterprise = queries.getEnterprise(enterpriseId);
+        if (!enterprise) {
+            toast('Enterprise not found', 'error');
+            return;
         }
 
-        var processBtn = document.getElementById('processYearBtn');
-        if (processBtn) {
-            processBtn.addEventListener('click', function() {
-                var processor = typeof window.IndustryProcessor !== 'undefined' ? window.IndustryProcessor : null;
-                if (processor && typeof processor.processAnnualEnterprise === 'function') {
-                    var result = processor.processAnnualEnterprise(enterpriseId);
-                    if (result && result.success) {
-                        _showToast('Processed year for ' + result.enterpriseName + ': ' + result.netProfit + ' profit', 'success');
-                        _closeTopModal();
-                        if (onSuccess) onSuccess();
-                    } else {
-                        _showToast('Failed to process year: ' + (result ? result.reason : 'Unknown error'), 'error');
-                    }
-                } else {
-                    _showToast('Industry processor not available', 'error');
-                }
-            });
+        var summary = queries.getEnterpriseSummary(enterpriseId);
+        if (!summary) {
+            toast('Enterprise summary not available', 'error');
+            return;
         }
 
-        var deleteBtn = document.getElementById('deleteEnterpriseBtn');
-        if (deleteBtn) {
-            deleteBtn.addEventListener('click', function() {
-                _confirmDialog('Delete "' + enterprise.name + '"?', 'Delete', function() {
-                    var result = commands.deleteEnterprise(enterpriseId);
-                    if (result && result.success) {
-                        _showToast('Enterprise deleted', 'info');
-                        _closeTopModal();
-                        _invalidateCaches();
-                        if (onSuccess) onSuccess();
-                    } else {
-                        _showToast('Failed to delete enterprise: ' + (result ? result.reason : 'Unknown error'), 'error');
-                    }
-                });
-            });
-        }
+        var workers = enterprise.workerList || [];
+        var workerWages = enterprise.workerWages || {};
+        var baseWage = enterprise.wages !== undefined ? enterprise.wages : 0;
 
-        var manageWorkersBtn = document.getElementById('manageWorkersBtn');
-        if (manageWorkersBtn) {
-            manageWorkersBtn.addEventListener('click', function() {
-                _closeTopModal();
-                openManageWorkersModal(enterpriseId, onSuccess);
-            });
-        }
-    }, 100);
-}
-
-// =============================================================================
-// 7. EDIT ENTERPRISE MODAL
-// =============================================================================
-
-function openEditEnterpriseModal(enterpriseId, onSuccess) {
-    var queries = _getQueries();
-    var commands = _getCommands();
-
-    if (!queries || !commands) {
-        _showToast('Industry system not available', 'error');
-        return;
-    }
-
-    var enterprise = queries.getEnterprise(enterpriseId);
-    if (!enterprise) {
-        _showToast('Enterprise not found', 'error');
-        return;
-    }
-
-    var content = `
-        <div style="padding: 8px; max-height: 400px; overflow-y: auto;">
-            <div class="form-group" style="margin-bottom: 12px;">
-                <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Enterprise Name</label>
-                <input type="text" id="editName" value="${_escapeHtml(enterprise.name)}" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">
-            </div>
-
-            <div class="form-group" style="margin-bottom: 12px;">
-                <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Status</label>
-                <select id="editStatus" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">
-                    <option value="active" ${enterprise.status === 'active' ? 'selected' : ''}>Active</option>
-                    <option value="inactive" ${enterprise.status === 'inactive' ? 'selected' : ''}>Inactive</option>
-                    <option value="bankrupt" ${enterprise.status === 'bankrupt' ? 'selected' : ''}>Bankrupt</option>
-                    <option value="closed" ${enterprise.status === 'closed' ? 'selected' : ''}>Closed</option>
-                </select>
-            </div>
-
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
-                <div>
-                    <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Wealth</label>
-                    <input type="number" id="editWealth" value="${enterprise.wealth || 0}" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
-                </div>
-                <div>
-                    <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Debt</label>
-                    <input type="number" id="editDebt" value="${enterprise.debt || 0}" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
-                </div>
-            </div>
-
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
-                <div>
-                    <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Income / year</label>
-                    <input type="number" id="editIncome" value="${enterprise.income || 0}" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
-                </div>
-                <div>
-                    <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Expenses / year</label>
-                    <input type="number" id="editExpenses" value="${enterprise.expenses || 0}" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
-                </div>
-            </div>
-
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
-                <div>
-                    <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Wages / worker</label>
-                    <input type="number" id="editWages" value="${enterprise.wages || 0}" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
-                </div>
-                <div>
-                    <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Max Workers</label>
-                    <input type="number" id="editMaxWorkers" value="${enterprise.maxWorkers || 10}" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
-                </div>
-            </div>
-
-            <div class="form-group" style="margin-bottom: 12px;">
-                <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes</label>
-                <textarea id="editNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">${_escapeHtml(enterprise.notes || '')}</textarea>
-            </div>
-        </div>
-    `;
-
-    _openModal({
-        title: 'Edit Enterprise: ' + enterprise.name,
-        content: content,
-        confirmText: 'Save',
-        cancelText: 'Cancel',
-        onConfirm: function() {
-            var updates = {
-                name: document.getElementById('editName').value.trim(),
-                status: document.getElementById('editStatus').value,
-                wealth: parseInt(document.getElementById('editWealth').value) || 0,
-                debt: parseInt(document.getElementById('editDebt').value) || 0,
-                income: parseInt(document.getElementById('editIncome').value) || 0,
-                expenses: parseInt(document.getElementById('editExpenses').value) || 0,
-                wages: parseInt(document.getElementById('editWages').value) || 0,
-                maxWorkers: parseInt(document.getElementById('editMaxWorkers').value) || 10,
-                notes: document.getElementById('editNotes').value
-            };
-
-            var result = commands.updateEnterprise(enterpriseId, updates);
-            if (result && result.success) {
-                _saveMasterData();
-                _invalidateCaches();
-                _showToast('Enterprise updated', 'success');
-                _closeTopModal();
-                if (onSuccess) onSuccess();
-                return true;
-            } else {
-                _showToast('Failed to update enterprise: ' + (result ? result.reason : 'Unknown error'), 'error');
-                return false;
+        var workerRows = '';
+        if (workers.length === 0) {
+            workerRows = '<div class="modal-empty">No workers</div>';
+        } else {
+            for (var i = 0; i < workers.length; i++) {
+                var wId = workers[i];
+                var char = getChar(wId);
+                var name = char ? (char.name + ' ' + (char.surname || '')) : wId;
+                var wage = workerWages[wId] !== undefined ? workerWages[wId] : baseWage;
+                workerRows += '<div class="worker-row">' +
+                    '<span>' + esc(name) + '</span>' +
+                    '<span class="worker-wage">Wage: ' + wage + '</span>' +
+                    '</div>';
             }
         }
-    });
-}
 
-// =============================================================================
-// 8. MANAGE WORKERS MODAL
-// =============================================================================
+        var content = `
+            <div style="max-height: 500px; overflow-y: auto; padding: 4px;">
+                <div class="detail-grid-2">
+                    <div class="detail-card">
+                        <div class="detail-label">Name</div>
+                        <div class="detail-value">${esc(enterprise.name)}</div>
+                        <div class="detail-sub">${esc(enterprise.typeName)} (${esc(enterprise.category)})</div>
+                    </div>
+                    <div class="detail-card">
+                        <div class="detail-label">Status</div>
+                        <div class="detail-value status-${esc(enterprise.status)}">${esc(enterprise.status)}</div>
+                        <div class="detail-sub">Founded: ${esc(String(enterprise.foundedYear))}</div>
+                    </div>
+                </div>
 
-function openManageWorkersModal(enterpriseId, onSuccess) {
-    var queries = _getQueries();
-    var commands = _getCommands();
+                <div class="detail-grid-2">
+                    <div class="detail-card">
+                        <div class="detail-label">Owner</div>
+                        <div class="detail-value">${esc(summary.ownerName || '—')}</div>
+                        <div class="detail-sub">${esc(enterprise.ownerType || 'none')}</div>
+                    </div>
+                    <div class="detail-card">
+                        <div class="detail-label">Location</div>
+                        <div class="detail-value">${esc(enterprise.locationName || '—')}</div>
+                    </div>
+                </div>
 
-    if (!queries || !commands) {
-        _showToast('Industry system not available', 'error');
-        return;
-    }
+                <div class="detail-grid-3">
+                    <div class="detail-card detail-card-center">
+                        <div class="detail-label">Wealth</div>
+                        <div class="detail-value ${enterprise.wealth >= 0 ? 'value-pos' : 'value-neg'}">${enterprise.wealth}</div>
+                    </div>
+                    <div class="detail-card detail-card-center">
+                        <div class="detail-label">Debt</div>
+                        <div class="detail-value ${enterprise.debt > 0 ? 'value-neg' : ''}">${enterprise.debt}</div>
+                    </div>
+                    <div class="detail-card detail-card-center">
+                        <div class="detail-label">Annual Profit</div>
+                        <div class="detail-value ${summary.annualProfit >= 0 ? 'value-pos' : 'value-neg'}">${summary.annualProfit}</div>
+                    </div>
+                </div>
 
-    var enterprise = queries.getEnterprise(enterpriseId);
-    if (!enterprise) {
-        _showToast('Enterprise not found', 'error');
-        return;
-    }
+                <div class="detail-card">
+                    <div class="detail-card-header">
+                        <div class="detail-label">Workers (${workers.length} / ${enterprise.maxWorkers})</div>
+                        <button id="manageWorkersBtn" class="btn">Manage Workers</button>
+                    </div>
+                    <div class="worker-list">${workerRows}</div>
+                </div>
 
-    var workers = enterprise.workerList || [];
-    var workerWages = enterprise.workerWages || {};
-
-    var workerHtml = workers.length === 0 ?
-        '<div style="text-align:center;padding:12px;color:var(--dim);font-size:0.7rem;">No workers assigned</div>' :
-        workers.map(function(w) {
-            var char = _getCharacterById(w);
-            var name = char ? char.name + ' ' + (char.surname || '') : 'Unknown';
-            var wage = workerWages[w] || enterprise.wages || 8;
-            return '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:var(--bg);border-radius:4px;margin-bottom:2px;">' +
-                '<span style="font-size:0.7rem;">' + _escapeHtml(name) + '</span>' +
-                '<div>' +
-                '<input type="number" class="worker-wage" data-worker="' + w + '" value="' + wage + '" style="width:60px;padding:2px 4px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.6rem;">' +
-                '<button class="update-wage-btn" data-worker="' + w + '" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:0.6rem;margin-left:4px;">[Update]</button>' +
-                '<button class="remove-worker-btn" data-worker="' + w + '" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:0.6rem;margin-left:4px;">[Remove]</button>' +
-                '</div></div>';
-        }).join('');
-
-    var content = `
-        <div style="max-height: 500px; overflow-y: auto; padding: 4px;">
-            <div style="margin-bottom: 12px;">
-                <div style="font-size: 0.7rem; color: var(--accent); margin-bottom: 6px;">Current Workers (${workers.length} / ${enterprise.maxWorkers || 10})</div>
-                <div style="max-height: 200px; overflow-y: auto;">
-                    ${workerHtml}
+                <div class="modal-actions-row">
+                    <button id="editEnterpriseBtn" class="btn primary">Edit</button>
+                    <button id="processYearBtn" class="btn">Process Year</button>
+                    <button id="deleteEnterpriseBtn" class="btn danger">Delete</button>
                 </div>
             </div>
+        `;
 
-            <div style="border-top: 1px solid var(--border); padding-top: 12px;">
-                <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
-                    <div style="flex: 2; min-width: 150px;">
-                        <input type="text" id="addWorkerDisplay" placeholder="Select worker..." readonly style="width: 100%; padding: 6px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem; cursor: pointer;">
-                        <input type="hidden" id="addWorkerId">
-                    </div>
-                    <div style="flex: 1; min-width: 80px;">
-                        <input type="number" id="addWorkerWage" placeholder="Wage" value="${enterprise.wages || 8}" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
-                    </div>
-                    <button id="selectWorkerBtn" class="btn" style="font-size: 0.6rem; padding: 4px 10px;">Select</button>
-                    <button id="addWorkerBtn" class="btn primary" style="font-size: 0.6rem; padding: 4px 10px;">Add</button>
-                    <button id="clearWorkerBtn" class="btn" style="font-size: 0.6rem; padding: 4px 8px;">Clear</button>
-                </div>
-            </div>
-        </div>
-    `;
+        modal.open({
+            title: 'Enterprise Details',
+            content: content,
+            confirmText: 'Close',
+            cancelText: '',
+            onConfirm: function() {}
+        });
 
-    _openModal({
-        title: 'Manage Workers: ' + enterprise.name,
-        content: content,
-        confirmText: 'Close',
-        cancelText: '',
-        onConfirm: function() {}
-    });
+        _afterRender(function() {
+            var editBtn = document.getElementById('editEnterpriseBtn');
+            if (editBtn) {
+                editBtn.addEventListener('click', function() {
+                    modal.close();
+                    openEditEnterpriseModal(enterpriseId, onSuccess);
+                });
+            }
 
-    setTimeout(function() {
-        // Remove worker buttons
-        var removeBtns = document.querySelectorAll('.remove-worker-btn');
-        for (var i = 0; i < removeBtns.length; i++) {
-            (function(btn) {
-                btn.addEventListener('click', function() {
-                    var workerId = this.dataset.worker;
-                    var char = _getCharacterById(workerId);
-                    var name = char ? char.name : 'Unknown';
-                    _confirmDialog('Remove ' + name + ' from this enterprise?', 'Remove Worker', function() {
-                        var result = commands.removeWorkerFromEnterprise(enterpriseId, workerId);
-                        if (result && result.success) {
-                            _showToast('Worker removed', 'info');
-                            _closeTopModal();
-                            _invalidateCaches();
-                            openManageWorkersModal(enterpriseId, onSuccess);
+            var processBtn = document.getElementById('processYearBtn');
+            if (processBtn) {
+                processBtn.addEventListener('click', function() {
+                    var processor = window.IndustryProcessor;
+                    if (!processor) {
+                        toast('Industry processor not available', 'error');
+                        return;
+                    }
+                    var result = processor.processAnnualEnterprise(enterpriseId);
+                    if (result.success) {
+                        if (result.skipped) {
+                            toast('Already processed for this year', 'info');
                         } else {
-                            _showToast('Failed to remove worker: ' + (result ? result.reason : 'Unknown error'), 'error');
+                            toast('Processed year: net ' + result.netProfit, 'success');
+                        }
+                        modal.close();
+                        if (onSuccess) onSuccess();
+                    } else {
+                        toast('Failed to process year: ' + result.reason, 'error');
+                    }
+                });
+            }
+
+            var deleteBtn = document.getElementById('deleteEnterpriseBtn');
+            if (deleteBtn) {
+                deleteBtn.addEventListener('click', function() {
+                    confirm('Delete "' + enterprise.name + '"?', 'Delete Enterprise', function() {
+                        var result = commands.deleteEnterprise(enterpriseId);
+                        if (result.success) {
+                            toast('Enterprise deleted', 'info');
+                            modal.close();
+                            if (onSuccess) onSuccess();
+                        } else {
+                            toast('Failed to delete: ' + result.reason, 'error');
                         }
                     });
                 });
-            })(removeBtns[i]);
+            }
+
+            var manageWorkersBtn = document.getElementById('manageWorkersBtn');
+            if (manageWorkersBtn) {
+                manageWorkersBtn.addEventListener('click', function() {
+                    modal.close();
+                    openManageWorkersModal(enterpriseId, onSuccess);
+                });
+            }
+        });
+    }
+
+    // =========================================================================
+    // 6. EDIT ENTERPRISE MODAL
+    // =========================================================================
+
+    function openEditEnterpriseModal(enterpriseId, onSuccess) {
+        var queries = _requireQueries();
+        var commands = _requireCommands();
+        var modal = _requireModalCore();
+        var esc = _requireEscapeHtml();
+        var toast = _requireToast();
+
+        var enterprise = queries.getEnterprise(enterpriseId);
+        if (!enterprise) {
+            toast('Enterprise not found', 'error');
+            return;
         }
 
-        // Update wage buttons
-        var updateBtns = document.querySelectorAll('.update-wage-btn');
-        for (var i = 0; i < updateBtns.length; i++) {
-            (function(btn) {
-                btn.addEventListener('click', function() {
-                    var workerId = this.dataset.worker;
-                    var input = document.querySelector('.worker-wage[data-worker="' + workerId + '"]');
-                    if (input) {
-                        var wage = parseInt(input.value);
-                        if (isNaN(wage) || wage < 0) {
-                            _showToast('Please enter a valid wage', 'error');
+        var statuses = ['active', 'inactive', 'bankrupt', 'closed'];
+        var statusOptions = '';
+        for (var i = 0; i < statuses.length; i++) {
+            var sel = enterprise.status === statuses[i] ? 'selected' : '';
+            statusOptions += '<option value="' + statuses[i] + '" ' + sel + '>' +
+                statuses[i].charAt(0).toUpperCase() + statuses[i].slice(1) + '</option>';
+        }
+
+        var content = `
+            <div style="max-height: 500px; overflow-y: auto; padding: 4px;">
+                <div class="form-group">
+                    <label class="form-label">Enterprise Name</label>
+                    <input type="text" id="editName" class="form-input" value="${esc(enterprise.name)}">
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Status</label>
+                    <select id="editStatus" class="form-input">${statusOptions}</select>
+                </div>
+
+                <div class="form-grid-2">
+                    <div>
+                        <label class="form-label-sm">Wealth</label>
+                        <input type="number" id="editWealth" class="form-input" value="${enterprise.wealth}">
+                    </div>
+                    <div>
+                        <label class="form-label-sm">Debt</label>
+                        <input type="number" id="editDebt" class="form-input" value="${enterprise.debt}">
+                    </div>
+                </div>
+
+                <div class="form-grid-2">
+                    <div>
+                        <label class="form-label-sm">Income / year</label>
+                        <input type="number" id="editIncome" class="form-input" value="${enterprise.income}">
+                    </div>
+                    <div>
+                        <label class="form-label-sm">Expenses / year</label>
+                        <input type="number" id="editExpenses" class="form-input" value="${enterprise.expenses}">
+                    </div>
+                </div>
+
+                <div class="form-grid-2">
+                    <div>
+                        <label class="form-label-sm">Wages / worker</label>
+                        <input type="number" id="editWages" class="form-input" value="${enterprise.wages}">
+                    </div>
+                    <div>
+                        <label class="form-label-sm">Max Workers</label>
+                        <input type="number" id="editMaxWorkers" class="form-input" value="${enterprise.maxWorkers}">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Notes</label>
+                    <textarea id="editNotes" class="form-input" rows="2">${esc(enterprise.notes || '')}</textarea>
+                </div>
+            </div>
+        `;
+
+        modal.open({
+            title: 'Edit Enterprise: ' + enterprise.name,
+            content: content,
+            confirmText: 'Save',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var updates = {};
+
+                var name = document.getElementById('editName').value.trim();
+                if (!name) {
+                    toast('Enterprise name is required', 'error');
+                    return false;
+                }
+                updates.name = name;
+                updates.status = document.getElementById('editStatus').value;
+                updates.notes = document.getElementById('editNotes').value;
+
+                var wealth = _readRequiredInt(document.getElementById('editWealth'));
+                if (wealth === undefined) {
+                    toast('Wealth must be a valid number', 'error');
+                    return false;
+                }
+                updates.wealth = wealth;
+
+                var debt = _readRequiredInt(document.getElementById('editDebt'));
+                if (debt === undefined || debt < 0) {
+                    toast('Debt must be a non-negative number', 'error');
+                    return false;
+                }
+                updates.debt = debt;
+
+                var income = _readRequiredInt(document.getElementById('editIncome'));
+                if (income === undefined) {
+                    toast('Income must be a valid number', 'error');
+                    return false;
+                }
+                updates.income = income;
+
+                var expenses = _readRequiredInt(document.getElementById('editExpenses'));
+                if (expenses === undefined) {
+                    toast('Expenses must be a valid number', 'error');
+                    return false;
+                }
+                updates.expenses = expenses;
+
+                var wages = _readRequiredInt(document.getElementById('editWages'));
+                if (wages === undefined || wages < 0) {
+                    toast('Wages must be a non-negative number', 'error');
+                    return false;
+                }
+                updates.wages = wages;
+
+                var maxWorkers = _readRequiredInt(document.getElementById('editMaxWorkers'));
+                if (maxWorkers === undefined || maxWorkers < 1) {
+                    toast('Max workers must be at least 1', 'error');
+                    return false;
+                }
+                updates.maxWorkers = maxWorkers;
+
+                var result = commands.updateEnterprise(enterpriseId, updates);
+                if (!result.success) {
+                    toast('Failed to update: ' + result.reason, 'error');
+                    return false;
+                }
+
+                toast('Enterprise updated', 'success');
+                modal.close();
+                if (onSuccess) onSuccess(result.data);
+                return true;
+            }
+        });
+    }
+
+    // =========================================================================
+    // 7. MANAGE WORKERS MODAL
+    // =========================================================================
+
+    function openManageWorkersModal(enterpriseId, onSuccess) {
+        var queries = _requireQueries();
+        var commands = _requireCommands();
+        var modal = _requireModalCore();
+        var esc = _requireEscapeHtml();
+        var toast = _requireToast();
+        var confirm = _requireConfirmDialog();
+        var getChar = _requireCharacterById();
+
+        var enterprise = queries.getEnterprise(enterpriseId);
+        if (!enterprise) {
+            toast('Enterprise not found', 'error');
+            return;
+        }
+
+        var workers = enterprise.workerList || [];
+        var workerWages = enterprise.workerWages || {};
+        var baseWage = enterprise.wages !== undefined ? enterprise.wages : 0;
+
+        var workerRows = '';
+        if (workers.length === 0) {
+            workerRows = '<div class="modal-empty">No workers assigned</div>';
+        } else {
+            for (var i = 0; i < workers.length; i++) {
+                var wId = workers[i];
+                var char = getChar(wId);
+                var name = char ? (char.name + ' ' + (char.surname || '')) : wId;
+                var wage = workerWages[wId] !== undefined ? workerWages[wId] : baseWage;
+                workerRows += '<div class="worker-row" data-worker-id="' + esc(wId) + '">' +
+                    '<span class="worker-name">' + esc(name) + '</span>' +
+                    '<span class="worker-controls">' +
+                    '<input type="number" class="form-input-sm worker-wage-input" value="' + wage + '">' +
+                    '<button class="btn-sm" data-action="update-wage">Update</button>' +
+                    '<button class="btn-sm danger" data-action="remove-worker">Remove</button>' +
+                    '</span>' +
+                    '</div>';
+            }
+        }
+
+        var content = `
+            <div style="max-height: 500px; overflow-y: auto; padding: 4px;">
+                <div class="form-section">
+                    <div class="form-section-title">Current Workers (${workers.length} / ${enterprise.maxWorkers})</div>
+                    <div class="worker-list" id="workerListContainer">${workerRows}</div>
+                </div>
+
+                <div class="form-section">
+                    <div class="form-section-title">Add Worker</div>
+                    <div class="form-row">
+                        <input type="text" id="addWorkerDisplay" class="form-input" placeholder="Select worker..." readonly>
+                        <input type="hidden" id="addWorkerId">
+                        <input type="number" id="addWorkerWage" class="form-input-sm" value="${baseWage}" placeholder="Wage">
+                        <button id="selectWorkerBtn" class="btn">Select</button>
+                        <button id="addWorkerBtn" class="btn primary">Add</button>
+                        <button id="clearWorkerBtn" class="btn">Clear</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        modal.open({
+            title: 'Manage Workers: ' + enterprise.name,
+            content: content,
+            confirmText: 'Close',
+            cancelText: '',
+            onConfirm: function() {}
+        });
+
+        _afterRender(function() {
+            // Event delegation on the worker list
+            var container = document.getElementById('workerListContainer');
+            if (container) {
+                container.addEventListener('click', function(event) {
+                    var btn = event.target.closest('[data-action]');
+                    if (!btn) return;
+                    var row = btn.closest('[data-worker-id]');
+                    if (!row) return;
+
+                    var workerId = row.dataset.workerId;
+                    var action = btn.dataset.action;
+
+                    if (action === 'remove-worker') {
+                        var char = getChar(workerId);
+                        var name = char ? char.name : workerId;
+                        confirm('Remove ' + name + ' from this enterprise?', 'Remove Worker', function() {
+                            var result = commands.removeWorkerFromEnterprise(enterpriseId, workerId);
+                            if (result.success) {
+                                toast('Worker removed', 'info');
+                                modal.close();
+                                openManageWorkersModal(enterpriseId, onSuccess);
+                            } else {
+                                toast('Failed to remove worker: ' + result.reason, 'error');
+                            }
+                        });
+                    } else if (action === 'update-wage') {
+                        var input = row.querySelector('.worker-wage-input');
+                        var wage = _readRequiredInt(input);
+                        if (wage === undefined || wage < 0) {
+                            toast('Please enter a valid wage', 'error');
                             return;
                         }
                         var result = commands.setWorkerWage(enterpriseId, workerId, wage);
-                        if (result && result.success) {
-                            _showToast('Wage updated', 'success');
-                            _closeTopModal();
-                            _invalidateCaches();
+                        if (result.success) {
+                            toast('Wage updated', 'success');
+                            modal.close();
                             openManageWorkersModal(enterpriseId, onSuccess);
                         } else {
-                            _showToast('Failed to update wage: ' + (result ? result.reason : 'Unknown error'), 'error');
+                            toast('Failed to update wage: ' + result.reason, 'error');
                         }
                     }
                 });
-            })(updateBtns[i]);
-        }
+            }
 
-        var selectBtn = document.getElementById('selectWorkerBtn');
-        if (selectBtn) {
-            selectBtn.addEventListener('click', function() {
-                var existingWorkers = {};
-                var workers = enterprise.workerList || [];
-                for (var i = 0; i < workers.length; i++) {
-                    existingWorkers[workers[i]] = true;
-                }
+            // Select worker
+            var selectBtn = document.getElementById('selectWorkerBtn');
+            if (selectBtn) {
+                selectBtn.addEventListener('click', function() {
+                    var existing = {};
+                    for (var i = 0; i < workers.length; i++) {
+                        existing[workers[i]] = true;
+                    }
 
-                _openCharacterSelectorForIndustry('Select Worker', function(character) {
-                    if (character) {
-                        if (existingWorkers[character.id]) {
-                            _showToast('This character is already a worker', 'warning');
+                    _openCharacterSelector('Select Worker', function(character) {
+                        if (!character) return;
+                        if (existing[character.id]) {
+                            toast('This character is already a worker', 'warning');
                             return;
                         }
-                        document.getElementById('addWorkerDisplay').value = character.name + (character.surname ? ' ' + character.surname : '');
+                        document.getElementById('addWorkerDisplay').value =
+                            character.name + (character.surname ? ' ' + character.surname : '');
                         document.getElementById('addWorkerId').value = character.id;
-                        _showToast('Selected: ' + character.name, 'success');
-                    }
-                }, {
-                    gender: 'all',
-                    status: 'all',
-                    peers: false,
-                    showDeceased: false
+                        toast('Selected: ' + character.name, 'success');
+                    });
                 });
-            });
-        }
+            }
 
-        var clearBtn = document.getElementById('clearWorkerBtn');
-        if (clearBtn) {
-            clearBtn.addEventListener('click', function() {
-                document.getElementById('addWorkerDisplay').value = '';
-                document.getElementById('addWorkerId').value = '';
-                _showToast('Selection cleared', 'info');
-            });
-        }
+            // Clear
+            var clearBtn = document.getElementById('clearWorkerBtn');
+            if (clearBtn) {
+                clearBtn.addEventListener('click', function() {
+                    document.getElementById('addWorkerDisplay').value = '';
+                    document.getElementById('addWorkerId').value = '';
+                });
+            }
 
-        var addBtn = document.getElementById('addWorkerBtn');
-        if (addBtn) {
-            addBtn.addEventListener('click', function() {
-                var workerId = document.getElementById('addWorkerId').value;
-                var wageInput = document.getElementById('addWorkerWage');
-                var wage = wageInput ? parseInt(wageInput.value) : 8;
+            // Add
+            var addBtn = document.getElementById('addWorkerBtn');
+            if (addBtn) {
+                addBtn.addEventListener('click', function() {
+                    var workerId = document.getElementById('addWorkerId').value;
+                    if (!workerId) {
+                        toast('Please select a worker first', 'error');
+                        return;
+                    }
+                    var wage = _readRequiredInt(document.getElementById('addWorkerWage'));
+                    if (wage === undefined || wage < 0) {
+                        toast('Please enter a valid wage', 'error');
+                        return;
+                    }
 
-                if (!workerId) {
-                    _showToast('Please select a worker first', 'error');
-                    return;
-                }
-                if (isNaN(wage) || wage < 0) {
-                    _showToast('Please enter a valid wage', 'error');
-                    return;
-                }
-
-                var result = commands.addWorkerToEnterprise(enterpriseId, workerId, wage);
-                if (result && result.success) {
-                    _showToast('Worker added', 'success');
-                    _closeTopModal();
-                    _invalidateCaches();
-                    openManageWorkersModal(enterpriseId, onSuccess);
-                } else {
-                    _showToast('Failed to add worker: ' + (result ? result.reason : 'Unknown error'), 'error');
-                }
-            });
-        }
-    }, 100);
-}
-
-// =============================================================================
-// 9. ENTERPRISE TYPE MANAGEMENT MODAL
-// =============================================================================
-
-function openManageEnterpriseTypesModal(onSuccess) {
-    var types = _getTypes();
-    if (!types) {
-        _showToast('Industry types not available', 'error');
-        return;
+                    var result = commands.addWorkerToEnterprise(enterpriseId, workerId, wage);
+                    if (result.success) {
+                        toast('Worker added', 'success');
+                        modal.close();
+                        openManageWorkersModal(enterpriseId, onSuccess);
+                    } else {
+                        toast('Failed to add worker: ' + result.reason, 'error');
+                    }
+                });
+            }
+        });
     }
 
-    var typeList = types.getEnterpriseTypes();
-    var categories = types.getEnterpriseCategories();
+    // =========================================================================
+    // 8. MANAGE ENTERPRISE TYPES MODAL
+    // =========================================================================
 
-    var content = `
-        <div style="max-height: 500px; overflow-y: auto; padding: 4px;">
-            <div style="margin-bottom: 12px;">
-                <button id="addTypeBtn" class="btn primary" style="font-size: 0.7rem; padding: 4px 12px;">+ Add Enterprise Type</button>
-            </div>
-            ${Object.keys(categories).sort().map(function(cat) {
+    function openManageEnterpriseTypesModal(onSuccess) {
+        var types = _requireTypeQueries();
+        var typeCommands = _requireTypeCommands();
+        var modal = _requireModalCore();
+        var esc = _requireEscapeHtml();
+        var toast = _requireToast();
+        var confirm = _requireConfirmDialog();
+
+        var categories = types.getEnterpriseCategories();
+        var catKeys = Object.keys(categories).sort();
+
+        var categoriesHtml = '';
+        if (catKeys.length === 0) {
+            categoriesHtml = '<div class="modal-empty">No enterprise types defined</div>';
+        } else {
+            for (var ci = 0; ci < catKeys.length; ci++) {
+                var cat = catKeys[ci];
                 var catTypes = categories[cat];
-                return `
-                    <div style="margin-bottom: 12px;">
-                        <div style="font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">${_escapeHtml(cat.charAt(0).toUpperCase() + cat.slice(1))}</div>
-                        ${catTypes.map(function(t) {
-                            return `
-                                <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 8px; background: var(--bg); border-radius: 4px; margin-bottom: 2px; font-size: 0.65rem;">
-                                    <span>${_escapeHtml(t.name)} (Income: ${t.baseIncome}, Workers: ${t.baseWorkers})</span>
-                                    <span>
-                                        <button class="edit-type-btn" data-type-id="${t.id}" style="background: none; border: none; color: var(--accent); cursor: pointer; font-size: 0.6rem; margin-right: 4px;">[Edit]</button>
-                                        <button class="delete-type-btn" data-type-id="${t.id}" style="background: none; border: none; color: var(--danger); cursor: pointer; font-size: 0.6rem;">[Delete]</button>
-                                    </span>
-                                </div>
-                            `;
-                        }).join('')}
-                    </div>
-                `;
-            }).join('')}
-        </div>
-    `;
-
-    _openModal({
-        title: 'Manage Enterprise Types',
-        content: content,
-        confirmText: 'Close',
-        cancelText: '',
-        onConfirm: function() {}
-    });
-
-    setTimeout(function() {
-        var addBtn = document.getElementById('addTypeBtn');
-        if (addBtn) {
-            addBtn.addEventListener('click', function() {
-                _closeTopModal();
-                openCreateEnterpriseTypeModal(function() {
-                    openManageEnterpriseTypesModal(onSuccess);
-                });
-            });
+                var label = cat.charAt(0).toUpperCase() + cat.slice(1);
+                categoriesHtml += '<div class="type-category">';
+                categoriesHtml += '<div class="type-category-title">' + esc(label) + '</div>';
+                for (var ti = 0; ti < catTypes.length; ti++) {
+                    var t = catTypes[ti];
+                    categoriesHtml += '<div class="type-row">' +
+                        '<span>' + esc(t.name) + ' (Income: ' + t.baseIncome + ', Workers: ' + t.baseWorkers + ')</span>' +
+                        '<span class="type-actions">' +
+                        '<button class="btn-sm" data-action="edit-type" data-type-id="' + esc(t.id) + '">Edit</button>' +
+                        '<button class="btn-sm danger" data-action="delete-type" data-type-id="' + esc(t.id) + '">Delete</button>' +
+                        '</span>' +
+                        '</div>';
+                }
+                categoriesHtml += '</div>';
+            }
         }
 
-        var editBtns = document.querySelectorAll('.edit-type-btn');
-        for (var i = 0; i < editBtns.length; i++) {
-            (function(btn) {
-                btn.addEventListener('click', function() {
-                    var typeId = this.dataset.typeId;
-                    _closeTopModal();
-                    openEditEnterpriseTypeModal(typeId, function() {
+        var content = `
+            <div style="max-height: 500px; overflow-y: auto; padding: 4px;">
+                <div class="modal-actions-row">
+                    <button id="addTypeBtn" class="btn primary">Add Enterprise Type</button>
+                </div>
+                ${categoriesHtml}
+            </div>
+        `;
+
+        modal.open({
+            title: 'Manage Enterprise Types',
+            content: content,
+            confirmText: 'Close',
+            cancelText: '',
+            onConfirm: function() {}
+        });
+
+        _afterRender(function() {
+            var addBtn = document.getElementById('addTypeBtn');
+            if (addBtn) {
+                addBtn.addEventListener('click', function() {
+                    modal.close();
+                    openCreateEnterpriseTypeModal(function() {
                         openManageEnterpriseTypesModal(onSuccess);
                     });
                 });
-            })(editBtns[i]);
-        }
+            }
 
-        var deleteBtns = document.querySelectorAll('.delete-type-btn');
-        for (var i = 0; i < deleteBtns.length; i++) {
-            (function(btn) {
-                btn.addEventListener('click', function() {
-                    var typeId = this.dataset.typeId;
-                    var type = _getTypes ? _getTypes().getEnterpriseTypeById(typeId) : null;
-                    _confirmDialog('Delete "' + (type ? type.name : typeId) + '"? This will not affect existing enterprises using this type.', 'Delete Type', function() {
-                        var result = _getTypes ? _getTypes().deleteEnterpriseType(typeId) : null;
-                        if (result && result.success) {
-                            _showToast('Type deleted', 'info');
-                            _closeTopModal();
-                            _invalidateCaches();
-                            openManageEnterpriseTypesModal(onSuccess);
-                        } else {
-                            _showToast('Failed to delete type: ' + (result ? result.reason : 'Unknown error'), 'error');
-                        }
+            var container = document.querySelector('.modal-content') || document.body;
+            container.addEventListener('click', function(event) {
+                var btn = event.target.closest('[data-action]');
+                if (!btn) return;
+                var action = btn.dataset.action;
+                var typeId = btn.dataset.typeId;
+
+                if (action === 'edit-type') {
+                    modal.close();
+                    openEditEnterpriseTypeModal(typeId, function() {
+                        openManageEnterpriseTypesModal(onSuccess);
                     });
-                });
-            })(deleteBtns[i]);
-        }
-    }, 100);
-}
-
-// =============================================================================
-// 10. CREATE ENTERPRISE TYPE MODAL
-// =============================================================================
-
-function openCreateEnterpriseTypeModal(onSuccess) {
-    var types = _getTypes();
-    if (!types) {
-        _showToast('Industry types not available', 'error');
-        return;
+                } else if (action === 'delete-type') {
+                    var type = types.getEnterpriseTypeById(typeId);
+                    var typeName = type ? type.name : typeId;
+                    confirm('Delete "' + typeName + '"? This will fail if any enterprise uses this type.',
+                        'Delete Type',
+                        function() {
+                            var result = typeCommands.deleteEnterpriseType(typeId);
+                            if (result.success) {
+                                toast('Type deleted', 'info');
+                                modal.close();
+                                openManageEnterpriseTypesModal(onSuccess);
+                            } else {
+                                toast('Failed to delete type: ' + result.reason, 'error');
+                            }
+                        });
+                }
+            });
+        });
     }
 
-    var content = `
-        <div style="max-height: 500px; overflow-y: auto; padding: 4px;">
-            <div class="form-group" style="margin-bottom: 12px;">
-                <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Type Name *</label>
-                <input type="text" id="newTypeName" placeholder="e.g., Factory, Farm, Smithy" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">
-                <small style="font-size: 0.5rem; color: var(--dim);">Required</small>
-            </div>
+    // =========================================================================
+    // 9. CREATE ENTERPRISE TYPE MODAL
+    // =========================================================================
 
-            <div class="form-group" style="margin-bottom: 12px;">
-                <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Category *</label>
-                <select id="newTypeCategory" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">
-                    <option value="agricultural">Agricultural</option>
-                    <option value="craft">Craft</option>
-                    <option value="industrial">Industrial</option>
-                    <option value="commercial">Commercial</option>
-                    <option value="transport">Transport</option>
-                    <option value="mining">Mining</option>
-                    <option value="other" selected>Other</option>
-                </select>
-            </div>
+    function openCreateEnterpriseTypeModal(onSuccess) {
+        var typeCommands = _requireTypeCommands();
+        var modal = _requireModalCore();
+        var toast = _requireToast();
 
-            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 12px;">
-                <div>
-                    <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Base Income / year</label>
-                    <input type="number" id="newTypeIncome" value="10" min="1" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
+        var content = `
+            <div style="max-height: 500px; overflow-y: auto; padding: 4px;">
+                <div class="form-group">
+                    <label class="form-label">Type Name *</label>
+                    <input type="text" id="newTypeName" class="form-input" placeholder="e.g., Factory, Farm, Smithy">
                 </div>
-                <div>
-                    <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Base Expenses / year</label>
-                    <input type="number" id="newTypeExpenses" value="5" min="0" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
+
+                <div class="form-group">
+                    <label class="form-label">Category *</label>
+                    <select id="newTypeCategory" class="form-input">
+                        <option value="agricultural">Agricultural</option>
+                        <option value="craft">Craft</option>
+                        <option value="industrial">Industrial</option>
+                        <option value="commercial">Commercial</option>
+                        <option value="transport">Transport</option>
+                        <option value="mining">Mining</option>
+                        <option value="manufacturing">Manufacturing</option>
+                        <option value="subsistence">Subsistence</option>
+                        <option value="other" selected>Other</option>
+                    </select>
                 </div>
-                <div>
-                    <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Base Wages / worker</label>
-                    <input type="number" id="newTypeWages" value="8" min="0" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
+
+                <div class="form-grid-3">
+                    <div>
+                        <label class="form-label-sm">Base Income / year</label>
+                        <input type="number" id="newTypeIncome" class="form-input" value="10" min="0">
+                    </div>
+                    <div>
+                        <label class="form-label-sm">Base Expenses / year</label>
+                        <input type="number" id="newTypeExpenses" class="form-input" value="5" min="0">
+                    </div>
+                    <div>
+                        <label class="form-label-sm">Base Wages / worker</label>
+                        <input type="number" id="newTypeWages" class="form-input" value="8" min="0">
+                    </div>
+                </div>
+
+                <div class="form-grid-3">
+                    <div>
+                        <label class="form-label-sm">Base Workers</label>
+                        <input type="number" id="newTypeWorkers" class="form-input" value="2" min="0">
+                    </div>
+                    <div>
+                        <label class="form-label-sm">Max Workers</label>
+                        <input type="number" id="newTypeMaxWorkers" class="form-input" value="10" min="1">
+                    </div>
+                    <div>
+                        <label class="form-label-sm">Base Cost</label>
+                        <input type="number" id="newTypeCost" class="form-input" value="100" min="0">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Description</label>
+                    <textarea id="newTypeDescription" class="form-input" rows="2" placeholder="Brief description..."></textarea>
+                </div>
+
+                <div class="form-hint">
+                    Income should be higher than expenses + wages for a profitable enterprise.
                 </div>
             </div>
+        `;
 
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
-                <div>
-                    <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Base Workers</label>
-                    <input type="number" id="newTypeWorkers" value="2" min="0" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
-                </div>
-                <div>
-                    <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Max Workers</label>
-                    <input type="number" id="newTypeMaxWorkers" value="10" min="1" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
-                </div>
-            </div>
+        modal.open({
+            title: 'Add Enterprise Type',
+            content: content,
+            confirmText: 'Create Type',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var name = document.getElementById('newTypeName').value.trim();
+                if (!name) {
+                    toast('Type name is required', 'error');
+                    return false;
+                }
 
-            <div class="form-group" style="margin-bottom: 12px;">
-                <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Description</label>
-                <textarea id="newTypeDescription" rows="2" placeholder="Brief description of this enterprise type..." style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;"></textarea>
-            </div>
+                var category = document.getElementById('newTypeCategory').value;
+                if (!category) {
+                    toast('Category is required', 'error');
+                    return false;
+                }
 
-            <div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">
-                Income should be higher than expenses + wages for a profitable enterprise.
-            </div>
-        </div>
-    `;
+                var data = {
+                    name: name,
+                    category: category,
+                    baseIncome: _readRequiredInt(document.getElementById('newTypeIncome')),
+                    baseExpenses: _readRequiredInt(document.getElementById('newTypeExpenses')),
+                    baseWages: _readRequiredInt(document.getElementById('newTypeWages')),
+                    baseWorkers: _readRequiredInt(document.getElementById('newTypeWorkers')),
+                    maxWorkers: _readRequiredInt(document.getElementById('newTypeMaxWorkers')),
+                    baseCost: _readRequiredInt(document.getElementById('newTypeCost')),
+                    description: document.getElementById('newTypeDescription').value.trim()
+                };
 
-    _openModal({
-        title: 'Add Enterprise Type',
-        content: content,
-        confirmText: 'Create Type',
-        cancelText: 'Cancel',
-        onConfirm: function() {
-            var name = document.getElementById('newTypeName').value.trim();
-            if (!name) {
-                _showToast('Type name is required', 'error');
-                return false;
-            }
+                var result = typeCommands.createEnterpriseType(data);
+                if (!result.success) {
+                    toast('Failed to create type: ' + result.reason, 'error');
+                    return false;
+                }
 
-            var data = {
-                name: name,
-                category: document.getElementById('newTypeCategory').value,
-                baseIncome: parseInt(document.getElementById('newTypeIncome').value) || 10,
-                baseExpenses: parseInt(document.getElementById('newTypeExpenses').value) || 5,
-                baseWages: parseInt(document.getElementById('newTypeWages').value) || 8,
-                baseWorkers: parseInt(document.getElementById('newTypeWorkers').value) || 2,
-                maxWorkers: parseInt(document.getElementById('newTypeMaxWorkers').value) || 10,
-                description: document.getElementById('newTypeDescription').value.trim(),
-                baseCost: parseInt(document.getElementById('newTypeIncome').value) * 5 || 50
-            };
-
-            var result = types.addEnterpriseType(data);
-            if (result && result.success) {
-                _saveMasterData();
-                _invalidateCaches();
-                _showToast('Enterprise type created: ' + result.data.name, 'success');
-                _closeTopModal();
+                toast('Enterprise type created: ' + result.data.name, 'success');
+                modal.close();
                 if (onSuccess) onSuccess(result.data);
                 return true;
-            } else {
-                _showToast('Failed to create enterprise type: ' + (result ? result.reason : 'Unknown error'), 'error');
-                return false;
             }
+        });
+    }
+
+    // =========================================================================
+    // 10. EDIT ENTERPRISE TYPE MODAL
+    // =========================================================================
+
+    function openEditEnterpriseTypeModal(typeId, onSuccess) {
+        var types = _requireTypeQueries();
+        var typeCommands = _requireTypeCommands();
+        var modal = _requireModalCore();
+        var esc = _requireEscapeHtml();
+        var toast = _requireToast();
+
+        var type = types.getEnterpriseTypeById(typeId);
+        if (!type) {
+            toast('Enterprise type not found', 'error');
+            return;
         }
-    });
-}
 
-// =============================================================================
-// 11. EDIT ENTERPRISE TYPE MODAL
-// =============================================================================
+        var categories = [
+            'agricultural', 'craft', 'industrial', 'commercial',
+            'transport', 'mining', 'manufacturing', 'subsistence', 'other'
+        ];
+        var categoryOptions = '';
+        for (var i = 0; i < categories.length; i++) {
+            var sel = type.category === categories[i] ? 'selected' : '';
+            categoryOptions += '<option value="' + categories[i] + '" ' + sel + '>' +
+                categories[i].charAt(0).toUpperCase() + categories[i].slice(1) + '</option>';
+        }
 
-function openEditEnterpriseTypeModal(typeId, onSuccess) {
-    var types = _getTypes();
-    if (!types) {
-        _showToast('Industry types not available', 'error');
-        return;
-    }
-
-    var type = types.getEnterpriseTypeById(typeId);
-    if (!type) {
-        _showToast('Enterprise type not found', 'error');
-        return;
-    }
-
-    var content = `
-        <div style="max-height: 500px; overflow-y: auto; padding: 4px;">
-            <div class="form-group" style="margin-bottom: 12px;">
-                <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Type Name *</label>
-                <input type="text" id="editTypeName" value="${_escapeHtml(type.name)}" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">
-            </div>
-
-            <div class="form-group" style="margin-bottom: 12px;">
-                <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Category *</label>
-                <select id="editTypeCategory" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">
-                    <option value="agricultural" ${type.category === 'agricultural' ? 'selected' : ''}>Agricultural</option>
-                    <option value="craft" ${type.category === 'craft' ? 'selected' : ''}>Craft</option>
-                    <option value="industrial" ${type.category === 'industrial' ? 'selected' : ''}>Industrial</option>
-                    <option value="commercial" ${type.category === 'commercial' ? 'selected' : ''}>Commercial</option>
-                    <option value="transport" ${type.category === 'transport' ? 'selected' : ''}>Transport</option>
-                    <option value="mining" ${type.category === 'mining' ? 'selected' : ''}>Mining</option>
-                    <option value="other" ${type.category === 'other' || !type.category ? 'selected' : ''}>Other</option>
-                </select>
-            </div>
-
-            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 12px;">
-                <div>
-                    <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Base Income / year</label>
-                    <input type="number" id="editTypeIncome" value="${type.baseIncome || 10}" min="1" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
+        var content = `
+            <div style="max-height: 500px; overflow-y: auto; padding: 4px;">
+                <div class="form-group">
+                    <label class="form-label">Type Name *</label>
+                    <input type="text" id="editTypeName" class="form-input" value="${esc(type.name)}">
                 </div>
-                <div>
-                    <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Base Expenses / year</label>
-                    <input type="number" id="editTypeExpenses" value="${type.baseExpenses || 5}" min="0" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
-                </div>
-                <div>
-                    <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Base Wages / worker</label>
-                    <input type="number" id="editTypeWages" value="${type.baseWages || 8}" min="0" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
-                </div>
-            </div>
 
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
-                <div>
-                    <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Base Workers</label>
-                    <input type="number" id="editTypeWorkers" value="${type.baseWorkers || 2}" min="0" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
+                <div class="form-group">
+                    <label class="form-label">Category *</label>
+                    <select id="editTypeCategory" class="form-input">${categoryOptions}</select>
                 </div>
-                <div>
-                    <label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Max Workers</label>
-                    <input type="number" id="editTypeMaxWorkers" value="${type.maxWorkers || 10}" min="1" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">
+
+                <div class="form-grid-3">
+                    <div>
+                        <label class="form-label-sm">Base Income / year</label>
+                        <input type="number" id="editTypeIncome" class="form-input" value="${type.baseIncome}" min="0">
+                    </div>
+                    <div>
+                        <label class="form-label-sm">Base Expenses / year</label>
+                        <input type="number" id="editTypeExpenses" class="form-input" value="${type.baseExpenses}" min="0">
+                    </div>
+                    <div>
+                        <label class="form-label-sm">Base Wages / worker</label>
+                        <input type="number" id="editTypeWages" class="form-input" value="${type.baseWages}" min="0">
+                    </div>
+                </div>
+
+                <div class="form-grid-3">
+                    <div>
+                        <label class="form-label-sm">Base Workers</label>
+                        <input type="number" id="editTypeWorkers" class="form-input" value="${type.baseWorkers}" min="0">
+                    </div>
+                    <div>
+                        <label class="form-label-sm">Max Workers</label>
+                        <input type="number" id="editTypeMaxWorkers" class="form-input" value="${type.maxWorkers}" min="1">
+                    </div>
+                    <div>
+                        <label class="form-label-sm">Base Cost</label>
+                        <input type="number" id="editTypeCost" class="form-input" value="${type.baseCost}" min="0">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Description</label>
+                    <textarea id="editTypeDescription" class="form-input" rows="2">${esc(type.description || '')}</textarea>
                 </div>
             </div>
+        `;
 
-            <div class="form-group" style="margin-bottom: 12px;">
-                <label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Description</label>
-                <textarea id="editTypeDescription" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">${_escapeHtml(type.description || '')}</textarea>
-            </div>
+        modal.open({
+            title: 'Edit Enterprise Type: ' + type.name,
+            content: content,
+            confirmText: 'Save Changes',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var updates = {};
 
-            <div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">
-                Income should be higher than expenses + wages for a profitable enterprise.
-            </div>
-        </div>
-    `;
+                var name = document.getElementById('editTypeName').value.trim();
+                if (!name) {
+                    toast('Type name is required', 'error');
+                    return false;
+                }
+                updates.name = name;
+                updates.category = document.getElementById('editTypeCategory').value;
 
-    _openModal({
-        title: 'Edit Enterprise Type: ' + type.name,
-        content: content,
-        confirmText: 'Save Changes',
-        cancelText: 'Cancel',
-        onConfirm: function() {
-            var name = document.getElementById('editTypeName').value.trim();
-            if (!name) {
-                _showToast('Type name is required', 'error');
-                return false;
-            }
+                var baseIncome = _readRequiredInt(document.getElementById('editTypeIncome'));
+                if (baseIncome === undefined || baseIncome < 0) {
+                    toast('Base income must be a non-negative number', 'error');
+                    return false;
+                }
+                updates.baseIncome = baseIncome;
 
-            var updates = {
-                name: name,
-                category: document.getElementById('editTypeCategory').value,
-                baseIncome: parseInt(document.getElementById('editTypeIncome').value) || 10,
-                baseExpenses: parseInt(document.getElementById('editTypeExpenses').value) || 5,
-                baseWages: parseInt(document.getElementById('editTypeWages').value) || 8,
-                baseWorkers: parseInt(document.getElementById('editTypeWorkers').value) || 2,
-                maxWorkers: parseInt(document.getElementById('editTypeMaxWorkers').value) || 10,
-                description: document.getElementById('editTypeDescription').value.trim()
-            };
+                var baseExpenses = _readRequiredInt(document.getElementById('editTypeExpenses'));
+                if (baseExpenses === undefined || baseExpenses < 0) {
+                    toast('Base expenses must be a non-negative number', 'error');
+                    return false;
+                }
+                updates.baseExpenses = baseExpenses;
 
-            var result = types.updateEnterpriseType(typeId, updates);
-            if (result && result.success) {
-                _saveMasterData();
-                _invalidateCaches();
-                _showToast('Enterprise type updated: ' + result.data.name, 'success');
-                _closeTopModal();
+                var baseWages = _readRequiredInt(document.getElementById('editTypeWages'));
+                if (baseWages === undefined || baseWages < 0) {
+                    toast('Base wages must be a non-negative number', 'error');
+                    return false;
+                }
+                updates.baseWages = baseWages;
+
+                var baseWorkers = _readRequiredInt(document.getElementById('editTypeWorkers'));
+                if (baseWorkers === undefined || baseWorkers < 0) {
+                    toast('Base workers must be a non-negative number', 'error');
+                    return false;
+                }
+                updates.baseWorkers = baseWorkers;
+
+                var maxWorkers = _readRequiredInt(document.getElementById('editTypeMaxWorkers'));
+                if (maxWorkers === undefined || maxWorkers < 1) {
+                    toast('Max workers must be at least 1', 'error');
+                    return false;
+                }
+                updates.maxWorkers = maxWorkers;
+
+                var baseCost = _readRequiredInt(document.getElementById('editTypeCost'));
+                if (baseCost === undefined || baseCost < 0) {
+                    toast('Base cost must be a non-negative number', 'error');
+                    return false;
+                }
+                updates.baseCost = baseCost;
+
+                updates.description = document.getElementById('editTypeDescription').value.trim();
+
+                var result = typeCommands.updateEnterpriseType(typeId, updates);
+                if (!result.success) {
+                    toast('Failed to update type: ' + result.reason, 'error');
+                    return false;
+                }
+
+                toast('Type updated', 'success');
+                modal.close();
                 if (onSuccess) onSuccess(result.data);
                 return true;
-            } else {
-                _showToast('Failed to update enterprise type: ' + (result ? result.reason : 'Unknown error'), 'error');
-                return false;
             }
-        }
-    });
-}
-
-// =============================================================================
-// 12. ENTERPRISE LIST MODAL
-// =============================================================================
-
-function openEnterpriseListModal(onSelect) {
-    var queries = _getQueries();
-    if (!queries) {
-        _showToast('Industry queries not available', 'error');
-        return;
+        });
     }
 
-    var enterprises = queries.getAllEnterprises();
-    if (enterprises.length === 0) {
-        _showToast('No enterprises found', 'info');
-        return;
+    // =========================================================================
+    // 11. ENTERPRISE LIST MODAL
+    // =========================================================================
+
+    function openEnterpriseListModal(onSelect) {
+        var queries = _requireQueries();
+        var modal = _requireModalCore();
+        var esc = _requireEscapeHtml();
+        var toast = _requireToast();
+
+        var enterprises = queries.getAllEnterprises();
+        if (enterprises.length === 0) {
+            toast('No enterprises found', 'info');
+            return;
+        }
+
+        var rows = '';
+        for (var i = 0; i < enterprises.length; i++) {
+            var e = enterprises[i];
+            var summary = queries.getEnterpriseSummary(e.id);
+            var profitLabel = summary ? String(summary.annualProfit) : '';
+            var profitClass = summary && summary.annualProfit >= 0 ? 'value-pos' : 'value-neg';
+            var workerCount = e.workerList ? e.workerList.length : 0;
+
+            rows += '<div class="enterprise-row status-' + esc(e.status) + '" data-enterprise-id="' + esc(e.id) + '">' +
+                '<span class="enterprise-row-name">' + esc(e.name) + ' (' + esc(e.typeName) + ')</span>' +
+                '<span class="enterprise-row-meta">' +
+                '<span class="' + profitClass + '">' + profitLabel + '</span>' +
+                '<span>' + workerCount + ' workers</span>' +
+                '</span>' +
+                '</div>';
+        }
+
+        var content = '<div style="padding: 8px; max-height: 400px; overflow-y: auto;" id="enterpriseListContainer">' + rows + '</div>';
+
+        modal.open({
+            title: 'Enterprises',
+            content: content,
+            confirmText: 'Close',
+            cancelText: '',
+            onConfirm: function() {}
+        });
+
+        _afterRender(function() {
+            var container = document.getElementById('enterpriseListContainer');
+            if (!container) return;
+
+            container.addEventListener('click', function(event) {
+                var row = event.target.closest('[data-enterprise-id]');
+                if (!row) return;
+                var id = row.dataset.enterpriseId;
+                modal.close();
+                if (onSelect) {
+                    onSelect(id);
+                } else {
+                    openEnterpriseDetailsModal(id);
+                }
+            });
+        });
     }
 
-    var html = enterprises.map(function(e) {
-        var summary = queries.getEnterpriseSummary(e.id);
-        var statusColor = e.status === 'active' ? 'var(--success)' :
-                         e.status === 'bankrupt' ? 'var(--danger)' :
-                         'var(--warn)';
-        return '<div class="enterprise-item" data-id="' + e.id + '" style="padding:6px 10px;background:var(--bg2);border-radius:4px;margin-bottom:2px;cursor:pointer;border-left:3px solid ' + statusColor + ';">' +
-            _escapeHtml(e.name) + ' (' + _escapeHtml(e.typeName) + ')' +
-            ' <span style="float:right;color:var(--dim);font-size:0.6rem;">' + (e.workerList ? e.workerList.length : 0) + ' workers</span>' +
-            (summary && summary.annualProfit !== undefined ? ' <span style="float:right;color:' + (summary.annualProfit >= 0 ? 'var(--success)' : 'var(--danger)') + ';font-size:0.6rem;margin-right:8px;">' + (summary.annualProfit >= 0 ? '+' : '') + summary.annualProfit + '</span>' : '') +
-            '</div>';
-    }).join('');
+    // =========================================================================
+    // 12. EXPORTS
+    // =========================================================================
 
-    var content = '<div style="padding:8px;max-height:400px;overflow-y:auto;">' + html + '</div>';
+    window.IndustryModals = {
+        openCreateEnterpriseModal: openCreateEnterpriseModal,
+        openEditEnterpriseModal: openEditEnterpriseModal,
+        openEnterpriseDetailsModal: openEnterpriseDetailsModal,
+        openManageWorkersModal: openManageWorkersModal,
+        openManageEnterpriseTypesModal: openManageEnterpriseTypesModal,
+        openCreateEnterpriseTypeModal: openCreateEnterpriseTypeModal,
+        openEditEnterpriseTypeModal: openEditEnterpriseTypeModal,
+        openEnterpriseListModal: openEnterpriseListModal
+    };
 
-    _openModal({
-        title: 'Enterprises',
-        content: content,
-        confirmText: 'Close',
-        cancelText: '',
-        onConfirm: function() {}
-    });
+    // Legacy global aliases (kept during migration)
+    window.openCreateEnterpriseModal = openCreateEnterpriseModal;
+    window.openEditEnterpriseModal = openEditEnterpriseModal;
+    window.openEnterpriseDetailsModal = openEnterpriseDetailsModal;
+    window.openManageWorkersModal = openManageWorkersModal;
+    window.openManageEnterpriseTypesModal = openManageEnterpriseTypesModal;
+    window.openCreateEnterpriseTypeModal = openCreateEnterpriseTypeModal;
+    window.openEditEnterpriseTypeModal = openEditEnterpriseTypeModal;
+    window.openEnterpriseListModal = openEnterpriseListModal;
 
-    setTimeout(function() {
-        var items = document.querySelectorAll('.enterprise-item');
-        for (var i = 0; i < items.length; i++) {
-            (function(item) {
-                item.addEventListener('click', function() {
-                    var id = this.dataset.id;
-                    _closeTopModal();
-                    if (onSelect) {
-                        var enterprise = _getQueries ? _getQueries().getEnterprise(id) : null;
-                        onSelect(enterprise);
-                    } else {
-                        openEnterpriseDetailsModal(id);
-                    }
-                });
-            })(items[i]);
-        }
-    }, 100);
-}
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.IndustryModals;
+    }
 
-// =============================================================================
-// 13. EXPORTS
-// =============================================================================
-
-window.openCreateEnterpriseModal = openCreateEnterpriseModal;
-window.openEditEnterpriseModal = openEditEnterpriseModal;
-window.openEnterpriseDetailsModal = openEnterpriseDetailsModal;
-window.openManageWorkersModal = openManageWorkersModal;
-window.openManageEnterpriseTypesModal = openManageEnterpriseTypesModal;
-window.openCreateEnterpriseTypeModal = openCreateEnterpriseTypeModal;
-window.openEditEnterpriseTypeModal = openEditEnterpriseTypeModal;
-window.openEnterpriseListModal = openEnterpriseListModal;
-
-// Legacy aliases
-window._openCreateEnterpriseModal = openCreateEnterpriseModal;
-window._openEditEnterpriseModal = openEditEnterpriseModal;
-window._openEnterpriseDetailsModal = openEnterpriseDetailsModal;
-window._openManageWorkersModal = openManageWorkersModal;
-window._openManageEnterpriseTypesModal = openManageEnterpriseTypesModal;
-window._openCreateEnterpriseTypeModal = openCreateEnterpriseTypeModal;
-window._openEditEnterpriseTypeModal = openEditEnterpriseTypeModal;
-window._openEnterpriseListModal = openEnterpriseListModal;
+})();
