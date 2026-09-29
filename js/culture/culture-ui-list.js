@@ -1,18 +1,33 @@
 /**
  * =============================================================================
- * STILL WATERS - CULTURE UI LIST (js/culture/culture-ui-list.js)
+ * STILL WATERS - CULTURE UI LIST
+ * js/culture/culture-ui-list.js
  * =============================================================================
- * 
- * UI rendering for culture lists and cards.
- * 
- * UPDATED: Fixed icon rendering - uses Icons from icons.js
- * 
- * DEPENDENCIES:
- *   - culture-state.js (CultureState)
- *   - culture-queries.js (CultureQueries)
- *   - formatting.js (escapeHtml)
- *   - icons.js (Icons)
- * 
+ *
+ * DOM rendering for culture lists, cards, and dropdown controls.
+ *
+ * This module is deliberately stupid.
+ *
+ * It receives view models from CultureViewModels, escapes strings, and
+ * writes HTML. It does not:
+ *   - read CultureState
+ *   - read masterData
+ *   - call CultureQueries
+ *   - resolve locations or religions
+ *   - inspect appearance or mythology structure
+ *   - decide fallback labels or icons
+ *   - attach per-row listeners
+ *   - do hover styling in JavaScript
+ *
+ * Dependencies:
+ *   - CultureViewModels   (projections)
+ *   - CultureQueries      (only for the initial "get all cultures" list)
+ *   - escapeHtml          (shared UI utility)
+ *
+ * The renderer is allowed to look up the culture list once. It is not
+ * allowed to reach into the domain for individual field resolution —
+ * that is what view models are for.
+ *
  * =============================================================================
  */
 
@@ -20,379 +35,370 @@
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
+    // 1. DEPENDENCIES
     // =========================================================================
 
-    function _getState() {
-        return typeof window.CultureState !== 'undefined' ? window.CultureState : null;
+    function _requireViewModels() {
+        if (!window.CultureViewModels) {
+            throw new Error('CultureUI requires CultureViewModels.');
+        }
+        return window.CultureViewModels;
     }
 
-    function _getQueries() {
-        return typeof window.CultureQueries !== 'undefined' ? window.CultureQueries : null;
+    function _requireQueries() {
+        if (!window.CultureQueries) {
+            throw new Error('CultureUI requires CultureQueries.');
+        }
+        return window.CultureQueries;
     }
 
-    function _escapeHtml(str) {
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
-        }
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    function _requireEscapeHtml() {
+        if (typeof window.escapeHtml === 'function') return window.escapeHtml;
+        if (typeof window._escapeHtml === 'function') return window._escapeHtml;
+        throw new Error(
+            'CultureUI requires escapeHtml. ' +
+            'Renderers do not implement their own escaping.'
+        );
     }
 
-    function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
+    function _resolveContainer(containerId) {
+        if (typeof containerId === 'string') {
+            var el = document.getElementById(containerId);
+            if (!el) throw new Error('CultureUI: container not found: ' + containerId);
+            return el;
         }
-        // If it's a direct icon string (like '✦'), return it
-        if (name && name.length === 1) {
-            return name;
-        }
-        return '';
-    }
-
-    function _getLocationName(locationId) {
-        if (typeof window.getPlaceName === 'function') {
-            return window.getPlaceName(locationId);
-        }
-        if (typeof window.getPlaceById === 'function') {
-            var place = window.getPlaceById(locationId);
-            return place ? place.displayName : 'Unknown';
-        }
-        return 'Unknown';
-    }
-
-    function _getReligionName(religionId) {
-        if (typeof window.ReligionState !== 'undefined' && 
-            typeof window.ReligionState.getReligion === 'function') {
-            var religion = window.ReligionState.getReligion(religionId);
-            return religion ? religion.displayName || religion.name : 'Unknown';
-        }
-        return 'Unknown';
-    }
-
-    function _getCultureIconHtml(culture) {
-        if (!culture) return '';
-        
-        var iconName = culture.icon || 'STAR_4';
-        var iconHtml = _getIcon(iconName);
-        
-        // If we got an icon from icons.js, use it
-        if (iconHtml) {
-            return iconHtml;
-        }
-        
-        // If culture has a displayIcon (like '✦'), use it
-        if (culture.icon && culture.icon.length === 1) {
-            return culture.icon;
-        }
-        
-        // Fallback to star
-        return _getIcon('STAR_4') || '✦';
+        if (containerId && containerId.nodeType === 1) return containerId;
+        throw new Error('CultureUI: invalid container');
     }
 
     // =========================================================================
-    // 2. RENDER CULTURE LIST
+    // 2. LIST
     // =========================================================================
 
+    /**
+     * Renders a list of cultures into a container.
+     *
+     * @param {string|Element} containerId
+     * @param {Object} [options]
+     * @param {string} [options.selectedId]       highlight a specific culture
+     * @param {Function} [options.onSelect]       called with the full culture object
+     * @param {string} [options.emptyMessage]     shown when the list is empty
+     * @param {boolean} [options.showLocations]   default true
+     * @param {boolean} [options.showReligions]   default true
+     * @param {boolean} [options.showMythology]   default true
+     * @param {Array} [options.cultures]          pre-supplied list; otherwise all cultures
+     */
     function renderCultureList(containerId, options) {
         options = options || {};
+        var container = _resolveContainer(containerId);
+        var viewModels = _requireViewModels();
+        var queries = _requireQueries();
+        var escapeHtml = _requireEscapeHtml();
 
-        var container = typeof containerId === 'string' ?
-            document.getElementById(containerId) :
-            containerId;
+        var cultures = Array.isArray(options.cultures)
+            ? options.cultures
+            : queries.getAllCultures();
 
-        if (!container) {
-            return false;
-        }
-
-        var state = _getState();
-        if (!state) {
-            container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--dim);">Culture system not available</div>';
-            return false;
-        }
-
-        var cultures = options.filteredCultures || state.getAllCultures();
-        var onSelect = options.onSelect || null;
-        var emptyMessage = options.emptyMessage || 'No cultures found';
-        var showLocations = options.showLocations !== undefined ? options.showLocations : true;
-        var showReligions = options.showReligions !== undefined ? options.showReligions : true;
-        var showMythology = options.showMythology !== undefined ? options.showMythology : true;
-        var selectedId = options.selectedId || null;
+        var emptyMessage = typeof options.emptyMessage === 'string'
+            ? options.emptyMessage
+            : 'No cultures found';
 
         if (!cultures || cultures.length === 0) {
-            container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--dim);">' + _escapeHtml(emptyMessage) + '</div>';
-            return true;
-        }
-
-        var sorted = cultures.slice().sort(function(a, b) {
-            return (a.displayName || a.name || '').localeCompare(b.displayName || b.name || '');
-        });
-
-        var html = '<div class="culture-list" style="display:flex;flex-direction:column;gap:4px;">';
-
-        for (var i = 0; i < sorted.length; i++) {
-            var c = sorted[i];
-            var isSelected = (selectedId === c.id);
-            
-            // Get icon HTML
-            var iconHtml = _getCultureIconHtml(c);
-            
-            var locationNames = [];
-            if (showLocations && c.locations) {
-                for (var j = 0; j < Math.min(3, c.locations.length); j++) {
-                    var name = _getLocationName(c.locations[j]);
-                    if (name) locationNames.push(name);
-                }
-                if (c.locations.length > 3) {
-                    locationNames.push('+' + (c.locations.length - 3) + ' more');
-                }
-            }
-
-            var religionNames = [];
-            if (showReligions && c.religions) {
-                for (var j = 0; j < Math.min(3, c.religions.length); j++) {
-                    var name = _getReligionName(c.religions[j]);
-                    if (name) religionNames.push(name);
-                }
-                if (c.religions.length > 3) {
-                    religionNames.push('+' + (c.religions.length - 3) + ' more');
-                }
-            }
-
-            var hasMythology = c.mythology && (
-                c.mythology.creation ||
-                c.mythology.afterlife ||
-                (c.mythology.keyDeities && c.mythology.keyDeities.length > 0)
-            );
-
-            var rowClass = options.rowClass || 'culture-row';
-            var clickable = onSelect ? 'cursor:pointer;' : '';
-            var bgColor = isSelected ? 'var(--accent-dim)' : 'var(--bg3)';
-            var borderColor = isSelected ? 'var(--accent)' : 'transparent';
-
-            html += '<div class="' + _escapeHtml(rowClass) + '" data-culture-id="' + _escapeHtml(c.id) + '" style="' +
-                'display:flex;justify-content:space-between;align-items:center;' +
-                'padding:8px 12px;background:' + bgColor + ';border-radius:6px;' +
-                'border-left:3px solid ' + borderColor + ';' +
-                clickable +
-                '">';
-
-            html += '<div style="flex:1;min-width:0;">';
-            html += '<div style="font-weight:bold;font-size:0.8rem;display:flex;align-items:center;gap:6px;">' +
-                '<span style="display:inline-flex;align-items:center;flex-shrink:0;">' + iconHtml + '</span>' +
-                '<span>' + _escapeHtml(c.displayName || c.name) + '</span>' +
-                (isSelected ? ' <span style="font-size:0.5rem;color:var(--accent);">◀</span>' : '') +
+            container.innerHTML =
+                '<div class="culture-list culture-list--empty">' +
+                escapeHtml(emptyMessage) +
                 '</div>';
-
-            if (c.description) {
-                html += '<div style="font-size:0.6rem;color:var(--dim);">' + _escapeHtml(c.description) + '</div>';
-            }
-
-            var details = [];
-            if (showLocations && locationNames.length > 0) {
-                var locIcon = _getIcon('LOCATION') || '📍';
-                details.push(locIcon + ' ' + locationNames.join(', '));
-            }
-            if (showReligions && religionNames.length > 0) {
-                var relIcon = _getIcon('CIRCLE_DOT') || '⛪';
-                details.push(relIcon + ' ' + religionNames.join(', '));
-            }
-            if (showMythology && hasMythology) {
-                var bookIcon = _getIcon('BOOK') || '📖';
-                details.push(bookIcon + ' Has mythology');
-            }
-
-            if (details.length > 0) {
-                html += '<div style="font-size:0.55rem;color:var(--dim);margin-top:2px;">' + details.join(' · ') + '</div>';
-            }
-
-            html += '</div>';
-
-            // Show count badge
-            var count = (c.locations ? c.locations.length : 0);
-            if (count > 0) {
-                html += '<div style="font-size:0.55rem;color:var(--dim);flex-shrink:0;margin-left:12px;background:var(--bg2);padding:2px 8px;border-radius:10px;">' +
-                    count + ' locations' +
-                    '</div>';
-            }
-
-            html += '</div>';
+            return;
         }
 
-        html += '</div>';
-
-        container.innerHTML = html;
-
-        if (onSelect) {
-            var rows = container.querySelectorAll('.culture-row');
-            for (var i = 0; i < rows.length; i++) {
-                (function(row) {
-                    row.addEventListener('click', function() {
-                        var id = this.dataset.cultureId;
-                        var state = _getState();
-                        if (state) {
-                            var culture = state.getCulture(id);
-                            if (culture && onSelect) {
-                                onSelect(culture);
-                            }
-                        }
-                    });
-                    row.addEventListener('mouseenter', function() {
-                        if (!this.style.borderLeftColor || this.style.borderLeftColor !== 'var(--accent)') {
-                            this.style.background = 'var(--bg2)';
-                        }
-                    });
-                    row.addEventListener('mouseleave', function() {
-                        if (!this.style.borderLeftColor || this.style.borderLeftColor !== 'var(--accent)') {
-                            this.style.background = 'var(--bg3)';
-                        }
-                    });
-                })(rows[i]);
-            }
-        }
-
-        return true;
-    }
-
-    // =========================================================================
-    // 3. RENDER CULTURE CARD
-    // =========================================================================
-
-    function renderCultureCard(culture) {
-        if (!culture) {
-            return '<div style="text-align:center;padding:20px;color:var(--dim);">Culture not found</div>';
-        }
-
-        var iconHtml = _getCultureIconHtml(culture);
-
-        var locationNames = [];
-        if (culture.locations) {
-            for (var i = 0; i < culture.locations.length; i++) {
-                var name = _getLocationName(culture.locations[i]);
-                if (name) locationNames.push(name);
-            }
-        }
-
-        var religionNames = [];
-        if (culture.religions) {
-            for (var i = 0; i < culture.religions.length; i++) {
-                var name = _getReligionName(culture.religions[i]);
-                if (name) religionNames.push(name);
-            }
-        }
-
-        var appearanceHtml = '';
-        if (culture.appearance) {
-            var categories = [];
-            for (var key in culture.appearance) {
-                if (culture.appearance.hasOwnProperty(key) && Array.isArray(culture.appearance[key])) {
-                    var options = culture.appearance[key];
-                    var preview = options.slice(0, 3).map(function(o) { return o.value; }).join(', ');
-                    if (options.length > 3) {
-                        preview += ', +' + (options.length - 3) + ' more';
-                    }
-                    categories.push('<span style="font-size:0.55rem;color:var(--dim);">' + 
-                        _escapeHtml(key) + ': ' + _escapeHtml(preview) + '</span>');
-                }
-            }
-            if (categories.length > 0) {
-                appearanceHtml = '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border-light);">' +
-                    categories.join(' · ') +
-                    '</div>';
-            }
-        }
-
-        var mythologyHtml = '';
-        if (culture.mythology && (culture.mythology.creation || culture.mythology.afterlife)) {
-            var parts = [];
-            if (culture.mythology.creation) {
-                parts.push('<span style="font-size:0.55rem;color:var(--dim);">Creation: ' + _escapeHtml(culture.mythology.creation) + '</span>');
-            }
-            if (culture.mythology.afterlife) {
-                parts.push('<span style="font-size:0.55rem;color:var(--dim);">Afterlife: ' + _escapeHtml(culture.mythology.afterlife) + '</span>');
-            }
-            if (culture.mythology.keyDeities && culture.mythology.keyDeities.length > 0) {
-                parts.push('<span style="font-size:0.55rem;color:var(--dim);">Deities: ' + 
-                    _escapeHtml(culture.mythology.keyDeities.slice(0, 5).join(', ')) + 
-                    (culture.mythology.keyDeities.length > 5 ? ' +' + (culture.mythology.keyDeities.length - 5) : '') + 
-                    '</span>');
-            }
-            if (parts.length > 0) {
-                mythologyHtml = '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border-light);">' +
-                    parts.join('<br>') +
-                    '</div>';
-            }
-        }
-
-        return '<div class="culture-card" style="' +
-            'background:var(--bg2);border-radius:8px;padding:16px;' +
-            'border:1px solid var(--border);' +
-            '">' +
-            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
-            '<h4 style="margin:0;font-size:0.9rem;display:flex;align-items:center;gap:8px;">' +
-            '<span style="display:inline-flex;align-items:center;">' + iconHtml + '</span>' +
-            _escapeHtml(culture.displayName || culture.name) +
-            '</h4>' +
-            '<span style="font-size:0.55rem;color:var(--dim);">' +
-            (culture.locations ? culture.locations.length : 0) + ' locations · ' +
-            (culture.religions ? culture.religions.length : 0) + ' religions' +
-            '</span>' +
-            '</div>' +
-            (culture.description ? '<div style="font-size:0.65rem;color:var(--dim);margin-bottom:8px;">' + _escapeHtml(culture.description) + '</div>' : '') +
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:0.6rem;">' +
-            '<div><span style="color:var(--dim);">Locations</span><br><strong>' + (locationNames.length > 0 ? _escapeHtml(locationNames.join(', ')) : 'None') + '</strong></div>' +
-            '<div><span style="color:var(--dim);">Religions</span><br><strong>' + (religionNames.length > 0 ? _escapeHtml(religionNames.join(', ')) : 'None') + '</strong></div>' +
-            '</div>' +
-            appearanceHtml +
-            mythologyHtml +
-            (culture.notes ? '<div style="margin-top:8px;font-size:0.55rem;color:var(--dim);padding-top:8px;border-top:1px solid var(--border-light);">' + _escapeHtml(culture.notes) + '</div>' : '') +
-            '</div>';
-    }
-
-    // =========================================================================
-    // 4. RENDER CULTURE DROPDOWN
-    // =========================================================================
-
-    function renderCultureDropdown(selectedId, placeholder, options) {
-        options = options || {};
-        var state = _getState();
-        if (!state) {
-            return '<select disabled><option>Culture system not available</option></select>';
-        }
-
-        var cultures = options.filteredCultures || state.getAllCultures();
-        var sorted = cultures.slice().sort(function(a, b) {
-            return (a.displayName || a.name || '').localeCompare(b.displayName || b.name || '');
+        var rows = viewModels.buildListRows(cultures, {
+            selected: options.selectedId || null,
+            showLocations: options.showLocations,
+            showReligions: options.showReligions,
+            showMythology: options.showMythology
         });
 
-        var html = '<select id="' + (options.id || 'cultureSelect') + '" style="' +
-            'width:100%;padding:8px;background:var(--bg);' +
-            'border:1px solid var(--border);border-radius:6px;color:var(--text);' +
-            'font-size:0.8rem;' +
-            '">';
+        var html = ['<div class="culture-list" role="list">'];
+        for (var i = 0; i < rows.length; i++) {
+            html.push(_renderRow(rows[i], escapeHtml));
+        }
+        html.push('</div>');
+        container.innerHTML = html.join('');
 
-        if (placeholder) {
-            html += '<option value="">' + _escapeHtml(placeholder) + '</option>';
+        // Event delegation: one listener, attached to the container.
+        // Rerendering replaces the innerHTML but the listener survives.
+        if (typeof options.onSelect === 'function' && !container.__cultureListBound) {
+            container.__cultureListBound = true;
+            container.addEventListener('click', function(e) {
+                var row = e.target.closest('[data-culture-id]');
+                if (!row || !container.contains(row)) return;
+                var id = row.getAttribute('data-culture-id');
+                var culture = queries.getCultureById(id);
+                if (culture) options.onSelect(culture);
+            });
+        }
+    }
+
+    function _renderRow(row, escapeHtml) {
+        var classes = ['culture-row'];
+        if (row.selected) classes.push('is-selected');
+
+        var parts = [
+            '<div class="' + classes.join(' ') + '"',
+            ' role="listitem"',
+            ' data-culture-id="' + escapeHtml(row.id) + '"',
+            ' tabindex="0"',
+            '>'
+        ];
+
+        parts.push('<div class="culture-row__main">');
+
+        parts.push('<div class="culture-row__title">');
+        if (row.icon) {
+            // The icon is a view-model decision. The renderer does not
+            // interpret it — if a culture has an icon, render it verbatim.
+            parts.push('<span class="culture-row__icon">');
+            parts.push(escapeHtml(row.icon));
+            parts.push('</span>');
+        }
+        parts.push('<span class="culture-row__label">');
+        parts.push(escapeHtml(row.label));
+        parts.push('</span>');
+        parts.push('</div>');
+
+        if (row.description) {
+            parts.push('<div class="culture-row__desc">');
+            parts.push(escapeHtml(row.description));
+            parts.push('</div>');
         }
 
-        for (var i = 0; i < sorted.length; i++) {
-            var c = sorted[i];
-            var selected = (selectedId === c.id) ? 'selected' : '';
-            var iconHtml = _getCultureIconHtml(c);
-            html += '<option value="' + _escapeHtml(c.id) + '" ' + selected + '>' +
-                iconHtml + ' ' + _escapeHtml(c.displayName || c.name) +
-                '</option>';
+        parts.push('</div>');
+
+        // Metadata line: locations, religions, mythology indicator.
+        // Composed here from view-model fields. The view model provides
+        // labels; the renderer provides typography.
+        var metaParts = [];
+
+        if (row.locations && row.locations.length > 0) {
+            metaParts.push(_renderRelationGroup(
+                'culture-row__locations',
+                row.locations,
+                escapeHtml
+            ));
+        }
+        if (row.religions && row.religions.length > 0) {
+            metaParts.push(_renderRelationGroup(
+                'culture-row__religions',
+                row.religions,
+                escapeHtml
+            ));
+        }
+        if (row.hasMythology) {
+            metaParts.push(
+                '<span class="culture-row__tag">Mythology</span>'
+            );
         }
 
-        html += '</select>';
-        return html;
+        if (metaParts.length > 0) {
+            parts.push('<div class="culture-row__meta">');
+            parts.push(metaParts.join('<span class="culture-row__sep">·</span>'));
+            parts.push('</div>');
+        }
+
+        if (row.associatedLocationCount > 0) {
+            parts.push('<div class="culture-row__badge">');
+            parts.push(escapeHtml(String(row.associatedLocationCount)));
+            parts.push('</div>');
+        }
+
+        parts.push('</div>');
+        return parts.join('');
+    }
+
+    function _renderRelationGroup(className, items, escapeHtml) {
+        var labels = [];
+        var max = Math.min(items.length, 3);
+        for (var i = 0; i < max; i++) {
+            labels.push(escapeHtml(items[i].label));
+        }
+        if (items.length > max) {
+            labels.push('+' + (items.length - max));
+        }
+        return '<span class="' + className + '">' + labels.join(', ') + '</span>';
     }
 
     // =========================================================================
-    // 5. EXPORTS
+    // 3. CARD
+    // =========================================================================
+
+    /**
+     * Renders a culture card into a container.
+     *
+     * @param {string|Element} containerId
+     * @param {string|Object} cultureOrId
+     */
+    function renderCultureCard(containerId, cultureOrId) {
+        var container = _resolveContainer(containerId);
+        var viewModels = _requireViewModels();
+        var queries = _requireQueries();
+        var escapeHtml = _requireEscapeHtml();
+
+        var culture = typeof cultureOrId === 'string'
+            ? queries.getCultureById(cultureOrId)
+            : cultureOrId;
+
+        if (!culture) {
+            container.innerHTML =
+                '<div class="culture-card culture-card--empty">Culture not found</div>';
+            return;
+        }
+
+        var vm = viewModels.buildCard(culture);
+
+        var parts = ['<div class="culture-card">'];
+
+        parts.push('<div class="culture-card__header">');
+        if (vm.icon) {
+            parts.push('<span class="culture-card__icon">' + escapeHtml(vm.icon) + '</span>');
+        }
+        parts.push('<span class="culture-card__label">' + escapeHtml(vm.label) + '</span>');
+        parts.push('<span class="culture-card__stats">');
+        parts.push(escapeHtml(String(vm.associatedLocationCount)) + ' locations · ');
+        parts.push(escapeHtml(String(vm.religionCount)) + ' religions');
+        parts.push('</span>');
+        parts.push('</div>');
+
+        if (vm.description) {
+            parts.push('<div class="culture-card__desc">' + escapeHtml(vm.description) + '</div>');
+        }
+
+        if (vm.locations.length > 0 || vm.religions.length > 0) {
+            parts.push('<div class="culture-card__relations">');
+            if (vm.locations.length > 0) {
+                parts.push('<div class="culture-card__relation">');
+                parts.push('<span class="culture-card__relation-label">Locations</span>');
+                parts.push('<span class="culture-card__relation-values">');
+                parts.push(vm.locations.map(function(loc) {
+                    return escapeHtml(loc.label);
+                }).join(', '));
+                parts.push('</span>');
+                parts.push('</div>');
+            }
+            if (vm.religions.length > 0) {
+                parts.push('<div class="culture-card__relation">');
+                parts.push('<span class="culture-card__relation-label">Religions</span>');
+                parts.push('<span class="culture-card__relation-values">');
+                parts.push(vm.religions.map(function(rel) {
+                    return escapeHtml(rel.label);
+                }).join(', '));
+                parts.push('</span>');
+                parts.push('</div>');
+            }
+            parts.push('</div>');
+        }
+
+        if (vm.appearance.length > 0) {
+            parts.push('<div class="culture-card__appearance">');
+            for (var i = 0; i < vm.appearance.length; i++) {
+                var a = vm.appearance[i];
+                parts.push('<div class="culture-card__appearance-row">');
+                parts.push('<span class="culture-card__appearance-cat">' + escapeHtml(a.category) + '</span>');
+                if (a.preview) {
+                    parts.push('<span class="culture-card__appearance-preview">' + escapeHtml(a.preview) + '</span>');
+                }
+                if (a.remaining > 0) {
+                    parts.push('<span class="culture-card__appearance-more">+' + a.remaining + ' more</span>');
+                }
+                parts.push('</div>');
+            }
+            parts.push('</div>');
+        }
+
+        if (vm.mythology) {
+            parts.push('<div class="culture-card__mythology">');
+            for (var j = 0; j < vm.mythology.sections.length; j++) {
+                var section = vm.mythology.sections[j];
+                parts.push('<div class="culture-card__myth-section">');
+                parts.push('<span class="culture-card__myth-label">' + escapeHtml(section.label) + '</span>');
+                if (section.value) {
+                    parts.push('<span class="culture-card__myth-value">' + escapeHtml(section.value) + '</span>');
+                } else if (section.values) {
+                    parts.push('<span class="culture-card__myth-values">' + escapeHtml(section.values.join(', ')) + '</span>');
+                }
+                parts.push('</div>');
+            }
+            parts.push('</div>');
+        }
+
+        if (vm.notes) {
+            parts.push('<div class="culture-card__notes">' + escapeHtml(vm.notes) + '</div>');
+        }
+
+        parts.push('</div>');
+        container.innerHTML = parts.join('');
+    }
+
+    // =========================================================================
+    // 4. DROPDOWN
+    // =========================================================================
+
+    /**
+     * Renders a <select> element for culture selection.
+     *
+     * Native <option> elements do not render arbitrary HTML reliably, so
+     * icons are omitted from the options. If a caller needs icons in a
+     * selector, they should build a custom control on top of the view
+     * model's dropdown options.
+     *
+     * @param {string|Element} containerId
+     * @param {Object} [options]
+     * @param {string} [options.selectedId]
+     * @param {string} [options.placeholder]
+     * @param {string} [options.id]            id attribute for the select element
+     * @param {Array}  [options.cultures]      override the culture list
+     */
+    function renderCultureDropdown(containerId, options) {
+        options = options || {};
+        var container = _resolveContainer(containerId);
+        var viewModels = _requireViewModels();
+        var queries = _requireQueries();
+        var escapeHtml = _requireEscapeHtml();
+
+        var cultures = Array.isArray(options.cultures)
+            ? options.cultures
+            : queries.getAllCultures();
+
+        var items = viewModels.buildDropdownOptions(cultures, {
+            selectedId: options.selectedId || null
+        });
+
+        var selectId = options.id || 'cultureSelect';
+
+        var parts = ['<select id="' + escapeHtml(selectId) + '" class="culture-select">'];
+
+        if (options.placeholder) {
+            parts.push(
+                '<option value="">' + escapeHtml(options.placeholder) + '</option>'
+            );
+        }
+
+        for (var i = 0; i < items.length; i++) {
+            var item = items[i];
+            parts.push(
+                '<option value="' + escapeHtml(item.id) + '"' +
+                (item.selected ? ' selected' : '') +
+                '>' +
+                escapeHtml(item.label) +
+                '</option>'
+            );
+        }
+
+        parts.push('</select>');
+        container.innerHTML = parts.join('');
+    }
+
+    // =========================================================================
+    // 5. PUBLIC API
     // =========================================================================
 
     window.CultureUI = {
