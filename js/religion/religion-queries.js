@@ -15,19 +15,19 @@
  * ICON POLICY: No emojis. No icons in confirm/cancel buttons.
  * 
  * =============================================================================
+ * PHASE 0 STABILISATION (2026):
+ *   - Removed _processingQuery re-entry guard. It was a boolean flag guarding
+ *     pure compositional functions, causing every nested query to silently
+ *     return an empty result. Queries must compose freely.
+ * 
+ * =============================================================================
  */
 
 (function() {
     'use strict';
 
     // =========================================================================
-    // 1. RECURSION GUARD
-    // =========================================================================
-
-    var _processingQuery = false;
-
-    // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
+    // 1. DEPENDENCY WRAPPERS
     // =========================================================================
 
     function _getReligion(id) {
@@ -75,11 +75,11 @@
     }
 
     function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
+        // Delegates to time.js — do not add fallback logic here.
+        return typeof window.getCurrentYearSafe === 'function'
+            ? window.getCurrentYearSafe()
+            : 1250;
+    }
 
     function _getFollowerCount(religionId) {
         if (typeof window.ReligionState !== 'undefined' &&
@@ -106,486 +106,325 @@
     }
 
     // =========================================================================
-    // 3. BASIC QUERIES
+    // 2. BASIC QUERIES
     // =========================================================================
 
     function getReligion(id) {
-        if (_processingQuery) return null;
-        _processingQuery = true;
-
-        try {
-            return _getReligion(id);
-        } finally {
-            _processingQuery = false;
-        }
+        return _getReligion(id);
     }
 
     function getAllReligions(options) {
-        if (_processingQuery) return [];
-        _processingQuery = true;
-
-        try {
-            return _getAllReligions(options);
-        } finally {
-            _processingQuery = false;
-        }
+        return _getAllReligions(options);
     }
 
     function getActiveReligions() {
-        if (_processingQuery) return [];
-        _processingQuery = true;
-
-        try {
-            return _getAllReligions({ includeDeprecated: false });
-        } finally {
-            _processingQuery = false;
-        }
+        return _getAllReligions({ includeDeprecated: false });
     }
 
     function getDeprecatedReligions() {
-        if (_processingQuery) return [];
-        _processingQuery = true;
-
-        try {
-            var all = _getAllReligions({ includeDeprecated: true });
-            var deprecated = [];
-            for (var i = 0; i < all.length; i++) {
-                if (all[i].isDeprecated) {
-                    deprecated.push(all[i]);
-                }
+        var all = _getAllReligions({ includeDeprecated: true });
+        var deprecated = [];
+        for (var i = 0; i < all.length; i++) {
+            if (all[i].isDeprecated) {
+                deprecated.push(all[i]);
             }
-            return deprecated;
-        } finally {
-            _processingQuery = false;
         }
+        return deprecated;
     }
 
     function getReligionsByLocation(locationId) {
-        if (_processingQuery) return [];
-        _processingQuery = true;
+        if (!locationId) return [];
 
-        try {
-            if (!locationId) return [];
+        var all = _getAllReligions({ includeDeprecated: false });
+        var result = [];
 
-            var all = _getAllReligions({ includeDeprecated: false });
-            var result = [];
-
-            for (var i = 0; i < all.length; i++) {
-                var religion = all[i];
-                if (religion.locations && religion.locations.indexOf(locationId) !== -1) {
-                    result.push(religion);
-                }
+        for (var i = 0; i < all.length; i++) {
+            var religion = all[i];
+            if (religion.locations && religion.locations.indexOf(locationId) !== -1) {
+                result.push(religion);
             }
-
-            return result;
-        } finally {
-            _processingQuery = false;
         }
+
+        return result;
     }
 
     function getReligionsByTrait(trait) {
-        if (_processingQuery) return [];
-        _processingQuery = true;
+        if (!trait) return [];
 
-        try {
-            if (!trait) return [];
+        var all = _getAllReligions({ includeDeprecated: false });
+        var result = [];
 
-            var all = _getAllReligions({ includeDeprecated: false });
-            var result = [];
-
-            for (var i = 0; i < all.length; i++) {
-                if (all[i].trait === trait) {
-                    result.push(all[i]);
-                }
+        for (var i = 0; i < all.length; i++) {
+            if (all[i].trait === trait) {
+                result.push(all[i]);
             }
-
-            return result;
-        } finally {
-            _processingQuery = false;
         }
+
+        return result;
     }
 
     function getReligionByLeader(characterId) {
-        if (_processingQuery) return null;
-        _processingQuery = true;
+        if (!characterId) return null;
 
-        try {
-            if (!characterId) return null;
+        var all = _getAllReligions({ includeDeprecated: true });
 
-            var all = _getAllReligions({ includeDeprecated: true });
-
-            for (var i = 0; i < all.length; i++) {
-                var religion = all[i];
-                if (religion.leader && religion.leader.characterId === characterId) {
-                    return religion;
-                }
+        for (var i = 0; i < all.length; i++) {
+            var religion = all[i];
+            if (religion.leader && religion.leader.characterId === characterId) {
+                return religion;
             }
-
-            return null;
-        } finally {
-            _processingQuery = false;
         }
+
+        return null;
     }
 
     // =========================================================================
-    // 4. GOD QUERIES
+    // 3. GOD QUERIES
     // =========================================================================
 
     function getGod(godId) {
-        if (_processingQuery) return null;
-        _processingQuery = true;
+        if (!godId) return null;
 
-        try {
-            if (!godId) return null;
+        var all = _getAllReligions({ includeDeprecated: true });
 
-            var all = _getAllReligions({ includeDeprecated: true });
-
-            for (var i = 0; i < all.length; i++) {
-                var religion = all[i];
-                if (religion.gods) {
-                    for (var j = 0; j < religion.gods.length; j++) {
-                        if (religion.gods[j].id === godId) {
-                            return religion.gods[j];
-                        }
+        for (var i = 0; i < all.length; i++) {
+            var religion = all[i];
+            if (religion.gods) {
+                for (var j = 0; j < religion.gods.length; j++) {
+                    if (religion.gods[j].id === godId) {
+                        return religion.gods[j];
                     }
                 }
             }
-
-            return null;
-        } finally {
-            _processingQuery = false;
         }
+
+        return null;
     }
 
     function getGodsByReligion(religionId) {
-        if (_processingQuery) return [];
-        _processingQuery = true;
-
-        try {
-            var religion = _getReligion(religionId);
-            if (!religion) return [];
-            return religion.gods || [];
-        } finally {
-            _processingQuery = false;
-        }
+        var religion = _getReligion(religionId);
+        if (!religion) return [];
+        return religion.gods || [];
     }
 
     function getGodsByDomain(domain) {
-        if (_processingQuery) return [];
-        _processingQuery = true;
+        if (!domain) return [];
 
-        try {
-            if (!domain) return [];
+        var all = _getAllReligions({ includeDeprecated: true });
+        var result = [];
 
-            var all = _getAllReligions({ includeDeprecated: true });
-            var result = [];
-
-            for (var i = 0; i < all.length; i++) {
-                var religion = all[i];
-                if (religion.gods) {
-                    for (var j = 0; j < religion.gods.length; j++) {
-                        if (religion.gods[j].domain === domain) {
-                            result.push(religion.gods[j]);
-                        }
+        for (var i = 0; i < all.length; i++) {
+            var religion = all[i];
+            if (religion.gods) {
+                for (var j = 0; j < religion.gods.length; j++) {
+                    if (religion.gods[j].domain === domain) {
+                        result.push(religion.gods[j]);
                     }
                 }
             }
-
-            return result;
-        } finally {
-            _processingQuery = false;
         }
+
+        return result;
     }
 
     function getGodCount(religionId) {
-        if (_processingQuery) return 0;
-        _processingQuery = true;
-
-        try {
-            var gods = getGodsByReligion(religionId);
-            return gods.length;
-        } finally {
-            _processingQuery = false;
-        }
+        var gods = getGodsByReligion(religionId);
+        return gods.length;
     }
 
     // =========================================================================
-    // 5. LAW QUERIES
+    // 4. LAW QUERIES
     // =========================================================================
 
     function getLaw(lawId) {
-        if (_processingQuery) return null;
-        _processingQuery = true;
+        if (!lawId) return null;
 
-        try {
-            if (!lawId) return null;
+        var all = _getAllReligions({ includeDeprecated: true });
 
-            var all = _getAllReligions({ includeDeprecated: true });
-
-            for (var i = 0; i < all.length; i++) {
-                var religion = all[i];
-                if (religion.laws) {
-                    for (var j = 0; j < religion.laws.length; j++) {
-                        if (religion.laws[j].id === lawId) {
-                            return religion.laws[j];
-                        }
+        for (var i = 0; i < all.length; i++) {
+            var religion = all[i];
+            if (religion.laws) {
+                for (var j = 0; j < religion.laws.length; j++) {
+                    if (religion.laws[j].id === lawId) {
+                        return religion.laws[j];
                     }
                 }
             }
-
-            return null;
-        } finally {
-            _processingQuery = false;
         }
+
+        return null;
     }
 
     function getLawsByReligion(religionId) {
-        if (_processingQuery) return [];
-        _processingQuery = true;
-
-        try {
-            var religion = _getReligion(religionId);
-            if (!religion) return [];
-            return religion.laws || [];
-        } finally {
-            _processingQuery = false;
-        }
+        var religion = _getReligion(religionId);
+        if (!religion) return [];
+        return religion.laws || [];
     }
 
     function getLawsByDomain(religionId, domain) {
-        if (_processingQuery) return [];
-        _processingQuery = true;
+        var laws = getLawsByReligion(religionId);
+        if (!domain) return laws;
 
-        try {
-            var laws = getLawsByReligion(religionId);
-            if (!domain) return laws;
-
-            var result = [];
-            for (var i = 0; i < laws.length; i++) {
-                if (laws[i].domain === domain) {
-                    result.push(laws[i]);
-                }
+        var result = [];
+        for (var i = 0; i < laws.length; i++) {
+            if (laws[i].domain === domain) {
+                result.push(laws[i]);
             }
-            return result;
-        } finally {
-            _processingQuery = false;
         }
+        return result;
     }
 
     function getLawsByCategory(religionId, category) {
-        if (_processingQuery) return [];
-        _processingQuery = true;
+        var laws = getLawsByReligion(religionId);
+        if (!category) return laws;
 
-        try {
-            var laws = getLawsByReligion(religionId);
-            if (!category) return laws;
-
-            var result = [];
-            for (var i = 0; i < laws.length; i++) {
-                if (laws[i].lawCategory === category) {
-                    result.push(laws[i]);
-                }
+        var result = [];
+        for (var i = 0; i < laws.length; i++) {
+            if (laws[i].lawCategory === category) {
+                result.push(laws[i]);
             }
-            return result;
-        } finally {
-            _processingQuery = false;
         }
+        return result;
     }
 
     function getApplicableLaws(religionId, characterId, domain) {
-        if (_processingQuery) return [];
-        _processingQuery = true;
-
-        try {
-            // This is a stub - in future, it will filter laws based on character
-            return getLawsByDomain(religionId, domain);
-        } finally {
-            _processingQuery = false;
-        }
+        // Stub: in future, will filter laws based on character.
+        return getLawsByDomain(religionId, domain);
     }
 
     // =========================================================================
-    // 6. FOLLOWER QUERIES
+    // 5. FOLLOWER QUERIES
     // =========================================================================
 
     function getFollowers(religionId, options) {
-        if (_processingQuery) return [];
-        _processingQuery = true;
-
-        try {
-            return _getFollowers(religionId, options);
-        } finally {
-            _processingQuery = false;
-        }
+        return _getFollowers(religionId, options);
     }
 
     function getFollowerCount(religionId) {
-        if (_processingQuery) return 0;
-        _processingQuery = true;
-
-        try {
-            return _getFollowerCount(religionId);
-        } finally {
-            _processingQuery = false;
-        }
+        return _getFollowerCount(religionId);
     }
 
     function getFollowersByLocation(religionId, locationId) {
-        if (_processingQuery) return [];
-        _processingQuery = true;
+        if (typeof window.ReligionState !== 'undefined' &&
+            typeof window.ReligionState.getFollowersByLocation === 'function') {
+            return window.ReligionState.getFollowersByLocation(religionId, locationId);
+        }
 
-        try {
-            if (typeof window.ReligionState !== 'undefined' &&
-                typeof window.ReligionState.getFollowersByLocation === 'function') {
-                return window.ReligionState.getFollowersByLocation(religionId, locationId);
+        var followers = getFollowers(religionId, { includeDeceased: false });
+        var result = [];
+
+        for (var i = 0; i < followers.length; i++) {
+            var char = followers[i];
+            var charLocationId = null;
+
+            if (typeof window.getCurrentLocationId === 'function') {
+                charLocationId = window.getCurrentLocationId(char);
+            } else if (char.currentLocationId) {
+                charLocationId = char.currentLocationId;
             }
 
-            var followers = getFollowers(religionId, { includeDeceased: false });
-            var result = [];
+            if (charLocationId === locationId) {
+                result.push(char);
+            }
+        }
 
-            for (var i = 0; i < followers.length; i++) {
-                var char = followers[i];
+        return result;
+    }
+
+    function getDominantReligion(locationId) {
+        if (!locationId) return null;
+
+        var religions = getReligionsByLocation(locationId);
+        var maxCount = 0;
+        var dominant = null;
+
+        for (var i = 0; i < religions.length; i++) {
+            var count = getFollowersByLocation(religions[i].id, locationId).length;
+            if (count > maxCount) {
+                maxCount = count;
+                dominant = religions[i];
+            }
+        }
+
+        return dominant;
+    }
+
+    function getReligiousBreakdown(locationId) {
+        if (!locationId) return {};
+
+        var religions = getReligionsByLocation(locationId);
+        var breakdown = {};
+        var total = 0;
+
+        for (var i = 0; i < religions.length; i++) {
+            var count = getFollowersByLocation(religions[i].id, locationId).length;
+            breakdown[religions[i].id] = {
+                name: religions[i].name,
+                count: count
+            };
+            total += count;
+        }
+
+        // Add "unaffiliated"
+        var allCharacters = [];
+        if (typeof window.getCharactersByLocation === 'function') {
+            allCharacters = window.getCharactersByLocation(locationId);
+        } else {
+            var characters = _getCharacters();
+            for (var i = 0; i < characters.length; i++) {
+                var char = characters[i];
                 var charLocationId = null;
-
                 if (typeof window.getCurrentLocationId === 'function') {
                     charLocationId = window.getCurrentLocationId(char);
                 } else if (char.currentLocationId) {
                     charLocationId = char.currentLocationId;
                 }
-
-                if (charLocationId === locationId) {
-                    result.push(char);
+                if (charLocationId === locationId && !char.isDeceased) {
+                    allCharacters.push(char);
                 }
             }
-
-            return result;
-        } finally {
-            _processingQuery = false;
         }
-    }
 
-    function getDominantReligion(locationId) {
-        if (_processingQuery) return null;
-        _processingQuery = true;
-
-        try {
-            if (!locationId) return null;
-
-            var religions = getReligionsByLocation(locationId);
-            var maxCount = 0;
-            var dominant = null;
-
-            for (var i = 0; i < religions.length; i++) {
-                var count = getFollowersByLocation(religions[i].id, locationId).length;
-                if (count > maxCount) {
-                    maxCount = count;
-                    dominant = religions[i];
-                }
+        var unaffiliated = 0;
+        for (var i = 0; i < allCharacters.length; i++) {
+            if (!allCharacters[i].religionId) {
+                unaffiliated++;
             }
-
-            return dominant;
-        } finally {
-            _processingQuery = false;
         }
-    }
 
-    function getReligiousBreakdown(locationId) {
-        if (_processingQuery) return {};
-        _processingQuery = true;
+        breakdown['unaffiliated'] = {
+            name: 'Unaffiliated',
+            count: unaffiliated
+        };
 
-        try {
-            if (!locationId) return {};
-
-            var religions = getReligionsByLocation(locationId);
-            var breakdown = {};
-            var total = 0;
-
-            for (var i = 0; i < religions.length; i++) {
-                var count = getFollowersByLocation(religions[i].id, locationId).length;
-                breakdown[religions[i].id] = {
-                    name: religions[i].name,
-                    count: count
-                };
-                total += count;
-            }
-
-            // Add "unaffiliated"
-            var allCharacters = [];
-            if (typeof window.getCharactersByLocation === 'function') {
-                allCharacters = window.getCharactersByLocation(locationId);
-            } else {
-                var characters = _getCharacters();
-                for (var i = 0; i < characters.length; i++) {
-                    var char = characters[i];
-                    var charLocationId = null;
-                    if (typeof window.getCurrentLocationId === 'function') {
-                        charLocationId = window.getCurrentLocationId(char);
-                    } else if (char.currentLocationId) {
-                        charLocationId = char.currentLocationId;
-                    }
-                    if (charLocationId === locationId && !char.isDeceased) {
-                        allCharacters.push(char);
-                    }
-                }
-            }
-
-            var unaffiliated = 0;
-            for (var i = 0; i < allCharacters.length; i++) {
-                if (!allCharacters[i].religionId) {
-                    unaffiliated++;
-                }
-            }
-
-            breakdown['unaffiliated'] = {
-                name: 'Unaffiliated',
-                count: unaffiliated
-            };
-
-            return breakdown;
-        } finally {
-            _processingQuery = false;
-        }
+        return breakdown;
     }
 
     // =========================================================================
-    // 7. CHARACTER RELIGION QUERIES
+    // 6. CHARACTER RELIGION QUERIES
     // =========================================================================
 
     function getCharacterReligion(characterId) {
-        if (_processingQuery) return null;
-        _processingQuery = true;
-
-        try {
-            if (typeof window.ReligionState !== 'undefined' &&
-                typeof window.ReligionState.getCharacterReligion === 'function') {
-                return window.ReligionState.getCharacterReligion(characterId);
-            }
-
-            var character = _getCharacterById(characterId);
-            if (!character) return null;
-            if (!character.religionId) return null;
-            return _getReligion(character.religionId);
-        } finally {
-            _processingQuery = false;
+        if (typeof window.ReligionState !== 'undefined' &&
+            typeof window.ReligionState.getCharacterReligion === 'function') {
+            return window.ReligionState.getCharacterReligion(characterId);
         }
+
+        var character = _getCharacterById(characterId);
+        if (!character) return null;
+        if (!character.religionId) return null;
+        return _getReligion(character.religionId);
     }
 
     function getCharacterReligionHistory(characterId) {
-        if (_processingQuery) return [];
-        _processingQuery = true;
-
-        try {
-            if (typeof window.ReligionState !== 'undefined' &&
-                typeof window.ReligionState.getCharacterReligionHistory === 'function') {
-                return window.ReligionState.getCharacterReligionHistory(characterId);
-            }
-
-            var character = _getCharacterById(characterId);
-            if (!character) return [];
-            return character.religionHistory || [];
-        } finally {
-            _processingQuery = false;
+        if (typeof window.ReligionState !== 'undefined' &&
+            typeof window.ReligionState.getCharacterReligionHistory === 'function') {
+            return window.ReligionState.getCharacterReligionHistory(characterId);
         }
+
+        var character = _getCharacterById(characterId);
+        if (!character) return [];
+        return character.religionHistory || [];
     }
 
     function getCharacterConversionHistory(characterId) {
@@ -593,348 +432,270 @@
     }
 
     function getCharactersByReligion(religionId, options) {
-        if (_processingQuery) return [];
-        _processingQuery = true;
-
-        try {
-            return getFollowers(religionId, options);
-        } finally {
-            _processingQuery = false;
-        }
+        return getFollowers(religionId, options);
     }
 
     function getCharactersByReligionAndLocation(religionId, locationId) {
-        if (_processingQuery) return [];
-        _processingQuery = true;
-
-        try {
-            return getFollowersByLocation(religionId, locationId);
-        } finally {
-            _processingQuery = false;
-        }
+        return getFollowersByLocation(religionId, locationId);
     }
 
     // =========================================================================
-    // 8. STATISTICS QUERIES
+    // 7. STATISTICS QUERIES
     // =========================================================================
 
     function getReligionStatistics(religionId) {
-        if (_processingQuery) return null;
-        _processingQuery = true;
-
-        try {
-            return _getReligionStatistics(religionId);
-        } finally {
-            _processingQuery = false;
-        }
+        return _getReligionStatistics(religionId);
     }
 
     function getGlobalReligionStatistics() {
-        if (_processingQuery) return null;
-        _processingQuery = true;
-
-        try {
-            if (typeof window.ReligionState !== 'undefined' &&
-                typeof window.ReligionState.getGlobalReligionStatistics === 'function') {
-                return window.ReligionState.getGlobalReligionStatistics();
-            }
-
-            var activeReligions = getActiveReligions();
-            var stats = {
-                totalReligions: activeReligions.length,
-                totalFollowers: 0,
-                byTrait: {},
-                largest: null,
-                oldest: null
-            };
-
-            var largestCount = 0;
-
-            for (var i = 0; i < activeReligions.length; i++) {
-                var religion = activeReligions[i];
-                var count = getFollowerCount(religion.id);
-
-                stats.totalFollowers += count;
-
-                if (religion.trait) {
-                    if (!stats.byTrait[religion.trait]) {
-                        stats.byTrait[religion.trait] = 0;
-                    }
-                    stats.byTrait[religion.trait] += count;
-                }
-
-                if (count > largestCount) {
-                    largestCount = count;
-                    stats.largest = {
-                        id: religion.id,
-                        name: religion.name,
-                        followers: count
-                    };
-                }
-
-                if (!stats.oldest || religion.createdAt < stats.oldest.createdAt) {
-                    stats.oldest = {
-                        id: religion.id,
-                        name: religion.name,
-                        createdAt: religion.createdAt
-                    };
-                }
-            }
-
-            return stats;
-        } finally {
-            _processingQuery = false;
+        if (typeof window.ReligionState !== 'undefined' &&
+            typeof window.ReligionState.getGlobalReligionStatistics === 'function') {
+            return window.ReligionState.getGlobalReligionStatistics();
         }
+
+        var activeReligions = getActiveReligions();
+        var stats = {
+            totalReligions: activeReligions.length,
+            totalFollowers: 0,
+            byTrait: {},
+            largest: null,
+            oldest: null
+        };
+
+        var largestCount = 0;
+
+        for (var i = 0; i < activeReligions.length; i++) {
+            var religion = activeReligions[i];
+            var count = getFollowerCount(religion.id);
+
+            stats.totalFollowers += count;
+
+            if (religion.trait) {
+                if (!stats.byTrait[religion.trait]) {
+                    stats.byTrait[religion.trait] = 0;
+                }
+                stats.byTrait[religion.trait] += count;
+            }
+
+            if (count > largestCount) {
+                largestCount = count;
+                stats.largest = {
+                    id: religion.id,
+                    name: religion.name,
+                    followers: count
+                };
+            }
+
+            if (!stats.oldest || religion.createdAt < stats.oldest.createdAt) {
+                stats.oldest = {
+                    id: religion.id,
+                    name: religion.name,
+                    createdAt: religion.createdAt
+                };
+            }
+        }
+
+        return stats;
     }
 
     function getReligionGrowth(religionId, years) {
-        if (_processingQuery) return null;
-        _processingQuery = true;
+        var religion = _getReligion(religionId);
+        if (!religion) return null;
 
-        try {
-            var religion = _getReligion(religionId);
-            if (!religion) return null;
+        var currentYear = _getCurrentYear();
 
-            var history = [];
-            var currentYear = _getCurrentYear();
+        // Explicit missing check — years === 0 is valid.
+        var span = (years === undefined || years === null) ? 10 : years;
 
-            // Get conversion history for this religion
-            var allCharacters = _getCharacters();
-            var conversions = [];
+        var allCharacters = _getCharacters();
+        var conversions = [];
 
-            for (var i = 0; i < allCharacters.length; i++) {
-                var char = allCharacters[i];
-                if (char.religionHistory) {
-                    for (var j = 0; j < char.religionHistory.length; j++) {
-                        var event = char.religionHistory[j];
-                        if (event.toReligionId === religionId || event.fromReligionId === religionId) {
-                            conversions.push(event);
-                        }
+        for (var i = 0; i < allCharacters.length; i++) {
+            var char = allCharacters[i];
+            if (char.religionHistory) {
+                for (var j = 0; j < char.religionHistory.length; j++) {
+                    var event = char.religionHistory[j];
+                    if (event.toReligionId === religionId || event.fromReligionId === religionId) {
+                        conversions.push(event);
                     }
                 }
             }
-
-            // Group by year
-            var yearData = {};
-            var startYear = currentYear - (years || 10);
-
-            for (var i = 0; i < conversions.length; i++) {
-                var event = conversions[i];
-                if (event.year >= startYear) {
-                    if (!yearData[event.year]) {
-                        yearData[event.year] = { to: 0, from: 0, net: 0 };
-                    }
-                    if (event.toReligionId === religionId) {
-                        yearData[event.year].to++;
-                    }
-                    if (event.fromReligionId === religionId) {
-                        yearData[event.year].from++;
-                    }
-                }
-            }
-
-            var result = [];
-            for (var year = startYear; year <= currentYear; year++) {
-                var data = yearData[year] || { to: 0, from: 0, net: 0 };
-                data.net = data.to - data.from;
-                result.push({
-                    year: year,
-                    conversionsTo: data.to,
-                    conversionsFrom: data.from,
-                    netChange: data.net
-                });
-            }
-
-            return {
-                religionId: religionId,
-                religionName: religion.name,
-                years: result,
-                totalConverts: 0,
-                totalLosses: 0,
-                netChange: 0
-            };
-        } finally {
-            _processingQuery = false;
         }
+
+        var yearData = {};
+        var startYear = currentYear - span;
+
+        for (var i = 0; i < conversions.length; i++) {
+            var event = conversions[i];
+            if (event.year >= startYear) {
+                if (!yearData[event.year]) {
+                    yearData[event.year] = { to: 0, from: 0, net: 0 };
+                }
+                if (event.toReligionId === religionId) {
+                    yearData[event.year].to++;
+                }
+                if (event.fromReligionId === religionId) {
+                    yearData[event.year].from++;
+                }
+            }
+        }
+
+        var totalConverts = 0;
+        var totalLosses = 0;
+        var result = [];
+
+        for (var year = startYear; year <= currentYear; year++) {
+            var data = yearData[year] || { to: 0, from: 0, net: 0 };
+            data.net = data.to - data.from;
+            totalConverts += data.to;
+            totalLosses += data.from;
+            result.push({
+                year: year,
+                conversionsTo: data.to,
+                conversionsFrom: data.from,
+                netChange: data.net
+            });
+        }
+
+        return {
+            religionId: religionId,
+            religionName: religion.name,
+            years: result,
+            totalConverts: totalConverts,
+            totalLosses: totalLosses,
+            netChange: totalConverts - totalLosses
+        };
     }
 
     function getConversionStats(religionId, startYear, endYear) {
-        if (_processingQuery) return null;
-        _processingQuery = true;
+        var growth = getReligionGrowth(religionId, (endYear || _getCurrentYear()) - (startYear || 0));
+        if (!growth) return null;
 
-        try {
-            var growth = getReligionGrowth(religionId, (endYear || _getCurrentYear()) - (startYear || 0));
-            if (!growth) return null;
+        var totalTo = 0;
+        var totalFrom = 0;
 
-            var totalTo = 0;
-            var totalFrom = 0;
-
-            for (var i = 0; i < growth.years.length; i++) {
-                totalTo += growth.years[i].conversionsTo;
-                totalFrom += growth.years[i].conversionsFrom;
-            }
-
-            return {
-                religionId: religionId,
-                religionName: growth.religionName,
-                totalConversions: totalTo,
-                totalLosses: totalFrom,
-                netChange: totalTo - totalFrom,
-                years: growth.years
-            };
-        } finally {
-            _processingQuery = false;
+        for (var i = 0; i < growth.years.length; i++) {
+            totalTo += growth.years[i].conversionsTo;
+            totalFrom += growth.years[i].conversionsFrom;
         }
+
+        return {
+            religionId: religionId,
+            religionName: growth.religionName,
+            totalConversions: totalTo,
+            totalLosses: totalFrom,
+            netChange: totalTo - totalFrom,
+            years: growth.years
+        };
     }
 
     // =========================================================================
-    // 9. PLACE OF WORSHIP QUERIES
+    // 8. PLACE OF WORSHIP QUERIES
     // =========================================================================
 
     function getPlacesOfWorshipByReligion(religionId) {
-        if (_processingQuery) return [];
-        _processingQuery = true;
-
-        try {
-            var religion = _getReligion(religionId);
-            if (!religion) return [];
-            return religion.placesOfWorship || [];
-        } finally {
-            _processingQuery = false;
-        }
+        var religion = _getReligion(religionId);
+        if (!religion) return [];
+        return religion.placesOfWorship || [];
     }
 
     function getPlacesOfWorshipByLocation(locationId) {
-        if (_processingQuery) return [];
-        _processingQuery = true;
+        if (!locationId) return [];
 
-        try {
-            if (!locationId) return [];
+        var all = _getAllReligions({ includeDeprecated: true });
+        var result = [];
 
-            var all = _getAllReligions({ includeDeprecated: true });
-            var result = [];
-
-            for (var i = 0; i < all.length; i++) {
-                var religion = all[i];
-                if (religion.placesOfWorship) {
-                    for (var j = 0; j < religion.placesOfWorship.length; j++) {
-                        // Since we don't store location per place, we check if the religion is at this location
-                        if (religion.locations && religion.locations.indexOf(locationId) !== -1) {
-                            result.push({
-                                id: religion.placesOfWorship[j],
-                                religionId: religion.id,
-                                religionName: religion.name
-                            });
-                        }
+        for (var i = 0; i < all.length; i++) {
+            var religion = all[i];
+            if (religion.placesOfWorship) {
+                for (var j = 0; j < religion.placesOfWorship.length; j++) {
+                    if (religion.locations && religion.locations.indexOf(locationId) !== -1) {
+                        result.push({
+                            id: religion.placesOfWorship[j],
+                            religionId: religion.id,
+                            religionName: religion.name
+                        });
                     }
                 }
             }
-
-            return result;
-        } finally {
-            _processingQuery = false;
         }
+
+        return result;
     }
 
     function getPlaceOfWorshipCount(religionId) {
-        if (_processingQuery) return 0;
-        _processingQuery = true;
-
-        try {
-            var places = getPlacesOfWorshipByReligion(religionId);
-            return places.length;
-        } finally {
-            _processingQuery = false;
-        }
+        var places = getPlacesOfWorshipByReligion(religionId);
+        return places.length;
     }
 
     // =========================================================================
-    // 10. COMPATIBILITY QUERIES (Flavor only - no enforcement)
+    // 9. COMPATIBILITY QUERIES (Flavor only - no enforcement)
     // =========================================================================
 
     function isCulturallyCompatible(characterIdA, characterIdB) {
-        if (_processingQuery) return { compatible: true, reason: 'No cultural system yet' };
-        _processingQuery = true;
-
-        try {
-            // Placeholder for future cultural system
-            return {
-                compatible: true,
-                reason: 'Culture system not yet implemented'
-            };
-        } finally {
-            _processingQuery = false;
-        }
+        return {
+            compatible: true,
+            reason: 'Culture system not yet implemented'
+        };
     }
 
     function isReligiouslyPermitted(characterIdA, characterIdB) {
-        if (_processingQuery) return { permitted: true, reason: 'No religious restrictions enforced' };
-        _processingQuery = true;
+        var charA = _getCharacterById(characterIdA);
+        var charB = _getCharacterById(characterIdB);
 
-        try {
-            var charA = _getCharacterById(characterIdA);
-            var charB = _getCharacterById(characterIdB);
+        if (!charA || !charB) {
+            return {
+                permitted: false,
+                reason: 'One or both characters not found'
+            };
+        }
 
-            if (!charA || !charB) {
-                return {
-                    permitted: false,
-                    reason: 'One or both characters not found'
-                };
-            }
-
-            // If either has no religion, it's permitted
-            if (!charA.religionId || !charB.religionId) {
-                return {
-                    permitted: true,
-                    reason: 'One or both characters have no religion'
-                };
-            }
-
-            // If same religion, permitted
-            if (charA.religionId === charB.religionId) {
-                return {
-                    permitted: true,
-                    reason: 'Same religion'
-                };
-            }
-
-            // Different religions - check if either religion allows interfaith marriage
-            var religionA = _getReligion(charA.religionId);
-            var religionB = _getReligion(charB.religionId);
-
-            // Check laws for interfaith restrictions
-            var lawsA = religionA ? (religionA.laws || []) : [];
-            var lawsB = religionB ? (religionB.laws || []) : [];
-
-            for (var i = 0; i < lawsA.length; i++) {
-                if (lawsA[i].domain === 'marriage' && lawsA[i].name.toLowerCase().indexOf('interfaith') !== -1) {
-                    return {
-                        permitted: false,
-                        reason: 'Restricted by ' + religionA.name + ' law: ' + lawsA[i].name
-                    };
-                }
-            }
-
-            for (var i = 0; i < lawsB.length; i++) {
-                if (lawsB[i].domain === 'marriage' && lawsB[i].name.toLowerCase().indexOf('interfaith') !== -1) {
-                    return {
-                        permitted: false,
-                        reason: 'Restricted by ' + religionB.name + ' law: ' + lawsB[i].name
-                    };
-                }
-            }
-
+        if (!charA.religionId || !charB.religionId) {
             return {
                 permitted: true,
-                reason: 'No restrictions found'
+                reason: 'One or both characters have no religion'
             };
-        } finally {
-            _processingQuery = false;
         }
+
+        if (charA.religionId === charB.religionId) {
+            return {
+                permitted: true,
+                reason: 'Same religion'
+            };
+        }
+
+        var religionA = _getReligion(charA.religionId);
+        var religionB = _getReligion(charB.religionId);
+
+        var lawsA = religionA ? (religionA.laws || []) : [];
+        var lawsB = religionB ? (religionB.laws || []) : [];
+
+        for (var i = 0; i < lawsA.length; i++) {
+            if (lawsA[i].domain === 'marriage' && lawsA[i].name.toLowerCase().indexOf('interfaith') !== -1) {
+                return {
+                    permitted: false,
+                    reason: 'Restricted by ' + religionA.name + ' law: ' + lawsA[i].name
+                };
+            }
+        }
+
+        for (var i = 0; i < lawsB.length; i++) {
+            if (lawsB[i].domain === 'marriage' && lawsB[i].name.toLowerCase().indexOf('interfaith') !== -1) {
+                return {
+                    permitted: false,
+                    reason: 'Restricted by ' + religionB.name + ' law: ' + lawsB[i].name
+                };
+            }
+        }
+
+        return {
+            permitted: true,
+            reason: 'No restrictions found'
+        };
     }
 
     // =========================================================================
-    // 11. EXPORTS
+    // 10. EXPORTS
     // =========================================================================
 
     window.ReligionQueries = {
