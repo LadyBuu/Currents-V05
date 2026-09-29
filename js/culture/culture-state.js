@@ -1,13 +1,36 @@
 /**
  * =============================================================================
- * STILL WATERS - CULTURE STATE (js/culture/culture-state.js)
+ * STILL WATERS - CULTURE STATE
+ * js/culture/culture-state.js
  * =============================================================================
- * 
- * Single source of truth for all culture data.
- * 
- * DEPENDENCIES:
- *   - storage.js (masterData, saveMasterData)
- * 
+ *
+ * Derived indexes and subscriptions for culture data.
+ *
+ * This module is deliberately boring.
+ *
+ * It owns:
+ *   - derived lookup indexes (byId, byName, byDisplayName, etc.)
+ *   - a subscription mechanism for interested consumers
+ *   - a way to rebuild indexes from canonical culture data
+ *
+ * It does NOT own:
+ *   - culture records                  (masterData.data.cultures)
+ *   - persistence                      (application save mechanism)
+ *   - mutation                         (CultureCommands)
+ *   - queries                          (CultureQueries)
+ *   - domain vocabulary                (appearance, mythology, etc.)
+ *   - presentation                     (CultureViewModels / CultureUI)
+ *
+ * Relationship to canonical data:
+ *
+ *     masterData.data.cultures
+ *             │
+ *             ├── CultureCommands ──── mutate + rebuild + save + notify
+ *             │
+ *             ├── CultureQueries ───── read / interpret
+ *             │
+ *             └── CultureState ─────── index
+ *
  * =============================================================================
  */
 
@@ -15,581 +38,350 @@
     'use strict';
 
     // =========================================================================
-    // 1. STATE DEFINITION
+    // 1. STATE
     // =========================================================================
 
-    var _state = {
-        cultures: [],
-        cache: {
-            byId: new Map(),
-            byName: new Map(),
-            byLocation: new Map(),
-            byReligion: new Map(),
-            byDisplayName: new Map()
-        },
-        subscribers: [],
-        _processingState: false,
-        _initialized: false,
-        _lastRefresh: 0
+    /**
+     * The only state this module holds.
+     *
+     * Note the absence of:
+     *   - a cultures array (canonical data lives in masterData)
+     *   - a _processing flag (nothing here needs recursion protection)
+     *   - a lastRefresh timestamp (nobody should be branching on it)
+     *   - an _initialized flag (empty indexes are a valid state)
+     */
+    var _indexes = {
+        byId:                    new Map(),
+        byName:                  new Map(),  // name  -> [culture, ...]
+        byDisplayName:           new Map(),  // label -> [culture, ...]
+        byPrimaryCultureLocation: new Map(), // locationId -> [culture, ...]
+        byAssociatedLocation:    new Map(),  // locationId -> [culture, ...]
+        byReligion:              new Map()   // religionId -> [culture, ...]
     };
 
+    var _subscribers = [];
+
     // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
+    // 2. DEPENDENCY REQUIREMENT
     // =========================================================================
 
-    function _getMasterData() {
-        return typeof window.masterData !== 'undefined' ? window.masterData : null;
-    }
-
-    function _saveMasterData() {
-        if (typeof window.saveMasterData === 'function') {
-            window.saveMasterData(true);
-        } else if (window.masterData) {
-            try {
-                localStorage.setItem('stillwaters_master', JSON.stringify(window.masterData));
-            } catch(e) {}
+    /**
+     * Throws when a required capability is missing.
+     *
+     * Called at use time rather than at module load time so that load order
+     * during the migration does not become a chicken-and-egg problem.
+     *
+     * Missing dependencies must be loud, not substituted.
+     */
+    function _requireMasterData() {
+        if (typeof window.masterData === 'undefined' || !window.masterData) {
+            throw new Error(
+                'CultureState requires window.masterData. ' +
+                'This is a required dependency, not an optional one.'
+            );
         }
+        return window.masterData;
     }
 
-    function _generateId(prefix) {
-        if (typeof window.generateId === 'function') {
-            return window.generateId(prefix);
+    /**
+     * Reads the canonical culture collection.
+     *
+     * This is the ONLY place State reads culture records from.
+     * State never caches this array, and never writes to it.
+     */
+    function _readCanonicalCultures() {
+        var master = _requireMasterData();
+
+        if (!master.data) {
+            // The shape of masterData is a required invariant, not something
+            // State should silently paper over.
+            throw new Error(
+                'CultureState requires masterData.data to exist. ' +
+                'Canonical storage is not initialized.'
+            );
         }
-        return prefix + '_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+
+        // An absent cultures array is legitimately equivalent to "no cultures".
+        // Unlike a missing masterData, this is a valid empty state.
+        return Array.isArray(master.data.cultures) ? master.data.cultures : [];
     }
 
     // =========================================================================
-    // 3. DATA LOADING
+    // 3. INDEX REBUILDING
     // =========================================================================
 
-    function _ensureCulturesArray() {
-        var master = _getMasterData();
-        if (master && master.data) {
-            if (!master.data.cultures) {
-                master.data.cultures = [];
-                _saveMasterData();
-            }
-            return master.data.cultures;
+    /**
+     * Rebuilds all derived indexes from a canonical cultures array.
+     *
+     * Called by:
+     *   - CultureCommands after a successful mutation
+     *   - CultureState.refreshFromMasterData() after external canonical change
+     *
+     * NOT called by:
+     *   - queries
+     *   - UI
+     *   - "just in case" defensive code
+     *
+     * @param {Array} cultures - canonical culture records
+     */
+    function rebuildIndexes(cultures) {
+        if (!Array.isArray(cultures)) {
+            throw new Error('CultureState.rebuildIndexes requires an array');
         }
-        return [];
-    }
 
-    function _loadCultures() {
-        var master = _getMasterData();
-        if (master && master.data) {
-            if (!master.data.cultures) {
-                master.data.cultures = [];
-                _saveMasterData();
-            }
-            return master.data.cultures;
-        }
-        return [];
-    }
+        _indexes.byId.clear();
+        _indexes.byName.clear();
+        _indexes.byDisplayName.clear();
+        _indexes.byPrimaryCultureLocation.clear();
+        _indexes.byAssociatedLocation.clear();
+        _indexes.byReligion.clear();
 
-    function _loadData() {
-        if (_state._processingState) return;
-        _state._processingState = true;
-        try {
-            _state.cultures = _loadCultures();
-            _rebuildCaches();
-            _state._initialized = true;
-            _state._lastRefresh = Date.now();
-        } finally {
-            _state._processingState = false;
-        }
-    }
-
-    // =========================================================================
-    // 4. CACHE MANAGEMENT
-    // =========================================================================
-
-    function _rebuildCaches() {
-        var cache = _state.cache;
-        cache.byId.clear();
-        cache.byName.clear();
-        cache.byLocation.clear();
-        cache.byReligion.clear();
-        cache.byDisplayName.clear();
-
-        var cultures = _state.cultures;
         for (var i = 0; i < cultures.length; i++) {
             var c = cultures[i];
             if (!c || !c.id) continue;
 
-            // By ID
-            cache.byId.set(c.id, c);
+            _indexes.byId.set(c.id, c);
 
-            // By Name (case insensitive)
-            var nameKey = (c.name || '').toLowerCase().trim();
-            if (nameKey) {
-                if (!cache.byName.has(nameKey)) {
-                    cache.byName.set(nameKey, []);
-                }
-                cache.byName.get(nameKey).push(c);
-            }
+            _indexIntoStringMap(
+                _indexes.byName,
+                (c.name || '').toLowerCase().trim(),
+                c
+            );
 
-            // By Display Name (case insensitive)
-            var displayKey = (c.displayName || c.name || '').toLowerCase().trim();
-            if (displayKey) {
-                if (!cache.byDisplayName.has(displayKey)) {
-                    cache.byDisplayName.set(displayKey, []);
-                }
-                cache.byDisplayName.get(displayKey).push(c);
-            }
+            _indexIntoStringMap(
+                _indexes.byDisplayName,
+                (c.displayName || '').toLowerCase().trim(),
+                c
+            );
 
-            // By Location
-            if (c.locations && Array.isArray(c.locations)) {
-                for (var j = 0; j < c.locations.length; j++) {
-                    var locKey = c.locations[j];
-                    if (!cache.byLocation.has(locKey)) {
-                        cache.byLocation.set(locKey, []);
-                    }
-                    cache.byLocation.get(locKey).push(c);
-                }
-            }
+            // Associated locations: descriptive relationship stored on the
+            // culture record itself.
+            _indexIntoArrayMap(_indexes.byAssociatedLocation, c.locations, c);
 
-            // By Religion
-            if (c.religions && Array.isArray(c.religions)) {
-                for (var j = 0; j < c.religions.length; j++) {
-                    var relKey = c.religions[j];
-                    if (!cache.byReligion.has(relKey)) {
-                        cache.byReligion.set(relKey, []);
-                    }
-                    cache.byReligion.get(relKey).push(c);
-                }
-            }
+            // Religion association: also stored on the culture record.
+            _indexIntoArrayMap(_indexes.byReligion, c.religions, c);
         }
     }
 
-    function invalidateCache() {
-        if (_state._processingState) return;
-        _state._processingState = true;
-        try {
-            _rebuildCaches();
-            _notifySubscribers({ type: 'cacheInvalidated' });
-        } finally {
-            _state._processingState = false;
+    /**
+     * Rebuilds indexes from the current canonical data.
+     *
+     * This exists for cases where canonical data changed outside of a
+     * CultureCommands transaction (e.g. application-level reload, import,
+     * or migration). Normal mutations should not call this directly —
+     * they should call rebuildIndexes() with the array they just produced.
+     */
+    function refreshFromMasterData() {
+        rebuildIndexes(_readCanonicalCultures());
+    }
+
+    // =========================================================================
+    // 4. INDEX WRITE HELPERS
+    // =========================================================================
+
+    function _indexIntoStringMap(map, key, culture) {
+        if (!key) return; // empty name/displayName is not an indexable key
+        var bucket = map.get(key);
+        if (!bucket) {
+            bucket = [];
+            map.set(key, bucket);
+        }
+        bucket.push(culture);
+    }
+
+    function _indexIntoArrayMap(map, keys, culture) {
+        if (!Array.isArray(keys)) return;
+        for (var i = 0; i < keys.length; i++) {
+            var key = keys[i];
+            if (!key) continue;
+            var bucket = map.get(key);
+            if (!bucket) {
+                bucket = [];
+                map.set(key, bucket);
+            }
+            bucket.push(culture);
         }
     }
 
-    function getCacheStats() {
-        return {
-            byId: _state.cache.byId.size,
-            byName: _state.cache.byName.size,
-            byLocation: _state.cache.byLocation.size,
-            byReligion: _state.cache.byReligion.size,
-            byDisplayName: _state.cache.byDisplayName.size
-        };
+    // =========================================================================
+    // 5. INDEX ACCESS
+    // =========================================================================
+    //
+    // State exposes narrow lookup primitives. It does NOT expose semantic
+    // queries like "getCulturesForLocation()" — that interpretation belongs
+    // to CultureQueries.
+    //
+    // Note: State deliberately does NOT expose getAllCultures(). Providing
+    // it here would recreate the second-query-API problem we're refactoring
+    // away from. CultureQueries reads canonical data through its own path.
+    //
+
+    function getById(id) {
+        if (!id) return null;
+        return _indexes.byId.get(id) || null;
+    }
+
+    function getByName(name) {
+        if (!name) return [];
+        return _indexes.byName.get(name.toLowerCase().trim()) || [];
+    }
+
+    function getByDisplayName(displayName) {
+        if (!displayName) return [];
+        return _indexes.byDisplayName.get(displayName.toLowerCase().trim()) || [];
+    }
+
+    /**
+     * Cultures associated with a location via the descriptive
+     * culture.locations relationship.
+     *
+     * This does NOT walk the location hierarchy. Hierarchy semantics belong
+     * to CultureQueries, which composes this with PlaceQueries.
+     */
+    function getByAssociatedLocation(locationId) {
+        if (!locationId) return [];
+        return _indexes.byAssociatedLocation.get(locationId) || [];
+    }
+
+    /**
+     * Cultures for which this location is the PRIMARY culture.
+     *
+     * Populated by CultureCommands / the application from Place.cultureId.
+     * State does not derive it; it is told about it.
+     *
+     * NOTE: This accessor is present so the shape of the relationship is
+     * explicit, but it depends on State being fed primary-culture data
+     * during index construction. Until the Culture ↔ Location relationship
+     * is finalized (see ADR discussion), this index may remain empty.
+     * That is preferable to silently conflating it with byAssociatedLocation.
+     */
+    function getByPrimaryCultureLocation(locationId) {
+        if (!locationId) return [];
+        return _indexes.byPrimaryCultureLocation.get(locationId) || [];
+    }
+
+    function getByReligion(religionId) {
+        if (!religionId) return [];
+        return _indexes.byReligion.get(religionId) || [];
     }
 
     // =========================================================================
-    // 5. SUBSCRIPTION MANAGEMENT
+    // 6. SUBSCRIPTIONS
     // =========================================================================
+    //
+    // State provides the mechanism. It does NOT decide what event to emit,
+    // when to emit it, or what shape it should have. That is the command
+    // layer's responsibility.
+    //
 
     function subscribe(callback) {
-        if (typeof callback !== 'function') return null;
-        _state.subscribers.push(callback);
+        if (typeof callback !== 'function') {
+            throw new Error('CultureState.subscribe requires a function');
+        }
+        _subscribers.push(callback);
         return function unsubscribe() {
-            var index = _state.subscribers.indexOf(callback);
-            if (index !== -1) {
-                _state.subscribers.splice(index, 1);
-            }
+            var i = _subscribers.indexOf(callback);
+            if (i !== -1) _subscribers.splice(i, 1);
         };
     }
 
-    function _notifySubscribers(event) {
-        var subscribers = _state.subscribers;
-        for (var i = 0; i < subscribers.length; i++) {
+    /**
+     * Publishes an event to all subscribers.
+     *
+     * @param {Object} event - { type: string, ...payload }
+     */
+    function notify(event) {
+        // Copy so that a subscriber unsubscribing during dispatch does not
+        // affect the current round.
+        var snapshot = _subscribers.slice();
+
+        for (var i = 0; i < snapshot.length; i++) {
             try {
-                subscribers[i](event);
-            } catch (e) {}
+                snapshot[i](event);
+            } catch (err) {
+                // A broken subscriber must not prevent other subscribers
+                // from receiving the event.
+                _reportSubscriberError(err);
+            }
+        }
+    }
+
+    function _reportSubscriberError(err) {
+        // Route through whatever centralized error reporting exists.
+        // Silently swallowing here would hide real bugs in consumers.
+        if (typeof window.reportError === 'function') {
+            try { window.reportError(err); return; } catch (e) {}
+        }
+        if (typeof console !== 'undefined' && console.error) {
+            console.error('[CultureState] subscriber error', err);
         }
     }
 
     // =========================================================================
-    // 6. STATE MUTATION
+    // 7. DIAGNOSTICS
     // =========================================================================
 
-    function _setCultures(cultures) {
-        _state.cultures = cultures;
-        
-        var master = _getMasterData();
-        if (master && master.data) {
-            master.data.cultures = cultures;
-            _saveMasterData();
-        }
-        
-        _rebuildCaches();
-        _state._lastRefresh = Date.now();
-        _notifySubscribers({ type: 'change', data: { cultures: cultures } });
-    }
-
-    function _emitCultureChange(action, culture) {
-        _notifySubscribers({ type: 'cultureChanged', action: action, culture: culture });
-        try {
-            if (typeof window.dispatchEvent === 'function') {
-                window.dispatchEvent(new CustomEvent('cultureDataChanged', {
-                    detail: { action: action, cultureId: culture?.id }
-                }));
-            }
-        } catch (e) {}
-    }
-
-    function refreshFromMasterData() {
-        var master = _getMasterData();
-        if (master && master.data && master.data.cultures) {
-            _state.cultures = master.data.cultures;
-        } else {
-            _state.cultures = [];
-        }
-        _rebuildCaches();
-        _state._initialized = true;
-        _state._lastRefresh = Date.now();
-    }
-
-    function forceRefresh() {
-        var master = _getMasterData();
-        if (master && master.data) {
-            if (!master.data.cultures) {
-                master.data.cultures = [];
-                _saveMasterData();
-            }
-            _state.cultures = master.data.cultures;
-        } else {
-            _state.cultures = [];
-        }
-        _rebuildCaches();
-        _state._initialized = true;
-        _state._lastRefresh = Date.now();
-        _notifySubscribers({ type: 'forceRefresh' });
-    }
-
-    // =========================================================================
-    // 7. QUERY FUNCTIONS
-    // =========================================================================
-
-    function getCulture(id) {
-        if (!id) return null;
-        var cached = _state.cache.byId.get(id);
-        if (cached) return cached;
-        refreshFromMasterData();
-        return _state.cache.byId.get(id) || null;
-    }
-
-    function getCultureByName(name) {
-        if (!name) return null;
-        var key = name.toLowerCase().trim();
-        var cached = _state.cache.byName.get(key);
-        if (cached && cached.length > 0) return cached[0];
-        
-        // Fallback: search all cultures
-        var cultures = getAllCultures();
-        for (var i = 0; i < cultures.length; i++) {
-            if ((cultures[i].name || '').toLowerCase().trim() === key) {
-                return cultures[i];
-            }
-        }
-        return null;
-    }
-
-    function getCultureByDisplayName(displayName) {
-        if (!displayName) return null;
-        var key = displayName.toLowerCase().trim();
-        var cached = _state.cache.byDisplayName.get(key);
-        if (cached && cached.length > 0) return cached[0];
-        
-        var cultures = getAllCultures();
-        for (var i = 0; i < cultures.length; i++) {
-            var dName = (cultures[i].displayName || cultures[i].name || '').toLowerCase().trim();
-            if (dName === key) {
-                return cultures[i];
-            }
-        }
-        return null;
-    }
-
-    function getAllCultures() {
-        if (!_state._initialized) {
-            refreshFromMasterData();
-        }
-        return _state.cultures.slice();
-    }
-
-    function getCulturesByLocation(locationId) {
-        var result = _state.cache.byLocation.get(locationId);
-        return result ? result.slice() : [];
-    }
-
-    function getCulturesByReligion(religionId) {
-        var result = _state.cache.byReligion.get(religionId);
-        return result ? result.slice() : [];
-    }
-
-    function searchByName(query) {
-        if (!query || query.trim() === '') return getAllCultures();
-        var lowerQuery = query.toLowerCase().trim();
-        var result = [];
-        var seen = new Set();
-        
-        // Search by name
-        var byName = _state.cache.byName;
-        for (var key of byName.keys()) {
-            if (key.indexOf(lowerQuery) !== -1) {
-                var cultures = byName.get(key);
-                for (var i = 0; i < cultures.length; i++) {
-                    if (!seen.has(cultures[i].id)) {
-                        seen.add(cultures[i].id);
-                        result.push(cultures[i]);
-                    }
-                }
-            }
-        }
-        
-        // Search by display name
-        var byDisplay = _state.cache.byDisplayName;
-        for (var key of byDisplay.keys()) {
-            if (key.indexOf(lowerQuery) !== -1) {
-                var cultures = byDisplay.get(key);
-                for (var i = 0; i < cultures.length; i++) {
-                    if (!seen.has(cultures[i].id)) {
-                        seen.add(cultures[i].id);
-                        result.push(cultures[i]);
-                    }
-                }
-            }
-        }
-        
-        return result;
-    }
-
-    function searchCultures(query, options) {
-        options = options || {};
-        var results = searchByName(query);
-        
-        if (options.limit) {
-            results = results.slice(0, options.limit);
-        }
-        
-        if (options.sortBy) {
-            var sortKey = options.sortBy;
-            results.sort(function(a, b) {
-                var aVal = a[sortKey] || '';
-                var bVal = b[sortKey] || '';
-                return aVal.localeCompare(bVal);
-            });
-        }
-        
-        return results;
-    }
-
-    function getCultureCount() {
-        return _state.cultures.length;
-    }
-
-    function getCulturesByAge() {
-        var cultures = getAllCultures();
-        return cultures.slice().sort(function(a, b) {
-            return (a.createdAt || 0) - (b.createdAt || 0);
-        });
-    }
-
-    function getCulturesByUpdated() {
-        var cultures = getAllCultures();
-        return cultures.slice().sort(function(a, b) {
-            return (b.updatedAt || 0) - (a.updatedAt || 0);
-        });
-    }
-
-    function getCultureIds() {
-        var cultures = getAllCultures();
-        return cultures.map(function(c) { return c.id; });
-    }
-
-    function cultureExists(id) {
-        return getCulture(id) !== null;
-    }
-
-    function cultureExistsByName(name) {
-        return getCultureByName(name) !== null;
-    }
-
-    function getCulturesWithMythology() {
-        var cultures = getAllCultures();
-        var result = [];
-        for (var i = 0; i < cultures.length; i++) {
-            var m = cultures[i].mythology;
-            if (m && (m.creation || m.afterlife || (m.keyDeities && m.keyDeities.length > 0))) {
-                result.push(cultures[i]);
-            }
-        }
-        return result;
-    }
-
-    function getCulturesWithAppearance() {
-        var cultures = getAllCultures();
-        var result = [];
-        for (var i = 0; i < cultures.length; i++) {
-            var a = cultures[i].appearance;
-            if (a && Object.keys(a).length > 0) {
-                result.push(cultures[i]);
-            }
-        }
-        return result;
-    }
-
-    function getCultureStatistics() {
-        var cultures = getAllCultures();
-        var stats = {
-            total: cultures.length,
-            withLocations: 0,
-            withReligions: 0,
-            withMythology: 0,
-            withAppearance: 0,
-            totalLocations: 0,
-            totalReligions: 0
+    function getIndexStats() {
+        return {
+            byId:                     _indexes.byId.size,
+            byName:                   _indexes.byName.size,
+            byDisplayName:            _indexes.byDisplayName.size,
+            byPrimaryCultureLocation: _indexes.byPrimaryCultureLocation.size,
+            byAssociatedLocation:     _indexes.byAssociatedLocation.size,
+            byReligion:               _indexes.byReligion.size,
+            subscriberCount:          _subscribers.length
         };
-        
-        for (var i = 0; i < cultures.length; i++) {
-            var c = cultures[i];
-            if (c.locations && c.locations.length > 0) {
-                stats.withLocations++;
-                stats.totalLocations += c.locations.length;
-            }
-            if (c.religions && c.religions.length > 0) {
-                stats.withReligions++;
-                stats.totalReligions += c.religions.length;
-            }
-            var m = c.mythology;
-            if (m && (m.creation || m.afterlife || (m.keyDeities && m.keyDeities.length > 0))) {
-                stats.withMythology++;
-            }
-            if (c.appearance && Object.keys(c.appearance).length > 0) {
-                stats.withAppearance++;
-            }
-        }
-        
-        return stats;
-    }
-
-    function getCulturesByLocationHierarchy(locationId) {
-        var direct = getCulturesByLocation(locationId);
-        var all = getAllCultures();
-        var result = [];
-        var seen = new Set();
-        
-        // Add direct matches
-        for (var i = 0; i < direct.length; i++) {
-            if (!seen.has(direct[i].id)) {
-                seen.add(direct[i].id);
-                result.push(direct[i]);
-            }
-        }
-        
-        // Find cultures whose locations include ancestors
-        // This requires location hierarchy access - skip if not available
-        try {
-            if (typeof window.getPlaceById === 'function') {
-                var place = window.getPlaceById(locationId);
-                var ancestors = [];
-                var current = place;
-                while (current && current.parentId) {
-                    current = window.getPlaceById(current.parentId);
-                    if (current) ancestors.push(current.id);
-                }
-                
-                for (var i = 0; i < all.length; i++) {
-                    if (seen.has(all[i].id)) continue;
-                    if (!all[i].locations) continue;
-                    for (var j = 0; j < ancestors.length; j++) {
-                        if (all[i].locations.indexOf(ancestors[j]) !== -1) {
-                            seen.add(all[i].id);
-                            result.push(all[i]);
-                            break;
-                        }
-                    }
-                }
-            }
-        } catch(e) {}
-        
-        return result;
     }
 
     // =========================================================================
     // 8. PUBLIC API
     // =========================================================================
 
-    var CultureState = {
-
-        // ---- Data Access ----
-        getCulture: getCulture,
-        getCultureByName: getCultureByName,
-        getCultureByDisplayName: getCultureByDisplayName,
-        getAllCultures: getAllCultures,
-        getCulturesByLocation: getCulturesByLocation,
-        getCulturesByReligion: getCulturesByReligion,
-        getCulturesByLocationHierarchy: getCulturesByLocationHierarchy,
-        searchByName: searchByName,
-        searchCultures: searchCultures,
-        getCultureCount: getCultureCount,
-        getCultureIds: getCultureIds,
-        cultureExists: cultureExists,
-        cultureExistsByName: cultureExistsByName,
-
-        // ---- Specialized Queries ----
-        getCulturesWithMythology: getCulturesWithMythology,
-        getCulturesWithAppearance: getCulturesWithAppearance,
-        getCulturesByAge: getCulturesByAge,
-        getCulturesByUpdated: getCulturesByUpdated,
-
-        // ---- Statistics ----
-        getCultureStatistics: getCultureStatistics,
-        getCacheStats: getCacheStats,
-
-        // ---- Cache Management ----
-        invalidateCache: invalidateCache,
+    window.CultureState = {
+        // ---- Index lifecycle ----
+        rebuildIndexes: rebuildIndexes,
         refreshFromMasterData: refreshFromMasterData,
-        forceRefresh: forceRefresh,
+
+        // ---- Index access (primitives) ----
+        getById: getById,
+        getByName: getByName,
+        getByDisplayName: getByDisplayName,
+        getByPrimaryCultureLocation: getByPrimaryCultureLocation,
+        getByAssociatedLocation: getByAssociatedLocation,
+        getByReligion: getByReligion,
 
         // ---- Subscriptions ----
         subscribe: subscribe,
+        notify: notify,
 
-        // ---- Internal (for commands) ----
-        _setCultures: _setCultures,
-        _emitCultureChange: _emitCultureChange,
-        _loadData: _loadData,
-
-        // ---- State Info ----
-        isProcessing: function() {
-            return _state._processingState;
-        },
-        isInitialized: function() {
-            return _state._initialized;
-        },
-        getLastRefresh: function() {
-            return _state._lastRefresh;
-        }
+        // ---- Diagnostics ----
+        getIndexStats: getIndexStats
     };
 
     // =========================================================================
-    // 9. AUTO-LOAD
+    // 9. INITIAL BUILD
     // =========================================================================
+    //
+    // Attempt an initial build if canonical data already exists. If it does
+    // not, indexes remain empty and refreshFromMasterData() can be called
+    // later. State must be loadable before masterData is ready.
+    //
+    // Note: this does not throw when masterData is absent — empty indexes are
+    // a legitimate initial state. It only throws when someone actually asks
+    // State to read canonical data that the application claimed existed.
+    //
 
-    refreshFromMasterData();
-
-    if (typeof window !== 'undefined') {
-        window.addEventListener('masterDataUpdated', function() {
+    try {
+        if (typeof window.masterData !== 'undefined' &&
+            window.masterData && window.masterData.data) {
             refreshFromMasterData();
-        });
+        }
+    } catch (err) {
+        _reportSubscriberError(err);
     }
 
-    // =========================================================================
-    // 10. EXPORTS
-    // =========================================================================
-
-    window.CultureState = CultureState;
-
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = CultureState;
+        module.exports = window.CultureState;
     }
 
 })();
