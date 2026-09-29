@@ -15,16 +15,15 @@
  * 
  * =============================================================================
  * PHASE 2 VOCABULARY CONSOLIDATION (2026):
- *   - Removed getReligiousTraitName / getWorshipTypeName / getInheritanceRuleName
- *     / getConversionReasonName. Display names now live in religion-format.js.
- *   - Added *_NAMES maps (RELIGIOUS_TRAIT_NAMES, INHERITANCE_RULE_NAMES,
- *     WORSHIP_TYPE_NAMES, CONVERSION_REASON_NAMES) so the display-name source
- *     is data, not a function, and can be consumed directly by format modules
- *     or UI without a wrapper call.
- *   - Removed icon default ('✦') from DEFAULT_RELIGION.
- *   - Removed symbol default ('✦') from DEFAULT_GOD.
- *     Per ADR Decision 4: icons and symbols are user-authored world data, not
- *     presentation defaults.
+ *   - Added *_NAMES maps. Removed display-name helper functions.
+ *   - Removed icon/symbol defaults from templates.
+ * 
+ * PHASE 6 CLEANUP (2026):
+ *   - Deleted legacy global aliases (window.RELIGIOUS_TRAITS,
+ *     window.INHERITANCE_RULES, window.WORSHIP_TYPES, window.CONVERSION_REASONS,
+ *     window.DEFAULT_RELIGION, window.DEFAULT_GOD,
+ *     window.DEFAULT_PLACE_OF_WORSHIP).
+ *   - Canonical access is now ReligionConstants.* only.
  * 
  * =============================================================================
  */
@@ -73,7 +72,7 @@
     };
 
     // =========================================================================
-    // 3. WORSHIP TYPES (for places of worship)
+    // 3. WORSHIP TYPES
     // =========================================================================
 
     var WORSHIP_TYPES = {
@@ -126,7 +125,6 @@
         id: null,
         name: '',
         displayName: '',
-        // No default icon. Icons are user-authored world data (ADR Decision 4).
         icon: '',
         description: '',
         trait: RELIGIOUS_TRAITS.POLYTHEISTIC,
@@ -161,7 +159,6 @@
         name: '',
         displayName: '',
         domain: 'war',
-        // No default symbol. Symbols are user-authored world data (ADR Decision 4).
         symbol: '',
         description: '',
         gender: 'neuter',
@@ -207,7 +204,6 @@
     // =========================================================================
 
     var ReligionConstants = {
-        // Vocabulary
         RELIGIOUS_TRAITS: RELIGIOUS_TRAITS,
         RELIGIOUS_TRAIT_NAMES: RELIGIOUS_TRAIT_NAMES,
 
@@ -220,7 +216,6 @@
         CONVERSION_REASONS: CONVERSION_REASONS,
         CONVERSION_REASON_NAMES: CONVERSION_REASON_NAMES,
 
-        // Templates
         DEFAULT_RELIGION: DEFAULT_RELIGION,
         DEFAULT_GOD: DEFAULT_GOD,
         DEFAULT_PLACE_OF_WORSHIP: DEFAULT_PLACE_OF_WORSHIP
@@ -229,56 +224,11 @@
     window.ReligionConstants = ReligionConstants;
 
     // =========================================================================
-    // 9. LEGACY GLOBAL ALIASES
-    // =========================================================================
-    // Kept for compatibility during the refactor. Removed in Phase 6.
-
-    if (typeof window.RELIGIOUS_TRAITS === 'undefined') {
-        window.RELIGIOUS_TRAITS = RELIGIOUS_TRAITS;
-    }
-    if (typeof window.INHERITANCE_RULES === 'undefined') {
-        window.INHERITANCE_RULES = INHERITANCE_RULES;
-    }
-    if (typeof window.WORSHIP_TYPES === 'undefined') {
-        window.WORSHIP_TYPES = WORSHIP_TYPES;
-    }
-    if (typeof window.WORSHIP_TYPE_NAMES === 'undefined') {
-        window.WORSHIP_TYPE_NAMES = WORSHIP_TYPE_NAMES;
-    }
-    if (typeof window.CONVERSION_REASONS === 'undefined') {
-        window.CONVERSION_REASONS = CONVERSION_REASONS;
-    }
-    if (typeof window.DEFAULT_RELIGION === 'undefined') {
-        window.DEFAULT_RELIGION = DEFAULT_RELIGION;
-    }
-    if (typeof window.DEFAULT_GOD === 'undefined') {
-        window.DEFAULT_GOD = DEFAULT_GOD;
-    }
-    if (typeof window.DEFAULT_PLACE_OF_WORSHIP === 'undefined') {
-        window.DEFAULT_PLACE_OF_WORSHIP = DEFAULT_PLACE_OF_WORSHIP;
-    }
-
-    // NOTE: window.getReligiousTraitName, window.getWorshipTypeName,
-    // window.getInheritanceRuleName, window.getConversionReasonName are NOT
-    // redefined here. They now live in religion-format.js (Phase 2 file 2).
-
-    // =========================================================================
-    // 10. COMMONJS EXPORT
+    // 9. COMMONJS EXPORT
     // =========================================================================
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
-            RELIGIOUS_TRAITS: RELIGIOUS_TRAITS,
-            RELIGIOUS_TRAIT_NAMES: RELIGIOUS_TRAIT_NAMES,
-            INHERITANCE_RULES: INHERITANCE_RULES,
-            INHERITANCE_RULE_NAMES: INHERITANCE_RULE_NAMES,
-            WORSHIP_TYPES: WORSHIP_TYPES,
-            WORSHIP_TYPE_NAMES: WORSHIP_TYPE_NAMES,
-            CONVERSION_REASONS: CONVERSION_REASONS,
-            CONVERSION_REASON_NAMES: CONVERSION_REASON_NAMES,
-            DEFAULT_RELIGION: DEFAULT_RELIGION,
-            DEFAULT_GOD: DEFAULT_GOD,
-            DEFAULT_PLACE_OF_WORSHIP: DEFAULT_PLACE_OF_WORSHIP,
             ReligionConstants: ReligionConstants
         };
     }
