@@ -10,12 +10,20 @@
  * 
  * DEPENDENCIES:
  *   - religion-state.js: ReligionState
- *   - religion-commands.js: ReligionCommands (for CRUD operations)
  *   - crime-constants.js: CRIME_TYPES, LAW_TYPES, LAW_CATEGORIES, LAW_DOMAINS, LAW_SEVERITY
  *   - ids.js: generateId
  *   - storage.js: saveMasterData
  * 
  * ICON POLICY: No emojis. No icons in confirm/cancel buttons.
+ * 
+ * =============================================================================
+ * PHASE 0 STABILISATION (2026):
+ *   - Removed _processingLaw re-entry guard. It was a boolean flag guarding
+ *     pure compositional functions, causing composite queries to silently
+ *     return empty results (getLawsByDomain, getLawsByCategory, getLawsByType,
+ *     getLawsBySeverity, getEnforcedLaws, getApplicableLaws, getCrimeMappingForLaw,
+ *     getEnforcedLawsByCrimeType were all broken).
+ *   - Statistics now compute correctly because nested query calls succeed.
  * 
  * =============================================================================
  */
@@ -24,13 +32,7 @@
     'use strict';
 
     // =========================================================================
-    // 1. RECURSION GUARD
-    // =========================================================================
-
-    var _processingLaw = false;
-
-    // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
+    // 1. DEPENDENCY WRAPPERS
     // =========================================================================
 
     function _getReligion(id) {
@@ -81,7 +83,7 @@
     }
 
     // =========================================================================
-    // 3. CONSTANTS REFERENCE
+    // 2. CONSTANTS REFERENCE
     // =========================================================================
 
     var _LAW_TYPES = window.LAW_TYPES || {
@@ -118,622 +120,486 @@
     var _CRIME_TYPES = window.CRIME_TYPES || {};
 
     // =========================================================================
-    // 4. LAW CRUD
+    // 3. LAW CRUD
     // =========================================================================
 
     function addLaw(religionId, lawData) {
-        if (_processingLaw) {
-            return { success: false, reason: 'Law operation already in progress' };
+        var religion = _getReligion(religionId);
+        if (!religion) {
+            return { success: false, reason: 'Religion not found' };
         }
 
-        _processingLaw = true;
+        if (!lawData.name || lawData.name.trim() === '') {
+            return { success: false, reason: 'Law name is required' };
+        }
 
-        try {
-            var religion = _getReligion(religionId);
-            if (!religion) {
-                return { success: false, reason: 'Religion not found' };
+        // Validate domain
+        var validDomains = Object.values(_LAW_DOMAINS);
+        if (lawData.domain && validDomains.indexOf(lawData.domain) === -1) {
+            return { success: false, reason: 'Invalid law domain: ' + lawData.domain };
+        }
+
+        // Validate category
+        var validCategories = Object.values(_LAW_CATEGORIES);
+        if (lawData.lawCategory && validCategories.indexOf(lawData.lawCategory) === -1) {
+            return { success: false, reason: 'Invalid law category: ' + lawData.lawCategory };
+        }
+
+        // Validate severity
+        var validSeverities = Object.values(_LAW_SEVERITY);
+        if (lawData.severity && validSeverities.indexOf(lawData.severity) === -1) {
+            return { success: false, reason: 'Invalid law severity: ' + lawData.severity };
+        }
+
+        // Validate law type
+        var validTypes = Object.values(_LAW_TYPES);
+        if (lawData.type && validTypes.indexOf(lawData.type) === -1) {
+            return { success: false, reason: 'Invalid law type: ' + lawData.type };
+        }
+
+        // Validate crime type if provided
+        if (lawData.crimeType && _CRIME_TYPES) {
+            var crimeTypes = Object.values(_CRIME_TYPES);
+            if (crimeTypes.indexOf(lawData.crimeType) === -1) {
+                return { success: false, reason: 'Invalid crime type: ' + lawData.crimeType };
             }
+        }
 
-            if (!lawData.name || lawData.name.trim() === '') {
-                return { success: false, reason: 'Law name is required' };
-            }
+        var law = {
+            id: _generateId('law'),
+            name: lawData.name.trim(),
+            type: lawData.type || _LAW_TYPES.LAW,
+            lawCategory: lawData.lawCategory || _LAW_CATEGORIES.RELIGIOUS,
+            domain: lawData.domain || _LAW_DOMAINS.BEHAVIOR,
+            description: lawData.description || '',
+            severity: lawData.severity || _LAW_SEVERITY.MINOR,
+            crimeMapping: {
+                crimeType: lawData.crimeType || null,
+                crimeSeverity: lawData.crimeSeverity || null,
+                isEnforced: lawData.isEnforced || false,
+                punishment: lawData.punishment || null,
+                notes: lawData.crimeNotes || ''
+            },
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            notes: lawData.notes || ''
+        };
 
-            // Validate domain
-            var validDomains = Object.values(_LAW_DOMAINS);
-            if (lawData.domain && validDomains.indexOf(lawData.domain) === -1) {
-                return { success: false, reason: 'Invalid law domain: ' + lawData.domain };
-            }
+        var laws = religion.laws || [];
+        laws.push(law);
 
-            // Validate category
-            var validCategories = Object.values(_LAW_CATEGORIES);
-            if (lawData.lawCategory && validCategories.indexOf(lawData.lawCategory) === -1) {
-                return { success: false, reason: 'Invalid law category: ' + lawData.lawCategory };
-            }
+        var result = _updateReligion(religionId, {
+            laws: laws,
+            updatedAt: Date.now()
+        });
 
-            // Validate severity
-            var validSeverities = Object.values(_LAW_SEVERITY);
-            if (lawData.severity && validSeverities.indexOf(lawData.severity) === -1) {
-                return { success: false, reason: 'Invalid law severity: ' + lawData.severity };
-            }
-
-            // Validate law type
-            var validTypes = Object.values(_LAW_TYPES);
-            if (lawData.type && validTypes.indexOf(lawData.type) === -1) {
-                return { success: false, reason: 'Invalid law type: ' + lawData.type };
-            }
-
-            // Validate crime type if provided
-            if (lawData.crimeType && _CRIME_TYPES) {
-                var crimeTypes = Object.values(_CRIME_TYPES);
-                if (crimeTypes.indexOf(lawData.crimeType) === -1) {
-                    return { success: false, reason: 'Invalid crime type: ' + lawData.crimeType };
-                }
-            }
-
-            var law = {
-                id: _generateId('law'),
-                name: lawData.name.trim(),
-                type: lawData.type || _LAW_TYPES.LAW,
-                lawCategory: lawData.lawCategory || _LAW_CATEGORIES.RELIGIOUS,
-                domain: lawData.domain || _LAW_DOMAINS.BEHAVIOR,
-                description: lawData.description || '',
-                severity: lawData.severity || _LAW_SEVERITY.MINOR,
-                crimeMapping: {
-                    crimeType: lawData.crimeType || null,
-                    crimeSeverity: lawData.crimeSeverity || null,
-                    isEnforced: lawData.isEnforced || false,
-                    punishment: lawData.punishment || null,
-                    notes: lawData.crimeNotes || ''
-                },
-                createdAt: Date.now(),
-                updatedAt: Date.now(),
-                notes: lawData.notes || ''
+        if (result) {
+            _invalidateCaches();
+            return {
+                success: true,
+                data: law,
+                reason: 'Law added successfully'
             };
-
-            var laws = religion.laws || [];
-            laws.push(law);
-
-            var result = _updateReligion(religionId, {
-                laws: laws,
-                updatedAt: Date.now()
-            });
-
-            if (result) {
-                _invalidateCaches();
-                return {
-                    success: true,
-                    data: law,
-                    reason: 'Law added successfully'
-                };
-            }
-
-            return { success: false, reason: 'Failed to add law' };
-
-        } catch (e) {
-            return { success: false, reason: e.message || 'Unknown error' };
-        } finally {
-            _processingLaw = false;
         }
+
+        return { success: false, reason: 'Failed to add law' };
     }
 
     function updateLaw(lawId, updates) {
-        if (_processingLaw) {
-            return { success: false, reason: 'Law operation already in progress' };
-        }
+        // Find which religion contains this law
+        var allReligions = _getAllReligions({ includeDeprecated: true });
+        var targetReligion = null;
+        var lawIndex = -1;
 
-        _processingLaw = true;
-
-        try {
-            // Find which religion contains this law
-            var allReligions = _getAllReligions({ includeDeprecated: true });
-            var targetReligion = null;
-            var lawIndex = -1;
-
-            for (var i = 0; i < allReligions.length; i++) {
-                var religion = allReligions[i];
-                if (religion.laws) {
-                    for (var j = 0; j < religion.laws.length; j++) {
-                        if (religion.laws[j].id === lawId) {
-                            targetReligion = religion;
-                            lawIndex = j;
-                            break;
-                        }
+        for (var i = 0; i < allReligions.length; i++) {
+            var religion = allReligions[i];
+            if (religion.laws) {
+                for (var j = 0; j < religion.laws.length; j++) {
+                    if (religion.laws[j].id === lawId) {
+                        targetReligion = religion;
+                        lawIndex = j;
+                        break;
                     }
                 }
-                if (targetReligion) break;
             }
-
-            if (!targetReligion) {
-                return { success: false, reason: 'Law not found' };
-            }
-
-            var law = targetReligion.laws[lawIndex];
-
-            // Update fields
-            if (updates.name !== undefined) law.name = updates.name.trim();
-            if (updates.type !== undefined) {
-                var validTypes = Object.values(_LAW_TYPES);
-                if (validTypes.indexOf(updates.type) === -1) {
-                    return { success: false, reason: 'Invalid law type: ' + updates.type };
-                }
-                law.type = updates.type;
-            }
-            if (updates.lawCategory !== undefined) {
-                var validCategories = Object.values(_LAW_CATEGORIES);
-                if (validCategories.indexOf(updates.lawCategory) === -1) {
-                    return { success: false, reason: 'Invalid law category: ' + updates.lawCategory };
-                }
-                law.lawCategory = updates.lawCategory;
-            }
-            if (updates.domain !== undefined) {
-                var validDomains = Object.values(_LAW_DOMAINS);
-                if (validDomains.indexOf(updates.domain) === -1) {
-                    return { success: false, reason: 'Invalid law domain: ' + updates.domain };
-                }
-                law.domain = updates.domain;
-            }
-            if (updates.description !== undefined) law.description = updates.description;
-            if (updates.severity !== undefined) {
-                var validSeverities = Object.values(_LAW_SEVERITY);
-                if (validSeverities.indexOf(updates.severity) === -1) {
-                    return { success: false, reason: 'Invalid law severity: ' + updates.severity };
-                }
-                law.severity = updates.severity;
-            }
-            if (updates.notes !== undefined) law.notes = updates.notes;
-
-            // Update crime mapping
-            if (updates.crimeMapping !== undefined) {
-                if (updates.crimeMapping.crimeType !== undefined) {
-                    if (updates.crimeMapping.crimeType && _CRIME_TYPES) {
-                        var crimeTypes = Object.values(_CRIME_TYPES);
-                        if (crimeTypes.indexOf(updates.crimeMapping.crimeType) === -1) {
-                            return { success: false, reason: 'Invalid crime type: ' + updates.crimeMapping.crimeType };
-                        }
-                    }
-                    law.crimeMapping.crimeType = updates.crimeMapping.crimeType;
-                }
-                if (updates.crimeMapping.crimeSeverity !== undefined) {
-                    law.crimeMapping.crimeSeverity = updates.crimeMapping.crimeSeverity;
-                }
-                if (updates.crimeMapping.isEnforced !== undefined) {
-                    law.crimeMapping.isEnforced = updates.crimeMapping.isEnforced;
-                }
-                if (updates.crimeMapping.punishment !== undefined) {
-                    law.crimeMapping.punishment = updates.crimeMapping.punishment;
-                }
-                if (updates.crimeMapping.notes !== undefined) {
-                    law.crimeMapping.notes = updates.crimeMapping.notes;
-                }
-            }
-
-            law.updatedAt = Date.now();
-
-            var result = _updateReligion(targetReligion.id, {
-                laws: targetReligion.laws,
-                updatedAt: Date.now()
-            });
-
-            if (result) {
-                _invalidateCaches();
-                return {
-                    success: true,
-                    data: law,
-                    reason: 'Law updated successfully'
-                };
-            }
-
-            return { success: false, reason: 'Failed to update law' };
-
-        } catch (e) {
-            return { success: false, reason: e.message || 'Unknown error' };
-        } finally {
-            _processingLaw = false;
+            if (targetReligion) break;
         }
+
+        if (!targetReligion) {
+            return { success: false, reason: 'Law not found' };
+        }
+
+        var law = targetReligion.laws[lawIndex];
+
+        // Update fields
+        if (updates.name !== undefined) law.name = updates.name.trim();
+        if (updates.type !== undefined) {
+            var validTypes = Object.values(_LAW_TYPES);
+            if (validTypes.indexOf(updates.type) === -1) {
+                return { success: false, reason: 'Invalid law type: ' + updates.type };
+            }
+            law.type = updates.type;
+        }
+        if (updates.lawCategory !== undefined) {
+            var validCategories = Object.values(_LAW_CATEGORIES);
+            if (validCategories.indexOf(updates.lawCategory) === -1) {
+                return { success: false, reason: 'Invalid law category: ' + updates.lawCategory };
+            }
+            law.lawCategory = updates.lawCategory;
+        }
+        if (updates.domain !== undefined) {
+            var validDomains = Object.values(_LAW_DOMAINS);
+            if (validDomains.indexOf(updates.domain) === -1) {
+                return { success: false, reason: 'Invalid law domain: ' + updates.domain };
+            }
+            law.domain = updates.domain;
+        }
+        if (updates.description !== undefined) law.description = updates.description;
+        if (updates.severity !== undefined) {
+            var validSeverities = Object.values(_LAW_SEVERITY);
+            if (validSeverities.indexOf(updates.severity) === -1) {
+                return { success: false, reason: 'Invalid law severity: ' + updates.severity };
+            }
+            law.severity = updates.severity;
+        }
+        if (updates.notes !== undefined) law.notes = updates.notes;
+
+        // Update crime mapping
+        if (updates.crimeMapping !== undefined) {
+            if (updates.crimeMapping.crimeType !== undefined) {
+                if (updates.crimeMapping.crimeType && _CRIME_TYPES) {
+                    var crimeTypes = Object.values(_CRIME_TYPES);
+                    if (crimeTypes.indexOf(updates.crimeMapping.crimeType) === -1) {
+                        return { success: false, reason: 'Invalid crime type: ' + updates.crimeMapping.crimeType };
+                    }
+                }
+                law.crimeMapping.crimeType = updates.crimeMapping.crimeType;
+            }
+            if (updates.crimeMapping.crimeSeverity !== undefined) {
+                law.crimeMapping.crimeSeverity = updates.crimeMapping.crimeSeverity;
+            }
+            if (updates.crimeMapping.isEnforced !== undefined) {
+                law.crimeMapping.isEnforced = updates.crimeMapping.isEnforced;
+            }
+            if (updates.crimeMapping.punishment !== undefined) {
+                law.crimeMapping.punishment = updates.crimeMapping.punishment;
+            }
+            if (updates.crimeMapping.notes !== undefined) {
+                law.crimeMapping.notes = updates.crimeMapping.notes;
+            }
+        }
+
+        law.updatedAt = Date.now();
+
+        var result = _updateReligion(targetReligion.id, {
+            laws: targetReligion.laws,
+            updatedAt: Date.now()
+        });
+
+        if (result) {
+            _invalidateCaches();
+            return {
+                success: true,
+                data: law,
+                reason: 'Law updated successfully'
+            };
+        }
+
+        return { success: false, reason: 'Failed to update law' };
     }
 
     function removeLaw(religionId, lawId) {
-        if (_processingLaw) {
-            return { success: false, reason: 'Law operation already in progress' };
+        var religion = _getReligion(religionId);
+        if (!religion) {
+            return { success: false, reason: 'Religion not found' };
         }
 
-        _processingLaw = true;
-
-        try {
-            var religion = _getReligion(religionId);
-            if (!religion) {
-                return { success: false, reason: 'Religion not found' };
-            }
-
-            if (!religion.laws) {
-                return { success: false, reason: 'No laws found in this religion' };
-            }
-
-            var index = -1;
-            for (var i = 0; i < religion.laws.length; i++) {
-                if (religion.laws[i].id === lawId) {
-                    index = i;
-                    break;
-                }
-            }
-
-            if (index === -1) {
-                return { success: false, reason: 'Law not found in this religion' };
-            }
-
-            religion.laws.splice(index, 1);
-
-            var result = _updateReligion(religionId, {
-                laws: religion.laws,
-                updatedAt: Date.now()
-            });
-
-            if (result) {
-                _invalidateCaches();
-                return {
-                    success: true,
-                    reason: 'Law removed successfully'
-                };
-            }
-
-            return { success: false, reason: 'Failed to remove law' };
-
-        } catch (e) {
-            return { success: false, reason: e.message || 'Unknown error' };
-        } finally {
-            _processingLaw = false;
+        if (!religion.laws) {
+            return { success: false, reason: 'No laws found in this religion' };
         }
+
+        var index = -1;
+        for (var i = 0; i < religion.laws.length; i++) {
+            if (religion.laws[i].id === lawId) {
+                index = i;
+                break;
+            }
+        }
+
+        if (index === -1) {
+            return { success: false, reason: 'Law not found in this religion' };
+        }
+
+        religion.laws.splice(index, 1);
+
+        var result = _updateReligion(religionId, {
+            laws: religion.laws,
+            updatedAt: Date.now()
+        });
+
+        if (result) {
+            _invalidateCaches();
+            return {
+                success: true,
+                reason: 'Law removed successfully'
+            };
+        }
+
+        return { success: false, reason: 'Failed to remove law' };
     }
 
     // =========================================================================
-    // 5. LAW QUERIES
+    // 4. LAW QUERIES
     // =========================================================================
 
     function getLaw(lawId) {
-        if (_processingLaw) return null;
-        _processingLaw = true;
+        if (!lawId) return null;
 
-        try {
-            if (!lawId) return null;
+        var allReligions = _getAllReligions({ includeDeprecated: true });
 
-            var allReligions = _getAllReligions({ includeDeprecated: true });
-
-            for (var i = 0; i < allReligions.length; i++) {
-                var religion = allReligions[i];
-                if (religion.laws) {
-                    for (var j = 0; j < religion.laws.length; j++) {
-                        if (religion.laws[j].id === lawId) {
-                            return religion.laws[j];
-                        }
+        for (var i = 0; i < allReligions.length; i++) {
+            var religion = allReligions[i];
+            if (religion.laws) {
+                for (var j = 0; j < religion.laws.length; j++) {
+                    if (religion.laws[j].id === lawId) {
+                        return religion.laws[j];
                     }
                 }
             }
-
-            return null;
-        } finally {
-            _processingLaw = false;
         }
+
+        return null;
     }
 
     function getLawsByReligion(religionId) {
-        if (_processingLaw) return [];
-        _processingLaw = true;
-
-        try {
-            var religion = _getReligion(religionId);
-            if (!religion) return [];
-            return religion.laws || [];
-        } finally {
-            _processingLaw = false;
-        }
+        var religion = _getReligion(religionId);
+        if (!religion) return [];
+        return religion.laws || [];
     }
 
     function getLawsByDomain(religionId, domain) {
-        if (_processingLaw) return [];
-        _processingLaw = true;
+        var laws = getLawsByReligion(religionId);
+        if (!domain) return laws;
 
-        try {
-            var laws = getLawsByReligion(religionId);
-            if (!domain) return laws;
-
-            var result = [];
-            for (var i = 0; i < laws.length; i++) {
-                if (laws[i].domain === domain) {
-                    result.push(laws[i]);
-                }
+        var result = [];
+        for (var i = 0; i < laws.length; i++) {
+            if (laws[i].domain === domain) {
+                result.push(laws[i]);
             }
-            return result;
-        } finally {
-            _processingLaw = false;
         }
+        return result;
     }
 
     function getLawsByCategory(religionId, category) {
-        if (_processingLaw) return [];
-        _processingLaw = true;
+        var laws = getLawsByReligion(religionId);
+        if (!category) return laws;
 
-        try {
-            var laws = getLawsByReligion(religionId);
-            if (!category) return laws;
-
-            var result = [];
-            for (var i = 0; i < laws.length; i++) {
-                if (laws[i].lawCategory === category) {
-                    result.push(laws[i]);
-                }
+        var result = [];
+        for (var i = 0; i < laws.length; i++) {
+            if (laws[i].lawCategory === category) {
+                result.push(laws[i]);
             }
-            return result;
-        } finally {
-            _processingLaw = false;
         }
+        return result;
     }
 
     function getLawsByType(religionId, type) {
-        if (_processingLaw) return [];
-        _processingLaw = true;
+        var laws = getLawsByReligion(religionId);
+        if (!type) return laws;
 
-        try {
-            var laws = getLawsByReligion(religionId);
-            if (!type) return laws;
-
-            var result = [];
-            for (var i = 0; i < laws.length; i++) {
-                if (laws[i].type === type) {
-                    result.push(laws[i]);
-                }
+        var result = [];
+        for (var i = 0; i < laws.length; i++) {
+            if (laws[i].type === type) {
+                result.push(laws[i]);
             }
-            return result;
-        } finally {
-            _processingLaw = false;
         }
+        return result;
     }
 
     function getLawsBySeverity(religionId, severity) {
-        if (_processingLaw) return [];
-        _processingLaw = true;
+        var laws = getLawsByReligion(religionId);
+        if (!severity) return laws;
 
-        try {
-            var laws = getLawsByReligion(religionId);
-            if (!severity) return laws;
-
-            var result = [];
-            for (var i = 0; i < laws.length; i++) {
-                if (laws[i].severity === severity) {
-                    result.push(laws[i]);
-                }
+        var result = [];
+        for (var i = 0; i < laws.length; i++) {
+            if (laws[i].severity === severity) {
+                result.push(laws[i]);
             }
-            return result;
-        } finally {
-            _processingLaw = false;
         }
+        return result;
     }
 
     function getEnforcedLaws(religionId) {
-        if (_processingLaw) return [];
-        _processingLaw = true;
+        var laws = getLawsByReligion(religionId);
+        var result = [];
 
-        try {
-            var laws = getLawsByReligion(religionId);
-            var result = [];
-
-            for (var i = 0; i < laws.length; i++) {
-                if (laws[i].crimeMapping && laws[i].crimeMapping.isEnforced) {
-                    result.push(laws[i]);
-                }
+        for (var i = 0; i < laws.length; i++) {
+            if (laws[i].crimeMapping && laws[i].crimeMapping.isEnforced) {
+                result.push(laws[i]);
             }
-
-            return result;
-        } finally {
-            _processingLaw = false;
         }
+
+        return result;
     }
 
     function getApplicableLaws(religionId, characterId, domain) {
-        if (_processingLaw) return [];
-        _processingLaw = true;
-
-        try {
-            // This is a stub - in future, it will filter laws based on character
-            // For now, return all laws in the specified domain
-            return getLawsByDomain(religionId, domain);
-        } finally {
-            _processingLaw = false;
-        }
+        // Stub: filters laws based on character is not yet implemented.
+        return getLawsByDomain(religionId, domain);
     }
 
     // =========================================================================
-    // 6. CRIME MAPPING
+    // 5. CRIME MAPPING
     // =========================================================================
 
     function getCrimeMappingForLaw(lawId) {
-        if (_processingLaw) return null;
-        _processingLaw = true;
+        var law = getLaw(lawId);
+        if (!law) return null;
 
-        try {
-            var law = getLaw(lawId);
-            if (!law) return null;
-
-            return {
-                law: law,
-                crimeMapping: law.crimeMapping || {
-                    crimeType: null,
-                    crimeSeverity: null,
-                    isEnforced: false,
-                    punishment: null,
-                    notes: ''
-                }
-            };
-        } finally {
-            _processingLaw = false;
-        }
+        return {
+            law: law,
+            crimeMapping: law.crimeMapping || {
+                crimeType: null,
+                crimeSeverity: null,
+                isEnforced: false,
+                punishment: null,
+                notes: ''
+            }
+        };
     }
 
     function getLawsByCrimeType(crimeType) {
-        if (_processingLaw) return [];
-        _processingLaw = true;
+        if (!crimeType) return [];
 
-        try {
-            if (!crimeType) return [];
+        var allReligions = _getAllReligions({ includeDeprecated: true });
+        var result = [];
 
-            var allReligions = _getAllReligions({ includeDeprecated: true });
-            var result = [];
-
-            for (var i = 0; i < allReligions.length; i++) {
-                var religion = allReligions[i];
-                if (religion.laws) {
-                    for (var j = 0; j < religion.laws.length; j++) {
-                        var law = religion.laws[j];
-                        if (law.crimeMapping && law.crimeMapping.crimeType === crimeType) {
-                            result.push({
-                                law: law,
-                                religionId: religion.id,
-                                religionName: religion.name
-                            });
-                        }
+        for (var i = 0; i < allReligions.length; i++) {
+            var religion = allReligions[i];
+            if (religion.laws) {
+                for (var j = 0; j < religion.laws.length; j++) {
+                    var law = religion.laws[j];
+                    if (law.crimeMapping && law.crimeMapping.crimeType === crimeType) {
+                        result.push({
+                            law: law,
+                            religionId: religion.id,
+                            religionName: religion.name
+                        });
                     }
                 }
             }
-
-            return result;
-        } finally {
-            _processingLaw = false;
         }
+
+        return result;
     }
 
     function getEnforcedLawsByCrimeType(crimeType) {
-        if (_processingLaw) return [];
-        _processingLaw = true;
+        var all = getLawsByCrimeType(crimeType);
+        var result = [];
 
-        try {
-            var all = getLawsByCrimeType(crimeType);
-            var result = [];
-
-            for (var i = 0; i < all.length; i++) {
-                if (all[i].law.crimeMapping && all[i].law.crimeMapping.isEnforced) {
-                    result.push(all[i]);
-                }
+        for (var i = 0; i < all.length; i++) {
+            if (all[i].law.crimeMapping && all[i].law.crimeMapping.isEnforced) {
+                result.push(all[i]);
             }
-
-            return result;
-        } finally {
-            _processingLaw = false;
         }
+
+        return result;
     }
 
     // =========================================================================
-    // 7. LAW STATISTICS
+    // 6. LAW STATISTICS
     // =========================================================================
 
     function getLawStatistics(religionId) {
-        if (_processingLaw) return null;
-        _processingLaw = true;
+        var religion = _getReligion(religionId);
+        if (!religion) return null;
 
-        try {
-            var religion = _getReligion(religionId);
-            if (!religion) return null;
+        var laws = religion.laws || [];
 
-            var laws = religion.laws || [];
+        var stats = {
+            totalLaws: laws.length,
+            byType: {},
+            byCategory: {},
+            byDomain: {},
+            bySeverity: {},
+            enforced: 0,
+            notEnforced: 0
+        };
 
-            var stats = {
-                totalLaws: laws.length,
-                byType: {},
-                byCategory: {},
-                byDomain: {},
-                bySeverity: {},
-                enforced: 0,
-                notEnforced: 0
-            };
+        for (var i = 0; i < laws.length; i++) {
+            var law = laws[i];
 
-            for (var i = 0; i < laws.length; i++) {
-                var law = laws[i];
+            if (!stats.byType[law.type]) stats.byType[law.type] = 0;
+            stats.byType[law.type]++;
 
-                // By type
-                if (!stats.byType[law.type]) stats.byType[law.type] = 0;
-                stats.byType[law.type]++;
+            if (!stats.byCategory[law.lawCategory]) stats.byCategory[law.lawCategory] = 0;
+            stats.byCategory[law.lawCategory]++;
 
-                // By category
-                if (!stats.byCategory[law.lawCategory]) stats.byCategory[law.lawCategory] = 0;
-                stats.byCategory[law.lawCategory]++;
+            if (!stats.byDomain[law.domain]) stats.byDomain[law.domain] = 0;
+            stats.byDomain[law.domain]++;
 
-                // By domain
-                if (!stats.byDomain[law.domain]) stats.byDomain[law.domain] = 0;
-                stats.byDomain[law.domain]++;
+            if (!stats.bySeverity[law.severity]) stats.bySeverity[law.severity] = 0;
+            stats.bySeverity[law.severity]++;
 
-                // By severity
-                if (!stats.bySeverity[law.severity]) stats.bySeverity[law.severity] = 0;
-                stats.bySeverity[law.severity]++;
-
-                // Enforced
-                if (law.crimeMapping && law.crimeMapping.isEnforced) {
-                    stats.enforced++;
-                } else {
-                    stats.notEnforced++;
-                }
+            if (law.crimeMapping && law.crimeMapping.isEnforced) {
+                stats.enforced++;
+            } else {
+                stats.notEnforced++;
             }
-
-            return stats;
-        } finally {
-            _processingLaw = false;
         }
+
+        return stats;
     }
 
     function getGlobalLawStatistics() {
-        if (_processingLaw) return null;
-        _processingLaw = true;
+        var allReligions = _getAllReligions({ includeDeprecated: false });
 
-        try {
-            var allReligions = _getAllReligions({ includeDeprecated: false });
+        var stats = {
+            totalReligionsWithLaws: 0,
+            totalLaws: 0,
+            totalEnforced: 0,
+            byDomain: {},
+            byCategory: {},
+            bySeverity: {},
+            religions: []
+        };
 
-            var stats = {
-                totalReligionsWithLaws: 0,
-                totalLaws: 0,
-                totalEnforced: 0,
-                byDomain: {},
-                byCategory: {},
-                bySeverity: {},
-                religions: []
-            };
+        for (var i = 0; i < allReligions.length; i++) {
+            var religion = allReligions[i];
+            var laws = religion.laws || [];
 
-            for (var i = 0; i < allReligions.length; i++) {
-                var religion = allReligions[i];
-                var laws = religion.laws || [];
-
-                if (laws.length > 0) {
-                    stats.totalReligionsWithLaws++;
-                    stats.religions.push({
-                        id: religion.id,
-                        name: religion.name,
-                        lawCount: laws.length
-                    });
-                }
-
-                for (var j = 0; j < laws.length; j++) {
-                    var law = laws[j];
-                    stats.totalLaws++;
-
-                    if (law.crimeMapping && law.crimeMapping.isEnforced) {
-                        stats.totalEnforced++;
-                    }
-
-                    if (!stats.byDomain[law.domain]) stats.byDomain[law.domain] = 0;
-                    stats.byDomain[law.domain]++;
-
-                    if (!stats.byCategory[law.lawCategory]) stats.byCategory[law.lawCategory] = 0;
-                    stats.byCategory[law.lawCategory]++;
-
-                    if (!stats.bySeverity[law.severity]) stats.bySeverity[law.severity] = 0;
-                    stats.bySeverity[law.severity]++;
-                }
+            if (laws.length > 0) {
+                stats.totalReligionsWithLaws++;
+                stats.religions.push({
+                    id: religion.id,
+                    name: religion.name,
+                    lawCount: laws.length
+                });
             }
 
-            return stats;
-        } finally {
-            _processingLaw = false;
+            for (var j = 0; j < laws.length; j++) {
+                var law = laws[j];
+                stats.totalLaws++;
+
+                if (law.crimeMapping && law.crimeMapping.isEnforced) {
+                    stats.totalEnforced++;
+                }
+
+                if (!stats.byDomain[law.domain]) stats.byDomain[law.domain] = 0;
+                stats.byDomain[law.domain]++;
+
+                if (!stats.byCategory[law.lawCategory]) stats.byCategory[law.lawCategory] = 0;
+                stats.byCategory[law.lawCategory]++;
+
+                if (!stats.bySeverity[law.severity]) stats.bySeverity[law.severity] = 0;
+                stats.bySeverity[law.severity]++;
+            }
         }
+
+        return stats;
     }
 
     // =========================================================================
-    // 8. HELPER FUNCTIONS
+    // 7. HELPER FUNCTIONS
     // =========================================================================
 
     function getLawTypeName(type) {
@@ -798,7 +664,7 @@
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 8. EXPORTS
     // =========================================================================
 
     window.ReligionLaws = {
