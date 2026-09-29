@@ -20,19 +20,23 @@
  * ICON POLICY: No emojis. No icons in confirm/cancel buttons.
  * 
  * =============================================================================
+ * PHASE 0 STABILISATION (2026):
+ *   - Removed _processingInheritance re-entry guard. It was a boolean flag
+ *     guarding pure compositional functions. The bug: inheritReligionForChild
+ *     set the guard, then called getInheritedReligion, which saw the guard and
+ *     immediately returned null. The batch inheritance operation never worked.
+ *   - Fixed year-zero bug: optionsObj.year || (child.birthYear || 0) treated
+ *     year 0 as missing. Now uses explicit undefined/null check.
+ *   - Fixed falsy priority: rule.priority || null treated '' and 0 as missing.
+ * 
+ * =============================================================================
  */
 
 (function() {
     'use strict';
 
     // =========================================================================
-    // 1. RECURSION GUARD
-    // =========================================================================
-
-    var _processingInheritance = false;
-
-    // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
+    // 1. DEPENDENCY WRAPPERS
     // =========================================================================
 
     function _getReligion(id) {
@@ -75,7 +79,6 @@
             var religion = allReligions[i];
             var count = 0;
 
-            // Count followers at this location
             if (typeof window.ReligionState !== 'undefined' &&
                 typeof window.ReligionState.getFollowersByLocation === 'function') {
                 count = window.ReligionState.getFollowersByLocation(religion.id, locationId).length;
@@ -99,7 +102,7 @@
     }
 
     // =========================================================================
-    // 3. INHERITANCE RULES REFERENCE
+    // 2. INHERITANCE RULES REFERENCE
     // =========================================================================
 
     var INHERITANCE_RULES = window.INHERITANCE_RULES || {
@@ -111,28 +114,31 @@
     };
 
     // =========================================================================
-    // 4. CORE INHERITANCE FUNCTION
+    // 3. CORE INHERITANCE FUNCTION
     // =========================================================================
 
     function getInheritedReligion(childId, motherId, fatherId, locationId) {
-        if (_processingInheritance) return null;
-        _processingInheritance = true;
+        var mother = motherId ? _getCharacterById(motherId) : null;
+        var father = fatherId ? _getCharacterById(fatherId) : null;
 
-        try {
-            // Get child's current religion (if any)
-            var child = _getCharacterById(childId);
+        var motherReligion = mother && mother.religionId ? _getReligion(mother.religionId) : null;
+        var fatherReligion = father && father.religionId ? _getReligion(father.religionId) : null;
 
-            // Get mother and father
-            var mother = motherId ? _getCharacterById(motherId) : null;
-            var father = fatherId ? _getCharacterById(fatherId) : null;
+        // If no parents have religions, check location
+        if (!motherReligion && !fatherReligion) {
+            if (locationId) {
+                var dominant = _getDominantReligion(locationId);
+                if (dominant && !dominant.isDeprecated) {
+                    return dominant;
+                }
+            }
+            return null;
+        }
 
-            // Get their religions
-            var motherReligion = mother && mother.religionId ? _getReligion(mother.religionId) : null;
-            var fatherReligion = father && father.religionId ? _getReligion(father.religionId) : null;
-
-            // If no parents have religions, check location
-            if (!motherReligion && !fatherReligion) {
-                // Check if location has a dominant religion
+        // Only mother has a religion
+        if (motherReligion && !fatherReligion) {
+            var motherRule = motherReligion.inheritanceRule || { type: INHERITANCE_RULES.MOTHER };
+            if (motherRule.type === INHERITANCE_RULES.NONE) {
                 if (locationId) {
                     var dominant = _getDominantReligion(locationId);
                     if (dominant && !dominant.isDeprecated) {
@@ -141,58 +147,37 @@
                 }
                 return null;
             }
-
-            // Determine which parent's religion to use for inheritance rule
-            // If only one parent has a religion, use that one
-            if (motherReligion && !fatherReligion) {
-                var motherRule = motherReligion.inheritanceRule || { type: INHERITANCE_RULES.MOTHER };
-                if (motherRule.type === INHERITANCE_RULES.NONE) {
-                    // Check location as fallback
-                    if (locationId) {
-                        var dominant = _getDominantReligion(locationId);
-                        if (dominant && !dominant.isDeprecated) {
-                            return dominant;
-                        }
-                    }
-                    return null;
-                }
-                return motherReligion;
-            }
-
-            if (fatherReligion && !motherReligion) {
-                var fatherRule = fatherReligion.inheritanceRule || { type: INHERITANCE_RULES.FATHER };
-                if (fatherRule.type === INHERITANCE_RULES.NONE) {
-                    if (locationId) {
-                        var dominant = _getDominantReligion(locationId);
-                        if (dominant && !dominant.isDeprecated) {
-                            return dominant;
-                        }
-                    }
-                    return null;
-                }
-                return fatherReligion;
-            }
-
-            // Both parents have religions - apply inheritance rules
-            var result = _applyInheritanceRules(
-                motherReligion,
-                fatherReligion,
-                locationId
-            );
-
-            return result;
-
-        } finally {
-            _processingInheritance = false;
+            return motherReligion;
         }
+
+        // Only father has a religion
+        if (fatherReligion && !motherReligion) {
+            var fatherRule = fatherReligion.inheritanceRule || { type: INHERITANCE_RULES.FATHER };
+            if (fatherRule.type === INHERITANCE_RULES.NONE) {
+                if (locationId) {
+                    var dominant = _getDominantReligion(locationId);
+                    if (dominant && !dominant.isDeprecated) {
+                        return dominant;
+                    }
+                }
+                return null;
+            }
+            return fatherReligion;
+        }
+
+        // Both parents have religions - apply inheritance rules
+        return _applyInheritanceRules(
+            motherReligion,
+            fatherReligion,
+            locationId
+        );
     }
 
     // =========================================================================
-    // 5. INHERITANCE RULE APPLICATION
+    // 4. INHERITANCE RULE APPLICATION
     // =========================================================================
 
     function _applyInheritanceRules(motherReligion, fatherReligion, locationId) {
-        // Get the inheritance rules from both religions
         var motherRule = motherReligion.inheritanceRule || { type: INHERITANCE_RULES.MOTHER };
         var fatherRule = fatherReligion.inheritanceRule || { type: INHERITANCE_RULES.FATHER };
 
@@ -201,13 +186,11 @@
             return _applyRule(motherReligion, fatherReligion, motherRule.type, locationId);
         }
 
-        // Different rules - check which one to follow
-        // Priority: Mother's rule takes precedence (historical default)
-        // But we check if either rule is NONE first
+        // Different rules - check which one to follow.
+        // Priority: Mother's rule takes precedence (historical default),
+        // but NONE on either side is respected.
         if (motherRule.type === INHERITANCE_RULES.NONE) {
-            // Mother says no inheritance - check father
             if (fatherRule.type === INHERITANCE_RULES.NONE) {
-                // Both say none - check location
                 if (locationId) {
                     var dominant = _getDominantReligion(locationId);
                     if (dominant && !dominant.isDeprecated) {
@@ -220,7 +203,6 @@
         }
 
         if (fatherRule.type === INHERITANCE_RULES.NONE) {
-            // Father says none - use mother's rule
             return _applyRule(motherReligion, fatherReligion, motherRule.type, locationId);
         }
 
@@ -229,7 +211,7 @@
     }
 
     // =========================================================================
-    // 6. RULE EXECUTION
+    // 5. RULE EXECUTION
     // =========================================================================
 
     function _applyRule(motherReligion, fatherReligion, ruleType, locationId) {
@@ -241,23 +223,21 @@
                 return fatherReligion;
 
             case INHERITANCE_RULES.BOTH:
-                // If both parents have same religion, use it
                 if (motherReligion.id === fatherReligion.id) {
                     return motherReligion;
                 }
 
-                // Different religions - check priority
                 var motherRule = motherReligion.inheritanceRule || { priority: INHERITANCE_RULES.MOTHER };
-                var fatherRule = fatherReligion.inheritanceRule || { priority: INHERITANCE_RULES.FATHER };
+                var priority = motherRule.priority !== undefined && motherRule.priority !== null
+                    ? motherRule.priority
+                    : INHERITANCE_RULES.MOTHER;
 
-                var priority = motherRule.priority || INHERITANCE_RULES.MOTHER;
                 if (priority === INHERITANCE_RULES.MOTHER) {
                     return motherReligion;
                 } else if (priority === INHERITANCE_RULES.FATHER) {
                     return fatherReligion;
                 }
 
-                // Default to mother
                 return motherReligion;
 
             case INHERITANCE_RULES.DOMINANT:
@@ -267,7 +247,6 @@
                         return dominant;
                     }
                 }
-                // Fallback to mother if no dominant
                 return motherReligion;
 
             case INHERITANCE_RULES.NONE:
@@ -277,7 +256,7 @@
     }
 
     // =========================================================================
-    // 7. HELPER FUNCTIONS
+    // 6. HELPER FUNCTIONS
     // =========================================================================
 
     function getInheritanceRuleName(ruleType) {
@@ -333,7 +312,7 @@
             religionName: religion.name,
             ruleType: rule.type,
             ruleName: getInheritanceRuleName(rule.type),
-            priority: rule.priority || null,
+            priority: rule.priority !== undefined && rule.priority !== null ? rule.priority : null,
             priorityName: rule.priority ? getInheritanceRuleName(rule.priority) : null,
             notes: rule.notes || '',
             description: getInheritanceDescription(religionId)
@@ -341,166 +320,146 @@
     }
 
     // =========================================================================
-    // 8. BATCH INHERITANCE (For children system)
+    // 7. BATCH INHERITANCE (For children system)
     // =========================================================================
 
     function inheritReligionForChild(childId, motherId, fatherId, locationId, options) {
-        if (_processingInheritance) return null;
-        _processingInheritance = true;
+        var optionsObj = options || {};
+        var inheritedReligion = getInheritedReligion(childId, motherId, fatherId, locationId);
 
-        try {
-            var optionsObj = options || {};
-            var inheritedReligion = getInheritedReligion(childId, motherId, fatherId, locationId);
-
-            if (!inheritedReligion) {
-                return {
-                    success: true,
-                    inherited: false,
-                    reason: 'No religion to inherit'
-                };
-            }
-
-            var child = _getCharacterById(childId);
-            if (!child) {
-                return {
-                    success: false,
-                    reason: 'Child not found'
-                };
-            }
-
-            // Assign the religion to the child
-            if (typeof window.ReligionCommands !== 'undefined' &&
-                typeof window.ReligionCommands.assignReligionToCharacter === 'function') {
-                var source = getInheritanceSource(motherId, fatherId, inheritedReligion.id);
-
-                var result = window.ReligionCommands.assignReligionToCharacter(
-                    childId,
-                    inheritedReligion.id,
-                    {
-                        year: optionsObj.year || (child.birthYear || 0),
-                        reason: 'inheritance',
-                        notes: 'Inherited from ' + (source === 'both' ? 'both parents' :
-                                                     source === 'mother' ? 'mother' :
-                                                     source === 'father' ? 'father' :
-                                                     'location\'s dominant religion'),
-                        inherited: true,
-                        inheritedFrom: source
-                    }
-                );
-
-                return {
-                    success: result.success,
-                    inherited: result.success,
-                    religion: inheritedReligion,
-                    source: source,
-                    data: result.data,
-                    reason: result.reason
-                };
-            }
-
-            // Fallback: direct assignment
-            if (!child.religionHistory) {
-                child.religionHistory = [];
-            }
-
-            var source = getInheritanceSource(motherId, fatherId, inheritedReligion.id);
-
-            child.religionHistory.push({
-                id: 'inherit_' + Date.now(),
-                characterId: childId,
-                fromReligionId: null,
-                fromReligionName: 'None',
-                toReligionId: inheritedReligion.id,
-                toReligionName: inheritedReligion.name,
-                year: optionsObj.year || (child.birthYear || 0),
-                reason: 'inheritance',
-                notes: 'Inherited from ' + (source === 'both' ? 'both parents' :
-                                             source === 'mother' ? 'mother' :
-                                             source === 'father' ? 'father' :
-                                             'location\'s dominant religion'),
-                inherited: true,
-                inheritedFrom: source,
-                timestamp: Date.now()
-            });
-
-            child.religionId = inheritedReligion.id;
-
-            if (typeof window.saveMasterData === 'function') {
-                window.saveMasterData();
-            }
-
+        if (!inheritedReligion) {
             return {
                 success: true,
-                inherited: true,
-                religion: inheritedReligion,
-                source: source,
-                data: child,
-                reason: 'Religion inherited successfully'
+                inherited: false,
+                reason: 'No religion to inherit'
             };
+        }
 
-        } catch (e) {
+        var child = _getCharacterById(childId);
+        if (!child) {
             return {
                 success: false,
-                inherited: false,
-                reason: e.message || 'Unknown error'
+                reason: 'Child not found'
             };
-        } finally {
-            _processingInheritance = false;
         }
+
+        // Determine the year: explicit missing check, year 0 is valid.
+        var resolvedYear;
+        if (optionsObj.year !== undefined && optionsObj.year !== null) {
+            resolvedYear = optionsObj.year;
+        } else if (child.birthYear !== undefined && child.birthYear !== null) {
+            resolvedYear = child.birthYear;
+        } else {
+            resolvedYear = 0;
+        }
+
+        var source = getInheritanceSource(motherId, fatherId, inheritedReligion.id);
+
+        // Preferred path: delegate to ReligionCommands
+        if (typeof window.ReligionCommands !== 'undefined' &&
+            typeof window.ReligionCommands.assignReligionToCharacter === 'function') {
+            var result = window.ReligionCommands.assignReligionToCharacter(
+                childId,
+                inheritedReligion.id,
+                {
+                    year: resolvedYear,
+                    reason: 'inheritance',
+                    notes: 'Inherited from ' + (source === 'both' ? 'both parents' :
+                                                 source === 'mother' ? 'mother' :
+                                                 source === 'father' ? 'father' :
+                                                 'location\'s dominant religion'),
+                    inherited: true,
+                    inheritedFrom: source
+                }
+            );
+
+            return {
+                success: result.success,
+                inherited: result.success,
+                religion: inheritedReligion,
+                source: source,
+                data: result.data,
+                reason: result.reason
+            };
+        }
+
+        // Fallback: direct assignment (Phase 3 will remove this path)
+        if (!child.religionHistory) {
+            child.religionHistory = [];
+        }
+
+        child.religionHistory.push({
+            id: 'inherit_' + Date.now(),
+            characterId: childId,
+            fromReligionId: null,
+            fromReligionName: 'None',
+            toReligionId: inheritedReligion.id,
+            toReligionName: inheritedReligion.name,
+            year: resolvedYear,
+            reason: 'inheritance',
+            notes: 'Inherited from ' + (source === 'both' ? 'both parents' :
+                                         source === 'mother' ? 'mother' :
+                                         source === 'father' ? 'father' :
+                                         'location\'s dominant religion'),
+            inherited: true,
+            inheritedFrom: source,
+            timestamp: Date.now()
+        });
+
+        child.religionId = inheritedReligion.id;
+
+        if (typeof window.saveMasterData === 'function') {
+            window.saveMasterData();
+        }
+
+        return {
+            success: true,
+            inherited: true,
+            religion: inheritedReligion,
+            source: source,
+            data: child,
+            reason: 'Religion inherited successfully'
+        };
     }
 
     // =========================================================================
-    // 9. INHERITANCE STATISTICS
+    // 8. INHERITANCE STATISTICS
     // =========================================================================
 
     function getInheritanceStatistics(religionId) {
-        if (_processingInheritance) return null;
-        _processingInheritance = true;
+        var religion = _getReligion(religionId);
+        if (!religion) return null;
 
-        try {
-            var religion = _getReligion(religionId);
-            if (!religion) return null;
+        var rule = religion.inheritanceRule || { type: INHERITANCE_RULES.MOTHER };
 
-            var rule = religion.inheritanceRule || { type: INHERITANCE_RULES.MOTHER };
-
-            return {
-                religionId: religion.id,
-                religionName: religion.name,
-                ruleType: rule.type,
-                ruleName: getInheritanceRuleName(rule.type),
-                priority: rule.priority || null,
-                priorityName: rule.priority ? getInheritanceRuleName(rule.priority) : null,
-                followerCount: _getFollowerCount(religionId),
-                hasChildren: true
-            };
-        } finally {
-            _processingInheritance = false;
-        }
+        return {
+            religionId: religion.id,
+            religionName: religion.name,
+            ruleType: rule.type,
+            ruleName: getInheritanceRuleName(rule.type),
+            priority: rule.priority !== undefined && rule.priority !== null ? rule.priority : null,
+            priorityName: rule.priority ? getInheritanceRuleName(rule.priority) : null,
+            followerCount: _getFollowerCount(religionId),
+            hasChildren: true
+        };
     }
 
     function getAllInheritanceSummaries() {
-        if (_processingInheritance) return [];
-        _processingInheritance = true;
+        var allReligions = _getAllReligions({ includeDeprecated: false });
+        var summaries = [];
 
-        try {
-            var allReligions = _getAllReligions({ includeDeprecated: false });
-            var summaries = [];
-
-            for (var i = 0; i < allReligions.length; i++) {
-                var summary = getInheritanceSummary(allReligions[i].id);
-                if (summary) {
-                    summaries.push(summary);
-                }
+        for (var i = 0; i < allReligions.length; i++) {
+            var summary = getInheritanceSummary(allReligions[i].id);
+            if (summary) {
+                summaries.push(summary);
             }
-
-            return summaries;
-        } finally {
-            _processingInheritance = false;
         }
+
+        return summaries;
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 9. EXPORTS
     // =========================================================================
 
     window.ReligionInheritance = {
