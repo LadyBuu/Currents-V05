@@ -7,17 +7,21 @@
  *
  * The sole owner of enterprise mutations.
  *
- * ARCHITECTURAL RULES (Phase 1):
+ * ARCHITECTURAL RULES:
  *   - Commands mutate masterData.data.enterprises directly.
  *   - Commands construct candidate clones, validate, then commit.
  *   - Commands own the transaction: rebuild indexes → save → notify.
- *   - Commands do NOT call UI functions (_showToast).
+ *   - Commands do NOT call UI functions.
  *   - Commands do NOT have recursion guards. Composition is expected.
  *   - Commands do NOT fabricate defaults for missing input.
- *     Creation defaults are explicit. Updates use explicit missing checks.
  *   - Commands do NOT reach into another domain's State.
  *     Cross-domain mutations go through the other domain's Commands.
  *   - Missing dependencies are failures, not silent no-ops.
+ *
+ * PHASE 2:
+ *   - Fixed transactional ordering in applyAnnualProcessing():
+ *     household transfer is applied BEFORE the enterprise array is replaced,
+ *     so a failed transfer leaves canonical data untouched.
  *
  * =============================================================================
  */
@@ -109,14 +113,6 @@
     // 2. TRANSACTION PRIMITIVE
     // =========================================================================
 
-    /**
-     * Commits a successful mutation:
-     *   - rebuild indexes from canonical data
-     *   - persist once
-     *   - notify once
-     *
-     * Call this after canonical data has been replaced.
-     */
     function _commit(eventType, eventData) {
         var state = _requireState();
         state.rebuildIndexes();
@@ -160,6 +156,11 @@
         return clone;
     }
 
+    function _resolveCreationNumber(provided, fallback) {
+        if (provided === undefined || provided === null) return fallback;
+        return provided;
+    }
+
     // =========================================================================
     // 4. CORE CRUD
     // =========================================================================
@@ -184,7 +185,6 @@
         var now = Date.now();
         var currentYear = _requireCurrentYear();
 
-        // Resolve owner type / id together. Do not default one without the other.
         var ownerType = data.ownerType;
         var ownerId = data.ownerId;
         if (ownerType === undefined || ownerType === null) {
@@ -200,8 +200,6 @@
             return { success: false, reason: 'Owner id provided without an owner type' };
         }
 
-        // Resolve owner name for settlement ownership via Place lookup.
-        // For character/household, name is derived by Queries; we do not persist it.
         var ownerName = data.ownerName === undefined ? null : data.ownerName;
 
         var ownershipType = data.ownershipType;
@@ -251,17 +249,14 @@
             updatedAt: now
         };
 
-        // Validate final candidate
         var validation = _validateEnterpriseCandidate(enterprise);
         if (!validation.ok) {
             return { success: false, reason: validation.reason };
         }
 
-        // Commit
         var enterprises = _requireEnterprisesArray();
         enterprises.push(enterprise);
 
-        // Cross-domain: register with household if applicable
         if (ownerType === 'household' && ownerId) {
             _registerWithHousehold(ownerId, enterprise.id, enterprise.foundedYear);
         }
@@ -314,7 +309,6 @@
             return { success: false, reason: 'No changes to apply' };
         }
 
-        // Re-derive fields that must be consistent
         if (updates.ownershipType !== undefined) {
             candidate.isPublic = (updates.ownershipType === 'public');
         }
@@ -361,7 +355,6 @@
         var enterprises = _requireEnterprisesArray();
         var enterprise = enterprises[index];
 
-        // Cross-domain: unregister from household before deleting
         if (enterprise.ownerType === 'household' && enterprise.ownerId) {
             _unregisterFromHousehold(enterprise.ownerId, enterprise.id, _requireCurrentYear());
         }
@@ -400,7 +393,6 @@
             return { success: false, reason: 'Cannot add workers to a ' + candidate.status + ' enterprise' };
         }
 
-        // Cross-domain: verify the character exists
         var getChar = _requireCharacterAccessor();
         var character = getChar(workerId);
         if (!character) {
@@ -593,19 +585,24 @@
     // Applied atomically by the Processor. All enterprise-side changes for a
     // single annual processing event go through this one command.
     //
-    // Household transfer is orchestrated here so the whole operation is one
-    // logical transaction.
+    // TRANSACTION ORDER (Phase 2 fix):
+    //   1. Compute candidate for enterprise (in memory, not yet committed)
+    //   2. Apply household transfer FIRST if present
+    //   3. If household succeeds, replace enterprise array entry
+    //   4. Commit indexes + save + notify
+    //
+    // If the household transfer fails, the enterprise is untouched.
 
     /**
      * @param {string} enterpriseId
-     * @param {Object} result - calculated transition from IndustryEconomics
+     * @param {Object} result — calculated transition from IndustryEconomics:
      *   {
      *     currentYear,
      *     yearsProcessed,
      *     newWealth,
      *     newDebt,
      *     nextStatus,
-     *     historyEntries: [ ... ],   // optional
+     *     historyEntries: [ ... ],      // optional
      *     householdTransfer: number|null,
      *     householdId: string|null,
      *     householdReason: string|null
@@ -651,27 +648,29 @@
             return { success: false, reason: validation.reason };
         }
 
-        enterprises[index] = candidate;
-
-        // Cross-domain: household wealth transfer as part of the same transaction
-        if (result.householdTransfer !== undefined && result.householdTransfer !== null &&
+        // ---- TRANSACTIONAL ORDER ----
+        // Apply household transfer FIRST. If it fails, do not touch the
+        // canonical enterprise array. The candidate is discarded.
+        if (result.householdTransfer !== undefined &&
+            result.householdTransfer !== null &&
             result.householdId) {
+
             var hhResult = _applyHouseholdTransfer(
                 result.householdId,
                 result.householdTransfer,
                 result.householdReason
             );
-            if (!hhResult.success) {
-                // Roll back the enterprise change — do NOT commit a partial transaction.
-                enterprises[index] = candidate; // no-op, but explicit
-                // We haven't committed yet, so restore is as simple as not committing.
-                // (candidate hasn't replaced the array yet at this point? It has.)
-                // To be transactional: apply household FIRST, or roll back here.
-                // Simplest: apply household first, then enterprise. See note below.
-                return { success: false, reason: 'Household transfer failed: ' + hhResult.reason };
+
+            if (!hhResult || !hhResult.success) {
+                return {
+                    success: false,
+                    reason: 'Household transfer failed: ' + (hhResult ? hhResult.reason : 'unknown')
+                };
             }
         }
 
+        // Household step succeeded (or was not required). Commit enterprise change.
+        enterprises[index] = candidate;
         _commit('enterprise_processed', { enterprise: candidate });
 
         return { success: true, data: candidate };
@@ -806,7 +805,6 @@
             timestamp: Date.now()
         });
 
-        // Cross-domain: unregister from household
         if (existing.ownerType === 'household' && existing.ownerId) {
             _unregisterFromHousehold(existing.ownerId, existing.id, demolishYear);
         }
@@ -878,7 +876,6 @@
             timestamp: Date.now()
         });
 
-        // Cross-domain: re-register with household if it previously owned it
         if (record.ownerId && record.ownerType === 'household') {
             _registerWithHousehold(record.ownerId, existing.id, rebuildYearValue);
         }
@@ -938,11 +935,6 @@
     // =========================================================================
     // 11. CROSS-DOMAIN: HOUSEHOLD
     // =========================================================================
-    //
-    // Industry does not own household records. All household mutations go
-    // through HouseholdCommands. If the household domain does not yet expose
-    // a Commands interface, these helpers fail loudly rather than silently
-    // mutating HouseholdState.
 
     function _getHouseholdCommands() {
         return window.HouseholdCommands || null;
@@ -983,41 +975,26 @@
     }
 
     // =========================================================================
-    // 12. HELPERS
-    // =========================================================================
-
-    function _resolveCreationNumber(provided, fallback) {
-        if (provided === undefined || provided === null) return fallback;
-        return provided;
-    }
-
-    // =========================================================================
-    // 13. EXPORTS
+    // 12. EXPORTS
     // =========================================================================
 
     window.IndustryCommands = {
-        // Core CRUD
         createEnterprise: createEnterprise,
         updateEnterprise: updateEnterprise,
         deleteEnterprise: deleteEnterprise,
 
-        // Worker management
         addWorkerToEnterprise: addWorkerToEnterprise,
         removeWorkerFromEnterprise: removeWorkerFromEnterprise,
         setWorkerWage: setWorkerWage,
 
-        // Financial operations
         updateEnterpriseWealth: updateEnterpriseWealth,
         updateEnterpriseDebt: updateEnterpriseDebt,
 
-        // Annual processing (called by IndustryProcessor)
         applyAnnualProcessing: applyAnnualProcessing,
 
-        // Public enterprise
         createPublicEnterprise: createPublicEnterprise,
         convertEnterpriseToPublic: convertEnterpriseToPublic,
 
-        // Demolish / rebuild
         demolishEnterprise: demolishEnterprise,
         rebuildEnterprise: rebuildEnterprise
     };
