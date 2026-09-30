@@ -1,614 +1,259 @@
 /**
  * =============================================================================
- * LOCATION HIERARCHY - Business logic for location hierarchy
+ * LOCATION HIERARCHY
  * =============================================================================
- * 
- * LOCATION: js/location/location-hierarchy.js
- * 
- * Responsibilities:
- * - Hierarchy validation (prevent circular references)
- * - Relationship detection (ancestor, same country, LCA)
- * - Inheritance chain resolution
- * 
- * DEPENDENCIES:
- *   - LocationState (public API)
- *   - Core wrappers from modals-core.js
- * 
+ *
+ * Owns hierarchy semantics:
+ *   - Ancestry / descent relationships
+ *   - Structural validation (cycle prevention, type-priority rules)
+ *   - Nearest ancestor at priority
+ *   - Depth, inheritance chain
+ *
+ * Depends on:
+ *   - LocationState (primitive indexes)
+ *   - LocationQueries (for chain/hierarchy retrieval)
+ *
+ * Does NOT delegate hierarchy rules back to State.
+ * Does NOT format display strings (ViewModel layer does).
+ *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
-    // =========================================================================
-    // 1. RECURSION GUARD
-    // =========================================================================
-
-    var _processingHierarchy = false;
-
-    // =========================================================================
-    // 2. DEPENDENCY WRAPPERS (Using core wrappers)
-    // =========================================================================
-
-    function _getLocationTypePriority(typeId) {
-        return LocationState.getLocationTypePriority(typeId);
+    function _state() {
+        if (!window.LocationState) throw new Error('LocationHierarchy: LocationState required');
+        return window.LocationState;
+    }
+    function _queries() {
+        if (!window.LocationQueries) throw new Error('LocationHierarchy: LocationQueries required');
+        return window.LocationQueries;
     }
 
-    function _getLocationTypeName(typeId) {
-        return LocationState.getLocationTypeName(typeId);
+    // -------------------------------------------------------------------------
+    // VALIDATION
+    // -------------------------------------------------------------------------
+
+    function isValidParentType(parentTypeId, childTypeId) {
+        var parentPrio = _queries().getLocationTypePriority(parentTypeId);
+        var childPrio = _queries().getLocationTypePriority(childTypeId);
+        if (parentPrio === null || childPrio === null) return false;
+        return parentPrio <= childPrio;
     }
 
-    function _showToast(message, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(message, type);
-        }
-    }
-
-    // =========================================================================
-    // 3. HIERARCHY VALIDATION
-    // =========================================================================
-
-    /**
-     * Validates if a place can be moved to a new parent
-     * @param {string} placeId - Place ID to validate
-     * @param {string} newParentId - Proposed new parent ID
-     * @returns {Object} { valid: boolean, reason: string }
-     */
     function validateHierarchy(placeId, newParentId) {
-        if (_processingHierarchy) {
-            return { valid: false, reason: 'Hierarchy validation already in progress' };
+        if (!placeId) return { valid: false, reason: 'Place ID is required' };
+
+        var place = _state().getPlaceById(placeId);
+        if (!place) return { valid: false, reason: 'Place not found' };
+
+        if (!newParentId) return { valid: true, reason: 'Valid: no parent (root)' };
+
+        if (newParentId === placeId) {
+            return { valid: false, reason: 'Place cannot be its own parent' };
         }
-        _processingHierarchy = true;
 
-        try {
-            if (!placeId) {
-                return { valid: false, reason: 'Place ID is required' };
-            }
+        var parent = _state().getPlaceById(newParentId);
+        if (!parent) return { valid: false, reason: 'Parent place not found' };
 
-            var place = LocationState.getPlace(placeId);
-            if (!place) {
-                return { valid: false, reason: 'Place not found' };
-            }
-
-            if (!newParentId) {
-                return { valid: true, reason: 'Valid: Removing parent' };
-            }
-
-            var parent = LocationState.getPlace(newParentId);
-            if (!parent) {
-                return { valid: false, reason: 'Parent place not found' };
-            }
-
-            if (newParentId === placeId) {
-                return { valid: false, reason: 'Place cannot be its own parent' };
-            }
-
-            // Check for circular reference
-            if (LocationState.isAncestorOf(placeId, newParentId)) {
-                return { valid: false, reason: 'Would create circular reference' };
-            }
-
-            // Check type priority: parent should have equal or higher priority (lower number)
-            var placePriority = _getLocationTypePriority(place.typeId);
-            var parentPriority = _getLocationTypePriority(parent.typeId);
-
-            if (parentPriority > placePriority) {
-                return { 
-                    valid: false, 
-                    reason: 'Parent type priority (' + parentPriority + ') is lower than child type (' + placePriority + ')' 
-                };
-            }
-
-            return { valid: true, reason: 'Valid hierarchy' };
-
-        } finally {
-            _processingHierarchy = false;
+        if (_queries().isAncestorOf(placeId, newParentId)) {
+            return { valid: false, reason: 'Would create circular reference' };
         }
+
+        if (!isValidParentType(parent.typeId, place.typeId)) {
+            return {
+                valid: false,
+                reason: 'Parent type priority must be equal to or higher than child type'
+            };
+        }
+
+        return { valid: true, reason: 'Valid hierarchy' };
     }
 
-    // =========================================================================
-    // 4. INHERITANCE CHAIN
-    // =========================================================================
+    // -------------------------------------------------------------------------
+    // ANCESTRY
+    // -------------------------------------------------------------------------
 
-    /**
-     * Gets the inheritance chain for a place (with type info)
-     * @param {string} placeId - Place ID
-     * @returns {Array} Array of chain objects
-     */
-    function getInheritanceChain(placeId) {
-        if (_processingHierarchy) {
-            return [];
-        }
-        _processingHierarchy = true;
-
-        try {
-            var hierarchy = LocationState.getPlaceHierarchy(placeId);
-            var chain = [];
-
-            for (var i = 0; i < hierarchy.length; i++) {
-                var p = hierarchy[i];
-                chain.push({
-                    id: p.id,
-                    name: p.displayName,
-                    type: LocationState.getLocationTypeName(p.typeId),
-                    typePriority: _getLocationTypePriority(p.typeId),
-                    isCapital: p.isCapital || false,
-                    status: p.status || 'active'
-                });
-            }
-
-            return chain;
-
-        } finally {
-            _processingHierarchy = false;
-        }
-    }
-
-    // =========================================================================
-    // 5. RELATIONSHIP DETECTION
-    // =========================================================================
-
-    /**
-     * Checks if one place is an ancestor of another
-     * @param {string} ancestorId - Potential ancestor ID
-     * @param {string} placeId - Place ID to check
-     * @returns {boolean} True if ancestor
-     */
     function isAncestorOf(ancestorId, placeId) {
-        if (_processingHierarchy) {
-            return false;
-        }
-        _processingHierarchy = true;
+        return _queries().isAncestorOf(ancestorId, placeId);
+    }
 
-        try {
-            return LocationState.isAncestorOf(ancestorId, placeId);
+    function areInSameCountry(id1, id2) {
+        return _queries().areInSameCountry(id1, id2);
+    }
 
-        } finally {
-            _processingHierarchy = false;
-        }
+    function findLowestCommonAncestor(id1, id2) {
+        return _queries().findLowestCommonAncestor(id1, id2);
     }
 
     /**
-     * Checks if two places are in the same country
-     * @param {string} placeId1 - First place ID
-     * @param {string} placeId2 - Second place ID
-     * @returns {boolean} True if same country
-     */
-    function areInSameCountry(placeId1, placeId2) {
-        if (_processingHierarchy) {
-            return false;
-        }
-        _processingHierarchy = true;
-
-        try {
-            return LocationState.areInSameCountry(placeId1, placeId2);
-
-        } finally {
-            _processingHierarchy = false;
-        }
-    }
-
-    /**
-     * Finds the lowest common ancestor of two places
-     * @param {string} placeId1 - First place ID
-     * @param {string} placeId2 - Second place ID
-     * @returns {Object|null} Common ancestor place or null
-     */
-    function findLowestCommonAncestor(placeId1, placeId2) {
-        if (_processingHierarchy) {
-            return null;
-        }
-        _processingHierarchy = true;
-
-        try {
-            return LocationState.findLowestCommonAncestor(placeId1, placeId2);
-
-        } finally {
-            _processingHierarchy = false;
-        }
-    }
-
-    /**
-     * Gets the depth of a place in the hierarchy
-     * @param {string} placeId - Place ID
-     * @returns {number} Depth (0 = root)
+     * Depth of the place in the hierarchy. 0 = root.
+     * Returns null if the place does not exist.
      */
     function getLocationDepth(placeId) {
-        if (_processingHierarchy) {
-            return 0;
-        }
-        _processingHierarchy = true;
-
-        try {
-            var hierarchy = LocationState.getPlaceHierarchy(placeId);
-            return hierarchy.length;
-
-        } finally {
-            _processingHierarchy = false;
-        }
+        var place = _state().getPlaceById(placeId);
+        if (!place) return null;
+        return _queries().getPlaceHierarchy(placeId).length - 1;
     }
 
     /**
-     * Gets all places of a specific type priority
-     * @param {number} typePriority - Type priority (1-5)
-     * @returns {Array} Array of place objects
+     * Nearest ancestor (excluding self) whose type priority equals targetPriority.
+     * Returns null if none exists.
      */
-    function getTypeHierarchy(typePriority) {
-        if (_processingHierarchy) {
-            return [];
-        }
-        _processingHierarchy = true;
-
-        try {
-            var places = LocationState.getAllPlaces({ includeDeprecated: false });
-            var result = [];
-
-            for (var i = 0; i < places.length; i++) {
-                var p = places[i];
-                var priority = _getLocationTypePriority(p.typeId);
-                if (priority === typePriority) {
-                    result.push(p);
-                }
+    function getNearestAncestorAtPriority(placeId, targetPriority) {
+        var chain = _queries().getParentChain(placeId);
+        for (var i = chain.length - 1; i >= 0; i--) {
+            if (_queries().getLocationTypePriority(chain[i].typeId) === targetPriority) {
+                return chain[i];
             }
-
-            return result;
-
-        } finally {
-            _processingHierarchy = false;
         }
+        return null;
     }
 
-    // =========================================================================
-    // 6. HIERARCHY NAVIGATION HELPERS
-    // =========================================================================
-
-    /**
-     * Gets the next higher priority location in the hierarchy
-     * @param {string} placeId - Place ID
-     * @param {number} targetPriority - Target priority (lower = higher)
-     * @returns {Object|null} Place object or null
-     */
-    function getAncestorAtPriority(placeId, targetPriority) {
-        if (_processingHierarchy) {
-            return null;
-        }
-        _processingHierarchy = true;
-
-        try {
-            var hierarchy = LocationState.getPlaceHierarchy(placeId);
-            
-            // Search from bottom up (closest first)
-            for (var i = hierarchy.length - 1; i >= 0; i--) {
-                var p = hierarchy[i];
-                var priority = _getLocationTypePriority(p.typeId);
-                if (priority === targetPriority) {
-                    return p;
-                }
-            }
-
-            return null;
-
-        } finally {
-            _processingHierarchy = false;
-        }
-    }
-
-    /**
-     * Gets all descendants of a place with a specific type priority
-     * @param {string} placeId - Place ID
-     * @param {number} targetPriority - Target priority
-     * @returns {Array} Array of place objects
-     */
     function getDescendantsAtPriority(placeId, targetPriority) {
-        if (_processingHierarchy) {
-            return [];
-        }
-        _processingHierarchy = true;
-
-        try {
-            var descendants = LocationState.getPlaceChildren(placeId, true);
-            var result = [];
-
-            for (var i = 0; i < descendants.length; i++) {
-                var p = descendants[i];
-                var priority = _getLocationTypePriority(p.typeId);
-                if (priority === targetPriority) {
-                    result.push(p);
-                }
+        var descendants = _queries().getPlaceChildren(placeId, true);
+        var result = [];
+        for (var i = 0; i < descendants.length; i++) {
+            if (_queries().getLocationTypePriority(descendants[i].typeId) === targetPriority) {
+                result.push(descendants[i]);
             }
-
-            return result;
-
-        } finally {
-            _processingHierarchy = false;
         }
+        return result;
     }
 
-    /**
-     * Gets the immediate parent of a place with a specific priority
-     * @param {string} placeId - Place ID
-     * @param {number} targetPriority - Target priority
-     * @returns {Object|null} Place object or null
-     */
-    function getImmediateAncestorAtPriority(placeId, targetPriority) {
-        if (_processingHierarchy) {
-            return null;
-        }
-        _processingHierarchy = true;
-
-        try {
-            var hierarchy = LocationState.getPlaceHierarchy(placeId);
-            
-            // Find the closest ancestor with the target priority
-            for (var i = hierarchy.length - 2; i >= 0; i--) {
-                var p = hierarchy[i];
-                var priority = _getLocationTypePriority(p.typeId);
-                if (priority === targetPriority) {
-                    return p;
-                }
-            }
-
-            return null;
-
-        } finally {
-            _processingHierarchy = false;
-        }
-    }
-
-    /**
-     * Checks if a place has a child of a specific priority
-     * @param {string} placeId - Place ID
-     * @param {number} targetPriority - Target priority
-     * @returns {boolean} True if has child of that priority
-     */
     function hasChildAtPriority(placeId, targetPriority) {
-        if (_processingHierarchy) {
-            return false;
+        var children = _queries().getPlaceChildren(placeId, false);
+        for (var i = 0; i < children.length; i++) {
+            if (_queries().getLocationTypePriority(children[i].typeId) === targetPriority) return true;
         }
-        _processingHierarchy = true;
-
-        try {
-            var children = LocationState.getPlaceChildren(placeId, false);
-            for (var i = 0; i < children.length; i++) {
-                var priority = _getLocationTypePriority(children[i].typeId);
-                if (priority === targetPriority) {
-                    return true;
-                }
-            }
-            return false;
-
-        } finally {
-            _processingHierarchy = false;
-        }
+        return false;
     }
 
-    /**
-     * Gets the country ID for a place (wrapper)
-     * @param {string} placeId - Place ID
-     * @returns {string|null} Country ID or null
-     */
-    function getCountryId(placeId) {
-        if (_processingHierarchy) {
-            return null;
-        }
-        _processingHierarchy = true;
-
-        try {
-            return LocationState.getCountryId(placeId);
-
-        } finally {
-            _processingHierarchy = false;
-        }
-    }
-
-    /**
-     * Gets the region ID (priority 2) for a place
-     * @param {string} placeId - Place ID
-     * @returns {string|null} Region ID or null
-     */
     function getRegionId(placeId) {
-        if (_processingHierarchy) {
-            return null;
-        }
-        _processingHierarchy = true;
-
-        try {
-            var place = LocationState.getPlace(placeId);
-            if (!place) return null;
-            
-            var hierarchy = LocationState.getPlaceHierarchy(placeId);
-            for (var i = hierarchy.length - 1; i >= 0; i--) {
-                var p = hierarchy[i];
-                var priority = _getLocationTypePriority(p.typeId);
-                if (priority === 2) {
-                    return p.id;
-                }
-            }
-            return null;
-
-        } finally {
-            _processingHierarchy = false;
-        }
+        var p = getNearestAncestorAtPriority(placeId, 2);
+        if (p) return p.id;
+        // Region may be the place itself
+        var self = _queries().getPlace(placeId);
+        if (self && _queries().getLocationTypePriority(self.typeId) === 2) return self.id;
+        return null;
     }
 
-    /**
-     * Gets the region name for a place
-     * @param {string} placeId - Place ID
-     * @returns {string} Region name or 'Unknown'
-     */
-    function getRegionName(placeId) {
-        if (_processingHierarchy) {
-            return 'Unknown';
-        }
-        _processingHierarchy = true;
-
-        try {
-            var regionId = getRegionId(placeId);
-            if (!regionId) return 'Unknown';
-            var region = LocationState.getPlace(regionId);
-            return region ? region.displayName : 'Unknown';
-
-        } finally {
-            _processingHierarchy = false;
-        }
-    }
-
-    /**
-     * Gets the county ID (priority 3) for a place
-     * @param {string} placeId - Place ID
-     * @returns {string|null} County ID or null
-     */
     function getCountyId(placeId) {
-        if (_processingHierarchy) {
-            return null;
-        }
-        _processingHierarchy = true;
+        var p = getNearestAncestorAtPriority(placeId, 3);
+        if (p) return p.id;
+        var self = _queries().getPlace(placeId);
+        if (self && _queries().getLocationTypePriority(self.typeId) === 3) return self.id;
+        return null;
+    }
 
-        try {
-            var place = LocationState.getPlace(placeId);
-            if (!place) return null;
-            
-            var hierarchy = LocationState.getPlaceHierarchy(placeId);
-            for (var i = hierarchy.length - 1; i >= 0; i--) {
-                var p = hierarchy[i];
-                var priority = _getLocationTypePriority(p.typeId);
-                if (priority === 3) {
-                    return p.id;
-                }
-            }
-            return null;
-
-        } finally {
-            _processingHierarchy = false;
-        }
+    function getCountryId(placeId) {
+        return _queries().getCountryId(placeId);
     }
 
     /**
-     * Gets the county name for a place
-     * @param {string} placeId - Place ID
-     * @returns {string} County name or 'Unknown'
-     */
-    function getCountyName(placeId) {
-        if (_processingHierarchy) {
-            return 'Unknown';
-        }
-        _processingHierarchy = true;
-
-        try {
-            var countyId = getCountyId(placeId);
-            if (!countyId) return 'Unknown';
-            var county = LocationState.getPlace(countyId);
-            return county ? county.displayName : 'Unknown';
-
-        } finally {
-            _processingHierarchy = false;
-        }
-    }
-
-    /**
-     * Checks if a place is a root (has no parent)
-     * @param {string} placeId - Place ID
-     * @returns {boolean} True if root
+     * Returns true/false/null.
+     * null when the place does not exist (distinct from "not root").
      */
     function isRootPlace(placeId) {
-        if (_processingHierarchy) {
-            return false;
-        }
-        _processingHierarchy = true;
-
-        try {
-            var place = LocationState.getPlace(placeId);
-            return place ? !place.parentId : false;
-
-        } finally {
-            _processingHierarchy = false;
-        }
+        var place = _state().getPlaceById(placeId);
+        if (!place) return null;
+        return !place.parentId;
     }
 
     /**
-     * Gets all root places (countries/kingdoms)
-     * @param {Object} options - Filter options
-     * @returns {Array} Array of root place objects
+     * Domain projection of the inheritance chain.
+     * No display names, no status defaults.
      */
-    function getRootPlaces(options) {
-        if (_processingHierarchy) {
-            return [];
+    function getInheritanceChain(placeId) {
+        var chain = _queries().getPlaceHierarchy(placeId);
+        var result = [];
+        for (var i = 0; i < chain.length; i++) {
+            var p = chain[i];
+            result.push({
+                id: p.id,
+                typeId: p.typeId,
+                typePriority: _queries().getLocationTypePriority(p.typeId),
+                isCapital: p.isCapital === true,
+                status: p.status === undefined ? null : p.status
+            });
         }
-        _processingHierarchy = true;
-
-        try {
-            return LocationState.getRootPlaces(options || { includeDeprecated: false });
-
-        } finally {
-            _processingHierarchy = false;
-        }
+        return result;
     }
+
+    // -------------------------------------------------------------------------
+    // DISTANCE / RELATION
+    // -------------------------------------------------------------------------
 
     /**
-     * Gets the full hierarchy path as a formatted string
-     * @param {string} placeId - Place ID
-     * @param {string} separator - Separator string
-     * @returns {string} Formatted hierarchy
+     * Hierarchy edge distance between two places.
+     * Returns:
+     *   0    same place
+     *   N>0  connected places
+     *   null if either place missing or they are disconnected
      */
-    function getHierarchyPath(placeId, separator) {
-        if (_processingHierarchy) {
-            return '';
-        }
-        _processingHierarchy = true;
+    function getHierarchyDistance(id1, id2) {
+        if (!id1 || !id2) return null;
+        if (id1 === id2) return 0;
+        if (!_state().getPlaceById(id1) || !_state().getPlaceById(id2)) return null;
 
-        try {
-            separator = separator || ' → ';
-            var hierarchy = LocationState.getPlaceHierarchy(placeId);
-            var names = [];
-            for (var i = 0; i < hierarchy.length; i++) {
-                names.push(hierarchy[i].displayName);
-            }
-            return names.join(separator);
+        var lca = _queries().findLowestCommonAncestor(id1, id2);
+        if (!lca) return null;
 
-        } finally {
-            _processingHierarchy = false;
-        }
+        var d1 = _queries().getPlaceHierarchy(id1).length;
+        var d2 = _queries().getPlaceHierarchy(id2).length;
+        var dl = _queries().getPlaceHierarchy(lca.id).length;
+        return (d1 - dl) + (d2 - dl);
     }
 
-    // =========================================================================
-    // 7. EXPORTS
-    // =========================================================================
+    function areLocationsRelated(id1, id2) {
+        if (!id1 || !id2) return false;
+        if (id1 === id2) return true;
+        return _queries().findLowestCommonAncestor(id1, id2) !== null;
+    }
+
+    function getCommonAncestor(locationIds) {
+        if (!locationIds || locationIds.length === 0) return null;
+        var common = _state().getPlaceById(locationIds[0]);
+        if (!common) return null;
+        for (var i = 1; i < locationIds.length; i++) {
+            if (!_state().getPlaceById(locationIds[i])) return null;
+            var lca = _queries().findLowestCommonAncestor(common.id, locationIds[i]);
+            if (!lca) return null;
+            common = lca;
+        }
+        return common;
+    }
+
+    // -------------------------------------------------------------------------
+    // EXPORTS
+    // -------------------------------------------------------------------------
 
     window.LocationHierarchy = {
         // Validation
         validateHierarchy: validateHierarchy,
+        isValidParentType: isValidParentType,
 
-        // Inheritance
-        getInheritanceChain: getInheritanceChain,
-
-        // Relationship detection
+        // Ancestry
         isAncestorOf: isAncestorOf,
         areInSameCountry: areInSameCountry,
         findLowestCommonAncestor: findLowestCommonAncestor,
-
-        // Depth and type
         getLocationDepth: getLocationDepth,
-        getTypeHierarchy: getTypeHierarchy,
-
-        // Navigation helpers
-        getAncestorAtPriority: getAncestorAtPriority,
+        getNearestAncestorAtPriority: getNearestAncestorAtPriority,
         getDescendantsAtPriority: getDescendantsAtPriority,
-        getImmediateAncestorAtPriority: getImmediateAncestorAtPriority,
         hasChildAtPriority: hasChildAtPriority,
 
-        // Country/Region/County
-        getCountryId: getCountryId,
+        // IDs at priority
         getRegionId: getRegionId,
-        getRegionName: getRegionName,
         getCountyId: getCountyId,
-        getCountyName: getCountyName,
-
-        // Root helpers
+        getCountryId: getCountryId,
         isRootPlace: isRootPlace,
-        getRootPlaces: getRootPlaces,
+        getInheritanceChain: getInheritanceChain,
 
-        // Path
-        getHierarchyPath: getHierarchyPath
+        // Distance / relation
+        getHierarchyDistance: getHierarchyDistance,
+        areLocationsRelated: areLocationsRelated,
+        getCommonAncestor: getCommonAncestor
     };
 
 })();
