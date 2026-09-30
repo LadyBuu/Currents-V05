@@ -18,6 +18,10 @@
 (function() {
     'use strict';
 
+    // =========================================================================
+    // 1. DEPENDENCY ACCESS
+    // =========================================================================
+
     function _requireEscapeHtml() {
         var fn = window.escapeHtml || window._escapeHtml;
         if (typeof fn !== 'function') {
@@ -37,7 +41,7 @@
     }
 
     // =========================================================================
-    // 1. LIST RENDERER
+    // 2. LIST RENDERER
     // =========================================================================
 
     /**
@@ -48,6 +52,7 @@
      * @param {string}  [options.emptyMessage]
      * @param {boolean} [options.showOwner=true]
      * @param {boolean} [options.showStatus=true]
+     * @returns {boolean}
      */
     function renderEnterpriseList(containerId, rows, options) {
         options = options || {};
@@ -66,6 +71,7 @@
         var html = '<div class="enterprise-list">';
         for (var i = 0; i < rows.length; i++) {
             var r = rows[i];
+
             var metaParts = [esc(r.type)];
             if (showOwner) {
                 metaParts.push('Owner: ' + esc(r.ownerLabel));
@@ -79,11 +85,15 @@
                 '<div class="enterprise-row-main">' +
                     '<div class="enterprise-row-name">' + esc(r.name) + '</div>' +
                     '<div class="enterprise-row-meta">' + metaParts.join(' · ') + '</div>' +
-                    '<div class="enterprise-row-metrics">' + esc(r.workersLabel) + ' · Wealth: ' + esc(r.wealthLabel) + '</div>' +
+                    '<div class="enterprise-row-metrics">' +
+                        esc(r.workersLabel) + ' · Wealth: ' + esc(r.wealthLabel) +
+                    '</div>' +
                 '</div>' +
                 '<div class="enterprise-row-side">' +
                     statusBlock +
-                    '<div class="enterprise-row-profit ' + esc(r.profitClass) + '">' + esc(r.profitLabel) + ' profit</div>' +
+                    '<div class="enterprise-row-profit ' + esc(r.profitClass) + '">' +
+                        esc(r.profitLabel) + ' profit' +
+                    '</div>' +
                 '</div>' +
             '</div>';
         }
@@ -104,16 +114,25 @@
     }
 
     // =========================================================================
-    // 2. CARD RENDERER
+    // 3. CARD RENDERER
     // =========================================================================
 
+    /**
+     * @param {Object} viewModel — from IndustryViewModels.buildCard
+     * @returns {string} HTML
+     */
     function renderEnterpriseCard(viewModel) {
         var esc = _requireEscapeHtml();
+
         if (!viewModel) {
             return '<div class="industry-empty">Enterprise not found</div>';
         }
 
         var v = viewModel;
+        var notesBlock = (v.notesLabel && v.notesLabel !== '—')
+            ? '<div class="enterprise-card-notes">' + esc(v.notesLabel) + '</div>'
+            : '';
+
         return '<div class="enterprise-card ' + esc(v.statusClass) + '">' +
             '<div class="enterprise-card-header">' +
                 '<h4>' + esc(v.name) + '</h4>' +
@@ -130,21 +149,20 @@
                 '<div><span class="label">Workers</span><strong>' + esc(v.workersLabel) + '</strong></div>' +
                 '<div><span class="label">Annual Profit</span><strong class="' + esc(v.profitClass) + '">' + esc(v.profitLabel) + '</strong></div>' +
             '</div>' +
-            (v.notesLabel && v.notesLabel !== '—'
-                ? '<div class="enterprise-card-notes">' + esc(v.notesLabel) + '</div>'
-                : '') +
+            notesBlock +
         '</div>';
     }
 
     // =========================================================================
-    // 3. TABLE RENDERER
+    // 4. TABLE RENDERER
     // =========================================================================
 
     /**
      * @param {Array} rows       — from IndustryViewModels.buildTableRow()
      * @param {Object} options
-     * @param {Array}  options.columns    — e.g. ['name','type','profit']
+     * @param {Array}  options.columns      — e.g. ['name','type','profit']
      * @param {Object} options.columnLabels — optional: { name: 'Name', ... }
+     * @returns {string} HTML
      */
     function renderEnterpriseTable(rows, options) {
         options = options || {};
@@ -172,8 +190,8 @@
                 if (!cell) {
                     html += '<td></td>';
                 } else {
-                    html += '<td' + (cell.className ? ' class="' + esc(cell.className) + '"' : '') + '>' +
-                        esc(cell.text) + '</td>';
+                    var cls = cell.className ? ' class="' + esc(cell.className) + '"' : '';
+                    html += '<td' + cls + '>' + esc(cell.text) + '</td>';
                 }
             }
             html += '</tr>';
@@ -184,7 +202,7 @@
     }
 
     // =========================================================================
-    // 4. EXPORTS
+    // 5. EXPORTS
     // =========================================================================
 
     window.IndustryUI = {
