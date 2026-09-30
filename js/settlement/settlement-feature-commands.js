@@ -11,26 +11,24 @@
  *   - removeFeature   : remove a feature with full refund
  *   - demolishFeature : remove a feature with no refund, record history
  *
- * Each command is one logical transaction. It:
- *   1. reads canonical settlement state
- *   2. resolves required inputs
- *   3. builds a candidate settlement object
- *   4. validates the operation via SettlementFeatureRules
- *   5. applies domain consequences (cost, refund, debt, history)
- *   6. commits the candidate to canonical storage
- *   7. rebuilds SettlementState indexes
- *   8. persists once
- *   9. publishes one event
- *  10. returns a structured result
+ * Each command is one logical transaction:
  *
- * It does not:
- *   - display UI
- *   - log events via a UI-facing logger
- *   - show toasts
- *   - clamp or coerce inputs
- *   - fabricate missing values
- *   - use recursion guards
- *   - delegate mutation to SettlementState private methods
+ *   read canonical
+ *     ↓
+ *   resolve inputs
+ *     ↓
+ *   build candidate
+ *     ↓
+ *   validate (via rules)
+ *     ↓
+ *   apply domain consequences
+ *     ↓
+ *   commit candidate        (SettlementCommandCommit.commit)
+ *     ↓
+ *   return structured result
+ *
+ * The commit helper owns the write / rebuild / persist / publish
+ * sequence. This module does not reimplement any part of it.
  *
  * Contract reference: Settlement Architecture Contracts §5 (Missing-Value
  * Semantics), §9 (Rules Contract), §12 (Command Contract), §13
@@ -42,12 +40,12 @@
  *   - Feature build may create debt. Cost is deducted from wealth; the
  *     shortfall, if any, is added to totalDebt. Under §18, wealth and
  *     debt are independent balances; this command updates both
- *     atomically.
+ *     atomically in one candidate.
  *   - Removal refunds the full build cost. This is a rule of the removal
  *     command, not a property of the feature definition.
  *   - Demolition refunds nothing and appends a demolition history
  *     record. The history record and the feature removal happen in the
- *     same commit; they cannot diverge.
+ *     same candidate; they cannot diverge.
  *
  * =============================================================================
  */
@@ -71,44 +69,18 @@
         return window.SettlementFeatureRules;
     }
 
-    function _getState() {
-        return window.SettlementState;
+    function _getCommit() {
+        return window.SettlementCommandCommit;
     }
 
     function _getTime() {
-        // Time is a required dependency. If it is unavailable, the
-        // application is not in a valid state, and the call will throw.
-        // There is no fallback year.
+        // Time is a required dependency. There is no fallback year.
         return window.Time;
     }
 
     // =========================================================================
-    // 2. CANONICAL STORE WRITE
+    // 2. HELPERS
     // =========================================================================
-    //
-    // The canonical store is masterData.data.settlementData. Commands are
-    // the only modules allowed to replace the canonical record for a
-    // location. State rebuilds its derived indexes after a successful
-    // commit; it does not own the write itself.
-    //
-
-    function _getCanonicalStore() {
-        if (!window.masterData || !window.masterData.data) {
-            throw new Error('SettlementFeatureCommands: masterData not available');
-        }
-        if (!window.masterData.data.settlementData) {
-            window.masterData.data.settlementData = {};
-        }
-        return window.masterData.data.settlementData;
-    }
-
-    // =========================================================================
-    // 3. HELPERS
-    // =========================================================================
-
-    function _isFiniteNumber(value) {
-        return typeof value === 'number' && isFinite(value);
-    }
 
     function _failure(code, details) {
         return {
@@ -118,24 +90,38 @@
         };
     }
 
+    /**
+     * Returns a shallow copy of `source` with `overrides` applied.
+     * Nested objects are shared by reference until a caller replaces
+     * them; this keeps the commit path cheap and defers deep copying to
+     * the commands that actually need to modify nested structures.
+     */
+    function _copyWith(source, overrides) {
+        var copy = {};
+        for (var key in source) {
+            if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+            copy[key] = source[key];
+        }
+        for (var overrideKey in overrides) {
+            if (!Object.prototype.hasOwnProperty.call(overrides, overrideKey)) continue;
+            copy[overrideKey] = overrides[overrideKey];
+        }
+        return copy;
+    }
+
     // =========================================================================
-    // 4. BUILD FEATURE
+    // 3. BUILD FEATURE
     // =========================================================================
     //
-    // Transaction:
-    //   read → candidate → validate → apply cost/debt → commit → rebuild
-    //   → persist → publish → return
-    //
-    // Debt rule (per §18 and the domain decision above):
+    // Debt rule:
     //   - cost is deducted from wealth
     //   - if resulting wealth is negative, the shortfall is added to debt
-    //     and wealth is left as the negative residual
-    //   - the shortfall added to debt equals the amount by which wealth
-    //     would go below zero
+    //   - the shortfall added to debt is exactly the amount by which
+    //     wealth would go below zero
     //
-    // Example:
+    // Cases:
     //   wealth = 300, cost = 500  →  wealth = -200, debt += 200
-    //   wealth = 800, cost = 500  →  wealth = 300,  debt unchanged
+    //   wealth = 800, cost = 500  →  wealth =  300, debt unchanged
     //   wealth = -100, cost = 500 →  wealth = -600, debt += 500
     //
 
@@ -176,57 +162,56 @@
         var wealthBefore = settlement.wealth;
         var wealthAfter = wealthBefore - cost;
         var debtDelta = 0;
-        var debtAfter = settlement.totalDebt;
+        var debtBefore = settlement.totalDebt;
+        var debtAfter = debtBefore;
 
         if (wealthAfter < 0 && wealthBefore >= 0) {
-            // Wealth crossed from non-negative to negative. Shortfall is
-            // added to debt; wealth keeps the negative residual.
+            // Wealth crossed from non-negative to negative. The shortfall
+            // becomes debt; wealth keeps the negative residual.
             debtDelta = -wealthAfter;
-            debtAfter = settlement.totalDebt + debtDelta;
+            debtAfter = debtBefore + debtDelta;
         } else if (wealthAfter < 0 && wealthBefore < 0) {
-            // Wealth was already negative. The entire cost adds to debt.
+            // Wealth was already negative. The whole cost becomes debt.
             debtDelta = cost;
-            debtAfter = settlement.totalDebt + cost;
+            debtAfter = debtBefore + cost;
         }
-        // else: wealth stayed non-negative; no debt change.
+        // else: wealth remained non-negative; no debt change.
 
         var candidateFeatureIds = currentFeatureIds.slice();
         candidateFeatureIds.push(feature.id);
 
-        var candidate = _copySettlementWith(settlement, {
+        var candidate = _copyWith(settlement, {
             featureIds: candidateFeatureIds,
             wealth: wealthAfter,
             totalDebt: debtAfter
         });
 
-        // --- Commit ---
-        _commit(locationId, candidate);
+        var publishedEvent = _getCommit().commit(locationId, candidate, {
+            type: 'featureBuilt',
+            featureId: feature.id,
+            cost: cost,
+            wealthAfter: wealthAfter,
+            debtDelta: debtDelta
+        });
 
-        // --- Result ---
         return {
             success: true,
             locationId: locationId,
             featureId: feature.id,
+            featureName: feature.name,
             cost: cost,
             wealthBefore: wealthBefore,
             wealthAfter: wealthAfter,
+            debtBefore: debtBefore,
+            debtAfter: debtAfter,
             debtDelta: debtDelta,
-            debtAfter: debtAfter
+            event: publishedEvent
         };
     }
 
     // =========================================================================
-    // 5. REMOVE FEATURE (full refund)
+    // 4. REMOVE FEATURE (full refund)
     // =========================================================================
-    //
-    // Transaction:
-    //   read → candidate → validate → apply refund → commit → rebuild
-    //   → persist → publish → return
-    //
-    // Refund rule:
-    //   - the feature's full cost is added to wealth
-    //   - debt is unchanged
-    //
 
     /**
      * @param {string} locationId
@@ -266,36 +251,33 @@
         var wealthBefore = settlement.wealth;
         var wealthAfter = wealthBefore + refund;
 
-        var candidate = _copySettlementWith(settlement, {
+        var candidate = _copyWith(settlement, {
             featureIds: candidateFeatureIds,
             wealth: wealthAfter
         });
 
-        // --- Commit ---
-        _commit(locationId, candidate);
+        var publishedEvent = _getCommit().commit(locationId, candidate, {
+            type: 'featureRemoved',
+            featureId: feature.id,
+            refund: refund,
+            wealthAfter: wealthAfter
+        });
 
         return {
             success: true,
             locationId: locationId,
             featureId: feature.id,
+            featureName: feature.name,
             refund: refund,
             wealthBefore: wealthBefore,
-            wealthAfter: wealthAfter
+            wealthAfter: wealthAfter,
+            event: publishedEvent
         };
     }
 
     // =========================================================================
-    // 6. DEMOLISH FEATURE (no refund, record history)
+    // 5. DEMOLISH FEATURE (no refund, record history)
     // =========================================================================
-    //
-    // Transaction:
-    //   read → candidate → validate → remove feature → append history
-    //   → commit → rebuild → persist → publish → return
-    //
-    // The feature removal and the history append happen in the same
-    // candidate. They cannot diverge. There is no window in which the
-    // feature is gone but the demolition record is missing, or vice
-    // versa.
     //
     // History record shape:
     //   {
@@ -306,6 +288,9 @@
     //     demolishedReason, // string
     //     recordedAt        // technical timestamp (Date.now())
     //   }
+    //
+    // The feature removal and the history append are in the same
+    // candidate. They cannot diverge.
     //
 
     /**
@@ -363,79 +348,30 @@
         var candidateHistory = currentHistory.slice();
         candidateHistory.push(historyRecord);
 
-        var candidate = _copySettlementWith(settlement, {
+        var candidate = _copyWith(settlement, {
             featureIds: candidateFeatureIds,
             demolitionHistory: candidateHistory
         });
 
-        // --- Commit ---
-        _commit(locationId, candidate);
+        var publishedEvent = _getCommit().commit(locationId, candidate, {
+            type: 'featureDemolished',
+            featureId: feature.id,
+            featureName: feature.name,
+            demolishedYear: worldYear
+        });
 
         return {
             success: true,
             locationId: locationId,
             featureId: feature.id,
             featureName: feature.name,
-            demolishedYear: worldYear
+            demolishedYear: worldYear,
+            event: publishedEvent
         };
     }
 
     // =========================================================================
-    // 7. COMMIT
-    // =========================================================================
-    //
-    // The commit sequence is fixed by the contract:
-    //   commit candidate → rebuild indexes → persist once → publish once
-    //
-    // The command does not perform these steps individually at each call
-    // site; they are bundled here so the ordering is enforced in one
-    // place.
-    //
-
-    function _commit(locationId, candidate) {
-        var store = _getCanonicalStore();
-        store[locationId] = candidate;
-
-        _getState().rebuildIndexes();
-
-        if (typeof window.saveMasterData === 'function') {
-            window.saveMasterData();
-        }
-
-        _getState().publish({
-            type: 'settlementCommitted',
-            locationId: locationId
-        });
-    }
-
-    // =========================================================================
-    // 8. CANDIDATE CONSTRUCTION
-    // =========================================================================
-    //
-    // A shallow copy with overridden fields. The candidate is a fresh
-    // object. Nested objects (budget, employment) are shared by reference
-    // until a command needs to modify them; a command that modifies a
-    // nested object is responsible for replacing that object with a fresh
-    // copy before committing. This keeps the commit path cheap while
-    // preventing accidental shared-reference mutation across the commit
-    // boundary.
-    //
-
-    function _copySettlementWith(source, overrides) {
-        var copy = {};
-        for (var key in source) {
-            if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
-            copy[key] = source[key];
-        }
-        for (var overrideKey in overrides) {
-            if (!Object.prototype.hasOwnProperty.call(overrides, overrideKey)) continue;
-            copy[overrideKey] = overrides[overrideKey];
-        }
-        return copy;
-    }
-
-    // =========================================================================
-    // 9. EXPORTS
+    // 6. EXPORTS
     // =========================================================================
 
     window.SettlementFeatureCommands = Object.freeze({
