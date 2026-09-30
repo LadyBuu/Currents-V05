@@ -17,21 +17,21 @@
  *   - render
  *   - decide presentation defaults (icon fallbacks, labels)
  *
- * It reads canonical data through masterData (via CultureState's canonical
- * accessor contract) and uses CultureState for indexed lookups.
- *
  * Relationship to other modules:
  *
  *     CultureQueries
  *         │
- *         ├── CultureState          (indexes)
+ *         ├── CultureState            (indexes)
  *         ├── masterData.data.cultures (canonical reads)
- *         ├── PlaceQueries           (location hierarchy)
- *         ├── ReligionQueries        (religion lookups)
- *         └── CharacterQueries       (character culture lookups)
+ *         ├── PlaceQueries            (location hierarchy)
+ *         ├── ReligionQueries         (religion lookups)
+ *         └── CharacterQueries        (character culture lookups)
  *
- * If a required dependency is missing, queries throw. They do not return
- * fabricated empty results that look like valid answers.
+ * NOTE ON NAMING:
+ *   The canonical lookup function is `getCultureById(id)`.
+ *   This matches `getPlaceById`, `getReligionById`, `getCharacterById`.
+ *   Callers migrating from the old `CultureState.getCulture(id)` should
+ *   switch to `CultureQueries.getCultureById(id)`.
  *
  * =============================================================================
  */
@@ -97,13 +97,6 @@
     // =========================================================================
     // 2. CANONICAL READS
     // =========================================================================
-    //
-    // CultureQueries reads canonical data directly for full-collection reads.
-    // It uses CultureState for indexed lookups.
-    //
-    // This is the one place where the canonical collection enters the query
-    // layer. Everything else is either index lookup or composition.
-    //
 
     function _readCanonicalCultures() {
         var master = _requireMasterData();
@@ -136,8 +129,6 @@
 
     /**
      * Gets all cultures matching a name (case-insensitive).
-     *
-     * Returns an array because name collisions are possible.
      *
      * @param {string} name
      * @returns {Array}
@@ -180,11 +171,6 @@
     // =========================================================================
     // 4. SEARCH
     // =========================================================================
-    //
-    // Search policy belongs to Queries, not State. The implementation uses
-    // State's indexes as a primitive, but the semantic decision of what
-    // constitutes a "match" is made here.
-    //
 
     /**
      * Searches cultures by name and display name.
@@ -228,7 +214,6 @@
             results.sort(function(a, b) {
                 var av = a[key];
                 var bv = b[key];
-                // Explicit missing-value handling: undefined sorts last.
                 if (av === undefined && bv === undefined) return 0;
                 if (av === undefined) return 1;
                 if (bv === undefined) return -1;
@@ -246,18 +231,6 @@
     // =========================================================================
     // 5. LOCATION RELATIONSHIPS
     // =========================================================================
-    //
-    // There are two distinct relationships between cultures and locations:
-    //
-    //   Place.cultureId
-    //       The authoritative PRIMARY culture of a place. Singular.
-    //
-    //   Culture.locations[]
-    //       A descriptive association between a culture and locations.
-    //       Plural. Descriptive, not authoritative.
-    //
-    // Both are exposed here, deliberately named, and never conflated.
-    //
 
     /**
      * Gets the primary culture for a location.
@@ -277,28 +250,22 @@
 
         var currentId = locationId;
         var guard = 0;
-        var maxDepth = 100; // cycle / malformed-data protection
+        var maxDepth = 100;
 
         while (currentId && guard < maxDepth) {
             guard++;
 
-            // 1. Does the place itself declare a primary culture?
             var place = placeQueries.getPlaceById(currentId);
             if (place && place.cultureId) {
                 var direct = state.getById(place.cultureId);
                 if (direct) return direct;
             }
 
-            // 2. Also check whether any culture claims this location as
-            //    its primary-culture location via the index. This supports
-            //    the inverse-direction lookup for data that was written
-            //    that way.
             var primaryMatches = state.getByPrimaryCultureLocation(currentId);
             if (primaryMatches.length > 0) {
                 return primaryMatches[0];
             }
 
-            // 3. Walk up.
             if (!place || !place.parentId) break;
             currentId = place.parentId;
         }
@@ -325,8 +292,6 @@
      *   - the primary culture (authoritative)
      *   - directly associated cultures (descriptive)
      *
-     * Direct associations at the location win over inherited associations.
-     *
      * @param {string} locationId
      * @returns {Array}
      */
@@ -346,15 +311,11 @@
             }
         }
 
-        // 1. Primary culture from this location, or from its nearest
-        //    ancestor that declares one.
         add(getPrimaryCultureForLocation(locationId));
 
-        // 2. Directly associated cultures at this location.
         var direct = state.getByAssociatedLocation(locationId);
         for (var i = 0; i < direct.length; i++) add(direct[i]);
 
-        // 3. Associated cultures at ancestors.
         var place = placeQueries.getPlaceById(locationId);
         var current = place ? place.parentId : null;
         var guard = 0;
@@ -456,11 +417,7 @@
     /**
      * Builds a data summary of a culture.
      *
-     * This is a QUERY projection, not a presentation view-model. It contains
-     * data, not labels, and it does not invent fallback values.
-     *
-     * Presentation concerns (icon fallbacks, label resolution, formatting)
-     * belong to CultureViewModels.
+     * Data projection only. No presentation defaults.
      *
      * @param {string} id
      * @returns {Object|null}
@@ -516,12 +473,6 @@
     /**
      * Computes comprehensive culture statistics.
      *
-     * Distinguishes clearly between:
-     *   - associated location references (culture.locations[])
-     *   - places whose primary culture is this culture (Place.cultureId)
-     *
-     * These are different relationships and produce different numbers.
-     *
      * @returns {Object}
      */
     function getCultureStatistics() {
@@ -532,7 +483,6 @@
         var places = placeQueries.getAllPlaces();
         var characters = characterQueries.getAllCharacters();
 
-        // Count places by primary culture
         var placesByPrimary = {};
         for (var i = 0; i < places.length; i++) {
             var pid = places[i].cultureId;
@@ -540,7 +490,6 @@
             placesByPrimary[pid] = (placesByPrimary[pid] || 0) + 1;
         }
 
-        // Count characters by culture
         var charactersByCulture = {};
         for (var i = 0; i < characters.length; i++) {
             var cid = characters[i].cultureId;
@@ -625,11 +574,6 @@
     // 10. MYTHOLOGY / APPEARANCE FILTERS
     // =========================================================================
 
-    /**
-     * Gets cultures that have non-empty mythology.
-     *
-     * @returns {Array}
-     */
     function getCulturesWithMythology() {
         var all = _readCanonicalCultures();
         var result = [];
@@ -643,11 +587,6 @@
         return result;
     }
 
-    /**
-     * Gets cultures that define appearance data.
-     *
-     * @returns {Array}
-     */
     function getCulturesWithAppearance() {
         var all = _readCanonicalCultures();
         var result = [];
@@ -665,7 +604,6 @@
     // =========================================================================
 
     window.CultureQueries = {
-        // Basic lookups
         getCultureById: getCultureById,
         getAllCultures: getAllCultures,
         getCulturesByName: getCulturesByName,
@@ -673,26 +611,20 @@
         getCultureCount: getCultureCount,
         cultureExists: cultureExists,
 
-        // Search
         searchCultures: searchCultures,
 
-        // Location relationships
         getPrimaryCultureForLocation: getPrimaryCultureForLocation,
         getAssociatedCulturesForLocation: getAssociatedCulturesForLocation,
         getCulturesForLocation: getCulturesForLocation,
 
-        // Character relationships
         getCultureForCharacter: getCultureForCharacter,
         getCharactersForCulture: getCharactersForCulture,
 
-        // Religion relationships
         getCulturesForReligion: getCulturesForReligion,
 
-        // Projections
         getCultureSummary: getCultureSummary,
         getCultureStatistics: getCultureStatistics,
 
-        // Filters
         getCulturesWithMythology: getCulturesWithMythology,
         getCulturesWithAppearance: getCulturesWithAppearance
     };
