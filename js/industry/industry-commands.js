@@ -12,16 +12,17 @@
  *   - Commands construct candidate clones, validate, then commit.
  *   - Commands own the transaction: rebuild indexes → save → notify.
  *   - Commands do NOT call UI functions.
- *   - Commands do NOT have recursion guards. Composition is expected.
+ *   - Commands do NOT have recursion guards.
  *   - Commands do NOT fabricate defaults for missing input.
  *   - Commands do NOT reach into another domain's State.
- *     Cross-domain mutations go through the other domain's Commands.
- *   - Missing dependencies are failures, not silent no-ops.
+ *   - Commands write only canonical fields. Derived fields are resolved
+ *     by IndustryQueries at read time.
+ *   - Historical identity of relationships is captured in `history`.
  *
- * PHASE 2:
- *   - Fixed transactional ordering in applyAnnualProcessing():
- *     household transfer is applied BEFORE the enterprise array is replaced,
- *     so a failed transfer leaves canonical data untouched.
+ * PHASE 3:
+ *   - Stops writing typeName, category, isPublic, ownerName, locationName,
+ *     workerCount. Those are now projections resolved on read.
+ *   - Writes history snapshots when relationships change (type, owner).
  *
  * =============================================================================
  */
@@ -200,8 +201,6 @@
             return { success: false, reason: 'Owner id provided without an owner type' };
         }
 
-        var ownerName = data.ownerName === undefined ? null : data.ownerName;
-
         var ownershipType = data.ownershipType;
         if (ownershipType === undefined || ownershipType === null) {
             ownershipType = (ownerType === 'settlement') ? 'public' : 'private';
@@ -210,22 +209,18 @@
             return { success: false, reason: 'Invalid ownershipType: ' + ownershipType };
         }
 
+        var foundedYear = data.foundedYear === undefined ? currentYear : data.foundedYear;
+
         var enterprise = {
             id: _requireGenerateId()('ent'),
             name: data.name.trim(),
             typeId: data.typeId,
-            typeName: type.name,
-            category: type.category,
 
             ownershipType: ownershipType,
-            isPublic: ownershipType === 'public',
-
             ownerType: ownerType,
             ownerId: ownerId,
-            ownerName: ownerName,
 
             locationId: data.locationId === undefined ? null : data.locationId,
-            locationName: data.locationName === undefined ? null : data.locationName,
 
             wealth: _resolveCreationNumber(data.wealth, 0),
             debt: _resolveCreationNumber(data.debt, 0),
@@ -233,14 +228,13 @@
             expenses: _resolveCreationNumber(data.expenses, type.baseExpenses),
             wages: _resolveCreationNumber(data.wages, type.baseWages),
 
-            workerCount: 0,
             maxWorkers: _resolveCreationNumber(data.maxWorkers, type.maxWorkers),
             workerList: [],
             workerWages: {},
 
             status: data.status === undefined ? 'active' : data.status,
-            foundedYear: data.foundedYear === undefined ? currentYear : data.foundedYear,
-            lastProcessedYear: data.foundedYear === undefined ? currentYear : data.foundedYear,
+            foundedYear: foundedYear,
+            lastProcessedYear: foundedYear,
 
             history: [],
             notes: data.notes === undefined ? '' : data.notes,
@@ -248,6 +242,30 @@
             createdAt: now,
             updatedAt: now
         };
+
+        // Record the type snapshot in history — this is the correct place
+        // for "what the type looked like when the enterprise was founded".
+        enterprise.history.push({
+            year: foundedYear,
+            type: 'type_assigned',
+            typeId: type.id,
+            typeName: type.name,
+            category: type.category,
+            timestamp: now
+        });
+
+        // Record the owner snapshot in history if the owner had a name
+        // at creation time. This is historical, not canonical.
+        if (ownerType !== 'none' && data.ownerName) {
+            enterprise.history.push({
+                year: foundedYear,
+                type: 'owner_assigned',
+                ownerType: ownerType,
+                ownerId: ownerId,
+                ownerName: data.ownerName,
+                timestamp: now
+            });
+        }
 
         var validation = _validateEnterpriseCandidate(enterprise);
         if (!validation.ok) {
@@ -258,7 +276,7 @@
         enterprises.push(enterprise);
 
         if (ownerType === 'household' && ownerId) {
-            _registerWithHousehold(ownerId, enterprise.id, enterprise.foundedYear);
+            _registerWithHousehold(ownerId, enterprise.id, foundedYear);
         }
 
         _commit('enterprise_added', { enterprise: enterprise });
@@ -287,13 +305,25 @@
         var existing = enterprises[index];
         var candidate = _cloneEnterprise(existing);
 
+        // Only canonical fields may be updated.
         var allowedFields = [
-            'name', 'typeId', 'typeName', 'category',
-            'ownershipType', 'isPublic', 'ownerType', 'ownerId', 'ownerName',
-            'locationId', 'locationName',
-            'wealth', 'debt', 'income', 'expenses', 'wages',
-            'maxWorkers', 'workerList', 'workerWages',
-            'status', 'lastProcessedYear', 'notes'
+            'name',
+            'typeId',
+            'ownershipType',
+            'ownerType',
+            'ownerId',
+            'locationId',
+            'wealth',
+            'debt',
+            'income',
+            'expenses',
+            'wages',
+            'maxWorkers',
+            'workerList',
+            'workerWages',
+            'status',
+            'lastProcessedYear',
+            'notes'
         ];
 
         var changed = false;
@@ -309,20 +339,42 @@
             return { success: false, reason: 'No changes to apply' };
         }
 
-        if (updates.ownershipType !== undefined) {
-            candidate.isPublic = (updates.ownershipType === 'public');
-        }
+        var currentYear = _requireCurrentYear();
+
+        // Record type change in history
         if (updates.typeId !== undefined && updates.typeId !== existing.typeId) {
             var getType = _requireTypeLookup();
             var type = getType(updates.typeId);
             if (!type) {
                 return { success: false, reason: 'Enterprise type not found: ' + updates.typeId };
             }
-            candidate.typeName = type.name;
-            candidate.category = type.category;
+            candidate.history.push({
+                year: currentYear,
+                type: 'type_changed',
+                previousTypeId: existing.typeId,
+                newTypeId: type.id,
+                newTypeName: type.name,
+                newCategory: type.category,
+                timestamp: Date.now()
+            });
         }
-        if (candidate.workerList) {
-            candidate.workerCount = candidate.workerList.length;
+
+        // Record owner change in history
+        var ownerChanged =
+            (updates.ownerType !== undefined && updates.ownerType !== existing.ownerType) ||
+            (updates.ownerId !== undefined && updates.ownerId !== existing.ownerId);
+
+        if (ownerChanged && updates.ownerName) {
+            candidate.history.push({
+                year: currentYear,
+                type: 'owner_changed',
+                previousOwnerType: existing.ownerType,
+                previousOwnerId: existing.ownerId,
+                newOwnerType: candidate.ownerType,
+                newOwnerId: candidate.ownerId,
+                newOwnerName: updates.ownerName,
+                timestamp: Date.now()
+            });
         }
 
         candidate.updatedAt = Date.now();
@@ -417,7 +469,6 @@
 
         candidate.workerList.push(workerId);
         candidate.workerWages[workerId] = resolvedWage;
-        candidate.workerCount = candidate.workerList.length;
         candidate.updatedAt = Date.now();
 
         enterprises[index] = candidate;
@@ -453,7 +504,6 @@
 
         candidate.workerList.splice(listIndex, 1);
         delete candidate.workerWages[workerId];
-        candidate.workerCount = candidate.workerList.length;
         candidate.updatedAt = Date.now();
 
         enterprises[index] = candidate;
@@ -579,35 +629,9 @@
     }
 
     // =========================================================================
-    // 7. ANNUAL PROCESSING COMMAND
+    // 7. ANNUAL PROCESSING
     // =========================================================================
-    //
-    // Applied atomically by the Processor. All enterprise-side changes for a
-    // single annual processing event go through this one command.
-    //
-    // TRANSACTION ORDER (Phase 2 fix):
-    //   1. Compute candidate for enterprise (in memory, not yet committed)
-    //   2. Apply household transfer FIRST if present
-    //   3. If household succeeds, replace enterprise array entry
-    //   4. Commit indexes + save + notify
-    //
-    // If the household transfer fails, the enterprise is untouched.
 
-    /**
-     * @param {string} enterpriseId
-     * @param {Object} result — calculated transition from IndustryEconomics:
-     *   {
-     *     currentYear,
-     *     yearsProcessed,
-     *     newWealth,
-     *     newDebt,
-     *     nextStatus,
-     *     historyEntries: [ ... ],      // optional
-     *     householdTransfer: number|null,
-     *     householdId: string|null,
-     *     householdReason: string|null
-     *   }
-     */
     function applyAnnualProcessing(enterpriseId, result) {
         if (!enterpriseId) {
             return { success: false, reason: 'Enterprise id is required' };
@@ -648,9 +672,7 @@
             return { success: false, reason: validation.reason };
         }
 
-        // ---- TRANSACTIONAL ORDER ----
-        // Apply household transfer FIRST. If it fails, do not touch the
-        // canonical enterprise array. The candidate is discarded.
+        // Household transfer first — if it fails, enterprise is untouched.
         if (result.householdTransfer !== undefined &&
             result.householdTransfer !== null &&
             result.householdId) {
@@ -669,7 +691,6 @@
             }
         }
 
-        // Household step succeeded (or was not required). Commit enterprise change.
         enterprises[index] = candidate;
         _commit('enterprise_processed', { enterprise: candidate });
 
@@ -698,13 +719,11 @@
         payload.ownershipType = 'public';
         payload.ownerType = 'settlement';
         payload.ownerId = locationId;
-        payload.ownerName = place.displayName;
         if (payload.locationId === undefined || payload.locationId === null) {
             payload.locationId = locationId;
         }
-        if (payload.locationName === undefined || payload.locationName === null) {
-            payload.locationName = place.displayName;
-        }
+        // ownerName is intentionally NOT set. It is a projection resolved
+        // by IndustryQueries via the Place accessor.
 
         return createEnterprise(payload);
     }
@@ -723,8 +742,7 @@
         return updateEnterprise(enterpriseId, {
             ownershipType: 'public',
             ownerType: 'settlement',
-            ownerId: locationId,
-            ownerName: place.displayName
+            ownerId: locationId
         });
     }
 
@@ -763,10 +781,7 @@
             enterpriseId: existing.id,
             enterpriseName: existing.name,
             typeId: existing.typeId,
-            typeName: existing.typeName,
-            category: existing.category,
             locationId: existing.locationId,
-            locationName: existing.locationName,
             demolishedYear: demolishYear,
             demolishedReason: demolishReason,
             destroyedBy: options.destroyedBy === undefined ? 'manual' : options.destroyedBy,
@@ -778,7 +793,6 @@
             workerIds: existing.workerList ? existing.workerList.slice() : [],
             ownershipType: existing.ownershipType,
             ownerId: existing.ownerId,
-            ownerName: existing.ownerName,
             timestamp: Date.now()
         };
 
@@ -790,7 +804,6 @@
         candidate.demolishedRecord = demolitionRecord;
         candidate.workerList = [];
         candidate.workerWages = {};
-        candidate.workerCount = 0;
         candidate.wealth = 0;
         candidate.debt = 0;
         candidate.updatedAt = Date.now();
@@ -865,7 +878,6 @@
         candidate.debt = 0;
         candidate.workerList = [];
         candidate.workerWages = {};
-        candidate.workerCount = 0;
         candidate.updatedAt = Date.now();
 
         candidate.history.push({
