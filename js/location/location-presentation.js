@@ -1,57 +1,54 @@
 /**
  * =============================================================================
- * STILL WATERS - LOCATION PRESENTATION (location-presentation.js)
+ * LOCATION PRESENTATION
  * =============================================================================
- * 
- * LOCATION: js/modules/locations/location-presentation.js
- * 
- * Display strings for locations. Consumes world.js queries.
- * 
- * DEPENDENCIES:
- *   - world.js (getCurrentPlace, getParentChain, getLocationCountry, ...)
- * 
- * ICON POLICY: No emojis. No icons.
- * 
+ *
+ * Thin formatting helpers.
+ * No domain resolution. No dependency fallbacks. No fabricated values.
+ *
+ * Input: domain objects or values.
+ * Output: strings for display.
+ *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
-    function getCurrentLocationLabel(character) {
-        if (typeof window.getCurrentPlace !== 'function') return 'Unknown';
-        var place = window.getCurrentPlace(character);
-        if (!place) return 'Unknown';
-        return place.displayName || 'Unknown';
+    function getPlaceLabel(place) {
+        if (!place) return null;
+        return place.displayName || null;
     }
 
-    function getCountryLabel(place) {
-        if (typeof window.getLocationCountry !== 'function') return 'Other Locations';
-        var country = window.getLocationCountry(place);
-        if (!country) return 'Other Locations';
-        return country.displayName || 'Other Locations';
+    function getCountryLabel(countryPlace) {
+        if (!countryPlace) return 'Other Locations';
+        return countryPlace.displayName || 'Other Locations';
     }
 
-    function getHierarchyDisplay(place, separator) {
-        separator = separator || ' → ';
-        if (typeof window.getParentChain !== 'function') return '';
-        var chain = window.getParentChain(place);
-        if (chain.length === 0) return '';
+    function getHierarchyDisplay(chain, separator) {
+        var joiner = separator === undefined || separator === null ? ' → ' : separator;
+        if (!chain || chain.length === 0) return '';
         var names = [];
         for (var i = 0; i < chain.length; i++) {
-            if (chain[i].displayName) names.push(chain[i].displayName);
+            var p = chain[i];
+            if (p && p.displayName) names.push(p.displayName);
         }
-        return names.join(separator);
+        return names.join(joiner);
     }
 
     function getGroupingLabel(group, separator) {
-        separator = separator || ' → ';
         if (!group || !group.place) return 'Ungrouped';
-        return getHierarchyDisplay(group.place, separator);
+        var chain = window.LocationQueries
+            ? window.LocationQueries.getPlaceHierarchy(group.place.id)
+            : [];
+        return getHierarchyDisplay(chain, separator);
     }
 
-    window.getCurrentLocationLabel = getCurrentLocationLabel;
-    window.getCountryLabel = getCountryLabel;
-    window.getHierarchyDisplay = getHierarchyDisplay;
-    window.getGroupingLabel = getGroupingLabel;
+    window.LocationPresentation = {
+        getPlaceLabel: getPlaceLabel,
+        getCountryLabel: getCountryLabel,
+        getHierarchyDisplay: getHierarchyDisplay,
+        getGroupingLabel: getGroupingLabel
+    };
+
 })();
