@@ -14,9 +14,10 @@
  *   - No silent catches. Errors propagate.
  *   - Reads from IndustryState (indexes) and cross-domain accessors.
  *
- * PHASE 2:
- *   - Added getEnterpriseWorkers(): resolves workerList + wages into
- *     display-ready entries with resolved character names.
+ * PHASE 3:
+ *   - Resolves typeName, category, isPublic, workerCount on read.
+ *   - These fields are NO LONGER stored on the canonical record.
+ *   - A missing typeId resolves to null metadata, not a fabricated type.
  *
  * =============================================================================
  */
@@ -27,9 +28,6 @@
     // =========================================================================
     // 1. DEPENDENCY ACCESS
     // =========================================================================
-    //
-    // Read lazily on each call so tests can install stubs.
-    // Missing dependencies throw — they are application errors, not data.
 
     function _requireState() {
         var state = window.IndustryState;
@@ -63,8 +61,67 @@
         return window.getPlaceById;
     }
 
+    function _requireTypeLookup() {
+        if (typeof window.IndustryTypes === 'undefined' ||
+            typeof window.IndustryTypes.getEnterpriseTypeById !== 'function') {
+            throw new Error('IndustryQueries: IndustryTypes.getEnterpriseTypeById dependency missing');
+        }
+        return window.IndustryTypes.getEnterpriseTypeById;
+    }
+
     // =========================================================================
-    // 2. ENTERPRISE QUERIES
+    // 2. RESOLVERS
+    // =========================================================================
+
+    /**
+     * Resolves typeName and category from typeId.
+     *
+     * A broken reference (typeId points to a type that does not exist)
+     * resolves to null metadata. It is NOT repaired. Diagnostics should
+     * surface broken references separately.
+     *
+     * @param {Object} enterprise
+     * @returns {{ typeName: string|null, category: string|null }}
+     */
+    function resolveTypeMetadata(enterprise) {
+        if (!enterprise.typeId) {
+            return { typeName: null, category: null };
+        }
+        var getType = _requireTypeLookup();
+        var type = getType(enterprise.typeId);
+        if (!type) {
+            return { typeName: null, category: null };
+        }
+        return {
+            typeName: type.name,
+            category: type.category
+        };
+    }
+
+    /**
+     * Resolves ownership type from ownershipType field.
+     *
+     * @param {Object} enterprise
+     * @returns {boolean}
+     */
+    function resolveIsPublic(enterprise) {
+        return enterprise.ownershipType === 'public';
+    }
+
+    /**
+     * Resolves worker count from workerList.
+     *
+     * @param {Object} enterprise
+     * @returns {number}
+     */
+    function resolveWorkerCount(enterprise) {
+        return Array.isArray(enterprise.workerList)
+            ? enterprise.workerList.length
+            : 0;
+    }
+
+    // =========================================================================
+    // 3. ENTERPRISE QUERIES
     // =========================================================================
 
     function getEnterprise(id) {
@@ -94,7 +151,8 @@
         var all = _requireState().getAllEnterprises();
         var result = [];
         for (var i = 0; i < all.length; i++) {
-            if (all[i].category === category) {
+            var meta = resolveTypeMetadata(all[i]);
+            if (meta.category === category) {
                 result.push(all[i]);
             }
         }
@@ -119,7 +177,7 @@
     }
 
     // =========================================================================
-    // 3. OWNERSHIP TYPE QUERIES
+    // 4. OWNERSHIP TYPE QUERIES
     // =========================================================================
 
     function getEnterprisesByOwnershipType(ownershipType, locationId) {
@@ -146,22 +204,9 @@
     }
 
     // =========================================================================
-    // 4. WORKER RESOLUTION
+    // 5. WORKER RESOLUTION
     // =========================================================================
 
-    /**
-     * Resolves an enterprise's worker list into display-ready entries.
-     *
-     * Authoritative model:
-     *   workerList       — who is employed
-     *   workerWages[id]  — per-worker wage override (optional)
-     *   wages            — base wage for workers without override
-     *
-     * @param {string} enterpriseId
-     * @returns {Array}  [{ id, name, wage }]
-     *                   empty array if enterprise not found
-     *                   wage may be undefined if neither override nor base wage exists
-     */
     function getEnterpriseWorkers(enterpriseId) {
         var enterprise = getEnterprise(enterpriseId);
         if (!enterprise) return [];
@@ -188,27 +233,15 @@
                 wage = undefined;
             }
 
-            result.push({
-                id: workerId,
-                name: name,
-                wage: wage
-            });
+            result.push({ id: workerId, name: name, wage: wage });
         }
         return result;
     }
 
     // =========================================================================
-    // 5. ENTERPRISE SUMMARY
+    // 6. ENTERPRISE SUMMARY
     // =========================================================================
 
-    /**
-     * Builds a summary of an enterprise.
-     *
-     * Missing fields stay missing. Presentation layer decides how to display.
-     *
-     * @param {string} enterpriseId
-     * @returns {Object|null}
-     */
     function getEnterpriseSummary(enterpriseId) {
         var enterprise = getEnterprise(enterpriseId);
         if (!enterprise) return null;
@@ -226,23 +259,26 @@
             annualProfit = undefined;
         }
 
+        var typeMeta = resolveTypeMetadata(enterprise);
         var ownerName = _resolveOwnerName(enterprise);
+        var locationName = _resolveLocationName(enterprise);
+        var isPublic = resolveIsPublic(enterprise);
 
         return {
             id: enterprise.id,
             name: enterprise.name,
-            type: enterprise.typeName,
-            category: enterprise.category,
+            type: typeMeta.typeName,
+            category: typeMeta.category,
 
             ownershipType: enterprise.ownershipType,
-            isPublic: enterprise.ownershipType === 'public',
+            isPublic: isPublic,
 
             ownerType: enterprise.ownerType,
             ownerId: enterprise.ownerId,
             ownerName: ownerName,
 
             locationId: enterprise.locationId,
-            locationName: enterprise.locationName,
+            locationName: locationName,
 
             wealth: enterprise.wealth,
             debt: enterprise.debt,
@@ -276,7 +312,6 @@
             } else if (baseWage !== undefined && baseWage !== null) {
                 total += baseWage;
             }
-            // Neither present — worker contributes 0 to total. Not fabricated.
         }
         return total;
     }
@@ -303,6 +338,13 @@
         return null;
     }
 
+    function _resolveLocationName(enterprise) {
+        if (!enterprise.locationId) return null;
+        var getPlace = _requirePlaceAccessor();
+        var place = getPlace(enterprise.locationId);
+        return place ? place.displayName : null;
+    }
+
     function getOwnerEnterprisesSummary(ownerId, ownerType) {
         var enterprises = getEnterprisesByOwner(ownerId, ownerType);
         var result = [];
@@ -324,16 +366,9 @@
     }
 
     // =========================================================================
-    // 6. SEARCH
+    // 7. SEARCH
     // =========================================================================
 
-    /**
-     * Searches enterprises by name and type.
-     *
-     * Note: does NOT search by ownerName, because ownerName is derived and
-     * not stored canonically. If owner-name search is required, either
-     * resolve owners during search or index owner names separately.
-     */
     function searchEnterprises(query) {
         var all = getAllEnterprises();
         if (!query || query.trim() === '') return all;
@@ -344,7 +379,10 @@
             var e = all[i];
             if (e.name && e.name.toLowerCase().indexOf(lowerQuery) !== -1) {
                 result.push(e);
-            } else if (e.typeName && e.typeName.toLowerCase().indexOf(lowerQuery) !== -1) {
+                continue;
+            }
+            var meta = resolveTypeMetadata(e);
+            if (meta.typeName && meta.typeName.toLowerCase().indexOf(lowerQuery) !== -1) {
                 result.push(e);
             }
         }
@@ -352,15 +390,9 @@
     }
 
     // =========================================================================
-    // 7. STATISTICS
+    // 8. STATISTICS
     // =========================================================================
 
-    /**
-     * Aggregated statistics over all enterprises.
-     *
-     * Enterprises with missing classification fields are counted separately
-     * under an "unknown" bucket, not silently assigned to a default bucket.
-     */
     function getEnterpriseStatistics() {
         var all = getAllEnterprises();
         var stats = {
@@ -377,7 +409,8 @@
             neutral: 0,
             publicCount: 0,
             privateCount: 0,
-            unknownOwnershipCount: 0
+            unknownOwnershipCount: 0,
+            brokenTypeReferences: 0
         };
 
         for (var i = 0; i < all.length; i++) {
@@ -386,7 +419,15 @@
             if (!summary) continue;
 
             _increment(stats.byStatus, e.status);
-            _increment(stats.byCategory, e.category);
+
+            // Category now derives from type metadata
+            var meta = resolveTypeMetadata(e);
+            if (meta.category) {
+                _increment(stats.byCategory, meta.category);
+            } else {
+                stats.brokenTypeReferences++;
+            }
+
             _increment(stats.byOwnerType, e.ownerType);
 
             if (e.ownershipType === 'public') {
@@ -401,7 +442,7 @@
 
             if (typeof summary.wealth === 'number') stats.totalWealth += summary.wealth;
             if (typeof summary.debt === 'number') stats.totalDebt += summary.debt;
-            stats.totalWorkers += summary.workerCount;
+            stats.totalWorkers += resolveWorkerCount(e);
 
             if (typeof summary.annualProfit === 'number') {
                 if (summary.annualProfit > 0) stats.profitable++;
@@ -422,11 +463,10 @@
     }
 
     // =========================================================================
-    // 8. EXPORTS
+    // 9. EXPORTS
     // =========================================================================
 
     window.IndustryQueries = {
-        // Enterprise accessors
         getEnterprise: getEnterprise,
         getAllEnterprises: getAllEnterprises,
         getEnterprisesByOwner: getEnterprisesByOwner,
@@ -435,23 +475,24 @@
         getEnterprisesByStatus: getEnterprisesByStatus,
         getStateEnterprises: getStateEnterprises,
 
-        // Ownership type queries
         getEnterprisesByOwnershipType: getEnterprisesByOwnershipType,
         getPublicEnterprises: getPublicEnterprises,
         getPrivateEnterprises: getPrivateEnterprises,
         getEnterpriseOwnershipType: getEnterpriseOwnershipType,
 
-        // Worker resolution
         getEnterpriseWorkers: getEnterpriseWorkers,
 
-        // Summaries
         getEnterpriseSummary: getEnterpriseSummary,
         getOwnerEnterprisesSummary: getOwnerEnterprisesSummary,
         getLocationEnterprisesSummary: getLocationEnterprisesSummary,
 
-        // Search and statistics
         searchEnterprises: searchEnterprises,
-        getEnterpriseStatistics: getEnterpriseStatistics
+        getEnterpriseStatistics: getEnterpriseStatistics,
+
+        // Resolvers exposed for diagnostics and direct use
+        resolveTypeMetadata: resolveTypeMetadata,
+        resolveIsPublic: resolveIsPublic,
+        resolveWorkerCount: resolveWorkerCount
     };
 
     if (typeof module !== 'undefined' && module.exports) {
