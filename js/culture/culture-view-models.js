@@ -6,36 +6,23 @@
  *
  * Presentation-ready projections of culture data.
  *
- * This module is the boundary between the domain and the renderer. The
- * renderer receives prepared objects and turns them into HTML. It does
- * not resolve locations, look up religions, inspect appearance structure,
- * interpret mythology, or decide fallback labels.
- *
  * Three kinds of "default" exist in this subsystem, and they live in
  * different layers:
  *
  *     Domain default       (CultureCommands + CultureConstants)
- *         "A newly created culture gets this appearance structure."
- *
  *     Normalization        (this module)
- *         "If displayName is absent, the label is name."
- *
  *     Presentation fallback (this module, optionally)
- *         "If icon is absent, render no icon (or a placeholder if the
- *          view model explicitly opts in)."
  *
- * Queries never invent data. Renderers never interpret missing data.
- * ViewModels decide how a missing value is presented — and only here.
+ * Public single-value helpers (labelFor, iconFor) are exposed so that
+ * other domains (Location, Character) can ask "what is this culture's
+ * label?" without building a full view model or re-implementing the
+ * displayName/name policy themselves.
  *
  * Dependencies:
- *   - CultureQueries           (all reads)
- *   - PlaceQueries             (location display names)
- *   - ReligionQueries          (religion display names)
- *   - CharacterQueries         (character counts for detail view)
- *
- * None of these is optional. If a dependency is missing, the view model
- * throws at call time. There is no "return [] and pretend the domain is
- * empty" behaviour.
+ *   - CultureQueries
+ *   - PlaceQueries
+ *   - ReligionQueries
+ *   - CharacterQueries
  *
  * =============================================================================
  */
@@ -78,19 +65,16 @@
     // =========================================================================
     // 2. NORMALIZATION HELPERS
     // =========================================================================
-    //
-    // These are the *only* functions that decide how a missing domain value
-    // is presented. Every other module asks the view model for a label, an
-    // icon, or a summary string — never invents one itself.
-    //
 
     /**
      * The human-readable label for a culture.
      *
-     * Policy: displayName is authoritative if present; otherwise name.
-     * An empty displayName is treated as absent.
+     * Policy: displayName is authoritative if non-empty; otherwise name.
+     *
+     * Public API. Other domains should call this rather than re-implement
+     * the displayName/name fallback.
      */
-    function _labelFor(culture) {
+    function labelFor(culture) {
         if (!culture) return '';
         if (typeof culture.displayName === 'string' && culture.displayName.length > 0) {
             return culture.displayName;
@@ -101,14 +85,17 @@
     /**
      * The icon to render for a culture.
      *
-     * Policy: preserve whatever the culture declared. `null` means the
-     * culture explicitly has no icon. Undefined means it was never set.
-     * Either way, this module does not invent an icon.
+     * Policy: preserve whatever the culture declared. Null means explicitly
+     * no icon. Undefined means never set. This function does not invent one.
      *
-     * If the caller requests a placeholder, one is returned. Otherwise
-     * null means null.
+     * @param {Object} culture
+     * @param {Object} [options]
+     * @param {string} [options.iconPlaceholder] - If supplied, used when
+     *        the culture has no icon. Callers should only pass this when
+     *        a placeholder is genuinely wanted (e.g. an empty list marker).
+     *        Omit it to preserve absence.
      */
-    function _iconFor(culture, options) {
+    function iconFor(culture, options) {
         if (!culture) return null;
         if (typeof culture.icon === 'string' && culture.icon.length > 0) {
             return culture.icon;
@@ -119,12 +106,6 @@
         return null;
     }
 
-    /**
-     * The description string, or null when there is nothing to render.
-     *
-     * Empty string is preserved as empty string — it is a legal authored
-     * value distinct from "no description at all".
-     */
     function _descriptionFor(culture) {
         if (!culture) return null;
         if (typeof culture.description !== 'string') return null;
@@ -141,11 +122,6 @@
     // 3. LOCATION / RELIGION LABELS
     // =========================================================================
 
-    /**
-     * Resolves an array of location IDs to { id, label } pairs.
-     * Missing locations are silently omitted — a broken association is
-     * not a rendering concern for this projection.
-     */
     function _resolveLocations(locationIds) {
         if (!Array.isArray(locationIds) || locationIds.length === 0) return [];
         var placeQueries = _requirePlaceQueries();
@@ -161,9 +137,6 @@
         return out;
     }
 
-    /**
-     * Resolves an array of religion IDs to { id, label } pairs.
-     */
     function _resolveReligions(religionIds) {
         if (!Array.isArray(religionIds) || religionIds.length === 0) return [];
         var religionQueries = _requireReligionQueries();
@@ -183,13 +156,6 @@
     // 4. MYTHOLOGY SUMMARY
     // =========================================================================
 
-    /**
-     * Produces a presentation-friendly mythology summary, or null when
-     * there is nothing worth showing.
-     *
-     * The renderer receives plain { label, value } pairs and does not
-     * need to know which fields mythology contains.
-     */
     function _mythologySummaryFor(culture) {
         if (!culture || !culture.mythology) return null;
         var m = culture.mythology;
@@ -226,13 +192,6 @@
     // 5. APPEARANCE SUMMARY
     // =========================================================================
 
-    /**
-     * Produces presentation-friendly appearance summary rows.
-     *
-     * The renderer receives [{ category, preview, remaining }] and does
-     * not need to know that appearance categories are weighted option
-     * lists or that `height` is an object.
-     */
     function _appearanceSummaryFor(culture, options) {
         if (!culture || !culture.appearance) return [];
         options = options || {};
@@ -249,7 +208,6 @@
             var row = { category: key };
 
             if (key === 'height' && category && typeof category === 'object') {
-                // Format per-gender ranges as a short string.
                 var parts = [];
                 for (var gender in category) {
                     if (!Object.prototype.hasOwnProperty.call(category, gender)) continue;
@@ -277,7 +235,6 @@
                 continue;
             }
 
-            // Unknown shape: still expose it, but do not invent a preview.
             row.preview = '';
             row.remaining = 0;
             out.push(row);
@@ -289,10 +246,6 @@
     // =========================================================================
     // 6. LIST ROW
     // =========================================================================
-    //
-    // Used by the culture list renderer. Contains everything the row needs
-    // to draw itself, and nothing more.
-    //
 
     function buildListRow(culture, options) {
         options = options || {};
@@ -310,8 +263,8 @@
 
         return {
             id: culture.id,
-            label: _labelFor(culture),
-            icon: _iconFor(culture, options),
+            label: labelFor(culture),
+            icon: iconFor(culture, options),
             description: _descriptionFor(culture),
             locations: locations,
             religions: religions,
@@ -323,9 +276,6 @@
         };
     }
 
-    /**
-     * Builds list rows for an array of cultures.
-     */
     function buildListRows(cultures, options) {
         options = options || {};
         var out = [];
@@ -339,16 +289,12 @@
     // =========================================================================
     // 7. CARD
     // =========================================================================
-    //
-    // Used by anything that renders a single culture as a card (detail
-    // side panels, embedded displays, search results).
-    //
 
     function buildCard(culture) {
         return {
             id: culture.id,
-            label: _labelFor(culture),
-            icon: _iconFor(culture),
+            label: labelFor(culture),
+            icon: iconFor(culture),
             description: _descriptionFor(culture),
             locations: _resolveLocations(culture.locations),
             religions: _resolveReligions(culture.religions),
@@ -367,12 +313,6 @@
     // =========================================================================
     // 8. DETAILS
     // =========================================================================
-    //
-    // The details view is the most information-dense projection. It is
-    // built from CultureQueries.getCultureSummary so the query layer
-    // remains the single source of truth for what "the culture's data"
-    // means.
-    //
 
     function buildDetails(cultureId) {
         var queries = _requireQueries();
@@ -388,8 +328,8 @@
 
         return {
             id: culture.id,
-            label: _labelFor(culture),
-            icon: _iconFor(culture),
+            label: labelFor(culture),
+            icon: iconFor(culture),
             description: _descriptionFor(culture),
             notes: _notesFor(culture),
 
@@ -424,11 +364,6 @@
     // =========================================================================
     // 9. DROPDOWN OPTIONS
     // =========================================================================
-    //
-    // For native <select> elements and similar controls. Icon and label
-    // only — icons are not rendered inside native options; the caller can
-    // decide to render them elsewhere if a custom control is used.
-    //
 
     function buildDropdownOptions(cultures, options) {
         options = options || {};
@@ -441,8 +376,8 @@
             var c = cultures[i];
             out.push({
                 id: c.id,
-                label: _labelFor(c),
-                icon: _iconFor(c),
+                label: labelFor(c),
+                icon: iconFor(c),
                 selected: c.id === selectedId
             });
         }
@@ -459,6 +394,10 @@
     // =========================================================================
 
     window.CultureViewModels = {
+        // Single-value helpers (public — safe for other domains to call)
+        labelFor: labelFor,
+        iconFor: iconFor,
+
         // Row projections
         buildListRow: buildListRow,
         buildListRows: buildListRows,
