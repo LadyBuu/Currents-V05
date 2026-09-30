@@ -7,13 +7,12 @@
  *
  * Modal dialogs for enterprise management.
  *
- * ARCHITECTURAL RULES (Phase 1):
- *   - Modals gather input, call Commands, render Views.
+ * ARCHITECTURAL RULES (Phase 2):
+ *   - Modals gather input, call Commands, render ViewModels.
  *   - Modals do NOT persist. Commands do.
- *   - Modals do NOT invalidate caches. Commands do.
- *   - Modals do NOT fabricate dependencies. Missing deps = fail loudly.
- *   - Modals do NOT decide domain defaults.
- *   - Toasts are shown here based on command results.
+ *   - Modals do NOT decide presentation. ViewModels do.
+ *   - Modals do NOT fabricate dependencies. Missing deps fail loudly.
+ *   - Toasts shown here based on command results.
  *   - No icons in confirm/cancel buttons.
  *
  * =============================================================================
@@ -50,6 +49,12 @@
         return t;
     }
 
+    function _requireViewModels() {
+        var v = window.IndustryViewModels;
+        if (!v) throw new Error('IndustryModals: IndustryViewModels dependency missing');
+        return v;
+    }
+
     function _requireModalCore() {
         if (typeof window.openModal !== 'function') {
             throw new Error('IndustryModals: openModal dependency missing');
@@ -57,10 +62,7 @@
         if (typeof window.closeTopModal !== 'function') {
             throw new Error('IndustryModals: closeTopModal dependency missing');
         }
-        return {
-            open: window.openModal,
-            close: window.closeTopModal
-        };
+        return { open: window.openModal, close: window.closeTopModal };
     }
 
     function _requireEscapeHtml() {
@@ -102,13 +104,6 @@
         return window.buildLocationDropdown;
     }
 
-    function _requireCharacterById() {
-        if (typeof window.getCharacterById !== 'function') {
-            throw new Error('IndustryModals: getCharacterById dependency missing');
-        }
-        return window.getCharacterById;
-    }
-
     function _requireCurrentYear() {
         if (typeof window.getCurrentYearSafe !== 'function') {
             throw new Error('IndustryModals: getCurrentYearSafe dependency missing');
@@ -120,7 +115,6 @@
         if (typeof window.confirmDialog === 'function') {
             return window.confirmDialog;
         }
-        // Fallback to native confirm — acceptable for UI, not for domain.
         return function(message, title, onConfirm) {
             if (window.confirm(message)) onConfirm();
         };
@@ -130,23 +124,10 @@
     // 2. HELPERS
     // =========================================================================
 
-    /**
-     * Fires after the current modal's DOM has been rendered.
-     *
-     * ASSUMPTION: modal infrastructure creates DOM synchronously. If your
-     * openModal() calls are async, replace this with a proper lifecycle hook.
-     *
-     * For Phase 1, we keep the setTimeout but make it visible and centralized
-     * so it can be replaced with a real hook later.
-     */
     function _afterRender(fn) {
         setTimeout(fn, 0);
     }
 
-    /**
-     * Reads an optional integer input. Returns undefined for empty string,
-     * otherwise the parsed integer. Returns undefined for NaN.
-     */
     function _readOptionalInt(element) {
         if (!element) return undefined;
         var raw = element.value;
@@ -156,9 +137,6 @@
         return n;
     }
 
-    /**
-     * Reads a required integer input. Returns undefined if missing or invalid.
-     */
     function _readRequiredInt(element) {
         if (!element) return undefined;
         var raw = element.value;
@@ -168,14 +146,38 @@
         return n;
     }
 
+    function _openCharacterSelector(title, onSelect) {
+        var open = _requireCharacterSelector();
+        open({
+            title: title,
+            targetId: null,
+            onSelect: onSelect,
+            filters: {
+                gender: 'all',
+                status: 'all',
+                showDeceased: false,
+                location: 'all'
+            }
+        });
+    }
+
+    function _openHouseholdSelector(title, onSelect) {
+        var open = _requireHouseholdSelector();
+        open({
+            title: title,
+            targetId: null,
+            onSelect: onSelect
+        });
+    }
+
     // =========================================================================
     // 3. CREATE ENTERPRISE MODAL
     // =========================================================================
 
     function openCreateEnterpriseModal(onSuccess, defaultData) {
-        var queries = _requireQueries();
         var commands = _requireCommands();
         var types = _requireTypeQueries();
+        var viewModels = _requireViewModels();
         var modal = _requireModalCore();
         var esc = _requireEscapeHtml();
         var toast = _requireToast();
@@ -186,22 +188,27 @@
         var allTypes = types.getEnterpriseTypes();
         var categories = types.getEnterpriseCategories();
 
-        var categoryOptions = '<option value="">All Categories</option>';
-        var catKeys = Object.keys(categories).sort();
-        for (var ci = 0; ci < catKeys.length; ci++) {
-            var cat = catKeys[ci];
-            var label = cat.charAt(0).toUpperCase() + cat.slice(1);
-            categoryOptions += '<option value="' + esc(cat) + '">' + esc(label) + '</option>';
+        var categoryOptions = '';
+        var catOptions = viewModels.buildCategoryOptions(categories);
+        for (var ci = 0; ci < catOptions.length; ci++) {
+            categoryOptions += '<option value="' + esc(catOptions[ci].value) + '">' +
+                esc(catOptions[ci].label) + '</option>';
         }
 
         var typeOptions = '<option value="">Select type...</option>';
-        for (var ti = 0; ti < allTypes.length; ti++) {
-            var t = allTypes[ti];
-            typeOptions += '<option value="' + esc(t.id) + '">' +
-                esc(t.name) + ' (' + esc(t.category) + ')</option>';
+        var typeOpts = viewModels.buildTypeOptions(allTypes);
+        for (var ti = 0; ti < typeOpts.length; ti++) {
+            typeOptions += '<option value="' + esc(typeOpts[ti].value) + '">' +
+                esc(typeOpts[ti].label) + '</option>';
         }
 
         var placeOptions = buildLocations(defaultData.locationId || '', 'No Location', false);
+
+        var ownerField = viewModels.buildOwnerField(
+            defaultData.ownerType,
+            defaultData.ownerId,
+            defaultData.ownerName
+        );
 
         var ownerTypes = [
             { value: 'character', label: 'Character' },
@@ -210,8 +217,8 @@
         ];
         var ownerTypeOptions = '';
         for (var oi = 0; oi < ownerTypes.length; oi++) {
-            var selected = (defaultData.ownerType || 'none') === ownerTypes[oi].value ? 'selected' : '';
-            ownerTypeOptions += '<option value="' + esc(ownerTypes[oi].value) + '" ' + selected + '>' +
+            var sel = ownerField.type === ownerTypes[oi].value ? 'selected' : '';
+            ownerTypeOptions += '<option value="' + esc(ownerTypes[oi].value) + '" ' + sel + '>' +
                 esc(ownerTypes[oi].label) + '</option>';
         }
 
@@ -242,8 +249,8 @@
                         <div>
                             <label class="form-label-sm">Owner</label>
                             <div class="form-row">
-                                <input type="text" id="entOwnerDisplay" class="form-input" placeholder="Select owner..." value="${esc(defaultData.ownerName || '')}" readonly>
-                                <input type="hidden" id="entOwnerId" value="${esc(defaultData.ownerId || '')}">
+                                <input type="text" id="entOwnerDisplay" class="form-input" placeholder="Select owner..." value="${esc(ownerField.displayName)}" readonly>
+                                <input type="hidden" id="entOwnerId" value="${esc(ownerField.id || '')}">
                                 <button id="selectOwnerBtn" class="btn">Select</button>
                                 <button id="clearOwnerBtn" class="btn">Clear</button>
                             </div>
@@ -378,12 +385,12 @@
         });
 
         _afterRender(function() {
-            _wireCategoryFilter();
-            _wireOwnerSelector(ownerTypeOptions.indexOf('selected') !== -1);
+            _wireCreateCategoryFilter();
+            _wireCreateOwnerSelector();
         });
     }
 
-    function _wireCategoryFilter() {
+    function _wireCreateCategoryFilter() {
         var categorySelect = document.getElementById('entCategory');
         var typeSelect = document.getElementById('entType');
         if (!categorySelect || !typeSelect) return;
@@ -404,13 +411,12 @@
         });
     }
 
-    function _wireOwnerSelector() {
+    function _wireCreateOwnerSelector() {
         var selectBtn = document.getElementById('selectOwnerBtn');
         var clearBtn = document.getElementById('clearOwnerBtn');
         var ownerTypeSelect = document.getElementById('entOwnerType');
         if (!selectBtn || !ownerTypeSelect) return;
 
-        var esc = _requireEscapeHtml();
         var toast = _requireToast();
 
         selectBtn.addEventListener('click', function() {
@@ -446,45 +452,17 @@
     }
 
     // =========================================================================
-    // 4. CHARACTER / HOUSEHOLD SELECTOR WRAPPERS
-    // =========================================================================
-
-    function _openCharacterSelector(title, onSelect) {
-        var open = _requireCharacterSelector();
-        open({
-            title: title,
-            targetId: null,
-            onSelect: onSelect,
-            filters: {
-                gender: 'all',
-                status: 'all',
-                showDeceased: false,
-                location: 'all'
-            }
-        });
-    }
-
-    function _openHouseholdSelector(title, onSelect) {
-        var open = _requireHouseholdSelector();
-        open({
-            title: title,
-            targetId: null,
-            onSelect: onSelect
-        });
-    }
-
-    // =========================================================================
-    // 5. ENTERPRISE DETAILS MODAL
+    // 4. ENTERPRISE DETAILS MODAL
     // =========================================================================
 
     function openEnterpriseDetailsModal(enterpriseId, onSuccess) {
         var queries = _requireQueries();
         var commands = _requireCommands();
+        var viewModels = _requireViewModels();
         var modal = _requireModalCore();
         var esc = _requireEscapeHtml();
         var toast = _requireToast();
         var confirm = _requireConfirmDialog();
-        var getChar = _requireCharacterById();
 
         var enterprise = queries.getEnterprise(enterpriseId);
         if (!enterprise) {
@@ -498,24 +476,24 @@
             return;
         }
 
-        var workers = enterprise.workerList || [];
-        var workerWages = enterprise.workerWages || {};
-        var baseWage = enterprise.wages !== undefined ? enterprise.wages : 0;
+        var workers = queries.getEnterpriseWorkers(enterpriseId);
+        var vm = viewModels.buildDetails(summary, enterprise, workers);
+        if (!vm) {
+            toast('Could not build enterprise details', 'error');
+            return;
+        }
 
-        var workerRows = '';
-        if (workers.length === 0) {
-            workerRows = '<div class="modal-empty">No workers</div>';
-        } else {
-            for (var i = 0; i < workers.length; i++) {
-                var wId = workers[i];
-                var char = getChar(wId);
-                var name = char ? (char.name + ' ' + (char.surname || '')) : wId;
-                var wage = workerWages[wId] !== undefined ? workerWages[wId] : baseWage;
-                workerRows += '<div class="worker-row">' +
-                    '<span>' + esc(name) + '</span>' +
-                    '<span class="worker-wage">Wage: ' + wage + '</span>' +
-                    '</div>';
+        var workerRowsHtml = '';
+        if (vm.hasWorkers) {
+            for (var i = 0; i < vm.workers.length; i++) {
+                var w = vm.workers[i];
+                workerRowsHtml += '<div class="worker-row">' +
+                    '<span>' + esc(w.name) + '</span>' +
+                    '<span class="worker-wage">Wage: ' + esc(w.wageLabel) + '</span>' +
+                '</div>';
             }
+        } else {
+            workerRowsHtml = '<div class="modal-empty">' + esc(vm.noWorkersMessage) + '</div>';
         }
 
         var content = `
@@ -523,49 +501,49 @@
                 <div class="detail-grid-2">
                     <div class="detail-card">
                         <div class="detail-label">Name</div>
-                        <div class="detail-value">${esc(enterprise.name)}</div>
-                        <div class="detail-sub">${esc(enterprise.typeName)} (${esc(enterprise.category)})</div>
+                        <div class="detail-value">${esc(vm.name)}</div>
+                        <div class="detail-sub">${esc(vm.typeLabel)} (${esc(vm.categoryLabel)})</div>
                     </div>
                     <div class="detail-card">
                         <div class="detail-label">Status</div>
-                        <div class="detail-value status-${esc(enterprise.status)}">${esc(enterprise.status)}</div>
-                        <div class="detail-sub">Founded: ${esc(String(enterprise.foundedYear))}</div>
+                        <div class="detail-value ${esc(vm.statusClass)}">${esc(vm.statusLabel)}</div>
+                        <div class="detail-sub">Founded: ${esc(vm.foundedYearLabel)}</div>
                     </div>
                 </div>
 
                 <div class="detail-grid-2">
                     <div class="detail-card">
                         <div class="detail-label">Owner</div>
-                        <div class="detail-value">${esc(summary.ownerName || '—')}</div>
-                        <div class="detail-sub">${esc(enterprise.ownerType || 'none')}</div>
+                        <div class="detail-value">${esc(vm.ownerLabel)}</div>
+                        <div class="detail-sub">${esc(vm.ownerTypeLabel)}</div>
                     </div>
                     <div class="detail-card">
                         <div class="detail-label">Location</div>
-                        <div class="detail-value">${esc(enterprise.locationName || '—')}</div>
+                        <div class="detail-value">${esc(vm.locationLabel)}</div>
                     </div>
                 </div>
 
                 <div class="detail-grid-3">
                     <div class="detail-card detail-card-center">
                         <div class="detail-label">Wealth</div>
-                        <div class="detail-value ${enterprise.wealth >= 0 ? 'value-pos' : 'value-neg'}">${enterprise.wealth}</div>
+                        <div class="detail-value ${esc(vm.wealthClass)}">${esc(vm.wealthLabel)}</div>
                     </div>
                     <div class="detail-card detail-card-center">
                         <div class="detail-label">Debt</div>
-                        <div class="detail-value ${enterprise.debt > 0 ? 'value-neg' : ''}">${enterprise.debt}</div>
+                        <div class="detail-value">${esc(vm.debtLabel)}</div>
                     </div>
                     <div class="detail-card detail-card-center">
                         <div class="detail-label">Annual Profit</div>
-                        <div class="detail-value ${summary.annualProfit >= 0 ? 'value-pos' : 'value-neg'}">${summary.annualProfit}</div>
+                        <div class="detail-value ${esc(vm.profitClass)}">${esc(vm.profitLabel)}</div>
                     </div>
                 </div>
 
                 <div class="detail-card">
                     <div class="detail-card-header">
-                        <div class="detail-label">Workers (${workers.length} / ${enterprise.maxWorkers})</div>
+                        <div class="detail-label">Workers (${esc(vm.workersLabel)})</div>
                         <button id="manageWorkersBtn" class="btn">Manage Workers</button>
                     </div>
-                    <div class="worker-list">${workerRows}</div>
+                    <div class="worker-list">${workerRowsHtml}</div>
                 </div>
 
                 <div class="modal-actions-row">
@@ -643,12 +621,13 @@
     }
 
     // =========================================================================
-    // 6. EDIT ENTERPRISE MODAL
+    // 5. EDIT ENTERPRISE MODAL
     // =========================================================================
 
     function openEditEnterpriseModal(enterpriseId, onSuccess) {
         var queries = _requireQueries();
         var commands = _requireCommands();
+        var viewModels = _requireViewModels();
         var modal = _requireModalCore();
         var esc = _requireEscapeHtml();
         var toast = _requireToast();
@@ -793,17 +772,17 @@
     }
 
     // =========================================================================
-    // 7. MANAGE WORKERS MODAL
+    // 6. MANAGE WORKERS MODAL
     // =========================================================================
 
     function openManageWorkersModal(enterpriseId, onSuccess) {
         var queries = _requireQueries();
         var commands = _requireCommands();
+        var viewModels = _requireViewModels();
         var modal = _requireModalCore();
         var esc = _requireEscapeHtml();
         var toast = _requireToast();
         var confirm = _requireConfirmDialog();
-        var getChar = _requireCharacterById();
 
         var enterprise = queries.getEnterprise(enterpriseId);
         if (!enterprise) {
@@ -811,35 +790,41 @@
             return;
         }
 
-        var workers = enterprise.workerList || [];
-        var workerWages = enterprise.workerWages || {};
-        var baseWage = enterprise.wages !== undefined ? enterprise.wages : 0;
+        var summary = queries.getEnterpriseSummary(enterpriseId);
+        if (!summary) {
+            toast('Enterprise summary not available', 'error');
+            return;
+        }
 
-        var workerRows = '';
-        if (workers.length === 0) {
-            workerRows = '<div class="modal-empty">No workers assigned</div>';
-        } else {
-            for (var i = 0; i < workers.length; i++) {
-                var wId = workers[i];
-                var char = getChar(wId);
-                var name = char ? (char.name + ' ' + (char.surname || '')) : wId;
-                var wage = workerWages[wId] !== undefined ? workerWages[wId] : baseWage;
-                workerRows += '<div class="worker-row" data-worker-id="' + esc(wId) + '">' +
-                    '<span class="worker-name">' + esc(name) + '</span>' +
+        var workers = queries.getEnterpriseWorkers(enterpriseId);
+        var vm = viewModels.buildWorkerManagement(summary, enterprise, workers);
+        if (!vm) {
+            toast('Could not build worker management view', 'error');
+            return;
+        }
+
+        var workerRowsHtml = '';
+        if (vm.hasWorkers) {
+            for (var i = 0; i < vm.workers.length; i++) {
+                var w = vm.workers[i];
+                workerRowsHtml += '<div class="worker-row" data-worker-id="' + esc(w.id) + '">' +
+                    '<span class="worker-name">' + esc(w.name) + '</span>' +
                     '<span class="worker-controls">' +
-                    '<input type="number" class="form-input-sm worker-wage-input" value="' + wage + '">' +
-                    '<button class="btn-sm" data-action="update-wage">Update</button>' +
-                    '<button class="btn-sm danger" data-action="remove-worker">Remove</button>' +
+                        '<input type="number" class="form-input-sm worker-wage-input" value="' + esc(String(w.wageValue)) + '">' +
+                        '<button class="btn-sm" data-action="update-wage">Update</button>' +
+                        '<button class="btn-sm danger" data-action="remove-worker">Remove</button>' +
                     '</span>' +
-                    '</div>';
+                '</div>';
             }
+        } else {
+            workerRowsHtml = '<div class="modal-empty">' + esc(vm.noWorkersMessage) + '</div>';
         }
 
         var content = `
             <div style="max-height: 500px; overflow-y: auto; padding: 4px;">
                 <div class="form-section">
-                    <div class="form-section-title">Current Workers (${workers.length} / ${enterprise.maxWorkers})</div>
-                    <div class="worker-list" id="workerListContainer">${workerRows}</div>
+                    <div class="form-section-title">Current Workers (${esc(vm.workersLabel)})</div>
+                    <div class="worker-list" id="workerListContainer">${workerRowsHtml}</div>
                 </div>
 
                 <div class="form-section">
@@ -847,7 +832,7 @@
                     <div class="form-row">
                         <input type="text" id="addWorkerDisplay" class="form-input" placeholder="Select worker..." readonly>
                         <input type="hidden" id="addWorkerId">
-                        <input type="number" id="addWorkerWage" class="form-input-sm" value="${baseWage}" placeholder="Wage">
+                        <input type="number" id="addWorkerWage" class="form-input-sm" value="${vm.baseWageValue !== null ? vm.baseWageValue : 0}" placeholder="Wage">
                         <button id="selectWorkerBtn" class="btn">Select</button>
                         <button id="addWorkerBtn" class="btn primary">Add</button>
                         <button id="clearWorkerBtn" class="btn">Clear</button>
@@ -865,7 +850,11 @@
         });
 
         _afterRender(function() {
-            // Event delegation on the worker list
+            var existingWorkerIds = {};
+            for (var i = 0; i < vm.workers.length; i++) {
+                existingWorkerIds[vm.workers[i].id] = true;
+            }
+
             var container = document.getElementById('workerListContainer');
             if (container) {
                 container.addEventListener('click', function(event) {
@@ -878,9 +867,9 @@
                     var action = btn.dataset.action;
 
                     if (action === 'remove-worker') {
-                        var char = getChar(workerId);
-                        var name = char ? char.name : workerId;
-                        confirm('Remove ' + name + ' from this enterprise?', 'Remove Worker', function() {
+                        var workerEntry = _findWorker(vm.workers, workerId);
+                        var displayName = workerEntry ? workerEntry.name : workerId;
+                        confirm('Remove ' + displayName + ' from this enterprise?', 'Remove Worker', function() {
                             var result = commands.removeWorkerFromEnterprise(enterpriseId, workerId);
                             if (result.success) {
                                 toast('Worker removed', 'info');
@@ -897,30 +886,24 @@
                             toast('Please enter a valid wage', 'error');
                             return;
                         }
-                        var result = commands.setWorkerWage(enterpriseId, workerId, wage);
-                        if (result.success) {
+                        var result2 = commands.setWorkerWage(enterpriseId, workerId, wage);
+                        if (result2.success) {
                             toast('Wage updated', 'success');
                             modal.close();
                             openManageWorkersModal(enterpriseId, onSuccess);
                         } else {
-                            toast('Failed to update wage: ' + result.reason, 'error');
+                            toast('Failed to update wage: ' + result2.reason, 'error');
                         }
                     }
                 });
             }
 
-            // Select worker
             var selectBtn = document.getElementById('selectWorkerBtn');
             if (selectBtn) {
                 selectBtn.addEventListener('click', function() {
-                    var existing = {};
-                    for (var i = 0; i < workers.length; i++) {
-                        existing[workers[i]] = true;
-                    }
-
                     _openCharacterSelector('Select Worker', function(character) {
                         if (!character) return;
-                        if (existing[character.id]) {
+                        if (existingWorkerIds[character.id]) {
                             toast('This character is already a worker', 'warning');
                             return;
                         }
@@ -932,7 +915,6 @@
                 });
             }
 
-            // Clear
             var clearBtn = document.getElementById('clearWorkerBtn');
             if (clearBtn) {
                 clearBtn.addEventListener('click', function() {
@@ -941,7 +923,6 @@
                 });
             }
 
-            // Add
             var addBtn = document.getElementById('addWorkerBtn');
             if (addBtn) {
                 addBtn.addEventListener('click', function() {
@@ -969,8 +950,15 @@
         });
     }
 
+    function _findWorker(workers, workerId) {
+        for (var i = 0; i < workers.length; i++) {
+            if (workers[i].id === workerId) return workers[i];
+        }
+        return null;
+    }
+
     // =========================================================================
-    // 8. MANAGE ENTERPRISE TYPES MODAL
+    // 7. MANAGE ENTERPRISE TYPES MODAL
     // =========================================================================
 
     function openManageEnterpriseTypesModal(onSuccess) {
@@ -999,10 +987,10 @@
                     categoriesHtml += '<div class="type-row">' +
                         '<span>' + esc(t.name) + ' (Income: ' + t.baseIncome + ', Workers: ' + t.baseWorkers + ')</span>' +
                         '<span class="type-actions">' +
-                        '<button class="btn-sm" data-action="edit-type" data-type-id="' + esc(t.id) + '">Edit</button>' +
-                        '<button class="btn-sm danger" data-action="delete-type" data-type-id="' + esc(t.id) + '">Delete</button>' +
+                            '<button class="btn-sm" data-action="edit-type" data-type-id="' + esc(t.id) + '">Edit</button>' +
+                            '<button class="btn-sm danger" data-action="delete-type" data-type-id="' + esc(t.id) + '">Delete</button>' +
                         '</span>' +
-                        '</div>';
+                    '</div>';
                 }
                 categoriesHtml += '</div>';
             }
@@ -1036,8 +1024,8 @@
                 });
             }
 
-            var container = document.querySelector('.modal-content') || document.body;
-            container.addEventListener('click', function(event) {
+            var modalRoot = document.querySelector('.modal-content') || document.body;
+            modalRoot.addEventListener('click', function(event) {
                 var btn = event.target.closest('[data-action]');
                 if (!btn) return;
                 var action = btn.dataset.action;
@@ -1069,7 +1057,7 @@
     }
 
     // =========================================================================
-    // 9. CREATE ENTERPRISE TYPE MODAL
+    // 8. CREATE ENTERPRISE TYPE MODAL
     // =========================================================================
 
     function openCreateEnterpriseTypeModal(onSuccess) {
@@ -1185,7 +1173,7 @@
     }
 
     // =========================================================================
-    // 10. EDIT ENTERPRISE TYPE MODAL
+    // 9. EDIT ENTERPRISE TYPE MODAL
     // =========================================================================
 
     function openEditEnterpriseTypeModal(typeId, onSuccess) {
@@ -1336,11 +1324,12 @@
     }
 
     // =========================================================================
-    // 11. ENTERPRISE LIST MODAL
+    // 10. ENTERPRISE LIST MODAL
     // =========================================================================
 
     function openEnterpriseListModal(onSelect) {
         var queries = _requireQueries();
+        var viewModels = _requireViewModels();
         var modal = _requireModalCore();
         var esc = _requireEscapeHtml();
         var toast = _requireToast();
@@ -1351,24 +1340,26 @@
             return;
         }
 
-        var rows = '';
+        var summaries = [];
         for (var i = 0; i < enterprises.length; i++) {
-            var e = enterprises[i];
-            var summary = queries.getEnterpriseSummary(e.id);
-            var profitLabel = summary ? String(summary.annualProfit) : '';
-            var profitClass = summary && summary.annualProfit >= 0 ? 'value-pos' : 'value-neg';
-            var workerCount = e.workerList ? e.workerList.length : 0;
+            var s = queries.getEnterpriseSummary(enterprises[i].id);
+            if (s) summaries.push(s);
+        }
+        var rows = viewModels.buildListRows(summaries);
 
-            rows += '<div class="enterprise-row status-' + esc(e.status) + '" data-enterprise-id="' + esc(e.id) + '">' +
-                '<span class="enterprise-row-name">' + esc(e.name) + ' (' + esc(e.typeName) + ')</span>' +
+        var rowsHtml = '';
+        for (var j = 0; j < rows.length; j++) {
+            var r = rows[j];
+            rowsHtml += '<div class="enterprise-row ' + esc(r.statusClass) + '" data-enterprise-id="' + esc(r.id) + '">' +
+                '<span class="enterprise-row-name">' + esc(r.name) + ' (' + esc(r.type) + ')</span>' +
                 '<span class="enterprise-row-meta">' +
-                '<span class="' + profitClass + '">' + profitLabel + '</span>' +
-                '<span>' + workerCount + ' workers</span>' +
+                    '<span class="' + esc(r.profitClass) + '">' + esc(r.profitLabel) + '</span>' +
+                    '<span>' + esc(r.workersLabel) + '</span>' +
                 '</span>' +
-                '</div>';
+            '</div>';
         }
 
-        var content = '<div style="padding: 8px; max-height: 400px; overflow-y: auto;" id="enterpriseListContainer">' + rows + '</div>';
+        var content = '<div style="padding: 8px; max-height: 400px; overflow-y: auto;" id="enterpriseListContainer">' + rowsHtml + '</div>';
 
         modal.open({
             title: 'Enterprises',
@@ -1397,7 +1388,7 @@
     }
 
     // =========================================================================
-    // 12. EXPORTS
+    // 11. EXPORTS
     // =========================================================================
 
     window.IndustryModals = {
