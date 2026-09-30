@@ -1,1186 +1,618 @@
 /**
  * =============================================================================
- * LOCATION QUERIES - Complex read operations for location data
+ * LOCATION QUERIES
  * =============================================================================
- * 
- * LOCATION: js/location/location-queries.js
- * 
- * Responsibilities:
- * - Search and filter locations
- * - Statistics and analytics
- * - Location comparison
- * - Population analytics
- * - Move analytics
- * - ROLE-LOCATION INTEGRATION (with fallbacks)
- * - APPRENTICESHIP-LOCATION INTEGRATION (with fallbacks)
- * 
- * DEPENDENCIES:
- *   - LocationState (public API)
- *   - Core wrappers from modals-core.js
- * 
+ *
+ * Interpretation and composition of location-domain data.
+ *
+ * Owns:
+ *   - Hierarchy interpretation
+ *   - Search / filtering
+ *   - Population analytics
+ *   - Movement interpretation
+ *   - Cross-domain read composition (via explicit deps)
+ *
+ * Does NOT own:
+ *   - Canonical data
+ *   - Mutations
+ *   - Presentation defaults (nulls stay null)
+ *   - Fallback implementations of other domains
+ *
+ * Explicit dependencies (must exist at call time):
+ *   - LocationState
+ *   - CharacterQueries  (window.CharacterQueries)
+ *   - TimeQueries       (window.TimeQueries)
+ *
+ * Cross-domain policy:
+ *   LocationQueries may compose other domains' Queries.
+ *   LocationQueries may not reproduce another domain's rules.
+ *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
-    // =========================================================================
-    // 1. RECURSION GUARD
-    // =========================================================================
+    // -------------------------------------------------------------------------
+    // EXPLICIT DEPENDENCIES (no fallback wrappers)
+    // -------------------------------------------------------------------------
 
-    var _processingQuery = false;
-
-    // =========================================================================
-    // 2. DEPENDENCY WRAPPERS (Using core wrappers)
-    // =========================================================================
-
-    function _getCharacters() {
-        return typeof window._getCharacters === 'function' ? window._getCharacters() : [];
+    function _state() {
+        if (!window.LocationState) {
+            throw new Error('LocationQueries: LocationState is required');
+        }
+        return window.LocationState;
     }
 
-    function _getCurrentYear() {
-        return typeof window._getCurrentYear === 'function' ? window._getCurrentYear() : 1250;
+    function _characters() {
+        if (!window.CharacterQueries) {
+            throw new Error('LocationQueries: CharacterQueries is required');
+        }
+        return window.CharacterQueries;
     }
 
-    function _getCharacterById(id) {
-        return typeof window._getCharacterById === 'function' ? window._getCharacterById(id) : null;
+    function _time() {
+        if (!window.TimeQueries) {
+            throw new Error('LocationQueries: TimeQueries is required');
+        }
+        return window.TimeQueries;
     }
 
-    function _getRoleById(id) {
-        try {
-            if (typeof window.getRoleById === 'function') {
-                return window.getRoleById(id);
-            }
-            if (typeof window._getRoleById === 'function') {
-                return window._getRoleById(id);
-            }
-        } catch (e) {
-            // Ignore
+    // -------------------------------------------------------------------------
+    // BASIC PLACE QUERIES
+    // -------------------------------------------------------------------------
+
+    function getPlace(placeId) {
+        return _state().getPlaceById(placeId);
+    }
+
+    function getAllPlaces(options) {
+        options = options || {};
+        var ids = _state().getAllPlaceIds();
+        var result = [];
+
+        for (var i = 0; i < ids.length; i++) {
+            var p = _state().getPlaceById(ids[i]);
+            if (!p) continue;
+            if (options.includeDeprecated === false && p.status === 'deprecated') continue;
+            if (options.typeId && p.typeId !== options.typeId) continue;
+            if (options.status && p.status !== options.status) continue;
+            result.push(p);
+        }
+        return result;
+    }
+
+    function getPlacesByParent(parentId, options) {
+        options = options || {};
+        var list = _state().getPlacesByParentId(parentId);
+        if (options.includeDeprecated === false) {
+            list = list.filter(function (p) { return p.status !== 'deprecated'; });
+        }
+        return list;
+    }
+
+    function getPlacesByType(typeId, options) {
+        options = options || {};
+        var list = _state().getPlacesByTypeId(typeId);
+        if (options.includeDeprecated === false) {
+            list = list.filter(function (p) { return p.status !== 'deprecated'; });
+        }
+        return list;
+    }
+
+    function getRootPlaces(options) {
+        return getPlacesByParent(null, options);
+    }
+
+    // -------------------------------------------------------------------------
+    // LOCATION TYPES
+    // -------------------------------------------------------------------------
+
+    function getLocationTypes() {
+        var ids = _state().getAllLocationTypeIds();
+        var result = [];
+        for (var i = 0; i < ids.length; i++) {
+            var t = _state().getLocationTypeById(ids[i]);
+            if (t) result.push(t);
+        }
+        return result;
+    }
+
+    function getLocationType(typeId) {
+        return _state().getLocationTypeById(typeId);
+    }
+
+    /**
+     * Returns the type's priority, or null if the type does not exist.
+     * Missing type is not priority 5.
+     */
+    function getLocationTypePriority(typeId) {
+        var type = _state().getLocationTypeById(typeId);
+        return type ? type.priority : null;
+    }
+
+    /**
+     * Returns the type's display name, or null if the type does not exist.
+     * Presentation decides how to render null.
+     */
+    function getLocationTypeName(typeId) {
+        var type = _state().getLocationTypeById(typeId);
+        return type ? type.displayName : null;
+    }
+
+    // -------------------------------------------------------------------------
+    // HIERARCHY QUERIES
+    // -------------------------------------------------------------------------
+
+    /**
+     * Root-to-place chain. Empty array if the place does not exist.
+     * Cycle-safe: returns whatever prefix is acyclic if corruption detected.
+     */
+    function getPlaceHierarchy(placeId) {
+        if (!placeId) return [];
+        var chain = [];
+        var seen = {};
+        var current = _state().getPlaceById(placeId);
+        while (current) {
+            if (seen[current.id]) break;
+            seen[current.id] = true;
+            chain.unshift(current);
+            if (!current.parentId) break;
+            current = _state().getPlaceById(current.parentId);
+        }
+        return chain;
+    }
+
+    function getPlaceChildren(placeId, recursive) {
+        var direct = _state().getPlacesByParentId(placeId);
+        if (!recursive) return direct;
+        var result = direct.slice();
+        for (var i = 0; i < direct.length; i++) {
+            result = result.concat(getPlaceChildren(direct[i].id, true));
+        }
+        return result;
+    }
+
+    function getAllSubLocationIds(locationId) {
+        var result = [locationId];
+        var children = getPlaceChildren(locationId, true);
+        for (var i = 0; i < children.length; i++) result.push(children[i].id);
+        return result;
+    }
+
+    function getParentChain(placeId) {
+        var chain = getPlaceHierarchy(placeId);
+        return chain.slice(0, -1);
+    }
+
+    /**
+     * Nearest ancestor (or self) whose type priority equals targetPriority.
+     * Returns null if none exists.
+     */
+    function getLocationAtPriority(placeId, targetPriority) {
+        var chain = getPlaceHierarchy(placeId);
+        for (var i = chain.length - 1; i >= 0; i--) {
+            var p = chain[i];
+            if (getLocationTypePriority(p.typeId) === targetPriority) return p;
         }
         return null;
     }
 
-    function _getLocationTypePriority(typeId) {
-        return LocationState.getLocationTypePriority(typeId);
+    function getCountryId(placeId) {
+        var p = getLocationAtPriority(placeId, 1);
+        return p ? p.id : null;
     }
 
-    function _getLocationTypeName(typeId) {
-        return LocationState.getLocationTypeName(typeId);
+    function getLocationCountry(placeId) {
+        var countryId = getCountryId(placeId);
+        if (!countryId) return null;
+        var country = _state().getPlaceById(countryId);
+        return country ? country.displayName : null;
     }
 
-    function _showToast(message, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(message, type);
+    function getLocationDistrict(placeId) {
+        var chain = getPlaceHierarchy(placeId);
+        for (var i = chain.length - 1; i >= 0; i--) {
+            var prio = getLocationTypePriority(chain[i].typeId);
+            if (prio === 2 || prio === 3) return chain[i].displayName;
         }
+        return null;
     }
 
-    // =========================================================================
-    // 3. SKILL LEVEL HELPERS (with fallbacks)
-    // =========================================================================
+    function isAncestorOf(ancestorId, placeId) {
+        if (!ancestorId || !placeId) return false;
+        if (ancestorId === placeId) return false;
+        var chain = getPlaceHierarchy(placeId);
+        for (var i = 0; i < chain.length; i++) {
+            if (chain[i].id === ancestorId) return true;
+        }
+        return false;
+    }
 
-    function _getSkillLevelName(level) {
-        try {
-            if (typeof window.ApprenticeshipQueries !== 'undefined' &&
-                typeof window.ApprenticeshipQueries.getSkillLevelName === 'function') {
-                return window.ApprenticeshipQueries.getSkillLevelName(level);
+    function areInSameCountry(placeId1, placeId2) {
+        if (!placeId1 || !placeId2) return false;
+        if (placeId1 === placeId2) return true;
+        var c1 = getCountryId(placeId1);
+        var c2 = getCountryId(placeId2);
+        return c1 !== null && c1 === c2;
+    }
+
+    function findLowestCommonAncestor(placeId1, placeId2) {
+        if (!placeId1 || !placeId2) return null;
+        if (placeId1 === placeId2) return _state().getPlaceById(placeId1);
+        var h1 = getPlaceHierarchy(placeId1);
+        var h2 = getPlaceHierarchy(placeId2);
+        var common = null;
+        var min = Math.min(h1.length, h2.length);
+        for (var i = 0; i < min; i++) {
+            if (h1[i].id === h2[i].id) common = h1[i];
+            else break;
+        }
+        return common;
+    }
+
+    // -------------------------------------------------------------------------
+    // POPULATION (explicit cross-domain reads)
+    // -------------------------------------------------------------------------
+
+    function getPopulationCount(locationId, includeDeceased) {
+        includeDeceased = includeDeceased === true;
+
+        var ids = getAllSubLocationIds(locationId);
+        var idSet = {};
+        for (var i = 0; i < ids.length; i++) idSet[ids[i]] = true;
+
+        var chars = _characters().getAllCharacters();
+        var count = 0;
+        for (var j = 0; j < chars.length; j++) {
+            var c = chars[j];
+            if (!includeDeceased && c.isDeceased) continue;
+            var locId = _characters().getCurrentLocationId(c.id);
+            if (locId && idSet[locId]) count++;
+        }
+        return count;
+    }
+
+    function getOwnPopulation(locationId, includeDeceased) {
+        includeDeceased = includeDeceased === true;
+        var chars = _characters().getAllCharacters();
+        var count = 0;
+        for (var i = 0; i < chars.length; i++) {
+            var c = chars[i];
+            if (!includeDeceased && c.isDeceased) continue;
+            var locId = _characters().getCurrentLocationId(c.id);
+            if (locId === locationId) count++;
+        }
+        return count;
+    }
+
+    // -------------------------------------------------------------------------
+    // MOVEMENT QUERIES (CharacterQueries owns movement records)
+    // -------------------------------------------------------------------------
+
+    function getMoveHistory(characterId) {
+        return _characters().getMoveHistory(characterId);
+    }
+
+    function getLastMove(characterId) {
+        var moves = _characters().getMoveHistory(characterId);
+        return moves.length === 0 ? null : moves[moves.length - 1];
+    }
+
+    function getCurrentLocation(characterId) {
+        var locId = _characters().getCurrentLocationId(characterId);
+        if (!locId) return null;
+        var place = _state().getPlaceById(locId);
+        return place ? { id: place.id, name: place.displayName } : { id: locId, name: null };
+    }
+
+    function getCurrentLocationId(characterId) {
+        return _characters().getCurrentLocationId(characterId);
+    }
+
+    function getCurrentLocationName(characterId) {
+        var loc = getCurrentLocation(characterId);
+        return loc ? loc.name : null;
+    }
+
+    function getLocationAtYear(characterId, year) {
+        var moves = _characters().getMoveHistory(characterId);
+        var result = null;
+        for (var i = 0; i < moves.length; i++) {
+            var m = moves[i];
+            if (m.year === null || m.year === undefined) continue;
+            if (m.year <= year) result = m;
+            else break;
+        }
+        return result ? result.locationName : null;
+    }
+
+    // -------------------------------------------------------------------------
+    // SEARCH
+    // -------------------------------------------------------------------------
+
+    function searchLocations(options) {
+        options = options || {};
+        var places = getAllPlaces({ includeDeprecated: options.includeDeprecated === true });
+        var results = [];
+
+        for (var i = 0; i < places.length; i++) {
+            var p = places[i];
+            var match = true;
+
+            if (options.search) {
+                var lower = options.search.toLowerCase();
+                var nameMatch = p.displayName && p.displayName.toLowerCase().indexOf(lower) !== -1;
+                var keyMatch = p.variableKey && p.variableKey.toLowerCase().indexOf(lower) !== -1;
+                if (!nameMatch && !keyMatch) match = false;
             }
-            if (typeof window.getSkillLevelName === 'function') {
-                return window.getSkillLevelName(level);
+            if (match && options.typeId && p.typeId !== options.typeId) match = false;
+            if (match && options.parentId !== undefined && p.parentId !== options.parentId) match = false;
+            if (match && options.status && p.status !== options.status) match = false;
+            if (match && options.isCapital !== undefined && !!p.isCapital !== options.isCapital) match = false;
+
+            if (match && options.hasChildren !== undefined) {
+                var kids = getPlaceChildren(p.id, false);
+                if ((kids.length > 0) !== options.hasChildren) match = false;
             }
-        } catch (e) {
-            // Ignore
+            if (match) results.push(p);
         }
-        if (level >= 91) return 'Master';
-        if (level >= 76) return 'Expert';
-        if (level >= 51) return 'Journeyman';
-        if (level >= 26) return 'Apprentice';
-        if (level >= 1) return 'Novice';
-        return 'Untrained';
+
+        if (options.sortBy) {
+            var order = options.sortOrder === 'desc' ? -1 : 1;
+            results.sort(function (a, b) {
+                var cmp = 0;
+                switch (options.sortBy) {
+                    case 'name': cmp = (a.displayName || '').localeCompare(b.displayName || ''); break;
+                    case 'type': cmp = (getLocationTypeName(a.typeId) || '').localeCompare(getLocationTypeName(b.typeId) || ''); break;
+                    case 'createdAt': cmp = (a.createdAt || 0) - (b.createdAt || 0); break;
+                    case 'updatedAt': cmp = (a.updatedAt || 0) - (b.updatedAt || 0); break;
+                    default: cmp = (a.displayName || '').localeCompare(b.displayName || '');
+                }
+                return cmp * order;
+            });
+        }
+
+        if (options.limit !== undefined && options.limit !== null) {
+            results = results.slice(0, options.limit);
+        }
+        return results;
     }
 
-    function _getTeachingThresholds() {
-        try {
-            if (window.TEACHING_THRESHOLDS) return window.TEACHING_THRESHOLDS;
-        } catch (e) {
-            // Ignore
-        }
+    // -------------------------------------------------------------------------
+    // STATISTICS
+    // -------------------------------------------------------------------------
+
+    function getLocationStatistics(locationId) {
+        var place = _state().getPlaceById(locationId);
+        if (!place) return null;
+
+        var directChildren = getPlaceChildren(locationId, false);
+        var allChildren = getPlaceChildren(locationId, true);
+        var hierarchy = getPlaceHierarchy(locationId);
+        var parent = place.parentId ? _state().getPlaceById(place.parentId) : null;
+
         return {
-            NOVICE: 0,
-            APPRENTICE: 26,
-            JOURNEYMAN: 51,
-            EXPERT: 76,
-            MASTER: 91
+            id: place.id,
+            name: place.displayName,
+            typeId: place.typeId,
+            typeName: getLocationTypeName(place.typeId),
+            typePriority: getLocationTypePriority(place.typeId),
+            status: place.status === undefined ? null : place.status,
+            isCapital: place.isCapital === true,
+            parentId: place.parentId === undefined ? null : place.parentId,
+            parentName: parent ? parent.displayName : null,
+            depth: hierarchy.length,
+            childCount: directChildren.length,
+            totalDescendants: allChildren.length,
+            ownPopulation: getOwnPopulation(locationId, false),
+            totalPopulation: getPopulationCount(locationId, false),
+            variableKey: place.variableKey === undefined ? null : place.variableKey,
+            notes: place.notes === undefined ? null : place.notes,
+            createdAt: place.createdAt,
+            updatedAt: place.updatedAt
         };
     }
 
-    // =========================================================================
-    // 4. APPRENTICESHIP HELPERS (with fallbacks)
-    // =========================================================================
-
-    function _isApprentice(characterId) {
-        try {
-            if (typeof window.isApprentice === 'function') {
-                return window.isApprentice(characterId);
-            }
-            if (typeof window.ApprenticeshipSystem !== 'undefined' &&
-                typeof window.ApprenticeshipSystem.isApprentice === 'function') {
-                return window.ApprenticeshipSystem.isApprentice(characterId);
-            }
-        } catch (e) {
-            // Ignore
-        }
-        return false;
-    }
-
-    function _isMaster(characterId) {
-        try {
-            if (typeof window.isMaster === 'function') {
-                return window.isMaster(characterId);
-            }
-            if (typeof window.ApprenticeshipSystem !== 'undefined' &&
-                typeof window.ApprenticeshipSystem.isMaster === 'function') {
-                return window.ApprenticeshipSystem.isMaster(characterId);
-            }
-        } catch (e) {
-            // Ignore
-        }
-        return false;
-    }
-
-    function _getMaster(characterId) {
-        try {
-            if (typeof window.getMaster === 'function') {
-                return window.getMaster(characterId);
-            }
-            if (typeof window.ApprenticeshipSystem !== 'undefined' &&
-                typeof window.ApprenticeshipSystem.getMaster === 'function') {
-                return window.ApprenticeshipSystem.getMaster(characterId);
-            }
-        } catch (e) {
-            // Ignore
-        }
-        return null;
-    }
-
-    function _getApprentices(characterId, activeOnly) {
-        try {
-            if (typeof window.getApprentices === 'function') {
-                return window.getApprentices(characterId, activeOnly);
-            }
-            if (typeof window.ApprenticeshipSystem !== 'undefined' &&
-                typeof window.ApprenticeshipSystem.getApprentices === 'function') {
-                return window.ApprenticeshipSystem.getApprentices(characterId, activeOnly);
-            }
-        } catch (e) {
-            // Ignore
-        }
-        return [];
-    }
-
-    function _getApprenticeshipRole(characterId) {
-        try {
-            if (typeof window.getApprenticeshipRole === 'function') {
-                return window.getApprenticeshipRole(characterId);
-            }
-            if (typeof window.ApprenticeshipSystem !== 'undefined' &&
-                typeof window.ApprenticeshipSystem.getApprenticeshipRole === 'function') {
-                return window.ApprenticeshipSystem.getApprenticeshipRole(characterId);
-            }
-        } catch (e) {
-            // Ignore
-        }
-        return null;
-    }
-
-    function _getSkillLevel(characterId) {
-        try {
-            if (typeof window.getSkillLevel === 'function') {
-                return window.getSkillLevel(characterId);
-            }
-            if (typeof window.ApprenticeshipSystem !== 'undefined' &&
-                typeof window.ApprenticeshipSystem.getSkillLevel === 'function') {
-                return window.ApprenticeshipSystem.getSkillLevel(characterId);
-            }
-        } catch (e) {
-            // Ignore
-        }
-        return 0;
-    }
-
-    function _getApprenticeship(characterId) {
-        try {
-            if (typeof window.getApprenticeship === 'function') {
-                return window.getApprenticeship(characterId);
-            }
-            if (typeof window.ApprenticeshipSystem !== 'undefined' &&
-                typeof window.ApprenticeshipSystem.getApprenticeship === 'function') {
-                return window.ApprenticeshipSystem.getApprenticeship(characterId);
-            }
-        } catch (e) {
-            // Ignore
-        }
-        return null;
-    }
-
-    // =========================================================================
-    // 5. SEARCH LOCATIONS
-    // =========================================================================
-
-    function searchLocations(options) {
-        if (_processingQuery) {
-            return [];
-        }
-        _processingQuery = true;
-
-        try {
-            options = options || {};
-            var places = LocationState.getAllPlaces({ 
-                includeDeprecated: options.includeDeprecated || false 
-            });
-
-            var results = [];
-
-            for (var i = 0; i < places.length; i++) {
-                var place = places[i];
-                var match = true;
-
-                if (options.search) {
-                    var searchLower = options.search.toLowerCase();
-                    var nameMatch = place.displayName && place.displayName.toLowerCase().indexOf(searchLower) !== -1;
-                    var keyMatch = place.variableKey && place.variableKey.toLowerCase().indexOf(searchLower) !== -1;
-                    var noteMatch = place.notes && place.notes.toLowerCase().indexOf(searchLower) !== -1;
-                    if (!nameMatch && !keyMatch && !noteMatch) {
-                        match = false;
-                    }
-                }
-
-                if (match && options.typeId) {
-                    if (place.typeId !== options.typeId) {
-                        match = false;
-                    }
-                }
-
-                if (match && options.parentId) {
-                    if (place.parentId !== options.parentId) {
-                        match = false;
-                    }
-                }
-
-                if (match && options.status) {
-                    if (place.status !== options.status) {
-                        match = false;
-                    }
-                }
-
-                if (match && options.isCapital !== undefined) {
-                    if (!!place.isCapital !== options.isCapital) {
-                        match = false;
-                    }
-                }
-
-                if (match && options.hasChildren !== undefined) {
-                    var children = LocationState.getPlaceChildren(place.id, false);
-                    var hasChildren = children.length > 0;
-                    if (hasChildren !== options.hasChildren) {
-                        match = false;
-                    }
-                }
-
-                if (match) {
-                    results.push(place);
-                }
-            }
-
-            if (options.sortBy) {
-                results.sort(function(a, b) {
-                    var compare = 0;
-                    switch (options.sortBy) {
-                        case 'name':
-                            compare = (a.displayName || '').localeCompare(b.displayName || '');
-                            break;
-                        case 'type':
-                            var typeA = LocationState.getLocationTypeName(a.typeId);
-                            var typeB = LocationState.getLocationTypeName(b.typeId);
-                            compare = typeA.localeCompare(typeB);
-                            break;
-                        case 'createdAt':
-                            compare = (a.createdAt || 0) - (b.createdAt || 0);
-                            break;
-                        case 'updatedAt':
-                            compare = (a.updatedAt || 0) - (b.updatedAt || 0);
-                            break;
-                        default:
-                            compare = (a.displayName || '').localeCompare(b.displayName || '');
-                    }
-                    return options.sortOrder === 'desc' ? -compare : compare;
-                });
-            }
-
-            if (options.limit) {
-                results = results.slice(0, options.limit);
-            }
-
-            return results;
-
-        } finally {
-            _processingQuery = false;
-        }
-    }
-
-    // =========================================================================
-    // 6. LOCATION STATISTICS
-    // =========================================================================
-
-    function getLocationStatistics(locationId) {
-        if (_processingQuery) {
-            return null;
-        }
-        _processingQuery = true;
-
-        try {
-            var place = LocationState.getPlace(locationId);
-            if (!place) return null;
-
-            var children = LocationState.getPlaceChildren(locationId, true);
-            var directChildren = LocationState.getPlaceChildren(locationId, false);
-            var population = LocationState.getPopulationCount(locationId, false);
-            var ownPopulation = LocationState.getOwnPopulation(locationId, false);
-            var hierarchy = LocationState.getPlaceHierarchy(locationId);
-
-            var stats = {
-                id: place.id,
-                name: place.displayName,
-                type: LocationState.getLocationTypeName(place.typeId),
-                typePriority: LocationState.getLocationTypePriority(place.typeId),
-                status: place.status || 'active',
-                isCapital: place.isCapital || false,
-                parentId: place.parentId || null,
-                parentName: place.parentId ? (LocationState.getPlace(place.parentId)?.displayName || 'Unknown') : null,
-                depth: hierarchy.length,
-                childCount: directChildren.length,
-                totalDescendants: children.length,
-                ownPopulation: ownPopulation,
-                totalPopulation: population,
-                variableKey: place.variableKey || null,
-                notes: place.notes || null,
-                createdAt: place.createdAt,
-                updatedAt: place.updatedAt
-            };
-
-            return stats;
-
-        } finally {
-            _processingQuery = false;
-        }
-    }
-
     function getGlobalLocationStatistics() {
-        if (_processingQuery) {
-            return null;
+        var places = getAllPlaces({});
+        var stats = {
+            totalLocations: places.length,
+            byType: {},
+            byStatus: {},
+            capitals: 0,
+            rootLocations: 0,
+            withChildren: 0,
+            totalPopulation: 0,
+            typeCounts: {}
+        };
+
+        for (var i = 0; i < places.length; i++) {
+            var p = places[i];
+            var typeName = getLocationTypeName(p.typeId);
+            var typeKey = typeName === null ? null : typeName;
+            stats.byType[typeKey] = (stats.byType[typeKey] || 0) + 1;
+
+            var statusKey = p.status === undefined ? null : p.status;
+            stats.byStatus[statusKey] = (stats.byStatus[statusKey] || 0) + 1;
+
+            if (p.isCapital) stats.capitals++;
+            if (!p.parentId) stats.rootLocations++;
+            if (getPlaceChildren(p.id, false).length > 0) stats.withChildren++;
+
+            stats.totalPopulation += getPopulationCount(p.id, false);
+
+            var prio = getLocationTypePriority(p.typeId);
+            stats.typeCounts[prio] = (stats.typeCounts[prio] || 0) + 1;
         }
-        _processingQuery = true;
 
-        try {
-            var places = LocationState.getAllPlaces({ includeDeprecated: false });
-            var types = LocationState.getLocationTypes();
-
-            var stats = {
-                totalLocations: places.length,
-                byType: {},
-                byStatus: {},
-                capitals: 0,
-                rootLocations: 0,
-                withChildren: 0,
-                totalPopulation: 0,
-                typeCounts: {}
-            };
-
-            for (var i = 0; i < places.length; i++) {
-                var place = places[i];
-
-                var typeName = LocationState.getLocationTypeName(place.typeId);
-                if (!stats.byType[typeName]) {
-                    stats.byType[typeName] = 0;
-                }
-                stats.byType[typeName]++;
-
-                var status = place.status || 'active';
-                if (!stats.byStatus[status]) {
-                    stats.byStatus[status] = 0;
-                }
-                stats.byStatus[status]++;
-
-                if (place.isCapital) stats.capitals++;
-
-                if (!place.parentId) stats.rootLocations++;
-
-                var children = LocationState.getPlaceChildren(place.id, false);
-                if (children.length > 0) stats.withChildren++;
-
-                stats.totalPopulation += LocationState.getPopulationCount(place.id, false);
-
-                var priority = LocationState.getLocationTypePriority(place.typeId);
-                if (!stats.typeCounts[priority]) {
-                    stats.typeCounts[priority] = 0;
-                }
-                stats.typeCounts[priority]++;
-            }
-
-            stats.typeNames = {};
-            for (var i = 0; i < types.length; i++) {
-                stats.typeNames[types[i].id] = types[i].displayName;
-            }
-
-            stats.averagePopulation = stats.totalLocations > 0 ? Math.round(stats.totalPopulation / stats.totalLocations) : 0;
-
-            return stats;
-
-        } finally {
-            _processingQuery = false;
-        }
+        return stats;
     }
 
-    // =========================================================================
-    // 7. POPULATION TRENDS
-    // =========================================================================
+    // -------------------------------------------------------------------------
+    // COMPARISON (uses explicit tie semantics)
+    // -------------------------------------------------------------------------
 
-    function getPopulationTrends(locationId, years) {
-        if (_processingQuery) {
-            return null;
-        }
-        _processingQuery = true;
-
-        try {
-            years = years || 10;
-            var currentYear = _getCurrentYear();
-
-            var locationIds = LocationState.getAllSubLocationIds(locationId);
-            var locationIdSet = {};
-            for (var i = 0; i < locationIds.length; i++) {
-                locationIdSet[locationIds[i]] = true;
-            }
-
-            var characters = _getCharacters();
-            var yearlyData = {};
-            var startYear = currentYear - years;
-
-            for (var year = startYear; year <= currentYear; year++) {
-                yearlyData[year] = { alive: 0, born: 0, died: 0, netChange: 0 };
-            }
-
-            for (var i = 0; i < characters.length; i++) {
-                var char = characters[i];
-                var charLocationId = LocationState.getCurrentLocationId(char.id);
-
-                if (!charLocationId || !locationIdSet[charLocationId]) continue;
-
-                var birthYear = char.birthYear;
-                var deathYear = char.deathYear;
-
-                for (var year = startYear; year <= currentYear; year++) {
-                    if (birthYear && birthYear <= year) {
-                        if (!deathYear || deathYear > year) {
-                            if (yearlyData[year]) {
-                                yearlyData[year].alive++;
-                            }
-                        }
-                    }
-                }
-
-                if (birthYear && birthYear >= startYear && birthYear <= currentYear) {
-                    if (yearlyData[birthYear]) {
-                        yearlyData[birthYear].born++;
-                    }
-                }
-
-                if (deathYear && deathYear >= startYear && deathYear <= currentYear) {
-                    if (yearlyData[deathYear]) {
-                        yearlyData[deathYear].died++;
-                    }
-                }
-            }
-
-            for (var year = startYear; year <= currentYear; year++) {
-                if (yearlyData[year]) {
-                    yearlyData[year].netChange = yearlyData[year].born - yearlyData[year].died;
-                }
-            }
-
-            var result = {
-                locationId: locationId,
-                locationName: LocationState.getPlace(locationId)?.displayName || 'Unknown',
-                years: years,
-                startYear: startYear,
-                endYear: currentYear,
-                data: yearlyData,
-                trends: {
-                    averagePopulation: 0,
-                    totalBirths: 0,
-                    totalDeaths: 0,
-                    netGrowth: 0,
-                    growthRate: 0
-                }
-            };
-
-            var totalAlive = 0;
-            var totalBirths = 0;
-            var totalDeaths = 0;
-            var count = 0;
-
-            for (var year in yearlyData) {
-                if (yearlyData.hasOwnProperty(year)) {
-                    totalAlive += yearlyData[year].alive;
-                    totalBirths += yearlyData[year].born;
-                    totalDeaths += yearlyData[year].died;
-                    count++;
-                }
-            }
-
-            result.trends.averagePopulation = count > 0 ? Math.round(totalAlive / count) : 0;
-            result.trends.totalBirths = totalBirths;
-            result.trends.totalDeaths = totalDeaths;
-            result.trends.netGrowth = totalBirths - totalDeaths;
-            result.trends.growthRate = totalAlive > 0 ? Math.round((result.trends.netGrowth / (totalAlive / count)) * 100) : 0;
-
-            return result;
-
-        } finally {
-            _processingQuery = false;
-        }
+    function _cmp(a, b) {
+        if (a > b) return 'greater';
+        if (a < b) return 'less';
+        return 'equal';
     }
 
-    // =========================================================================
-    // 8. LOCATION COMPARISON
-    // =========================================================================
+    function compareLocations(id1, id2) {
+        var s1 = getLocationStatistics(id1);
+        var s2 = getLocationStatistics(id2);
+        if (!s1 || !s2) return null;
 
-    function compareLocations(locationId1, locationId2) {
-        if (_processingQuery) {
-            return null;
-        }
-        _processingQuery = true;
-
-        try {
-            var stats1 = getLocationStatistics(locationId1);
-            var stats2 = getLocationStatistics(locationId2);
-
-            if (!stats1 || !stats2) return null;
-
-            var result = {
-                location1: stats1,
-                location2: stats2,
-                comparison: {
-                    populationDifference: stats1.totalPopulation - stats2.totalPopulation,
-                    depthDifference: stats1.depth - stats2.depth,
-                    childCountDifference: stats1.childCount - stats2.childCount,
-                    larger: stats1.totalPopulation > stats2.totalPopulation ? stats1.name : stats2.name,
-                    deeper: stats1.depth > stats2.depth ? stats1.name : stats2.name,
-                    moreChildren: stats1.childCount > stats2.childCount ? stats1.name : stats2.name
-                }
-            };
-
-            return result;
-
-        } finally {
-            _processingQuery = false;
-        }
+        return {
+            location1: s1,
+            location2: s2,
+            comparison: {
+                populationDifference: s1.totalPopulation - s2.totalPopulation,
+                populationRelation: _cmp(s1.totalPopulation, s2.totalPopulation),
+                depthDifference: s1.depth - s2.depth,
+                depthRelation: _cmp(s1.depth, s2.depth),
+                childCountDifference: s1.childCount - s2.childCount,
+                childCountRelation: _cmp(s1.childCount, s2.childCount)
+            }
+        };
     }
 
-    // =========================================================================
-    // 9. RANKINGS
-    // =========================================================================
+    // -------------------------------------------------------------------------
+    // RANKINGS
+    // -------------------------------------------------------------------------
 
     function getLargestLocations(limit) {
-        if (_processingQuery) {
-            return [];
-        }
-        _processingQuery = true;
-
-        try {
-            limit = limit || 10;
-            var places = LocationState.getAllPlaces({ includeDeprecated: false });
-            var withPopulation = [];
-
-            for (var i = 0; i < places.length; i++) {
-                var place = places[i];
-                var population = LocationState.getPopulationCount(place.id, false);
-                withPopulation.push({
-                    location: place,
-                    population: population,
-                    typeName: LocationState.getLocationTypeName(place.typeId),
-                    isCapital: place.isCapital || false
-                });
-            }
-
-            withPopulation.sort(function(a, b) {
-                return b.population - a.population;
-            });
-
-            return withPopulation.slice(0, limit);
-
-        } finally {
-            _processingQuery = false;
-        }
+        var places = getAllPlaces({});
+        var rows = places.map(function (p) {
+            return {
+                locationId: p.id,
+                typeId: p.typeId,
+                isCapital: p.isCapital === true,
+                population: getPopulationCount(p.id, false)
+            };
+        });
+        rows.sort(function (a, b) { return b.population - a.population; });
+        return limit === undefined || limit === null ? rows : rows.slice(0, limit);
     }
 
-    function getMostDenseLocations(limit) {
-        if (_processingQuery) {
-            return [];
-        }
-        _processingQuery = true;
-
-        try {
-            limit = limit || 10;
-            var places = LocationState.getAllPlaces({ includeDeprecated: false });
-            var withDensity = [];
-
-            for (var i = 0; i < places.length; i++) {
-                var place = places[i];
-                var population = LocationState.getPopulationCount(place.id, false);
-                var children = LocationState.getPlaceChildren(place.id, true);
-                var area = children.length + 1;
-
-                withDensity.push({
-                    location: place,
-                    population: population,
-                    density: Math.round(population / area),
-                    typeName: LocationState.getLocationTypeName(place.typeId),
-                    isCapital: place.isCapital || false
-                });
-            }
-
-            withDensity.sort(function(a, b) {
-                return b.density - a.density;
-            });
-
-            return withDensity.slice(0, limit);
-
-        } finally {
-            _processingQuery = false;
-        }
+    /**
+     * Population per hierarchy node — NOT geographic density.
+     * Named to match its actual metric.
+     */
+    function getPopulationPerNodeRanking(limit) {
+        var places = getAllPlaces({});
+        var rows = places.map(function (p) {
+            var pop = getPopulationCount(p.id, false);
+            var nodes = getPlaceChildren(p.id, true).length + 1;
+            return {
+                locationId: p.id,
+                typeId: p.typeId,
+                population: pop,
+                nodeCount: nodes,
+                populationPerNode: Math.round(pop / nodes)
+            };
+        });
+        rows.sort(function (a, b) { return b.populationPerNode - a.populationPerNode; });
+        return limit === undefined || limit === null ? rows : rows.slice(0, limit);
     }
 
-    // =========================================================================
-    // 10. MOVE ANALYTICS
-    // =========================================================================
+    // -------------------------------------------------------------------------
+    // MOVEMENT ANALYTICS
+    // -------------------------------------------------------------------------
 
     function getMoveStatistics(characterId) {
-        if (_processingQuery) {
-            return null;
-        }
-        _processingQuery = true;
+        var moves = _characters().getMoveHistory(characterId);
+        var character = _characters().getCharacterById(characterId);
+        if (!character) return null;
 
-        try {
-            var moves = LocationState.getMoveHistory(characterId);
-            var character = _getCharacterById(characterId);
+        var byLocation = {};
+        var byDecade = {};
+        var unique = {};
 
-            if (!character) return null;
+        for (var i = 0; i < moves.length; i++) {
+            var m = moves[i];
+            if (m.locationId) unique[m.locationId] = true;
+            var key = m.locationId === null || m.locationId === undefined ? null : m.locationId;
+            byLocation[key] = (byLocation[key] || 0) + 1;
 
-            var stats = {
-                characterId: characterId,
-                characterName: character.name + (character.surname ? ' ' + character.surname : ''),
-                totalMoves: moves.length,
-                uniqueLocations: 0,
-                firstMove: null,
-                lastMove: null,
-                averageYearsBetweenMoves: 0,
-                byLocation: {},
-                byDecade: {}
-            };
-
-            var locationSet = new Set();
-
-            for (var i = 0; i < moves.length; i++) {
-                var move = moves[i];
-                locationSet.add(move.locationId);
-
-                if (!stats.firstMove || move.year < stats.firstMove.year) {
-                    stats.firstMove = move;
-                }
-                if (!stats.lastMove || move.year > stats.lastMove.year) {
-                    stats.lastMove = move;
-                }
-
-                var locationName = move.locationName || 'Unknown';
-                if (!stats.byLocation[locationName]) {
-                    stats.byLocation[locationName] = 0;
-                }
-                stats.byLocation[locationName]++;
-
-                var decade = Math.floor(move.year / 10) * 10;
-                if (!stats.byDecade[decade]) {
-                    stats.byDecade[decade] = 0;
-                }
-                stats.byDecade[decade]++;
+            if (m.year !== null && m.year !== undefined) {
+                var decade = Math.floor(m.year / 10) * 10;
+                byDecade[decade] = (byDecade[decade] || 0) + 1;
             }
-
-            stats.uniqueLocations = locationSet.size;
-
-            if (moves.length > 1) {
-                var totalYears = 0;
-                for (var i = 1; i < moves.length; i++) {
-                    totalYears += Math.abs(moves[i].year - moves[i - 1].year);
-                }
-                stats.averageYearsBetweenMoves = Math.round((totalYears / (moves.length - 1)) * 10) / 10;
-            }
-
-            return stats;
-
-        } finally {
-            _processingQuery = false;
         }
+
+        var totalSpan = 0;
+        var validIntervals = 0;
+        for (var j = 1; j < moves.length; j++) {
+            var a = moves[j - 1].year;
+            var b = moves[j].year;
+            if (a === null || a === undefined || b === null || b === undefined) continue;
+            totalSpan += Math.abs(b - a);
+            validIntervals++;
+        }
+
+        return {
+            characterId: characterId,
+            totalMoves: moves.length,
+            uniqueLocations: Object.keys(unique).length,
+            averageYearsBetweenMoves: validIntervals > 0 ? Math.round((totalSpan / validIntervals) * 10) / 10 : null,
+            byLocation: byLocation,
+            byDecade: byDecade
+        };
     }
 
-    function getMigrationPatterns(locationId, years) {
-        if (_processingQuery) {
-            return null;
-        }
-        _processingQuery = true;
-
-        try {
-            years = years || 10;
-            var currentYear = _getCurrentYear();
-            var startYear = currentYear - years;
-
-            var locationIds = LocationState.getAllSubLocationIds(locationId);
-            var locationIdSet = {};
-            for (var i = 0; i < locationIds.length; i++) {
-                locationIdSet[locationIds[i]] = true;
-            }
-
-            var characters = _getCharacters();
-            var inMigration = 0;
-            var outMigration = 0;
-            var byYear = {};
-
-            for (var year = startYear; year <= currentYear; year++) {
-                byYear[year] = { in: 0, out: 0 };
-            }
-
-            for (var i = 0; i < characters.length; i++) {
-                var char = characters[i];
-                if (char.isDeceased) continue;
-
-                var moves = LocationState.getMoveHistory(char.id);
-                for (var j = 0; j < moves.length; j++) {
-                    var move = moves[j];
-                    if (move.year < startYear || move.year > currentYear) continue;
-
-                    var isIn = locationIdSet[move.locationId] || false;
-                    var wasIn = move.fromLocationId ? (locationIdSet[move.fromLocationId] || false) : false;
-
-                    if (isIn && !wasIn && move.fromLocationId) {
-                        inMigration++;
-                        if (byYear[move.year]) byYear[move.year].in++;
-                    }
-                    if (!isIn && wasIn) {
-                        outMigration++;
-                        if (byYear[move.year]) byYear[move.year].out++;
-                    }
-                }
-            }
-
-            var result = {
-                locationId: locationId,
-                locationName: LocationState.getPlace(locationId)?.displayName || 'Unknown',
-                years: years,
-                startYear: startYear,
-                endYear: currentYear,
-                totalInMigration: inMigration,
-                totalOutMigration: outMigration,
-                netMigration: inMigration - outMigration,
-                byYear: byYear
-            };
-
-            return result;
-
-        } finally {
-            _processingQuery = false;
-        }
-    }
-
-    // =========================================================================
-    // 11. ROLE-LOCATION INTEGRATION
-    // =========================================================================
-
-    function getRolesAtLocation(locationId) {
-        if (_processingQuery) {
-            return {};
-        }
-        _processingQuery = true;
-
-        try {
-            if (!locationId) return {};
-
-            var locationIds = LocationState.getAllSubLocationIds(locationId);
-            var locationIdSet = {};
-            for (var i = 0; i < locationIds.length; i++) {
-                locationIdSet[locationIds[i]] = true;
-            }
-
-            var characters = _getCharacters();
-            var roles = {};
-
-            for (var i = 0; i < characters.length; i++) {
-                var char = characters[i];
-                if (char.isDeceased) continue;
-
-                var charLocationId = LocationState.getCurrentLocationId(char.id);
-                if (charLocationId && locationIdSet[charLocationId]) {
-                    if (char.professions) {
-                        for (var j = 0; j < char.professions.length; j++) {
-                            var prof = char.professions[j];
-                            var roleId = prof.id || prof;
-                            if (!roles[roleId]) {
-                                var role = _getRoleById(roleId);
-                                roles[roleId] = {
-                                    id: roleId,
-                                    name: prof.name || (role ? role.name : roleId),
-                                    count: 0,
-                                    characters: []
-                                };
-                            }
-                            roles[roleId].count++;
-                            roles[roleId].characters.push(char.id);
-                        }
-                    }
-                }
-            }
-
-            return roles;
-
-        } finally {
-            _processingQuery = false;
-        }
-    }
-
-    function getCharactersByRoleAtLocation(locationId, roleId, mastersOnly) {
-        if (_processingQuery) {
-            return [];
-        }
-        _processingQuery = true;
-
-        try {
-            if (!locationId || !roleId) return [];
-
-            var locationIds = LocationState.getAllSubLocationIds(locationId);
-            var locationIdSet = {};
-            for (var i = 0; i < locationIds.length; i++) {
-                locationIdSet[locationIds[i]] = true;
-            }
-
-            var characters = _getCharacters();
-            var results = [];
-            var thresholds = _getTeachingThresholds();
-
-            for (var i = 0; i < characters.length; i++) {
-                var char = characters[i];
-                if (char.isDeceased) continue;
-
-                var charLocationId = LocationState.getCurrentLocationId(char.id);
-                if (!charLocationId || !locationIdSet[charLocationId]) continue;
-
-                if (char.professions) {
-                    for (var j = 0; j < char.professions.length; j++) {
-                        var prof = char.professions[j];
-                        var profId = prof.id || prof;
-                        if (profId === roleId) {
-                            var skillLevel = prof.skillLevel || 0;
-                            if (mastersOnly && skillLevel < 76) continue;
-
-                            results.push({
-                                character: char,
-                                profession: prof,
-                                skillLevel: skillLevel,
-                                skillTier: _getSkillLevelName(skillLevel),
-                                isMaster: skillLevel >= 76,
-                                isExpert: skillLevel >= 76,
-                                isJourneyman: skillLevel >= 51,
-                                canTeach: skillLevel >= 51
-                            });
-                            break;
-                        }
-                    }
-                }
-            }
-
-            return results;
-
-        } finally {
-            _processingQuery = false;
-        }
-    }
-
-    function getProfessionDistribution(locationId) {
-        if (_processingQuery) {
-            return null;
-        }
-        _processingQuery = true;
-
-        try {
-            if (!locationId) return null;
-
-            var roles = getRolesAtLocation(locationId);
-            var roleIds = Object.keys(roles);
-            var total = 0;
-
-            for (var i = 0; i < roleIds.length; i++) {
-                total += roles[roleIds[i]].count;
-            }
-
-            var distribution = {};
-            for (var i = 0; i < roleIds.length; i++) {
-                var id = roleIds[i];
-                distribution[id] = {
-                    name: roles[id].name,
-                    count: roles[id].count,
-                    percentage: total > 0 ? Math.round((roles[id].count / total) * 100) : 0
-                };
-            }
-
-            var sorted = roleIds.slice().sort(function(a, b) {
-                return roles[b].count - roles[a].count;
-            });
-            var topRoles = [];
-            for (var i = 0; i < Math.min(5, sorted.length); i++) {
-                var id = sorted[i];
-                topRoles.push({
-                    id: id,
-                    name: roles[id].name,
-                    count: roles[id].count,
-                    percentage: total > 0 ? Math.round((roles[id].count / total) * 100) : 0
-                });
-            }
-
-            return {
-                locationId: locationId,
-                totalProfessions: total,
-                uniqueRoles: roleIds.length,
-                distribution: distribution,
-                topRoles: topRoles
-            };
-
-        } finally {
-            _processingQuery = false;
-        }
-    }
-
-    // =========================================================================
-    // 12. APPRENTICESHIP-LOCATION QUERIES
-    // =========================================================================
-
-    function getApprenticesAtLocation(locationId, activeOnly) {
-        if (_processingQuery) return [];
-        _processingQuery = true;
-
-        try {
-            if (!locationId) return [];
-
-            var locationIds = LocationState.getAllSubLocationIds(locationId);
-            var locationIdSet = {};
-            for (var i = 0; i < locationIds.length; i++) {
-                locationIdSet[locationIds[i]] = true;
-            }
-
-            var characters = _getCharacters();
-            var results = [];
-
-            for (var i = 0; i < characters.length; i++) {
-                var char = characters[i];
-                if (char.isDeceased) continue;
-
-                var charLocationId = LocationState.getCurrentLocationId(char.id);
-                if (!charLocationId || !locationIdSet[charLocationId]) continue;
-
-                var isApprentice = _isApprentice(char.id);
-                if (isApprentice) {
-                    var master = _getMaster(char.id);
-                    var role = _getApprenticeshipRole(char.id);
-                    var skillLevel = _getSkillLevel(char.id);
-                    var status = 'ongoing';
-
-                    if (activeOnly) {
-                        var app = _getApprenticeship(char.id);
-                        if (app && app.status) status = app.status;
-                        if (status !== 'ongoing') continue;
-                    }
-
-                    var masterInfo = null;
-                    if (master && typeof master === 'object') {
-                        masterInfo = master;
-                    } else if (master && typeof master === 'string') {
-                        masterInfo = _getCharacterById(master);
-                    }
-
-                    var roleObj = null;
-                    if (role && typeof role === 'string') {
-                        roleObj = _getRoleById(role);
-                    } else if (role && typeof role === 'object') {
-                        roleObj = role;
-                    }
-
-                    results.push({
-                        apprentice: char,
-                        master: masterInfo,
-                        role: roleObj,
-                        roleId: typeof role === 'string' ? role : (role ? role.id : null),
-                        skillLevel: skillLevel,
-                        status: status
-                    });
-                }
-            }
-
-            return results;
-
-        } finally {
-            _processingQuery = false;
-        }
-    }
-
-    function getMastersAtLocation(locationId, roleId, activeOnly) {
-        if (_processingQuery) return [];
-        _processingQuery = true;
-
-        try {
-            if (!locationId) return [];
-
-            var locationIds = LocationState.getAllSubLocationIds(locationId);
-            var locationIdSet = {};
-            for (var i = 0; i < locationIds.length; i++) {
-                locationIdSet[locationIds[i]] = true;
-            }
-
-            var characters = _getCharacters();
-            var results = [];
-
-            for (var i = 0; i < characters.length; i++) {
-                var char = characters[i];
-                if (char.isDeceased) continue;
-
-                var charLocationId = LocationState.getCurrentLocationId(char.id);
-                if (!charLocationId || !locationIdSet[charLocationId]) continue;
-
-                var isMaster = _isMaster(char.id);
-                if (isMaster) {
-                    if (roleId) {
-                        var hasRole = false;
-                        if (char.professions) {
-                            for (var j = 0; j < char.professions.length; j++) {
-                                var prof = char.professions[j];
-                                var profId = prof.id || prof;
-                                if (profId === roleId && (prof.skillLevel || 0) >= 76) {
-                                    hasRole = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if (!hasRole) continue;
-                    }
-
-                    var apprentices = _getApprentices(char.id, true) || [];
-                    if (activeOnly && apprentices.length === 0) continue;
-
-                    var apprenticeDetails = [];
-                    for (var j = 0; j < Math.min(10, apprentices.length); j++) {
-                        var app = apprentices[j];
-                        var appChar = typeof app === 'string' ? _getCharacterById(app) : app;
-                        if (appChar) {
-                            apprenticeDetails.push({
-                                id: appChar.id,
-                                name: appChar.name + (appChar.surname ? ' ' + appChar.surname : '')
-                            });
-                        }
-                    }
-
-                    results.push({
-                        master: char,
-                        apprenticeCount: apprentices.length,
-                        apprentices: apprenticeDetails
-                    });
-                }
-            }
-
-            return results;
-
-        } finally {
-            _processingQuery = false;
-        }
-    }
-
-    function getApprenticeshipDensity(locationId) {
-        if (_processingQuery) return null;
-        _processingQuery = true;
-
-        try {
-            if (!locationId) return null;
-
-            var apprentices = getApprenticesAtLocation(locationId, true);
-            var masters = getMastersAtLocation(locationId, null, true);
-            var population = LocationState.getPopulationCount(locationId, false);
-            var place = LocationState.getPlace(locationId);
-
-            var byRole = {};
-            for (var i = 0; i < apprentices.length; i++) {
-                var roleId = apprentices[i].roleId;
-                if (roleId) {
-                    if (!byRole[roleId]) {
-                        var role = _getRoleById(roleId);
-                        byRole[roleId] = {
-                            id: roleId,
-                            name: role ? role.name : roleId,
-                            count: 0
-                        };
-                    }
-                    byRole[roleId].count++;
-                }
-            }
-
-            var sortedRoles = Object.keys(byRole).sort(function(a, b) {
-                return byRole[b].count - byRole[a].count;
-            });
-            var topRoles = [];
-            for (var i = 0; i < Math.min(5, sortedRoles.length); i++) {
-                topRoles.push(byRole[sortedRoles[i]]);
-            }
-
-            return {
-                locationId: locationId,
-                locationName: place ? place.displayName : 'Unknown',
-                totalApprentices: apprentices.length,
-                totalMasters: masters.length,
-                masterToApprenticeRatio: masters.length > 0 ? 
-                    Math.round((apprentices.length / masters.length) * 10) / 10 : 0,
-                apprenticeDensity: population > 0 ? 
-                    Math.round((apprentices.length / population) * 1000) / 10 : 0,
-                byRole: byRole,
-                topRoles: topRoles,
-                masters: masters.slice(0, 10)
-            };
-
-        } finally {
-            _processingQuery = false;
-        }
-    }
-
-    // =========================================================================
-    // 13. EXPORTS
-    // =========================================================================
+    // -------------------------------------------------------------------------
+    // EXPORTS
+    // -------------------------------------------------------------------------
 
     window.LocationQueries = {
+        // Basic place
+        getPlace: getPlace,
+        getAllPlaces: getAllPlaces,
+        getPlacesByParent: getPlacesByParent,
+        getPlacesByType: getPlacesByType,
+        getRootPlaces: getRootPlaces,
+
+        // Types
+        getLocationTypes: getLocationTypes,
+        getLocationType: getLocationType,
+        getLocationTypePriority: getLocationTypePriority,
+        getLocationTypeName: getLocationTypeName,
+
+        // Hierarchy
+        getPlaceHierarchy: getPlaceHierarchy,
+        getPlaceChildren: getPlaceChildren,
+        getAllSubLocationIds: getAllSubLocationIds,
+        getParentChain: getParentChain,
+        getLocationAtPriority: getLocationAtPriority,
+        getCountryId: getCountryId,
+        getLocationCountry: getLocationCountry,
+        getLocationDistrict: getLocationDistrict,
+        isAncestorOf: isAncestorOf,
+        areInSameCountry: areInSameCountry,
+        findLowestCommonAncestor: findLowestCommonAncestor,
+
+        // Population
+        getPopulationCount: getPopulationCount,
+        getOwnPopulation: getOwnPopulation,
+
+        // Movement interpretation
+        getMoveHistory: getMoveHistory,
+        getLastMove: getLastMove,
+        getCurrentLocation: getCurrentLocation,
+        getCurrentLocationId: getCurrentLocationId,
+        getCurrentLocationName: getCurrentLocationName,
+        getLocationAtYear: getLocationAtYear,
+
+        // Search / analytics
         searchLocations: searchLocations,
         getLocationStatistics: getLocationStatistics,
         getGlobalLocationStatistics: getGlobalLocationStatistics,
-        getPopulationTrends: getPopulationTrends,
         compareLocations: compareLocations,
         getLargestLocations: getLargestLocations,
-        getMostDenseLocations: getMostDenseLocations,
-        getMoveStatistics: getMoveStatistics,
-        getMigrationPatterns: getMigrationPatterns,
-        getRolesAtLocation: getRolesAtLocation,
-        getCharactersByRoleAtLocation: getCharactersByRoleAtLocation,
-        getProfessionDistribution: getProfessionDistribution,
-        getApprenticesAtLocation: getApprenticesAtLocation,
-        getMastersAtLocation: getMastersAtLocation,
-        getApprenticeshipDensity: getApprenticeshipDensity
+        getPopulationPerNodeRanking: getPopulationPerNodeRanking,
+        getMoveStatistics: getMoveStatistics
     };
 
 })();
