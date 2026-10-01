@@ -6,18 +6,21 @@
  * LOCATION: js/modules/names/name-rules.js
  *
  * SCOPE:
- *   - Rule type constants
+ *   - Rule type vocabulary
  *   - Rule validation (strict)
- *   - Rule presets (deep-frozen)
+ *   - Rule presets (deep-frozen; getRulePreset returns a clone)
  *   - Rule application: the canonical dispatcher for surname generation
  *     from declarative rules
  *   - Newborn surname policy
+ *   - Marriage surname calculation policy
+ *   - Base first-name extraction (canonical owner; see migration note)
  *
  * OUT OF SCOPE:
  *   - Data retrieval (name lists, ancestor records) → name-queries.js
  *   - Mutations (recording surname changes) → name-commands.js
  *   - Persistence → storage.js
  *   - Presentation → UI
+ *   - Randomness implementation → randomness.js
  *
  * SEMANTIC RULES:
  *   - This module is the ONLY owner of rule application. NameQueries
@@ -28,31 +31,79 @@
  *   - Rule presets are deeply frozen. getRulePreset returns a clone.
  *   - Validation is strict: missing and invalid are distinct. Missing
  *     optional fields receive documented defaults; invalid explicit
- *     values throw.
- *   - No module-wide recursion guards. Composition between rule types is
- *     normal, not recursion.
- *   - No silent fallback implementation. If a required dependency is
- *     missing, we throw at load. If a required query returns null, the
- *     caller sees null, not a fabricated value.
- *   - Random selection goes through randomness.js. No direct Math.random.
- *   - Surname generation returns null when it cannot produce a result.
- *     It never returns a sentinel string ("Unknown", "Unnamed").
+ *     values are rejected.
+ *   - No module-wide recursion guards. Composition between rule types
+ *     is normal, not recursion.
+ *   - No silent fallback implementation. Required dependencies throw at
+ *     load. A rule that cannot produce a result returns null; it does
+ *     not return a sentinel string.
+ *   - Random selection goes through NameQueries, which owns the
+ *     randomness contract. This module does not call pickRandom.
+ *   - Surname generation NEVER invents capitalization. Source data is
+ *     preserved as given. The only casing transformation is the one
+ *     required by patronymic morphology (john + son → Johnson), and it
+ *     is a dedicated function, not a generic capitalize() pass.
  *
- * OWNERSHIP OF RULE APPLICATION:
- *   generateSurnameFromRules() is the canonical dispatcher. It is called
- *   from:
- *     - NameCommands during character creation
- *     - NameQueries.determineNewbornSurname callers
- *     - Legacy wrapper callers
- *   Nothing else should reimplement the family/patronymic/chain logic.
+ * CHAIN MODEL:
+ *   A CHAIN rule's `order` is the COMPLETE, ORDERED list of absolute
+ *   ancestor slots to resolve. `order.length` is the depth. There is no
+ *   separate `depth` field. The slots are the same six (plus two
+ *   great-grandparent slots) used by NameQueries.getAncestorData:
+ *
+ *     father, mother,
+ *     paternal_grandfather, paternal_grandmother,
+ *     maternal_grandfather, maternal_grandmother,
+ *     paternal_great_grandfather, maternal_great_grandfather
+ *
+ *   A slot that cannot be resolved is skipped. A chain that resolves to
+ *   zero names returns null.
+ *
+ *   NOTE: the great-grandparent slots are declared here but are not yet
+ *   resolvable by name-queries.js. `chain_three_generation` therefore
+ *   degrades to two generations until that follow-up lands. The preset
+ *   is honest about what it contains; the query layer catches up.
+ *
+ * NEWBORN POLICY:
+ *   determineNewbornSurname walks this cascade:
+ *     1. Mother's country rules (if resolvable and valid)
+ *     2. Father's country rules (if resolvable and valid)
+ *     3. Random surname from the explicit `countryId` pool
+ *     4. Father's surname
+ *     5. Mother's surname
+ *     6. null (no surname)
+ *
+ *   A rule that is PRESENT but INVALID throws. A rule that is present
+ *   and valid but cannot produce a result falls through to the next
+ *   step. "Not configured" and "configured badly" are different states.
+ *
+ *   The cascade is a named policy. It lives in one place. Changing it
+ *   changes the culture of every newborn in the world; it should not be
+ *   an accidental edit.
+ *
+ * PATRONYMIC GENDER:
+ *   A gendered patronymic rule requires a resolvable child gender. If
+ *   the child's gender is 'unknown' or 'other', _applyPatronymicRule
+ *   returns null. The caller decides whether to fall back. Silent
+ *   male-form default is not applied; that is a policy decision that
+ *   belongs to whoever configures the rule.
  *
  * DEPENDENCIES (REQUIRED):
- *   - name-queries.js: getAncestorNames, getAncestorData, getRandomSurname,
- *                      getCountrySurnameRules
- *   - randomness.js:   pickRandom (used for the RANDOM rule type)
+ *   - name-queries.js: NameQueries
  *
  * DEPENDENCIES (OPTIONAL):
- *   - None.
+ *   - None. Randomness is owned by NameQueries.
+ *
+ * MIGRATION NOTES:
+ *   - getBaseFirstName (canonical owner) now lives here. name-queries.js
+ *     still has a private copy for getAncestorData's resolved firstName;
+ *     that duplication is temporary and will be removed when Queries
+ *     depends on Rules for the transformation.
+ *   - calculateMarriageSurnames (canonical owner) now lives here.
+ *     name-commands.js still has its own copy under a migration note and
+ *     needs a follow-up patch to delegate.
+ *   - The great-grandparent ancestor slots are declared here but not yet
+ *     resolvable in name-queries.js. chain_three_generation degrades
+ *     gracefully until the follow-up lands.
  *
  * ICON POLICY: No emojis. No icons.
  *
@@ -74,18 +125,15 @@
         }
         var requiredQueries = [
             'getAncestorNames',
-            'getAncestorData',
             'getRandomSurname',
-            'getCountrySurnameRules'
+            'getCountrySurnameRules',
+            'getCharacterCountryId'
         ];
         var missing = [];
         for (var i = 0; i < requiredQueries.length; i++) {
             if (typeof window.NameQueries[requiredQueries[i]] !== 'function') {
                 missing.push('NameQueries.' + requiredQueries[i]);
             }
-        }
-        if (typeof window.pickRandom !== 'function') {
-            missing.push('pickRandom');
         }
         if (missing.length > 0) {
             throw new Error(
@@ -116,13 +164,23 @@
         'space', 'hyphen', 'custom', 'none'
     ]);
     var CHAIN_SOURCES = Object.freeze(['firstname', 'surname']);
+
     var VALID_ANCESTOR_TYPES = Object.freeze([
         'father',
         'mother',
         'paternal_grandfather',
         'paternal_grandmother',
         'maternal_grandfather',
-        'maternal_grandmother'
+        'maternal_grandmother',
+        'paternal_great_grandfather',
+        'maternal_great_grandfather'
+    ]);
+
+    var MARRIAGE_RULES = Object.freeze([
+        'wife_takes_husband',
+        'husband_takes_wife',
+        'hyphenate',
+        'keep'
     ]);
 
     // =========================================================================
@@ -150,11 +208,6 @@
             && v > 0;
     }
 
-    function _capitalizeFirstLetter(str) {
-        if (!str || typeof str !== 'string') return '';
-        return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
-    }
-
     function _splitSurname(surname) {
         if (!surname || typeof surname !== 'string') return [];
         return surname.trim().split(/\s+/).filter(function(p) { return p.length > 0; });
@@ -169,8 +222,8 @@
 
     /**
      * Resolves a connector string for a given connector type.
-     * Missing connectorType defaults to 'space'. Invalid explicit values
-     * throw during validation; this function only resolves valid ones.
+     * Validation has already rejected invalid explicit values; this
+     * function only resolves values that passed validation.
      */
     function _resolveConnector(connectorType, customConnector) {
         if (_isMissing(connectorType)) return ' ';
@@ -185,10 +238,6 @@
         }
     }
 
-    /**
-     * Deep-freezes an object recursively. Arrays and plain objects are
-     * frozen; primitives pass through.
-     */
     function _deepFreeze(obj) {
         if (!obj || typeof obj !== 'object') return obj;
         if (Object.isFrozen(obj)) return obj;
@@ -200,10 +249,6 @@
         return obj;
     }
 
-    /**
-     * Deep-clones a rule object. Used by getRulePreset so callers cannot
-     * mutate the frozen preset.
-     */
     function _cloneRule(rule) {
         if (rule === null || typeof rule !== 'object') return rule;
         if (Array.isArray(rule)) {
@@ -221,8 +266,55 @@
         return out;
     }
 
+    /**
+     * Patronymic morphology. Given a base given name and a suffix/prefix
+     * pair, produce the derived surname form.
+     *
+     * The transformation is deliberately narrow:
+     *   - The base name's first character is uppercased.
+     *   - The rest of the base name is preserved as given.
+     *   - Prefix and suffix are appended/prepended as configured.
+     *
+     * This is NOT a generic capitalize() pass. It assumes the base name
+     * is a given name in normal orthography (`John`, `Mary`) and the
+     * affixes are morphology (`son`, `dottir`, `ovich`, `ovna`). For any
+     * other input, the caller is responsible for the result. Rules are
+     * declarative; this function does not try to guess.
+     */
+    function _applyPatronymicMorphology(baseName, prefix, suffix) {
+        if (!_isNonEmptyString(baseName)) return '';
+        var head = baseName.charAt(0).toUpperCase();
+        var tail = baseName.slice(1);
+        return (prefix || '') + head + tail + (suffix || '');
+    }
+
     // =========================================================================
-    // 3. VALIDATION
+    // 3. BASE FIRST NAME
+    // =========================================================================
+    //
+    // The canonical owner of base-first-name extraction. Queries has a
+    // private copy that will be removed when Queries can depend on Rules
+    // for this transformation. See the module header migration notes.
+
+    /**
+     * Extracts the "base" first name from a character: the given name
+     * with any trailing epithet or "of Place" suffix stripped.
+     *
+     * Note: this strips exactly one trailing token after "the" and one
+     * after "of". It is not a general-purpose parser. If your naming
+     * grammar grows multi-token epithets, this needs to grow with it.
+     */
+    function getBaseFirstName(character) {
+        if (!character) return '';
+        var name = typeof character.name === 'string' ? character.name : '';
+        if (name.length === 0) return '';
+        name = name.replace(/\s+the\s+\S+$/, '');
+        name = name.replace(/\s+of\s+\S+$/, '');
+        return name.trim();
+    }
+
+    // =========================================================================
+    // 4. VALIDATION
     // =========================================================================
 
     /**
@@ -231,9 +323,9 @@
      *   { valid: false, reason: '...' }
      *
      * Strict semantics:
-     *   - Missing required fields invalid.
-     *   - Explicit invalid values invalid.
-     *   - Unknown fields tolerated (forward-compatible).
+     *   - Missing required fields are invalid.
+     *   - Explicit invalid values are invalid.
+     *   - Unknown fields are tolerated (forward-compatible).
      */
     function validateRules(rules) {
         if (!_isPlainObject(rules)) {
@@ -246,16 +338,12 @@
         switch (rules.type) {
             case RULE_TYPES.RANDOM:
                 return { valid: true };
-
             case RULE_TYPES.FAMILY:
                 return _validateFamilyRules(rules.family);
-
             case RULE_TYPES.PATRONYMIC:
                 return _validatePatronymicRules(rules.patronymic);
-
             case RULE_TYPES.CHAIN:
                 return _validateChainRules(rules.chain);
-
             default:
                 return {
                     valid: false,
@@ -295,11 +383,13 @@
                 reason: 'family.connector must be one of: ' + CONNECTOR_TYPES.join(', ')
             };
         }
-        if (family.connector === 'custom' && typeof family.customConnector !== 'string') {
-            return {
-                valid: false,
-                reason: 'family.customConnector is required when family.connector is "custom"'
-            };
+        if (family.connector === 'custom') {
+            if (typeof family.customConnector !== 'string' || family.customConnector.length === 0) {
+                return {
+                    valid: false,
+                    reason: 'family.customConnector must be a non-empty string when connector is "custom"'
+                };
+            }
         }
         return { valid: true };
     }
@@ -314,8 +404,6 @@
                 reason: 'patronymic.source must be one of: ' + PATRONYMIC_SOURCES.join(', ')
             };
         }
-        // Optional fields: malePrefix, maleSuffix, femalePrefix, femaleSuffix,
-        // usePrefix, useSuffix. Validate types if present.
         var stringFields = ['malePrefix', 'maleSuffix', 'femalePrefix', 'femaleSuffix'];
         for (var i = 0; i < stringFields.length; i++) {
             var f = stringFields[i];
@@ -347,9 +435,6 @@
                 };
             }
         }
-        if (!_isPositiveInteger(chain.depth)) {
-            return { valid: false, reason: 'chain.depth must be a positive integer' };
-        }
         if (!_isMissing(chain.source) && CHAIN_SOURCES.indexOf(chain.source) === -1) {
             return {
                 valid: false,
@@ -362,11 +447,19 @@
                 reason: 'chain.connector must be one of: ' + CONNECTOR_TYPES.join(', ')
             };
         }
+        if (chain.connector === 'custom') {
+            if (typeof chain.customConnector !== 'string' || chain.customConnector.length === 0) {
+                return {
+                    valid: false,
+                    reason: 'chain.customConnector must be a non-empty string when connector is "custom"'
+                };
+            }
+        }
         return { valid: true };
     }
 
     // =========================================================================
-    // 4. RULE APPLICATION
+    // 5. RULE APPLICATION
     // =========================================================================
 
     /**
@@ -377,8 +470,8 @@
      * @param {string} childGender - 'male' | 'female' | 'unknown' | 'other'
      * @param {Object} rules
      * @returns {string|null} the generated surname, or null when the rule
-     *   cannot produce one (missing inputs, empty pools, etc.)
-     *
+     *   cannot produce one (missing inputs, empty pools, unresolvable
+     *   chain, etc.)
      * @throws {Error} when `rules` fails validation
      */
     function generateSurnameFromRules(mother, father, childGender, rules) {
@@ -389,7 +482,7 @@
 
         switch (rules.type) {
             case RULE_TYPES.RANDOM:
-                return _applyRandomRule(mother, father, rules);
+                return _applyRandomRule(mother, father);
             case RULE_TYPES.FAMILY:
                 return _applyFamilyRule(mother, father, rules.family);
             case RULE_TYPES.PATRONYMIC:
@@ -397,7 +490,6 @@
             case RULE_TYPES.CHAIN:
                 return _applyChainRule(mother, father, rules.chain);
             default:
-                // Unreachable: validation rejects unknown types.
                 throw new Error(
                     'generateSurnameFromRules: unhandled rule type "' + rules.type + '"'
                 );
@@ -405,7 +497,6 @@
     }
 
     function _applyRandomRule(mother, father) {
-        // Resolve the country from either parent.
         var countryId = null;
         if (mother && _isNonEmptyString(mother.id)) {
             countryId = window.NameQueries.getCharacterCountryId(mother.id);
@@ -439,7 +530,8 @@
         } else if (source === 'mother') {
             if (motherPart) parts.push(motherPart);
         } else {
-            // both
+            // both. Require both. Single-parent fallback is a policy
+            // decision that belongs in determineNewbornSurname, not here.
             if (order === 'father_first') {
                 if (fatherPart) parts.push(fatherPart);
                 if (motherPart) parts.push(motherPart);
@@ -452,14 +544,15 @@
         if (parts.length > count) parts = parts.slice(0, count);
         if (parts.length === 0) return null;
 
-        return _capitalizeFirstLetter(parts.join(connector));
+        // Preserve source casing. Do not capitalize.
+        return parts.join(connector);
     }
 
     function _applyPatronymicRule(mother, father, childGender, patronymic) {
         var parent = patronymic.source === 'father' ? father : mother;
         if (!parent) return null;
 
-        var baseName = window.NameQueries.getBaseFirstName(parent);
+        var baseName = getBaseFirstName(parent);
         if (!baseName) return null;
 
         var prefix = '';
@@ -480,57 +573,50 @@
                 suffix = patronymic.femaleSuffix;
             }
         } else {
-            // Default to male form for unknown/other genders.
-            if (patronymic.usePrefix !== false && _isNonEmptyString(patronymic.malePrefix)) {
-                prefix = patronymic.malePrefix;
-            }
-            if (patronymic.useSuffix !== false && _isNonEmptyString(patronymic.maleSuffix)) {
-                suffix = patronymic.maleSuffix;
-            }
+            // Unknown or other gender. A gendered patronymic rule cannot
+            // resolve a morphology for it. Return null; do not default
+            // to the male form silently. Callers who want a fallback can
+            // add an explicit policy step.
+            return null;
         }
 
-        var result = prefix + baseName + suffix;
+        var result = _applyPatronymicMorphology(baseName, prefix, suffix);
         if (!result) return null;
-        return _capitalizeFirstLetter(result);
+        return result;
     }
 
     function _applyChainRule(mother, father, chain) {
-        // Resolve a starting character to walk from.
-        // Prefer father; the chain rule does not currently distinguish
-        // which parent to begin from, so this is a documented policy.
+        // Chain rule starts from the father when present, otherwise the
+        // mother. This is a documented policy, not an accident.
         var start = father || mother;
         if (!start) return null;
 
         var source = _isMissing(chain.source) ? 'firstname' : chain.source;
-        var names = window.NameQueries.getAncestorNames(
-            start,
-            chain.order,
-            chain.depth,
-            source
-        );
+        var names = window.NameQueries.getAncestorNames(start, chain.order, source);
 
         if (!Array.isArray(names) || names.length === 0) return null;
 
         var connector = _resolveConnector(chain.connector, chain.customConnector);
-        return _capitalizeFirstLetter(names.join(connector));
+        return names.join(connector);
     }
 
     // =========================================================================
-    // 5. NEWBORN SURNAME POLICY
+    // 6. NEWBORN SURNAME POLICY
     // =========================================================================
 
     /**
      * Determines the surname for a newborn.
      *
-     * Resolution order:
-     *   1. Mother's country rules (if any)
-     *   2. Father's country rules (if any)
-     *   3. Cultural surname pool from the explicit countryId
+     * Cascade:
+     *   1. Mother's country rules
+     *   2. Father's country rules
+     *   3. Random surname from the explicit `countryId` pool
      *   4. Father's surname
      *   5. Mother's surname
+     *   6. null
      *
-     * This is a POLICY function, not a pure query. It selects a source
-     * according to the order above.
+     * A rule that is present but INVALID throws. A rule that is present
+     * and valid but cannot produce a result falls through.
      *
      * @param {Object|null} mother
      * @param {Object|null} father
@@ -543,14 +629,15 @@
      * }|null}
      */
     function determineNewbornSurname(mother, father, countryId) {
-        // Priority 1 & 2: rules from parent's countries
+        // Policy step 1: mother's country rules
         var parentRuleResult = _tryParentCountryRules(mother, 'mother');
-        if (!parentRuleResult) {
-            parentRuleResult = _tryParentCountryRules(father, 'father');
-        }
         if (parentRuleResult) return parentRuleResult;
 
-        // Priority 3: cultural surname from the explicit country
+        // Policy step 2: father's country rules
+        parentRuleResult = _tryParentCountryRules(father, 'father');
+        if (parentRuleResult) return parentRuleResult;
+
+        // Policy step 3: cultural surname from the explicit country
         if (_isNonEmptyString(countryId)) {
             var randomSurname = window.NameQueries.getRandomSurname(countryId);
             if (randomSurname) {
@@ -563,7 +650,7 @@
             }
         }
 
-        // Priority 4: father's surname
+        // Policy step 4: father's surname
         if (father && _isNonEmptyString(father.surname)) {
             return {
                 surname: father.surname,
@@ -573,7 +660,7 @@
             };
         }
 
-        // Priority 5: mother's surname
+        // Policy step 5: mother's surname
         if (mother && _isNonEmptyString(mother.surname)) {
             return {
                 surname: mother.surname,
@@ -583,6 +670,7 @@
             };
         }
 
+        // Policy step 6: no surname
         return null;
     }
 
@@ -595,26 +683,15 @@
         var rules = window.NameQueries.getCountrySurnameRules(parentCountryId);
         if (!rules || !rules.type) return null;
 
-        var otherParent = parentRole === 'mother' ? null : null;
-        // Apply the rules with the parent pair swapped appropriately.
-        // mother parameter is always the female parent, father always the male.
+        // Resolve the parent into the correct slot. Do not synthesize the
+        // other parent. A FAMILY rule with source 'both' will not produce
+        // a result if the other parent is absent, which is correct.
         var mother = parentRole === 'mother' ? parent : null;
         var father = parentRole === 'father' ? parent : null;
 
-        // If we only have one parent, both slots receive that parent so
-        // single-parent rules can still resolve.
-        if (!mother) mother = father;
-        if (!father) father = mother;
-
-        var generated;
-        try {
-            generated = generateSurnameFromRules(mother, father, 'unknown', rules);
-        } catch (e) {
-            // Rule validation failure on a persisted rule is not
-            // recoverable here; treat as no rule.
-            generated = null;
-        }
-
+        // A persisted rule that fails validation is a data-integrity
+        // problem, not a "no rule" state. Let it throw.
+        var generated = generateSurnameFromRules(mother, father, 'unknown', rules);
         if (!generated) return null;
 
         return {
@@ -626,11 +703,70 @@
     }
 
     // =========================================================================
-    // 6. RULE PRESETS
+    // 7. MARRIAGE SURNAME POLICY
     // =========================================================================
     //
-    // Presets are deeply frozen. getRulePreset returns a clone so callers
-    // can safely mutate the returned object.
+    // The canonical owner of marriage surname calculation. Commands
+    // orchestrate the application; the calculation is policy and lives
+    // here. Returns null for an unknown rule; it does not silently
+    // default.
+
+    /**
+     * @param {Object} person
+     * @param {Object} spouse
+     * @param {string} rule - one of MARRIAGE_RULES
+     * @returns {{ newSurname: string, spouseNewSurname: string }|null}
+     */
+    function calculateMarriageSurnames(person, spouse, rule) {
+        if (!person || !spouse) return null;
+        if (MARRIAGE_RULES.indexOf(rule) === -1) return null;
+
+        var personSurname = typeof person.surname === 'string' ? person.surname : '';
+        var spouseSurname = typeof spouse.surname === 'string' ? spouse.surname : '';
+
+        var result = {
+            newSurname: personSurname,
+            spouseNewSurname: spouseSurname
+        };
+
+        switch (rule) {
+            case 'wife_takes_husband':
+                if (person.gender === 'female' && spouse.gender === 'male') {
+                    result.newSurname = spouseSurname;
+                    result.spouseNewSurname = spouseSurname;
+                } else if (person.gender === 'male' && spouse.gender === 'female') {
+                    result.newSurname = personSurname;
+                    result.spouseNewSurname = personSurname;
+                }
+                return result;
+
+            case 'husband_takes_wife':
+                if (person.gender === 'male' && spouse.gender === 'female') {
+                    result.newSurname = spouseSurname;
+                    result.spouseNewSurname = spouseSurname;
+                } else if (person.gender === 'female' && spouse.gender === 'male') {
+                    result.newSurname = personSurname;
+                    result.spouseNewSurname = personSurname;
+                }
+                return result;
+
+            case 'hyphenate':
+                var combined = personSurname + '-' + spouseSurname;
+                result.newSurname = combined;
+                result.spouseNewSurname = combined;
+                return result;
+
+            case 'keep':
+                return result;
+
+            default:
+                return null;
+        }
+    }
+
+    // =========================================================================
+    // 8. RULE PRESETS
+    // =========================================================================
 
     var RULE_PRESETS = _deepFreeze({
         // Patrilineal: father's surname passed to children.
@@ -701,18 +837,24 @@
             type: RULE_TYPES.CHAIN,
             chain: {
                 order: ['father', 'paternal_grandfather'],
-                depth: 2,
                 source: 'firstname',
                 connector: 'space'
             }
         },
 
         // Chain: father → paternal grandfather → paternal great-grandfather.
+        //
+        // NOTE: 'paternal_great_grandfather' is declared in
+        // VALID_ANCESTOR_TYPES but is not yet resolvable in
+        // name-queries.js. Until the follow-up patch lands, this preset
+        // degrades to the first two generations, because
+        // getAncestorNames skips slots it cannot resolve. Once the query
+        // layer supports the slot, the third generation is included
+        // without further changes to this preset.
         chain_three_generation: {
             type: RULE_TYPES.CHAIN,
             chain: {
-                order: ['father', 'paternal_grandfather'],
-                depth: 3,
+                order: ['father', 'paternal_grandfather', 'paternal_great_grandfather'],
                 source: 'firstname',
                 connector: 'space'
             }
@@ -731,24 +873,20 @@
     }
 
     /**
-     * Returns the names of all available presets.
+     * Returns the names of all available presets, sorted.
      */
     function getRulePresetNames() {
-        return Object.keys(RULE_PRESETS);
+        return Object.keys(RULE_PRESETS).sort();
     }
 
     // =========================================================================
-    // 7. RULE DESCRIPTION
+    // 9. RULE DESCRIPTION
     // =========================================================================
 
     /**
      * Returns a human-readable description of a rule.
      *
-     * Throws when the rule is invalid. Does not silently repair malformed
-     * rules.
-     *
-     * @param {Object} rules
-     * @returns {string}
+     * Throws when the rule is invalid. Does not silently repair.
      */
     function describeRule(rules) {
         var validation = validateRules(rules);
@@ -759,16 +897,12 @@
         switch (rules.type) {
             case RULE_TYPES.RANDOM:
                 return 'Random surname from the cultural pool';
-
             case RULE_TYPES.FAMILY:
                 return _describeFamilyRule(rules.family);
-
             case RULE_TYPES.PATRONYMIC:
                 return _describePatronymicRule(rules.patronymic);
-
             case RULE_TYPES.CHAIN:
                 return _describeChainRule(rules.chain);
-
             default:
                 throw new Error('describeRule: unhandled rule type');
         }
@@ -792,8 +926,6 @@
 
     function _describePatronymicRule(patronymic) {
         var source = patronymic.source;
-        // The rule's semantic identity (patronymic vs matronymic) is
-        // determined by its source, not by which prefix happens to be set.
         var type = source === 'mother' ? 'matronymic' : 'patronymic';
         var parts = [type + ' from ' + source];
         if (_isNonEmptyString(patronymic.maleSuffix)) {
@@ -812,19 +944,21 @@
     }
 
     function _describeChainRule(chain) {
-        var depth = chain.depth;
         var source = _isMissing(chain.source) ? 'firstname' : chain.source;
-        var order = chain.order.join(' > ');
-        return 'Chain of ' + depth + ' generation(s) of ' + source + ' (' + order + ')';
+        var slotList = chain.order.join(' > ');
+        return 'Chain of ' + chain.order.length + ' ancestor slot(s) of ' +
+            source + ' (' + slotList + ')';
     }
 
     // =========================================================================
-    // 8. EXPORTS
+    // 10. EXPORTS
     // =========================================================================
 
     window.NameRules = {
         // Constants
         RULE_TYPES: RULE_TYPES,
+        MARRIAGE_RULES: MARRIAGE_RULES,
+        VALID_ANCESTOR_TYPES: VALID_ANCESTOR_TYPES,
 
         // Validation
         validateRules: validateRules,
@@ -832,6 +966,10 @@
         // Application
         generateSurnameFromRules: generateSurnameFromRules,
         determineNewbornSurname: determineNewbornSurname,
+        calculateMarriageSurnames: calculateMarriageSurnames,
+
+        // Base first name (canonical owner)
+        getBaseFirstName: getBaseFirstName,
 
         // Presets
         getRulePreset: getRulePreset,
