@@ -3,7 +3,8 @@
  * STILL WATERS - CHARACTER STATE (js/character/character-state.js)
  * =============================================================================
  *
- * Runtime projection of the canonical character collection.
+ * Runtime projection of the canonical character collection, plus the
+ * low-level write primitives that CharacterCommands builds on.
  *
  * SCOPE:
  *   - In-memory reference to the canonical character collection
@@ -11,12 +12,25 @@
  *     status, gender, profession, rank, birth decade, religion, culture
  *   - Subscription mechanism for change notifications
  *   - Reactive rebuild in response to canonical mutation events
+ *   - Low-level write primitives: updateCharacter, updateCharacters
+ *
+ * WRITE PRIMITIVES vs. COMMANDS:
+ *   updateCharacter / updateCharacters are persistence primitives. They
+ *   merge a partial update into the canonical record, save masterData,
+ *   and dispatch characterChanged so caches rebuild.
+ *
+ *   They do NOT validate domain rules. Skill-level bounds, salary policy,
+ *   literacy invariants, gender restrictions, and profession field shape
+ *   are validated by CharacterCommands (and, for role-specific rules,
+ *   RoleCommands) before calling here.
+ *
+ *   Callers other than CharacterCommands should not call these directly.
+ *   They are exposed because CharacterCommands is loaded separately and
+ *   cannot reach private functions.
  *
  * OUT OF SCOPE:
- *   - Mutating canonical characters → CharacterCommands
- *   - Mutating the canonical collection → CharacterCommands
+ *   - Domain validation of writes → CharacterCommands
  *   - Mutating family graph → FamilyCommands
- *   - Persisting data → storage.js
  *   - Querying derived facts → CharacterQueries
  *   - Aggregating families → FamilyStatistics
  *   - Lifecycle semantics → CharacterLifecycle
@@ -25,7 +39,7 @@
  *   - Canonical data lives in masterData.data.characters, accessed
  *     through accessors.js. This module does NOT own that data.
  *   - This module maintains DERIVED caches. It never writes back to the
- *     canonical collection.
+ *     canonical collection except through updateCharacter(s).
  *   - Caches are rebuilt by subscribing to characterChanged and
  *     masterDataUpdated events. This module does not poll.
  *   - Collection accessors return copies (slices). Individual character
@@ -45,17 +59,23 @@
  *   emits that event on every mutation, so the sync window is zero in
  *   practice.
  *
- *   If byId ever disagrees with getCharacterById(id), the accessor is
- *   authoritative. Callers who need a live-canonical object should use
- *   getCharacterById directly.
+ *   getCharacter(id) reads the local byId cache. Callers who need a live
+ *   canonical object guaranteed to reflect the latest write should call
+ *   getCharacterById(id) directly from accessors.js.
  *
  * RECURSION POLICY:
- *   This module contains no _processing flag. Queries are reentrant. If
- *   a subscriber calls back into CharacterState during notification,
- *   they see the new state (caches already rebuilt) — that is intentional.
+ *   This module contains no _processing flag for reads. Queries are
+ *   reentrant. If a subscriber calls back into CharacterState during
+ *   notification, they see the new state (caches already rebuilt) — that
+ *   is intentional.
+ *
+ *   The write primitives are synchronous. updateCharacters applies all
+ *   changes before persisting once and dispatching one event. There is
+ *   no reentrancy hazard because no public write calls another public
+ *   write.
  *
  * DEPENDENCIES (REQUIRED):
- *   - storage.js:   masterData
+ *   - storage.js:   masterData, saveMasterData
  *   - accessors.js: getCharacters, getCharacterById
  *
  * DEPENDENCIES (OPTIONAL):
@@ -75,7 +95,12 @@
     // =========================================================================
 
     function _requireDependencies() {
-        var required = ['getCharacters', 'getCharacterById', 'masterData'];
+        var required = [
+            'getCharacters',
+            'getCharacterById',
+            'saveMasterData',
+            'masterData'
+        ];
         var missing = [];
         for (var i = 0; i < required.length; i++) {
             if (typeof window[required[i]] === 'undefined') {
@@ -374,7 +399,12 @@
 
     /**
      * Returns the character with the given ID, or null.
-     * The returned object is a live canonical reference; do not mutate it.
+     *
+     * This reads the local byId cache. After any successful write via
+     * updateCharacter(s), the cache is rebuilt synchronously, so this
+     * reflects the latest write. If a mutation happened through some
+     * other path without dispatching characterChanged, use
+     * getCharacterById(id) from accessors.js instead.
      */
     function getCharacter(id) {
         if (!_hasId(id)) return null;
@@ -524,17 +554,177 @@
     }
 
     // =========================================================================
-    // 9. MANUAL REFRESH
+    // 9. PUBLIC API — WRITE PRIMITIVES
+    // =========================================================================
+    //
+    // These are the ONLY functions in this module that mutate canonical
+    // character data. They are thin: merge, save, rebuild, notify.
+    //
+    // No domain validation. No invariant enforcement. No role-aware rules.
+    // CharacterCommands validates before calling; RoleCommands delegates
+    // to CharacterCommands for profession changes.
+    //
+    // Exposed publicly because CharacterCommands is a separate script and
+    // cannot reach private functions across an IIFE boundary.
+
+    /**
+     * Merges `updates` into the canonical character record with the given
+     * id, saves masterData, rebuilds caches, and dispatches
+     * characterChanged.
+     *
+     * Idempotent if `updates` matches current values.
+     *
+     * @param {string} characterId
+     * @param {Object} updates - partial record; shallow-merged.
+     * @returns {{ success: boolean, reason?: string }}
+     */
+    function updateCharacter(characterId, updates) {
+        if (!_hasId(characterId)) {
+            return { success: false, reason: 'Character id is required.' };
+        }
+        if (!updates || typeof updates !== 'object') {
+            return { success: false, reason: 'Updates object is required.' };
+        }
+        if (Object.prototype.hasOwnProperty.call(updates, 'id')) {
+            // Allow only if identical to the current id; refuse changes.
+            if (updates.id !== characterId) {
+                return { success: false, reason: 'Character id cannot be changed.' };
+            }
+        }
+
+        var collection = window.masterData
+            && window.masterData.data
+            && window.masterData.data.characters;
+
+        if (!Array.isArray(collection)) {
+            return {
+                success: false,
+                reason: 'Canonical character collection is not an array.'
+            };
+        }
+
+        var target = null;
+        for (var i = 0; i < collection.length; i++) {
+            if (collection[i] && collection[i].id === characterId) {
+                target = collection[i];
+                break;
+            }
+        }
+
+        if (!target) {
+            return { success: false, reason: 'Character not found in canonical collection.' };
+        }
+
+        // Shallow merge. Callers own deep-copy semantics for nested fields
+        // they pass (e.g. professions array).
+        for (var key in updates) {
+            if (!Object.prototype.hasOwnProperty.call(updates, key)) continue;
+            if (key === 'id') continue;
+            target[key] = updates[key];
+        }
+
+        window.saveMasterData();
+
+        _rebuildCaches();
+        _notifySubscribers({
+            type: 'charactersChanged',
+            action: 'updated',
+            characterIds: [characterId]
+        });
+
+        return { success: true };
+    }
+
+    /**
+     * Applies a batch of updates in one save and one notification.
+     *
+     * @param {Array<{id: string, updates: Object}>} changes
+     * @returns {{ success: boolean, reason?: string }}
+     */
+    function updateCharacters(changes) {
+        if (!Array.isArray(changes)) {
+            return { success: false, reason: 'changes must be an array.' };
+        }
+        if (changes.length === 0) {
+            return { success: true };
+        }
+
+        var collection = window.masterData
+            && window.masterData.data
+            && window.masterData.data.characters;
+
+        if (!Array.isArray(collection)) {
+            return {
+                success: false,
+                reason: 'Canonical character collection is not an array.'
+            };
+        }
+
+        // Validate all entries before applying any. Partial application on
+        // mid-batch failure is worse than refusing the whole batch.
+        var index = {};
+        for (var c = 0; c < collection.length; c++) {
+            var ch = collection[c];
+            if (ch && _hasId(ch.id)) index[ch.id] = ch;
+        }
+
+        for (var i = 0; i < changes.length; i++) {
+            var change = changes[i];
+            if (!change || typeof change !== 'object') {
+                return { success: false, reason: 'Change at index ' + i + ' is not an object.' };
+            }
+            if (!_hasId(change.id)) {
+                return { success: false, reason: 'Change at index ' + i + ' has no id.' };
+            }
+            if (!change.updates || typeof change.updates !== 'object') {
+                return { success: false, reason: 'Change at index ' + i + ' has no updates object.' };
+            }
+            if (!index[change.id]) {
+                return { success: false, reason: 'Character "' + change.id + '" not found.' };
+            }
+            if (Object.prototype.hasOwnProperty.call(change.updates, 'id')
+                && change.updates.id !== change.id) {
+                return { success: false, reason: 'Change at index ' + i + ' attempts to change id.' };
+            }
+        }
+
+        // Apply.
+        var affectedIds = [];
+        for (var j = 0; j < changes.length; j++) {
+            var target = index[changes[j].id];
+            var patch = changes[j].updates;
+            for (var key in patch) {
+                if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
+                if (key === 'id') continue;
+                target[key] = patch[key];
+            }
+            affectedIds.push(changes[j].id);
+        }
+
+        window.saveMasterData();
+
+        _rebuildCaches();
+        _notifySubscribers({
+            type: 'charactersChanged',
+            action: 'bulk-updated',
+            characterIds: affectedIds
+        });
+
+        return { success: true };
+    }
+
+    // =========================================================================
+    // 10. MANUAL REFRESH
     // =========================================================================
 
     /**
      * Forces a synchronous cache rebuild and notifies subscribers.
      *
      * Normally unnecessary — characterChanged and masterDataUpdated events
-     * drive rebuilds automatically. Use this when the caller has mutated
-     * canonical data without emitting an event (a bug, but sometimes
-     * necessary during migration), or after importing a dataset without
-     * triggering masterDataUpdated.
+     * drive rebuilds automatically, and updateCharacter(s) dispatch them.
+     * Use this when the caller has mutated canonical data without emitting
+     * an event (a bug, but sometimes necessary during migration), or after
+     * importing a dataset without triggering masterDataUpdated.
      */
     function refresh() {
         _rebuildCaches();
@@ -542,13 +732,13 @@
     }
 
     // =========================================================================
-    // 10. INITIAL REBUILD
+    // 11. INITIAL REBUILD
     // =========================================================================
 
     _rebuildCaches();
 
     // =========================================================================
-    // 11. EXPORTS
+    // 12. EXPORTS
     // =========================================================================
 
     window.CharacterState = {
@@ -574,6 +764,10 @@
         getCharactersByReligion: getCharactersByReligion,
         getCharactersByCulture: getCharactersByCulture,
         searchByName: searchByName,
+
+        // Write primitives (CharacterCommands is the intended caller)
+        updateCharacter: updateCharacter,
+        updateCharacters: updateCharacters,
 
         // Refresh
         refresh: refresh
