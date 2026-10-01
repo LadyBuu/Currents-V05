@@ -12,62 +12,57 @@
  *   - Revert the most recent surname change
  *   - Clear surname history
  *   - Add / remove names from a country's name list
- *   - Validate before mutation
- *   - Log domain events
- *   - Notify subscribers via domain events
  *
  * OUT OF SCOPE:
- *   - Reads / projections → name-queries.js
- *   - Rule application (family / patronymic / chain) → name-rules.js
- *   - Marriage surname calculation policy → name-rules.js (planned; still
- *     lives here as `calculateMarriageSurnames` during migration)
+ *   - Reads → name-queries.js
+ *   - Rule application → name-rules.js
+ *   - Marriage surname policy (the calculation) → name-rules.js
  *   - Canonical data ownership → masterData (via accessors)
  *   - Runtime caches → name-state.js
  *   - Persistence mechanics → storage.js (via saveMasterData)
- *   - Presentation (toasts, icons, modals) → UI modules
+ *   - Presentation → UI modules
  *
  * PUBLIC CONTRACT:
  *   Every command returns:
  *     { success: true, ...payload }
  *     { success: false, reason: 'human-readable message' }
- *   Never null. Never undefined. Never a toast.
+ *   Never null. Never a toast.
  *
- *   Every command takes an ID (string), not an object. The command
- *   resolves the record via getCharacterById / getNameLists itself. This
- *   matches the way modals-name.js and the docs describe the API.
+ *   Every command takes an ID (string), not an object.
  *
  * COMPOSITION:
- *   There is no module-wide `_processingCommand` guard. Commands compose
- *   by calling private primitives (`_recordSurnameChange`), not by
- *   re-entering public commands. `applyMarriageSurnames` uses the
- *   private primitive for both parties and persists/notifies once.
+ *   There is no module-wide guard. Commands compose by calling the
+ *   private primitive `_recordSurnameChange`, not by re-entering public
+ *   commands.
  *
  * ATOMICITY:
- *   `applyMarriageSurnames` is a single logical mutation. It calculates
- *   both resulting surnames, validates both, applies both in memory,
- *   persists once, and emits one `characterChanged` event covering both
- *   character IDs. If either side fails validation, neither side is
- *   mutated.
+ *   applyMarriageSurnames is a single logical mutation. Both resulting
+ *   surnames are calculated, validated, applied in memory, persisted
+ *   once, and notified with one characterChanged event.
+ *
+ * METADATA RESTORATION:
+ *   Each change entry records the previous surnameSource and
+ *   surnameRules so that revert can restore them faithfully.
  *
  * STATE OWNERSHIP (MIGRATION NOTE):
- *   This module currently writes character fields directly
- *   (`character.surname`, `character.surnameHistory`) via the private
- *   helper `_applySurnameToCharacter`. There is no canonical "character
- *   state" mutation owner in the loaded dependency set yet. When one
- *   exists, only `_applySurnameToCharacter` needs to change.
+ *   This module writes character fields directly via the private helper
+ *   `_applySurnameToCharacter`. There is no canonical character-state
+ *   mutation owner in the loaded dependency set yet. When one exists,
+ *   only `_applySurnameToCharacter` changes.
  *
  * YEAR HANDLING:
- *   Year 0 is a valid year and is accepted. Missing years are rejected.
- *   There is no `1250` fallback anywhere in this file.
+ *   Year 0 is valid and accepted. Missing years are rejected. No 1250
+ *   fallback anywhere.
  *
  * DEPENDENCIES (REQUIRED):
  *   - accessors.js:    getCharacterById
- *   - name-state.js:   NameState (for cache invalidation)
+ *   - name-state.js:   NameState
+ *   - name-rules.js:   NameRules
  *   - storage.js:      saveMasterData
  *   - time.js:         getCurrentYearSafe
  *
  * DEPENDENCIES (OPTIONAL):
- *   - eventLogger.js:  logEvent (domain history only; if absent, no log)
+ *   - eventLogger.js:  logEvent
  *
  * ICON POLICY: No emojis. No icons. Commands return structured data.
  *
@@ -95,6 +90,9 @@
         }
         if (typeof window.NameState === 'undefined') {
             missing.push('NameState');
+        }
+        if (typeof window.NameRules === 'undefined') {
+            missing.push('NameRules');
         }
         if (missing.length > 0) {
             throw new Error(
@@ -139,11 +137,6 @@
         }
     }
 
-    /**
-     * Emits a domain event. `characterChanged` is consumed by NameState
-     * (cache invalidation) and by the character domain (accessor cache).
-     * One event per logical operation, not per record.
-     */
     function _emitCharacterChanged(action, characterIds) {
         if (typeof window.CustomEvent !== 'function') return;
         try {
@@ -154,17 +147,12 @@
                 }
             }));
         } catch (e) {
-            // Event dispatch is not the command's critical path. A failure
-            // here means the UI will not refresh, but the mutation is done.
             if (typeof console !== 'undefined' && console.warn) {
                 console.warn('name-commands.js: characterChanged dispatch failed:', e);
             }
         }
     }
 
-    /**
-     * Emits the name-list-changed event. Consumed by NameState.
-     */
     function _emitNameListChanged(countryId, name) {
         if (typeof window.CustomEvent !== 'function') return;
         try {
@@ -180,8 +168,6 @@
 
     /**
      * The one and only place this module writes to a character record.
-     * When a canonical character-mutation owner exists, this function
-     * becomes a delegation and nothing else in the file changes.
      */
     function _applySurnameToCharacter(character, surname, options) {
         character.surname = surname;
@@ -199,7 +185,7 @@
 
     /**
      * Ensures the character has a surnameHistory object of the canonical
-     * shape. Idempotent. Does not overwrite an existing history.
+     * shape. Idempotent.
      */
     function _ensureSurnameHistory(character) {
         if (_isPlainObject(character.surnameHistory)) {
@@ -230,11 +216,8 @@
     // =========================================================================
 
     /**
-     * Validates a surname-change request. Returns:
-     *   { valid: true }
-     *   { valid: false, reason: '...' }
-     *
-     * Year 0 is accepted. Missing years are rejected.
+     * Validates a surname-change request. Year 0 is accepted. Missing
+     * years are rejected.
      */
     function _validateSurnameChange(character, newSurname, year) {
         if (!character) {
@@ -261,12 +244,6 @@
     // =========================================================================
     // 3. PRIVATE MUTATION PRIMITIVE
     // =========================================================================
-    //
-    // This is the shared implementation used by `recordSurnameChange` and
-    // by `applyMarriageSurnames`. It does NOT persist, invalidate caches,
-    // emit events, or toast. Those are the public command's job, or the
-    // compound command's job. Keeping this primitive side-effect-free
-    // except for the in-memory mutation is what makes composition safe.
 
     function _recordSurnameChange(character, newSurname, year, reason, options) {
         options = options || {};
@@ -288,6 +265,9 @@
             year: year,
             reason: typeof reason === 'string' && reason.length > 0 ? reason : 'custom',
             previousSurname: previousSurname,
+            previousSurnameSource: typeof character.surnameSource === 'string'
+                ? character.surnameSource : null,
+            previousSurnameRules: character.surnameRules || null,
             spouseId: options.spouseId || null,
             notes: options.notes || '',
             timestamp: Date.now()
@@ -305,17 +285,6 @@
     // 4. COMMAND: recordSurnameChange
     // =========================================================================
 
-    /**
-     * Records a surname change on a single character.
-     *
-     * @param {string} characterId
-     * @param {string} newSurname
-     * @param {number} year
-     * @param {string} [reason] - 'custom' | 'marriage' | 'birth' | 'inheritance'
-     * @param {Object} [options] - { previousSurname, spouseId, notes,
-     *                              surnameSource, surnameRules }
-     * @returns {{ success: true, change: Object } | { success: false, reason: string }}
-     */
     function recordSurnameChange(characterId, newSurname, year, reason, options) {
         var character = _resolveCharacter(characterId);
         if (!character) {
@@ -341,10 +310,8 @@
     // 5. COMMAND: recordBirthSurname
     // =========================================================================
     //
-    // Scope: writes the birth surname into the character's surnameHistory.
-    // It does NOT set `character.surname` as a side effect. If a caller
-    // wants to establish the character's current surname at birth, that
-    // is a separate `recordSurnameChange` call with reason 'birth'.
+    // Writes the birth surname into the character's surnameHistory. Does
+    // NOT set character.surname as a side effect.
 
     function recordBirthSurname(characterId, birthSurname) {
         if (typeof birthSurname !== 'string') {
@@ -369,10 +336,6 @@
     // =========================================================================
     // 6. COMMAND: applyMarriageSurnames
     // =========================================================================
-    //
-    // Atomic compound command. Both surname changes are applied to the
-    // in-memory records before any persistence or notification. If either
-    // validation fails, neither record is mutated.
 
     function applyMarriageSurnames(personId, spouseId, rule, year, notes) {
         if (!_hasId(personId) || !_hasId(spouseId)) {
@@ -400,7 +363,7 @@
 
         var currentYear = _isMissing(year) ? _getCurrentYear() : year;
 
-        var calc = _calculateMarriageSurnames(person, spouse, rule);
+        var calc = window.NameRules.calculateMarriageSurnames(person, spouse, rule);
         if (!calc) {
             return { success: false, reason: 'Unknown marriage surname rule "' + rule + '"' };
         }
@@ -418,7 +381,6 @@
             };
         }
 
-        // Validate both before mutating either.
         if (personNeedsChange) {
             var pv = _validateSurnameChange(person, calc.newSurname, currentYear);
             if (!pv.valid) {
@@ -432,10 +394,6 @@
             }
         }
 
-        // Apply both in memory. If a mutation fails here, we roll back.
-        // Both mutations are pure field writes with no I/O, so this is
-        // effectively fail-safe, but we still defend against the case
-        // where the primitive returns an error.
         var personResult = null;
         var spouseResult = null;
 
@@ -457,23 +415,19 @@
                 previousSurname: spouse.surname
             });
             if (!spouseResult.success) {
-                // Roll back the person's mutation. We have the previous
-                // history state captured implicitly: the change we just
-                // pushed is the last entry, and the person's surname can
-                // be restored from its previousSurname. This is a
-                // best-effort rollback for an unreachable path.
                 if (personResult) {
                     var personHistory = person.surnameHistory;
                     if (personHistory && personHistory.entries.length > 0) {
-                        personHistory.entries.pop();
-                        person.surname = personResult.change.previousSurname || '';
+                        var rolledBack = personHistory.entries.pop();
+                        person.surname = rolledBack.previousSurname || '';
+                        person.surnameSource = rolledBack.previousSurnameSource || 'custom';
+                        person.surnameRules = rolledBack.previousSurnameRules || null;
                     }
                 }
                 return { success: false, reason: 'Spouse: ' + spouseResult.reason };
             }
         }
 
-        // Persist and notify once for the whole operation.
         window.saveMasterData();
         window.NameState.invalidateSurnameHistory(personId);
         window.NameState.invalidateSurnameHistory(spouseId);
@@ -499,67 +453,16 @@
     }
 
     // =========================================================================
-    // 7. MARRIAGE SURNAME CALCULATION
+    // 7. MARRIAGE SURNAME CALCULATION (delegation)
     // =========================================================================
-    //
-    // MIGRATION NOTE: this is domain policy and will move to NameRules in
-    // a later pass. It is exported under a public name (no underscore)
-    // because name-system.js already aliases it and because callers
-    // (tests, debugging) legitimately want it.
-    //
-    // Returns null for an unknown rule. It does not silently default.
 
+    /**
+     * Delegates to NameRules, which owns marriage surname policy.
+     * Exposed here for symmetry with the other commands and for callers
+     * that reach for NameCommands for all name operations.
+     */
     function calculateMarriageSurnames(person, spouse, rule) {
-        if (!person || !spouse) return null;
-
-        var personSurname = typeof person.surname === 'string' ? person.surname : '';
-        var spouseSurname = typeof spouse.surname === 'string' ? spouse.surname : '';
-        var result = {
-            newSurname: personSurname,
-            spouseNewSurname: spouseSurname
-        };
-
-        switch (rule) {
-            case 'wife_takes_husband':
-                if (person.gender === 'female' && spouse.gender === 'male') {
-                    result.newSurname = spouseSurname;
-                    result.spouseNewSurname = spouseSurname;
-                } else if (person.gender === 'male' && spouse.gender === 'female') {
-                    result.newSurname = personSurname;
-                    result.spouseNewSurname = personSurname;
-                } else {
-                    result.newSurname = personSurname;
-                    result.spouseNewSurname = spouseSurname;
-                }
-                return result;
-
-            case 'husband_takes_wife':
-                if (person.gender === 'male' && spouse.gender === 'female') {
-                    result.newSurname = spouseSurname;
-                    result.spouseNewSurname = spouseSurname;
-                } else if (person.gender === 'female' && spouse.gender === 'male') {
-                    result.newSurname = personSurname;
-                    result.spouseNewSurname = personSurname;
-                } else {
-                    result.newSurname = personSurname;
-                    result.spouseNewSurname = spouseSurname;
-                }
-                return result;
-
-            case 'hyphenate':
-                var combined = personSurname + '-' + spouseSurname;
-                result.newSurname = combined;
-                result.spouseNewSurname = combined;
-                return result;
-
-            case 'keep':
-                result.newSurname = personSurname;
-                result.spouseNewSurname = spouseSurname;
-                return result;
-
-            default:
-                return null;
-        }
+        return window.NameRules.calculateMarriageSurnames(person, spouse, rule);
     }
 
     // =========================================================================
@@ -588,12 +491,8 @@
             : (history.birthSurname || '');
 
         character.surname = restored;
-        // Restore metadata to the pre-change state. We do not have a
-        // recorded `previousSurnameSource` / `previousSurnameRules` on
-        // the change entry, so we reset them to the closest safe default.
-        // See migration note below.
-        character.surnameSource = 'custom';
-        character.surnameRules = null;
+        character.surnameSource = lastChange.previousSurnameSource || 'custom';
+        character.surnameRules = lastChange.previousSurnameRules || null;
 
         window.saveMasterData();
         window.NameState.invalidateSurnameHistory(characterId);
@@ -611,23 +510,12 @@
         };
     }
 
-    // MIGRATION NOTE on revert metadata:
-    //   The `surnameSource` and `surnameRules` fields are not currently
-    //   recorded on the change entry, so a revert cannot faithfully
-    //   restore them. Two options for a follow-up:
-    //     (a) Add `previousSurnameSource` / `previousSurnameRules` to each
-    //         change entry at record time.
-    //     (b) Stop persisting those two fields independently; derive them
-    //         from the current history entry when needed.
-    //   For now, revert resets them to the safe default ('custom' / null).
-
     // =========================================================================
     // 9. COMMAND: clearSurnameHistory
     // =========================================================================
     //
-    // Removes all change entries. Preserves `birthSurname`. Does not
-    // change the character's current surname. The character keeps whatever
-    // surname they currently have; the history of how they got it is gone.
+    // Removes all change entries. Preserves birthSurname. Does not change
+    // the character's current surname.
 
     function clearSurnameHistory(characterId) {
         var character = _resolveCharacter(characterId);
@@ -654,12 +542,6 @@
     // 10. COMMAND: addNameToList
     // =========================================================================
 
-    /**
-     * @param {string} countryId
-     * @param {string} name
-     * @param {string} gender - 'male' | 'female' | 'both' (both = unisex)
-     * @param {string} [category] - 'given' | 'surname'
-     */
     function addNameToList(countryId, name, gender, category) {
         if (!_hasId(countryId)) {
             return { success: false, reason: 'Country is required' };
@@ -674,14 +556,13 @@
             return { success: false, reason: "Category must be 'given' or 'surname'" };
         }
 
-        var nameList = window.NameState.getNameList(countryId);
+        var nameList = window.NameState.getMutableNameList(countryId);
         if (!nameList) {
             return { success: false, reason: 'Name list not found for country' };
         }
 
         var trimmed = name.trim();
         var added = false;
-
         var isSurname = category === 'surname';
 
         if (isSurname) {
@@ -730,12 +611,6 @@
     // 11. COMMAND: removeNameFromList
     // =========================================================================
 
-    /**
-     * @param {string} countryId
-     * @param {string} name
-     * @param {string} gender - 'male' | 'female' | 'both' | 'any'
-     * @param {string} [category] - 'given' | 'surname'
-     */
     function removeNameFromList(countryId, name, gender, category) {
         if (!_hasId(countryId)) {
             return { success: false, reason: 'Country is required' };
@@ -750,7 +625,7 @@
             return { success: false, reason: "Category must be 'given' or 'surname'" };
         }
 
-        var nameList = window.NameState.getNameList(countryId);
+        var nameList = window.NameState.getMutableNameList(countryId);
         if (!nameList) {
             return { success: false, reason: 'Name list not found for country' };
         }
@@ -793,21 +668,17 @@
     // =========================================================================
 
     window.NameCommands = {
-        // Character surname commands
         recordSurnameChange: recordSurnameChange,
         recordBirthSurname: recordBirthSurname,
         applyMarriageSurnames: applyMarriageSurnames,
         revertLastSurnameChange: revertLastSurnameChange,
         clearSurnameHistory: clearSurnameHistory,
 
-        // Name list commands
         addNameToList: addNameToList,
         removeNameFromList: removeNameFromList,
 
-        // Marriage policy (public for tests and legacy wrapper)
         calculateMarriageSurnames: calculateMarriageSurnames,
 
-        // Validation (public for tests)
         _validateSurnameChange: _validateSurnameChange
     };
 
