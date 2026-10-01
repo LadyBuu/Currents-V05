@@ -19,25 +19,37 @@
  *   - Confirmation dialogs → modals-core.js (confirmDialog)
  *
  * SEMANTIC RULES:
- *   - This module is pure UI. It reads via NameQueries and world.js,
- *     mutates via NameCommands, and renders. It does not touch storage,
- *     masterData, NameState, or accessors directly.
+ *   - This module is pure UI. It reads via NameQueries, mutates via
+ *     NameCommands, and renders. It does not touch storage, masterData,
+ *     or NameState directly.
  *   - Required dependencies throw at load. No silent fallbacks.
  *   - Missing optional data (a character with no surname history) is a
- *     legitimate UI state and renders as "no history" — not as a hidden
- *     empty pane.
+ *     legitimate UI state and renders as "no history".
  *   - Presentation is owned by CSS. This module emits classes only.
  *     No inline style attributes.
  *   - Events are delegated on the modal root, scoped via data-action.
- *     No global element IDs, no per-render listener stacks.
- *   - The generated name is held in a local variable, not read back from
- *     DOM text. The DOM is a rendering of state, not the state itself.
- *   - Year 0 is preserved in any year rendering.
+ *     No per-render listener stacks.
+ *   - The generated name is held in local state, not read back from DOM
+ *     text. The DOM renders state; it is not the state.
+ *   - Year 0 is preserved in year rendering.
  *   - No browser confirm(). Confirmation goes through confirmDialog.
  *   - No Unicode arrows in buttons. Icons come from icons.js.
- *   - Any string from canonical data that ends up in innerHTML is escaped.
- *     Any generated string that ends up in textContent is not (textContent
- *     does not interpret HTML).
+ *   - Any string from canonical data that ends up in innerHTML is
+ *     escaped. Generated strings that end up in textContent are not
+ *     (textContent does not interpret HTML).
+ *
+ * KNOWN DEBT (MIGRATION NOTE):
+ *   This modal reads character display names via `getCharacterById`
+ *   directly, because NameQueries does not yet expose a character-name
+ *   projection. The correct fix is a follow-up patch to name-queries.js
+ *   adding `NameQueries.getCharacterDisplayName(characterId)`. Until
+ *   that lands, `getCharacterById` is declared as a REQUIRED dependency
+ *   of this module and used directly. There is no `? : null` fallback.
+ *
+ * ICON CONTRACT:
+ *   All icons used by this module (REFRESH, BOOK, UNDO, TRASH) are
+ *   required. An unknown icon name throws. A missing icon is a
+ *   programming error, not a UI state.
  *
  * REQUIRED CSS:
  *   See name-modals.css. The module emits:
@@ -69,6 +81,7 @@
  *     .name-modal__surname-summary-value--accent
  *     .name-modal__actions
  *     .name-modal__action-button
+ *     .name-modal__action-button--danger
  *     .name-modal__error
  *
  * DEPENDENCIES (REQUIRED):
@@ -78,6 +91,7 @@
  *   - name-queries.js:  NameQueries
  *   - name-commands.js: NameCommands
  *   - world.js:         getCountryPlaces
+ *   - accessors.js:     getCharacterById  (see KNOWN DEBT note)
  *
  * DEPENDENCIES (OPTIONAL):
  *   - None.
@@ -99,7 +113,8 @@
             'escapeHtml',
             'openModal',
             'confirmDialog',
-            'getCountryPlaces'
+            'getCountryPlaces',
+            'getCharacterById'
         ];
         var missing = [];
         for (var i = 0; i < requiredFns.length; i++) {
@@ -122,7 +137,20 @@
     _requireDependencies();
 
     // =========================================================================
-    // 1. HELPERS
+    // 1. MODULE STATE
+    // =========================================================================
+
+    // Per-modal-instance counter for unique DOM IDs. Labels use these to
+    // associate with their inputs without relying on global singletons.
+    var _instanceCounter = 0;
+
+    function _nextInstanceId() {
+        _instanceCounter += 1;
+        return 'name-modal-' + _instanceCounter;
+    }
+
+    // =========================================================================
+    // 2. HELPERS
     // =========================================================================
 
     function _esc(v) {
@@ -138,18 +166,20 @@
     }
 
     /**
-     * Returns an icon SVG by name, or '' if the name is unknown.
-     * The icon module is required, so a missing name is a programming
-     * error worth surfacing quietly in the DOM (no SVG rendered) rather
-     * than throwing during a render.
+     * Returns an icon SVG by name. Unknown names throw: a missing icon
+     * is a programming error, not a UI state. See ICON CONTRACT above.
      */
     function _icon(name) {
-        return window.Icons[name] || '';
+        var svg = window.Icons[name];
+        if (typeof svg !== 'string' || svg.length === 0) {
+            throw new Error('modals-name.js: unknown icon "' + name + '"');
+        }
+        return svg;
     }
 
     /**
      * Formats a year for display. Missing yields the missingText.
-     * Year 0 is rendered as '0'.
+     * Year 0 renders as '0'.
      */
     function _formatYear(year, missingText) {
         if (_isMissing(year)) return missingText || 'Unknown';
@@ -161,30 +191,50 @@
      * placeholder so the UI does not look broken.
      */
     function _displaySurname(surname) {
-        if (typeof surname !== 'string' || surname.length === 0) return '(no surname)';
+        if (typeof surname !== 'string' || surname.length === 0) {
+            return '(no surname)';
+        }
         return surname;
     }
 
     /**
      * Renders an error line inside the modal. Errors are shown inline,
      * not as toasts, because the modal is already the user's focus.
+     *
+     * Auto-clears after 5 seconds. Calling this again while an error is
+     * visible removes the previous one and starts a fresh timer.
      */
     function _renderError(root, message) {
         if (!root) return;
         var existing = root.querySelector('.name-modal__error');
-        if (existing) existing.parentNode.removeChild(existing);
+        if (existing && existing.parentNode) {
+            existing.parentNode.removeChild(existing);
+        }
         var errorEl = document.createElement('div');
         errorEl.className = 'name-modal__error';
         errorEl.textContent = message;
         root.appendChild(errorEl);
-        // Auto-clear on next successful action, but for now leave it.
         setTimeout(function() {
             if (errorEl.parentNode) errorEl.parentNode.removeChild(errorEl);
         }, 5000);
     }
 
+    /**
+     * Reads a character's display name. See KNOWN DEBT note in the
+     * module header: this is the one direct accessor read in this file,
+     * and it is declared as a required dependency.
+     */
+    function _getCharacterDisplayName(characterId) {
+        var character = window.getCharacterById(characterId);
+        if (!character) return null;
+        if (typeof character.name === 'string' && character.name.length > 0) {
+            return character.name;
+        }
+        return characterId;
+    }
+
     // =========================================================================
-    // 2. NAME GENERATOR MODAL
+    // 3. NAME GENERATOR MODAL
     // =========================================================================
 
     /**
@@ -196,10 +246,12 @@
      *   gender      - 'male' | 'female' | 'all' (default 'all')
      *   onSelect    - called with the chosen name string when the user
      *                 confirms. Not called if the user cancels or if no
-     *                 name has been generated yet.
+     *                 name has been generated. "Open then close without
+     *                 generating" is a legitimate outcome and is not
+     *                 signaled separately.
      *
      * @param {Object} [options]
-     * @returns {{ element: HTMLElement, close: Function }|null}
+     * @returns {Object} the modal handle from openModal
      */
     function openNameGeneratorModal(options) {
         if (_isMissing(options)) options = {};
@@ -216,24 +268,32 @@
             throw new Error('openNameGeneratorModal: onSelect must be a function');
         }
         if (initialGender !== 'male' && initialGender !== 'female' && initialGender !== 'all') {
-            throw new Error("openNameGeneratorModal: gender must be 'male', 'female', or 'all'");
+            throw new Error(
+                "openNameGeneratorModal: gender must be 'male', 'female', or 'all'"
+            );
         }
+
+        var instanceId = _nextInstanceId();
+        var countrySelectId = instanceId + '-country';
+        var genderSelectId = instanceId + '-gender';
 
         // Local state — the DOM renders this, not the other way around.
         var state = {
             generatedName: null
         };
 
-        // Country list. Uses world's canonical country query.
         var countries = window.getCountryPlaces();
-        if (!Array.isArray(countries)) countries = [];
+        if (!Array.isArray(countries)) {
+            throw new Error(
+                'openNameGeneratorModal: getCountryPlaces() did not return an array'
+            );
+        }
 
         var hasCountries = countries.length > 0;
 
         var html = '';
         html += '<div class="name-modal">';
 
-        // Intro
         html += '<p class="name-modal__intro">'
              + (hasCountries
                 ? 'Choose a country to draw names from its cultural pool.'
@@ -242,8 +302,8 @@
 
         // Country
         html += '<div class="name-modal__field">';
-        html += '<label class="name-modal__label" for="name-modal-country">Country</label>';
-        html += '<select class="name-modal__input" id="name-modal-country"'
+        html += '<label class="name-modal__label" for="' + _esc(countrySelectId) + '">Country</label>';
+        html += '<select class="name-modal__input" id="' + _esc(countrySelectId) + '"'
              + ' data-role="country"'
              + (hasCountries ? '' : ' disabled') + '>';
         html += '<option value="">— Select country —</option>';
@@ -260,8 +320,8 @@
 
         // Gender
         html += '<div class="name-modal__field">';
-        html += '<label class="name-modal__label" for="name-modal-gender">Gender</label>';
-        html += '<select class="name-modal__input" id="name-modal-gender" data-role="gender">';
+        html += '<label class="name-modal__label" for="' + _esc(genderSelectId) + '">Gender</label>';
+        html += '<select class="name-modal__input" id="' + _esc(genderSelectId) + '" data-role="gender">';
         html += '<option value="all"' + (initialGender === 'all' ? ' selected' : '') + '>Any</option>';
         html += '<option value="male"' + (initialGender === 'male' ? ' selected' : '') + '>Male</option>';
         html += '<option value="female"' + (initialGender === 'female' ? ' selected' : '') + '>Female</option>';
@@ -294,11 +354,9 @@
                 if (state.generatedName && onSelect) {
                     onSelect(state.generatedName);
                 }
-                // If no name has been generated, we simply do not call
-                // onSelect. The modal still closes — the caller can decide
-                // whether that matters. We do not block the close with an
-                // error, since "user opened and closed without choosing"
-                // is a legitimate outcome.
+                // If no name has been generated, we do not call onSelect.
+                // The modal still closes; "opened and closed without
+                // choosing" is a legitimate outcome.
             }
         });
 
@@ -309,6 +367,21 @@
         var countrySelect = root.querySelector('[data-role="country"]');
         var genderSelect = root.querySelector('[data-role="gender"]');
         var previewEl = root.querySelector('[data-role="preview"]');
+
+        function _clearPreview() {
+            state.generatedName = null;
+            if (previewEl) {
+                previewEl.textContent = 'No name generated yet';
+                previewEl.classList.remove('name-modal__preview--filled');
+                previewEl.classList.add('name-modal__preview--empty');
+            }
+        }
+
+        // Country or gender change invalidates any previously generated
+        // name. The displayed controls must describe the value that
+        // onConfirm will hand to the caller.
+        if (countrySelect) countrySelect.addEventListener('change', _clearPreview);
+        if (genderSelect) genderSelect.addEventListener('change', _clearPreview);
 
         root.addEventListener('click', function(e) {
             var target = e.target.closest('[data-action="generate"]');
@@ -350,7 +423,7 @@
     }
 
     // =========================================================================
-    // 3. SURNAME MANAGEMENT MODAL
+    // 4. SURNAME MANAGEMENT MODAL
     // =========================================================================
 
     /**
@@ -364,7 +437,8 @@
      * @param {string} characterId
      * @param {Function} [onChange] - called after a successful revert or
      *   clear, so the caller can re-render.
-     * @returns {{ element: HTMLElement, close: Function }|null}
+     * @returns {Object} the modal handle from openModal
+     * @throws {Error} when characterId is missing or invalid
      */
     function openSurnameManagementModal(characterId, onChange) {
         if (!_hasId(characterId)) {
@@ -374,17 +448,17 @@
             throw new Error('openSurnameManagementModal: onChange must be a function');
         }
 
-        var character = window.getCharacterById
-            ? window.getCharacterById(characterId)
-            : null;
-        if (!character) {
-            return { success: false, reason: 'Character not found' };
+        var displayName = _getCharacterDisplayName(characterId);
+        if (displayName === null) {
+            throw new Error(
+                'openSurnameManagementModal: character "' + characterId + '" not found'
+            );
         }
 
         var html = _buildSurnameManagementContent(characterId);
 
         var modal = window.openModal({
-            titleHtml: _esc('Surname: ' + (character.name || characterId)),
+            titleHtml: _esc('Surname: ' + displayName),
             contentHtml: html,
             confirmText: 'Close',
             cancelText: '',
@@ -400,28 +474,20 @@
     /**
      * Builds the modal's HTML from current canonical data. Called at open
      * time and again after a mutation to rebuild the content in place.
+     *
+     * Assumption: NameQueries.getSurnameChanges returns entries in
+     * chronological order (oldest first). The last entry is the current
+     * surname. This is a domain invariant enforced by NameCommands, which
+     * appends. If that ever changes, this rendering changes with it.
      */
     function _buildSurnameManagementContent(characterId) {
-        var character = window.getCharacterById
-            ? window.getCharacterById(characterId)
-            : null;
-        if (!character) {
-            return '<div class="name-modal"><p class="name-modal__error">'
-                 + 'Character not found.'
-                 + '</p></div>';
-        }
-
-        var history = window.NameQueries.getSurnameHistory(characterId);
         var changes = window.NameQueries.getSurnameChanges(characterId);
         var birthSurname = window.NameQueries.getBirthSurname(characterId);
         var currentSurname = window.NameQueries.getCurrentSurname(characterId);
 
-        // Birth surname query returns null for missing history. Distinguish
-        // that from "empty birth surname".
-        var hasHistory = _isMissing(history) === false;
-        var birthSurnameForDisplay = _isMissing(birthSurname)
-            ? (typeof character.surname === 'string' ? character.surname : '')
-            : birthSurname;
+        // Birth surname query returns null when no history exists.
+        // Distinguish that from "empty birth surname".
+        var birthSurnameForDisplay = _isMissing(birthSurname) ? '' : birthSurname;
 
         var html = '';
         html += '<div class="name-modal">';
@@ -448,7 +514,7 @@
              + _icon('BOOK') + ' History (' + changes.length + ')'
              + '</div>';
 
-        if (!hasHistory || changes.length === 0) {
+        if (changes.length === 0) {
             html += '<div class="name-modal__history-empty">No surname changes recorded.</div>';
         } else {
             html += '<div class="name-modal__history-list">';
@@ -535,22 +601,26 @@
     /**
      * Re-renders the surname management content in place, preserving the
      * modal shell. Called after a successful mutation.
+     *
+     * The delegated click handler lives on `root`, not on the body, so
+     * rebuilding the body does not detach it. No rebinding is needed.
+     *
+     * If the modal body is not found, this throws. Replacing `root`
+     * would destroy the modal shell, focus management, close controls,
+     * and accessibility structure. That is not a recoverable fallback.
      */
     function _refreshSurnameModalContent(root, characterId) {
         var contentHost = root.querySelector('.modal-body');
         if (!contentHost) {
-            // Fallback: if we can't find the body, just replace the whole
-            // content. This should not happen given modals-core's structure,
-            // but we do not want to crash a working modal.
-            contentHost = root;
+            throw new Error(
+                'modals-name.js: modal body not found; cannot refresh surname content'
+            );
         }
         contentHost.innerHTML = _buildSurnameManagementContent(characterId);
-        // The delegated click handler is on the root, not on the body, so
-        // rebuilding the body does not detach it. No rebinding needed.
     }
 
     // =========================================================================
-    // 4. EXPORTS
+    // 5. EXPORTS
     // =========================================================================
 
     window.openNameGeneratorModal = openNameGeneratorModal;
