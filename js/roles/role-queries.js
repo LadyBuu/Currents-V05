@@ -2,541 +2,574 @@
  * =============================================================================
  * STILL WATERS - ROLE QUERIES (role-queries.js)
  * =============================================================================
- * 
- * This file contains ALL read operations for roles.
- * - NO side effects
- * - NO UI
- * 
+ *
+ * All read-only operations for the role domain.
+ *
+ * Contract:
+ *   - No mutations, no side effects, no events, no persistence.
+ *   - No recursion guards. These are synchronous pure reads; there is no
+ *     recursive graph to protect, and a guard would only break legitimate
+ *     composition between queries.
+ *   - No fallbacks. If a required dependency is missing at load time, this
+ *     module throws. If RoleState is not initialised, the underlying call
+ *     throws and the error propagates.
+ *   - No presentation data. Icons, labels, colours belong in the UI layer.
+ *   - Skill-tier classification delegated entirely to SkillUtils.
+ *
  * DEPENDENCIES:
- *   - role-state.js (RoleState)
- *   - role-constants.js (TEACHING_THRESHOLDS)
- *   - accessors.js (getCharacterById, getCharacters, getRoleById)
- *   - skill-utils.js (SkillUtils)
- * 
+ *   - role-state.js       (RoleState)
+ *   - role-constants.js   (RoleConstants)
+ *   - skill-utils.js      (SkillUtils)
+ *   - accessors.js        (getCharacterById, getCharacters)
+ *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
-    // 1. RECURSION GUARD
+    // 1. HARD DEPENDENCY CHECK
     // =========================================================================
 
-    var _processingQuery = false;
+    if (!window.RoleState) {
+        throw new Error('role-queries.js requires role-state.js to be loaded first.');
+    }
+    if (!window.RoleConstants) {
+        throw new Error('role-queries.js requires role-constants.js to be loaded first.');
+    }
+    if (!window.SkillUtils) {
+        throw new Error('role-queries.js requires skill-utils.js to be loaded first.');
+    }
+    if (typeof window.getCharacterById !== 'function' ||
+        typeof window.getCharacters !== 'function') {
+        throw new Error(
+            'role-queries.js requires accessors.js (getCharacterById, getCharacters).'
+        );
+    }
+
+    var RC = window.RoleConstants;
+    var RS = window.RoleState;
+    var SU = window.SkillUtils;
 
     // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
+    // 2. PRIVATE HELPERS
     // =========================================================================
 
-    function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(id);
+    function _roleHasId(role, roleId) {
+        return role && role.id === roleId;
+    }
+
+    function _characterHasRole(character, roleId) {
+        if (!character || !Array.isArray(character.professions)) return false;
+        for (var i = 0; i < character.professions.length; i++) {
+            if (character.professions[i] && character.professions[i].id === roleId) {
+                return true;
+            }
         }
-        if (typeof window._getCharacterById === 'function') {
-            return window._getCharacterById(id);
+        return false;
+    }
+
+    function _findProfession(character, roleId) {
+        if (!character || !Array.isArray(character.professions)) return null;
+        for (var i = 0; i < character.professions.length; i++) {
+            if (character.professions[i] && character.professions[i].id === roleId) {
+                return character.professions[i];
+            }
         }
         return null;
     }
 
-    function _getCharacters() {
-        if (typeof window.getCharacters === 'function') {
-            return window.getCharacters();
-        }
-        if (typeof window._getCharacters === 'function') {
-            return window._getCharacters();
-        }
-        return [];
+    function _matchesGenderRestriction(role, character) {
+        if (role.genderRestriction === 'both') return true;
+        return role.genderRestriction === character.gender;
     }
 
-    function _getRoleById(id) {
-        if (typeof window.getRoleById === 'function') {
-            return window.getRoleById(id);
+    // =========================================================================
+    // 3. ROLE COLLECTION QUERIES
+    // =========================================================================
+
+    /**
+     * Returns all roles, optionally filtered.
+     *
+     * @param {Object} [filters]
+     * @param {string} [filters.category]   Category id, or 'all'.
+     * @param {string} [filters.gender]     'male', 'female', 'both', or 'all'.
+     * @param {string} [filters.search]     Case-insensitive name/notes substring.
+     * @param {string[]} [filters.excludeIds] Role ids to omit from the result.
+     * @returns {Array} Sorted by name.
+     */
+    function getRoles(filters) {
+        filters = filters || {};
+        var roles = RS.getAllRoles();
+        var result = roles.slice();
+
+        if (filters.category && filters.category !== 'all') {
+            result = result.filter(function (r) { return r.category === filters.category; });
         }
-        if (typeof window._getRoleById === 'function') {
-            return window._getRoleById(id);
+
+        if (filters.gender && filters.gender !== 'all') {
+            var g = filters.gender;
+            result = result.filter(function (r) {
+                return r.genderRestriction === 'both' || r.genderRestriction === g;
+            });
         }
-        return null;
+
+        if (typeof filters.search === 'string' && filters.search.trim()) {
+            var needle = filters.search.toLowerCase().trim();
+            result = result.filter(function (r) {
+                if (r.name && r.name.toLowerCase().indexOf(needle) !== -1) return true;
+                if (r.notes && r.notes.toLowerCase().indexOf(needle) !== -1) return true;
+                return false;
+            });
+        }
+
+        if (Array.isArray(filters.excludeIds) && filters.excludeIds.length > 0) {
+            var excluded = {};
+            for (var i = 0; i < filters.excludeIds.length; i++) {
+                excluded[filters.excludeIds[i]] = true;
+            }
+            result = result.filter(function (r) { return !excluded[r.id]; });
+        }
+
+        result.sort(function (a, b) {
+            return (a.name || '').localeCompare(b.name || '');
+        });
+
+        return result;
     }
 
-    function _getSkillLevelName(level) {
-        if (typeof window.SkillUtils !== 'undefined') {
-            return window.SkillUtils.getSkillLevelName(level);
-        }
-        if (typeof window._getSkillLevelName === 'function') {
-            return window._getSkillLevelName(level);
-        }
-        if (level >= 91) return 'Master';
-        if (level >= 76) return 'Expert';
-        if (level >= 51) return 'Journeyman';
-        if (level >= 26) return 'Apprentice';
-        if (level >= 1) return 'Novice';
-        return 'Untrained';
+    /**
+     * Searches roles by name only. Intended for autocomplete-style lookups.
+     */
+    function searchRoles(searchTerm, options) {
+        options = options || {};
+        return getRoles({
+            search: searchTerm,
+            category: options.category,
+            gender: options.gender
+        }).slice(0, options.limit && options.limit > 0 ? options.limit : undefined);
     }
 
-    function _getTeachingThresholds() {
-        if (typeof window.SkillUtils !== 'undefined') {
-            return window.SkillUtils.getThresholds();
+    // =========================================================================
+    // 4. CATEGORY QUERIES
+    // =========================================================================
+
+    /**
+     * Returns the category map. No icons, no presentation data.
+     */
+    function getRoleCategories() {
+        return RS.getCategories();
+    }
+
+    /**
+     * Returns categories as a sorted array with role counts.
+     */
+    function getRoleCategoriesWithCounts() {
+        var categories = RS.getCategories();
+        var roles = RS.getAllRoles();
+
+        var counts = {};
+        for (var i = 0; i < roles.length; i++) {
+            var cat = roles[i].category || RC.UNCATEGORIZED_ID;
+            counts[cat] = (counts[cat] || 0) + 1;
         }
-        return window.TEACHING_THRESHOLDS || {
-            NOVICE: 0,
-            APPRENTICE: 26,
-            JOURNEYMAN: 51,
-            EXPERT: 76,
-            MASTER: 91
+
+        var result = [];
+        for (var key in categories) {
+            if (!Object.prototype.hasOwnProperty.call(categories, key)) continue;
+            result.push({
+                id: categories[key].id,
+                name: categories[key].name,
+                count: counts[key] || 0
+            });
+        }
+
+        result.sort(function (a, b) {
+            return b.count - a.count || a.name.localeCompare(b.name);
+        });
+
+        return result;
+    }
+
+    // =========================================================================
+    // 5. CHARACTER-ROLE QUERIES
+    // =========================================================================
+
+    /**
+     * Returns characters who hold a role, with their profession details.
+     *
+     * Options:
+     *   minSkill       - Only include professions with skillLevel >= minSkill.
+     *   minTier        - Only include professions whose tier id is >= this tier.
+     *                    One of: 'novice','apprentice','journeyman','expert','master'.
+     *   mastersOnly    - Shortcut for minTier: 'master'   (level 91+)
+     *   expertsAndUp   - Shortcut for minTier: 'expert'   (level 76+)
+     *   canTeachOnly   - Only include characters eligible to teach (51+).
+     *
+     * Note: `mastersOnly` means MASTER (91+), matching the canonical tier
+     * names. If you want "expert and above", use `expertsAndUp`.
+     */
+    function getCharactersWithRoleDetails(roleId, options) {
+        options = options || {};
+
+        var role = RS.getRole(roleId);
+        if (!role) return [];
+
+        var characters = window.getCharacters();
+        var results = [];
+        var minSkill = null;
+
+        if (options.mastersOnly) {
+            minSkill = SU.getThresholds().MASTER;
+        } else if (options.expertsAndUp) {
+            minSkill = SU.getThresholds().EXPERT;
+        } else if (options.canTeachOnly) {
+            minSkill = SU.getTeachingThreshold();
+        } else if (typeof options.minSkill === 'number') {
+            minSkill = options.minSkill;
+        } else if (typeof options.minTier === 'string') {
+            var tierMap = {
+                novice:     SU.getThresholds().NOVICE,
+                apprentice: SU.getThresholds().APPRENTICE,
+                journeyman: SU.getThresholds().JOURNEYMAN,
+                expert:     SU.getThresholds().EXPERT,
+                master:     SU.getThresholds().MASTER
+            };
+            if (Object.prototype.hasOwnProperty.call(tierMap, options.minTier)) {
+                minSkill = tierMap[options.minTier];
+            }
+        }
+
+        for (var i = 0; i < characters.length; i++) {
+            var character = characters[i];
+            var profession = _findProfession(character, roleId);
+            if (!profession) continue;
+
+            var skillLevel = typeof profession.skillLevel === 'number'
+                ? SU.clampLevel(profession.skillLevel)
+                : 0;
+
+            if (minSkill !== null && skillLevel < minSkill) continue;
+
+            var tier = SU.getTier(skillLevel);
+            var specializations = Array.isArray(profession.specs)
+                ? profession.specs.slice()
+                : [];
+
+            results.push({
+                character: character,
+                profession: profession,
+                skillLevel: skillLevel,
+                tierId: tier.id,
+                tierName: tier.name,
+                specializations: specializations,
+                isPrimary: profession.primary === true,
+                canTeach: SU.canTeach(skillLevel)
+            });
+        }
+
+        results.sort(function (a, b) {
+            if (b.skillLevel !== a.skillLevel) return b.skillLevel - a.skillLevel;
+            return (a.character.name || '').localeCompare(b.character.name || '');
+        });
+
+        return results;
+    }
+
+    /**
+     * Convenience: just the character records.
+     */
+    function getCharactersWithRole(roleId, options) {
+        return getCharactersWithRoleDetails(roleId, options).map(function (entry) {
+            return entry.character;
+        });
+    }
+
+    /**
+     * Returns the character's skill level in a role, or null if they do not
+     * hold the role.
+     */
+    function getSkillLevel(characterId, roleId) {
+        var character = window.getCharacterById(characterId);
+        if (!character) return null;
+        var profession = _findProfession(character, roleId);
+        if (!profession) return null;
+        return typeof profession.skillLevel === 'number'
+            ? SU.clampLevel(profession.skillLevel)
+            : 0;
+    }
+
+    /**
+     * True if the character currently holds this role.
+     */
+    function characterHasRole(characterId, roleId) {
+        var character = window.getCharacterById(characterId);
+        return _characterHasRole(character, roleId);
+    }
+
+    // =========================================================================
+    // 6. ELIGIBILITY QUERY
+    // =========================================================================
+
+    /**
+     * Returns characters eligible to be assigned a role.
+     *
+     * A character is eligible when:
+     *   - they are alive
+     *   - they satisfy the role's gender restriction
+     *   - they do not already hold the role
+     *
+     * UI-side filters (search text, current location, gender dropdown) are
+     * applied by this query so that every screen uses one definition of
+     * "eligible".
+     *
+     * @param {string} roleId
+     * @param {Object} [filters]
+     * @param {string} [filters.search]         Case-insensitive name/surname substring.
+     * @param {string} [filters.gender]         'male' | 'female' | 'all'.
+     * @param {string} [filters.locationId]     Place id, or 'all'.
+     * @param {Function} [filters.getLocation]  Optional location resolver
+     *                                          (character) -> locationId.
+     * @returns {Array} Characters sorted by birth year ascending.
+     */
+    function getEligibleCharactersForRole(roleId, filters) {
+        filters = filters || {};
+        var role = RS.getRole(roleId);
+        if (!role) return [];
+
+        var all = window.getCharacters();
+        var needle = typeof filters.search === 'string' && filters.search.trim()
+            ? filters.search.toLowerCase().trim()
+            : null;
+        var genderFilter = filters.gender && filters.gender !== 'all'
+            ? filters.gender
+            : null;
+        var locationFilter = filters.locationId && filters.locationId !== 'all'
+            ? filters.locationId
+            : null;
+        var resolveLocation = typeof filters.getLocation === 'function'
+            ? filters.getLocation
+            : null;
+
+        var result = [];
+
+        for (var i = 0; i < all.length; i++) {
+            var character = all[i];
+
+            if (character.isDeceased) continue;
+            if (!_matchesGenderRestriction(role, character)) continue;
+            if (_characterHasRole(character, roleId)) continue;
+
+            if (needle) {
+                var nameMatch = character.name &&
+                    character.name.toLowerCase().indexOf(needle) !== -1;
+                var surnameMatch = character.surname &&
+                    character.surname.toLowerCase().indexOf(needle) !== -1;
+                if (!nameMatch && !surnameMatch) continue;
+            }
+
+            if (genderFilter && character.gender !== genderFilter) continue;
+
+            if (locationFilter && resolveLocation) {
+                if (resolveLocation(character) !== locationFilter) continue;
+            }
+
+            result.push(character);
+        }
+
+        result.sort(function (a, b) {
+            return (a.birthYear || 9999) - (b.birthYear || 9999);
+        });
+
+        return result;
+    }
+
+    /**
+     * Returns the distinct location ids currently occupied by any live
+     * character. Optional location resolver, same contract as
+     * getEligibleCharactersForRole.
+     */
+    function getOccupiedLocationIds(getLocation) {
+        if (typeof getLocation !== 'function') return [];
+        var characters = window.getCharacters();
+        var seen = {};
+        var result = [];
+        for (var i = 0; i < characters.length; i++) {
+            var c = characters[i];
+            if (c.isDeceased) continue;
+            var loc = getLocation(c);
+            if (!loc || loc === 'unknown') continue;
+            if (seen[loc]) continue;
+            seen[loc] = true;
+            result.push(loc);
+        }
+        result.sort();
+        return result;
+    }
+
+    // =========================================================================
+    // 7. STATISTICS
+    // =========================================================================
+
+    /**
+     * Returns statistics for a role based on current character data.
+     *
+     * The returned `specializations` array is a copy. `canTeachCount` uses
+     * SkillUtils' teaching threshold, so it can never drift from the tier
+     * classification.
+     */
+    function getRoleStatistics(roleId) {
+        var role = RS.getRole(roleId);
+        if (!role) {
+            return {
+                totalCharacters: 0,
+                averageSkill: 0,
+                countsByTier: {
+                    untrained: 0, novice: 0, apprentice: 0,
+                    journeyman: 0, expert: 0, master: 0
+                },
+                canTeachCount: 0,
+                specializations: [],
+                totalSpecializations: 0
+            };
+        }
+
+        var entries = getCharactersWithRoleDetails(roleId);
+        var total = entries.length;
+        var totalSkill = 0;
+        var countsByTier = {
+            untrained: 0, novice: 0, apprentice: 0,
+            journeyman: 0, expert: 0, master: 0
+        };
+        var canTeachCount = 0;
+
+        for (var i = 0; i < entries.length; i++) {
+            var entry = entries[i];
+            totalSkill += entry.skillLevel;
+            countsByTier[entry.tierId] = (countsByTier[entry.tierId] || 0) + 1;
+            if (entry.canTeach) canTeachCount++;
+        }
+
+        var specializations = Array.isArray(role.specializations)
+            ? role.specializations.slice()
+            : [];
+
+        return {
+            totalCharacters: total,
+            averageSkill: total > 0 ? Math.round(totalSkill / total) : 0,
+            countsByTier: countsByTier,
+            canTeachCount: canTeachCount,
+            specializations: specializations,
+            totalSpecializations: specializations.length
         };
     }
 
     // =========================================================================
-    // 3. ROLE QUERIES
+    // 8. SPECIALIZATION QUERIES
     // =========================================================================
 
     /**
-     * Gets all roles with optional filtering
-     * @param {Object} filters - Optional filters
-     * @param {string} filters.category - Category filter
-     * @param {string} filters.gender - 'male', 'female', 'both'
-     * @param {string} filters.search - Search term
-     * @returns {Array} Array of role objects
+     * Returns a copy of the role's specializations.
      */
-    function getRoles(filters) {
-        if (_processingQuery) {
-            return [];
-        }
-        _processingQuery = true;
-
-        try {
-            filters = filters || {};
-            var roles = RoleState.getAllRoles();
-            var result = roles.slice();
-
-            if (filters.category && filters.category !== 'all') {
-                result = result.filter(function(r) {
-                    return r.category === filters.category;
-                });
-            }
-
-            if (filters.gender && filters.gender !== 'all') {
-                result = result.filter(function(r) {
-                    return r.genderRestriction === 'both' || r.genderRestriction === filters.gender;
-                });
-            }
-
-            if (filters.search && typeof filters.search === 'string' && filters.search.trim()) {
-                var searchLower = filters.search.toLowerCase().trim();
-                result = result.filter(function(r) {
-                    return r.name.toLowerCase().indexOf(searchLower) !== -1 ||
-                        (r.notes && r.notes.toLowerCase().indexOf(searchLower) !== -1);
-                });
-            }
-
-            result.sort(function(a, b) {
-                return a.name.localeCompare(b.name);
-            });
-
-            return result;
-
-        } finally {
-            _processingQuery = false;
-        }
+    function getRoleSpecializations(roleId) {
+        var role = RS.getRole(roleId);
+        if (!role || !Array.isArray(role.specializations)) return [];
+        return role.specializations.slice();
     }
 
     /**
-     * Gets characters with a specific role, including skill details
-     * @param {string} roleId - Role ID
-     * @param {boolean} mastersOnly - Only return characters with skill level 76+
-     * @returns {Array} Characters with skill info
+     * Returns every distinct specialization across all roles, sorted.
      */
-    function getCharactersWithRoleDetails(roleId, mastersOnly) {
-        if (_processingQuery) {
-            return [];
-        }
-        _processingQuery = true;
-
-        try {
-            var role = RoleState.getRole(roleId);
-            if (!role) return [];
-
-            var characters = _getCharacters();
-            var results = [];
-            var thresholds = _getTeachingThresholds();
-
-            for (var i = 0; i < characters.length; i++) {
-                var char = characters[i];
-                var profession = null;
-                if (char.professions) {
-                    for (var j = 0; j < char.professions.length; j++) {
-                        if (char.professions[j].id === roleId) {
-                            profession = char.professions[j];
-                            break;
-                        }
-                    }
-                }
-
-                if (profession) {
-                    var skillLevel = profession.skillLevel || 0;
-                    if (mastersOnly && skillLevel < thresholds.EXPERT) continue;
-
-                    results.push({
-                        character: char,
-                        profession: profession,
-                        skillLevel: skillLevel,
-                        skillTier: _getSkillLevelName(skillLevel),
-                        specializations: profession.specs || [],
-                        isPrimary: profession.primary === true,
-                        isMaster: skillLevel >= thresholds.MASTER,
-                        isExpert: skillLevel >= thresholds.EXPERT,
-                        isJourneyman: skillLevel >= thresholds.JOURNEYMAN,
-                        canTeach: skillLevel >= thresholds.JOURNEYMAN
-                    });
+    function getAllRoleSpecializations() {
+        var roles = RS.getAllRoles();
+        var seen = {};
+        var result = [];
+        for (var i = 0; i < roles.length; i++) {
+            var specs = roles[i].specializations || [];
+            for (var j = 0; j < specs.length; j++) {
+                var spec = specs[j];
+                if (spec && !seen[spec]) {
+                    seen[spec] = true;
+                    result.push(spec);
                 }
             }
-
-            results.sort(function(a, b) {
-                return b.skillLevel - a.skillLevel;
-            });
-
-            return results;
-
-        } finally {
-            _processingQuery = false;
         }
+        result.sort();
+        return result;
     }
 
     /**
-     * Gets characters with a specific role (just the character objects)
-     * @param {string} roleId - Role ID
-     * @param {boolean} mastersOnly - Only return characters with skill level 76+
-     * @returns {Array} Character objects
+     * Returns roles that list the given specialization.
      */
-    function getCharactersWithRole(roleId, mastersOnly) {
-        if (_processingQuery) {
-            return [];
-        }
-        _processingQuery = true;
-
-        try {
-            var results = getCharactersWithRoleDetails(roleId, mastersOnly);
-            return results.map(function(r) { return r.character; });
-
-        } finally {
-            _processingQuery = false;
-        }
-    }
-
-    /**
-     * Gets comprehensive statistics for a role
-     * @param {string} roleId - Role ID
-     * @returns {Object} Statistics object
-     */
-    function getRoleStatistics(roleId) {
-        if (_processingQuery) {
-            return { totalCharacters: 0, averageSkill: 0, masterCount: 0, expertCount: 0,
-                     journeymanCount: 0, apprenticeCount: 0, noviceCount: 0,
-                     canTeachCount: 0, specializations: [], totalSpecializations: 0 };
-        }
-        _processingQuery = true;
-
-        try {
-            var role = RoleState.getRole(roleId);
-            if (!role) {
-                return { totalCharacters: 0, averageSkill: 0, masterCount: 0, expertCount: 0,
-                         journeymanCount: 0, apprenticeCount: 0, noviceCount: 0,
-                         canTeachCount: 0, specializations: [], totalSpecializations: 0 };
-            }
-
-            var charactersWithRole = getCharactersWithRoleDetails(roleId);
-            var totalCount = charactersWithRole.length;
-            var totalSkill = 0;
-            var masterCount = 0;
-            var expertCount = 0;
-            var journeymanCount = 0;
-            var apprenticeCount = 0;
-            var noviceCount = 0;
-            var thresholds = _getTeachingThresholds();
-
-            for (var i = 0; i < charactersWithRole.length; i++) {
-                var c = charactersWithRole[i];
-                totalSkill += c.skillLevel;
-
-                if (c.skillLevel >= thresholds.MASTER) masterCount++;
-                else if (c.skillLevel >= thresholds.EXPERT) expertCount++;
-                else if (c.skillLevel >= thresholds.JOURNEYMAN) journeymanCount++;
-                else if (c.skillLevel >= thresholds.APPRENTICE) apprenticeCount++;
-                else if (c.skillLevel >= thresholds.NOVICE) noviceCount++;
-            }
-
-            var canTeachCount = charactersWithRole.filter(function(c) {
-                return c.skillLevel >= thresholds.JOURNEYMAN;
-            }).length;
-
-            var specializations = role.specializations || [];
-
-            return {
-                totalCharacters: totalCount,
-                averageSkill: totalCount > 0 ? Math.round(totalSkill / totalCount) : 0,
-                masterCount: masterCount,
-                expertCount: expertCount,
-                journeymanCount: journeymanCount,
-                apprenticeCount: apprenticeCount,
-                noviceCount: noviceCount,
-                canTeachCount: canTeachCount,
-                specializations: specializations,
-                totalSpecializations: specializations.length
-            };
-
-        } finally {
-            _processingQuery = false;
-        }
-    }
-
-    /**
-     * Gets role categories
-     * @returns {Object} Categories object
-     */
-    function getRoleCategories() {
-        if (_processingQuery) {
-            return {};
-        }
-        _processingQuery = true;
-
-        try {
-            return RoleState.getCategories();
-
-        } finally {
-            _processingQuery = false;
-        }
-    }
-
-    /**
-     * Gets all role categories as an array
-     * @returns {Array} Array of category objects
-     */
-    function getRoleCategoryList() {
-        if (_processingQuery) {
-            return [];
-        }
-        _processingQuery = true;
-
-        try {
-            var categories = RoleState.getCategories();
-            var result = [];
-            for (var key in categories) {
-                if (categories.hasOwnProperty(key)) {
-                    result.push(categories[key]);
-                }
-            }
-            result.sort(function(a, b) {
-                return a.name.localeCompare(b.name);
-            });
-            return result;
-
-        } finally {
-            _processingQuery = false;
-        }
-    }
-
-    /**
-     * Searches roles by name
-     * @param {string} searchTerm - Search term
-     * @param {Object} options - Options
-     * @param {string} options.category - Category filter
-     * @param {string} options.gender - Gender filter
-     * @param {number} options.limit - Max results
-     * @returns {Array} Array of matching roles
-     */
-    function searchRoles(searchTerm, options) {
-        if (_processingQuery) {
-            return [];
-        }
-        _processingQuery = true;
-
-        try {
-            options = options || {};
-            var roles = RoleState.getAllRoles();
-            var result = roles.slice();
-
-            if (searchTerm && typeof searchTerm === 'string' && searchTerm.trim()) {
-                var searchLower = searchTerm.toLowerCase().trim();
-                result = result.filter(function(r) {
-                    return r.name.toLowerCase().indexOf(searchLower) !== -1;
-                });
-            }
-
-            if (options.category && options.category !== 'all') {
-                result = result.filter(function(r) {
-                    return r.category === options.category;
-                });
-            }
-
-            if (options.gender && options.gender !== 'all') {
-                result = result.filter(function(r) {
-                    return r.genderRestriction === 'both' || r.genderRestriction === options.gender;
-                });
-            }
-
-            result.sort(function(a, b) {
-                return a.name.localeCompare(b.name);
-            });
-
-            if (options.limit && options.limit > 0) {
-                result = result.slice(0, options.limit);
-            }
-
-            return result;
-
-        } finally {
-            _processingQuery = false;
-        }
-    }
-
-    /**
-     * Gets all available categories with role counts
-     * @returns {Array} Array of category objects with counts
-     */
-    function getRoleCategoriesWithCounts() {
-        if (_processingQuery) {
-            return [];
-        }
-        _processingQuery = true;
-
-        try {
-            var categories = getRoleCategoryList();
-            var roles = RoleState.getAllRoles();
-            var result = [];
-
-            for (var i = 0; i < categories.length; i++) {
-                var cat = categories[i];
-                var count = 0;
-                for (var j = 0; j < roles.length; j++) {
-                    if (roles[j].category === cat.id) {
-                        count++;
-                    }
-                }
-                result.push({
-                    id: cat.id,
-                    name: cat.name,
-                    icon: cat.icon || '⌇',
-                    count: count
-                });
-            }
-
-            result.sort(function(a, b) {
-                return b.count - a.count || a.name.localeCompare(b.name);
-            });
-
-            return result;
-
-        } finally {
-            _processingQuery = false;
-        }
-    }
-
-    /**
-     * Gets the teaching threshold level name
-     * @param {number} level - Skill level
-     * @returns {string} Threshold name
-     */
-    function getTeachingThresholdName(level) {
-        if (_processingQuery) {
-            return 'Novice';
-        }
-        _processingQuery = true;
-
-        try {
-            var thresholds = _getTeachingThresholds();
-            if (level >= thresholds.MASTER) return 'Master';
-            if (level >= thresholds.EXPERT) return 'Expert';
-            if (level >= thresholds.JOURNEYMAN) return 'Journeyman';
-            if (level >= thresholds.APPRENTICE) return 'Apprentice';
-            return 'Novice';
-
-        } finally {
-            _processingQuery = false;
-        }
+    function getRolesWithSpecialization(specialization) {
+        if (typeof specialization !== 'string' || !specialization) return [];
+        var roles = RS.getAllRoles();
+        return roles.filter(function (role) {
+            return Array.isArray(role.specializations) &&
+                role.specializations.indexOf(specialization) !== -1;
+        });
     }
 
     // =========================================================================
-    // 4. SKILL LEVEL QUERY (NEW)
+    // 9. TEACHING QUERIES
     // =========================================================================
 
     /**
-     * Gets a character's skill level for a specific role
-     * @param {string} characterId - Character ID
-     * @param {string} roleId - Role ID
-     * @returns {number} Skill level (0-100), or 0 if not found
+     * Returns characters who hold this role and are eligible to teach it.
      */
-    function getSkillLevel(characterId, roleId) {
-        if (_processingQuery) {
-            return 0;
-        }
-        _processingQuery = true;
+    function getPotentialTeachersForRole(roleId) {
+        return getCharactersWithRoleDetails(roleId, { canTeachOnly: true });
+    }
 
-        try {
-            if (!characterId || !roleId) {
-                return 0;
-            }
-
-            var char = _getCharacterById(characterId);
-            if (!char || !char.professions) {
-                return 0;
-            }
-
-            for (var i = 0; i < char.professions.length; i++) {
-                if (char.professions[i].id === roleId) {
-                    return char.professions[i].skillLevel || 0;
-                }
-            }
-
-            return 0;
-
-        } finally {
-            _processingQuery = false;
-        }
+    /**
+     * True if the character can teach this specific role.
+     * Being a teacher in general is not enough — the character must hold the
+     * role at or above the teaching threshold.
+     */
+    function canCharacterTeachRole(characterId, roleId) {
+        var level = getSkillLevel(characterId, roleId);
+        if (level === null) return false;
+        return SU.canTeach(level);
     }
 
     // =========================================================================
-    // 5. EXPORTS
+    // 10. EXPORTS
     // =========================================================================
 
     window.RoleQueries = {
+        // Role collection
         getRoles: getRoles,
+        searchRoles: searchRoles,
+
+        // Categories
+        getRoleCategories: getRoleCategories,
+        getRoleCategoriesWithCounts: getRoleCategoriesWithCounts,
+
+        // Character-role
         getCharactersWithRoleDetails: getCharactersWithRoleDetails,
         getCharactersWithRole: getCharactersWithRole,
+        getSkillLevel: getSkillLevel,
+        characterHasRole: characterHasRole,
+
+        // Eligibility
+        getEligibleCharactersForRole: getEligibleCharactersForRole,
+        getOccupiedLocationIds: getOccupiedLocationIds,
+
+        // Statistics
         getRoleStatistics: getRoleStatistics,
-        getRoleCategories: getRoleCategories,
-        getRoleCategoryList: getRoleCategoryList,
-        searchRoles: searchRoles,
-        getRoleCategoriesWithCounts: getRoleCategoriesWithCounts,
-        getTeachingThresholdName: getTeachingThresholdName,
-        getSkillLevel: getSkillLevel  // NEW
+
+        // Specializations
+        getRoleSpecializations: getRoleSpecializations,
+        getAllRoleSpecializations: getAllRoleSpecializations,
+        getRolesWithSpecialization: getRolesWithSpecialization,
+
+        // Teaching
+        getPotentialTeachersForRole: getPotentialTeachersForRole,
+        canCharacterTeachRole: canCharacterTeachRole
     };
 
-    // Legacy aliases
-    window._getRoles = getRoles;
-    window._getCharactersWithRole = getCharactersWithRole;
-    window._getCharactersWithRoleDetails = getCharactersWithRoleDetails;
-    window._getRoleStatistics = getRoleStatistics;
-    window._getRoleCategories = getRoleCategories;
-    window._getRoleCategoryList = getRoleCategoryList;
-    window._searchRoles = searchRoles;
-    window._getRoleCategoriesWithCounts = getRoleCategoriesWithCounts;
-    window._getTeachingThresholdName = getTeachingThresholdName;
-    window._getSkillLevel = getSkillLevel;  // NEW
-
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            getRoles: getRoles,
-            getCharactersWithRoleDetails: getCharactersWithRoleDetails,
-            getCharactersWithRole: getCharactersWithRole,
-            getRoleStatistics: getRoleStatistics,
-            getRoleCategories: getRoleCategories,
-            getRoleCategoryList: getRoleCategoryList,
-            searchRoles: searchRoles,
-            getRoleCategoriesWithCounts: getRoleCategoriesWithCounts,
-            getTeachingThresholdName: getTeachingThresholdName,
-            getSkillLevel: getSkillLevel  // NEW
-        };
+        module.exports = window.RoleQueries;
     }
-
 })();
