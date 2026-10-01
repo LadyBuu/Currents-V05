@@ -2,38 +2,51 @@
  * =============================================================================
  * STILL WATERS - CRIME & VENDETTA STATE (crime-state.js)
  * =============================================================================
- * 
+ *
  * LOCATION: js/core/crime/crime-state.js
- * 
- * This is the SINGLE SOURCE OF TRUTH for ALL crime and vendetta data.
- * 
- * EXPORTED FUNCTIONS:
- *   - CrimeState.getCrime(id) - Get crime by ID
- *   - CrimeState.getAllCrimes() - Get all crimes
- *   - CrimeState.getCrimesByCharacter(characterId) - Get crimes for character
- *   - CrimeState.getCrimesByType(type) - Get crimes by type
- *   - CrimeState.getUnsolvedCrimes() - Get all unsolved crimes
- *   - CrimeState.recordCrime(data) - Record a new crime
- *   - CrimeState.solveCrime(id, solution) - Mark crime as solved
- *   - CrimeState.getVendetta(id) - Get vendetta by ID
- *   - CrimeState.getAllVendettas() - Get all vendettas
- *   - CrimeState.getVendettasByHousehold(householdId) - Get vendettas for household
- *   - CrimeState.getVendettasByCharacter(characterId) - Get vendettas for character
- *   - CrimeState.getActiveVendettas(householdId) - Get active vendettas for household
- *   - CrimeState.createVendetta(data) - Create a new vendetta
- *   - CrimeState.recordVendettaDeath(vendettaId, deathData) - Record a vendetta death
- *   - CrimeState.resolveVendetta(vendettaId, resolutionData) - Resolve a vendetta
- *   - CrimeState.subscribe(callback) - Subscribe to state changes
- *   - CrimeState.invalidateCache() - Clear all caches
- * 
+ *
+ * PURPOSE:
+ *   Single domain authority for crime and vendetta records. This module owns
+ *   storage, indexes, lifecycle transitions, and persistence. It does not
+ *   decide legal consequences, does not calculate derived statistics, and
+ *   does not know how laws work.
+ *
+ * OWNERSHIP:
+ *   - canonical crime and vendetta records (persisted at masterData.data)
+ *   - indexes over those records
+ *   - lifecycle transitions (record -> solve; active -> escalated -> resolved)
+ *   - persistence boundary
+ *   - subscriber notification
+ *
+ * WHAT THIS MODULE DOES NOT DO:
+ *   - It does not decide punishments or consequences. (CrimeLawIntegration)
+ *   - It does not compute statistics or trends. (CrimeQueries)
+ *   - It does not orchestrate multi-domain workflows. (CrimeCommands)
+ *   - It does not invent fallback values for missing dependencies. If a
+ *     required dependency is unavailable, the operation fails loudly.
+ *
+ * INVARIANTS:
+ *   - A crime is either solved or not. solved === true implies solvedAt is
+ *     a year; solved === false implies solvedAt is null. A crime cannot be
+ *     recorded in a solved state via recordCrime(); solving is a transition.
+ *   - A vendetta's bodyCount === deaths.length. status is derived from an
+ *     explicit transition; bodyCount and status must agree at all times.
+ *   - Records are added to the cache at most once. Re-adding the same id is
+ *     a no-op, not a duplicate.
+ *   - Persistence failures are returned, never swallowed. A mutation that
+ *     cannot be persisted is reported as failed.
+ *   - Historical snapshot fields (perpetratorName, victimName, householdAName,
+ *     etc.) are snapshots at time of recording. They are never refreshed from
+ *     live sources.
+ *
  * DEPENDENCIES:
- *   - ids.js: generateId
- *   - time.js: getCurrentYearSafe
- *   - accessors.js: getCharacterById, getHouseholdById
- *   - storage.js: saveMasterData
- * 
- * ICON POLICY: No emojis. No icons. Uses icons.js via _getIconSafe.
- * 
+ *   - ids.js:   generateId
+ *   - time.js:  getCurrentYearSafe (required; no fallback)
+ *   - accessors.js: getCharacterById, getHouseholdById (for name snapshots)
+ *   - storage.js:   saveMasterData (required for persistence)
+ *
+ * ICON POLICY: No emojis. No icons.
+ *
  * =============================================================================
  */
 
@@ -41,48 +54,77 @@
     'use strict';
 
     // =========================================================================
-    // 0. RECURSION GUARD
+    // 0. RECURSION GUARD (scoped to primitive mutations only)
     // =========================================================================
+    //
+    // This guard protects the state store from being mutated recursively by
+    // its own primitive operations. It is NOT shared with orchestration code.
+    // Commands compose by calling multiple public state functions; the guard
+    // is released between them.
 
-    var _processingState = false;
-    var _initialized = false;
+    var _mutatingState = false;
 
     // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
+    // 1. DEPENDENCY WRAPPERS (required dependencies; no fallbacks)
     // =========================================================================
 
     function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
+        if (typeof window.getCurrentYearSafe !== 'function') {
+            throw new Error(
+                '[CrimeState] Required dependency getCurrentYearSafe is not available.'
+            );
+        }
+        return window.getCurrentYearSafe();
+    }
 
     function _generateId(prefix) {
-        if (typeof window.generateId === 'function') {
-            return window.generateId(prefix);
+        if (typeof window.generateId !== 'function') {
+            throw new Error(
+                '[CrimeState] Required dependency generateId is not available.'
+            );
         }
-        return prefix + '_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+        return window.generateId(prefix);
     }
 
     function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(id);
-        }
-        return null;
+        if (typeof window.getCharacterById !== 'function') return null;
+        return window.getCharacterById(id);
     }
 
     function _getHouseholdById(id) {
-        if (typeof window.getHouseholdById === 'function') {
-            return window.getHouseholdById(id);
-        }
-        return null;
+        if (typeof window.getHouseholdById !== 'function') return null;
+        return window.getHouseholdById(id);
     }
 
     function _saveMasterData() {
-        if (typeof window.saveMasterData === 'function') {
-            window.saveMasterData();
+        if (typeof window.saveMasterData !== 'function') {
+            throw new Error(
+                '[CrimeState] Required dependency saveMasterData is not available.'
+            );
         }
+        window.saveMasterData();
+    }
+
+    function _getVendettaStatusConstants() {
+        if (window.CrimeConstants && window.CrimeConstants.VENDETTA_STATUS) {
+            return window.CrimeConstants.VENDETTA_STATUS;
+        }
+        if (window.VENDETTA_STATUS) {
+            return window.VENDETTA_STATUS;
+        }
+        throw new Error(
+            '[CrimeState] Required dependency CrimeConstants.VENDETTA_STATUS is not available.'
+        );
+    }
+
+    function _getEscalationThreshold() {
+        if (window.CrimeConstants &&
+            typeof window.CrimeConstants.VENDETTA_ESCALATION_THRESHOLD === 'number') {
+            return window.CrimeConstants.VENDETTA_ESCALATION_THRESHOLD;
+        }
+        throw new Error(
+            '[CrimeState] Required dependency CrimeConstants.VENDETTA_ESCALATION_THRESHOLD is not available.'
+        );
     }
 
     // =========================================================================
@@ -92,7 +134,8 @@
     var _state = {
         crimes: {
             byId: new Map(),
-            byCharacter: new Map(),
+            byPerpetrator: new Map(),
+            byVictim: new Map(),
             byType: new Map(),
             byLocation: new Map(),
             unsolved: new Set(),
@@ -108,258 +151,354 @@
         lastUpdate: 0
     };
 
+    var _initialized = false;
+
     // =========================================================================
-    // 3. INITIALIZATION
+    // 3. INITIALIZATION (transactional)
     // =========================================================================
+    //
+    // Initialization builds a fresh set of indexes and swaps them in atomically
+    // only if the entire dataset loads successfully. On failure, the previously
+    // valid state is preserved and the error is rethrown.
 
     function _initialize() {
         if (_initialized) return;
 
-        try {
-            // Try to load from masterData
-            if (typeof window.masterData !== 'undefined' && 
-                window.masterData.data) {
-                
-                // Load crimes
-                var savedCrimes = window.masterData.data.crimes || [];
-                for (var i = 0; i < savedCrimes.length; i++) {
-                    _addCrimeToCache(savedCrimes[i]);
-                }
+        var masterData = (typeof window.masterData !== 'undefined') ?
+            window.masterData : null;
 
-                // Load vendettas
-                var savedVendettas = window.masterData.data.vendettas || [];
-                for (var i = 0; i < savedVendettas.length; i++) {
-                    _addVendettaToCache(savedVendettas[i]);
-                }
-            }
-
+        if (!masterData || !masterData.data) {
+            // No persisted data yet. This is a valid empty state.
             _initialized = true;
-        } catch (e) {
-            // Silently handle initialization errors
+            return;
         }
+
+        var savedCrimes = Array.isArray(masterData.data.crimes) ?
+            masterData.data.crimes : [];
+        var savedVendettas = Array.isArray(masterData.data.vendettas) ?
+            masterData.data.vendettas : [];
+
+        // Build into fresh collections; do not mutate live state until success.
+        var next = {
+            crimes: {
+                byId: new Map(),
+                byPerpetrator: new Map(),
+                byVictim: new Map(),
+                byType: new Map(),
+                byLocation: new Map(),
+                unsolved: new Set(),
+                all: []
+            },
+            vendettas: {
+                byId: new Map(),
+                byHousehold: new Map(),
+                byCharacter: new Map(),
+                all: []
+            }
+        };
+
+        for (var i = 0; i < savedCrimes.length; i++) {
+            _indexCrimeInto(next.crimes, savedCrimes[i]);
+        }
+        for (var j = 0; j < savedVendettas.length; j++) {
+            _indexVendettaInto(next.vendettas, savedVendettas[j]);
+        }
+
+        // Atomic swap.
+        _state.crimes = next.crimes;
+        _state.vendettas = next.vendettas;
+        _state.lastUpdate = Date.now();
+        _initialized = true;
     }
 
     // =========================================================================
-    // 4. CRIME CACHE MANAGEMENT
+    // 4. INDEXING HELPERS (pure; operate on a target container)
     // =========================================================================
 
-    function _addCrimeToCache(crime) {
+    function _indexCrimeInto(crimes, crime) {
+        if (!crime || !crime.id) return false;
+        if (crimes.byId.has(crime.id)) return false;
+
+        crimes.byId.set(crime.id, crime);
+        crimes.all.push(crime);
+
+        if (crime.perpetratorId) {
+            if (!crimes.byPerpetrator.has(crime.perpetratorId)) {
+                crimes.byPerpetrator.set(crime.perpetratorId, new Set());
+            }
+            crimes.byPerpetrator.get(crime.perpetratorId).add(crime.id);
+        }
+
+        if (crime.victimId) {
+            if (!crimes.byVictim.has(crime.victimId)) {
+                crimes.byVictim.set(crime.victimId, new Set());
+            }
+            crimes.byVictim.get(crime.victimId).add(crime.id);
+        }
+
+        if (crime.type) {
+            if (!crimes.byType.has(crime.type)) {
+                crimes.byType.set(crime.type, new Set());
+            }
+            crimes.byType.get(crime.type).add(crime.id);
+        }
+
+        if (crime.locationId) {
+            if (!crimes.byLocation.has(crime.locationId)) {
+                crimes.byLocation.set(crime.locationId, new Set());
+            }
+            crimes.byLocation.get(crime.locationId).add(crime.id);
+        }
+
+        if (!crime.solved) {
+            crimes.unsolved.add(crime.id);
+        }
+
+        return true;
+    }
+
+    function _indexVendettaInto(vendettas, vendetta) {
+        if (!vendetta || !vendetta.id) return false;
+        if (vendettas.byId.has(vendetta.id)) return false;
+
+        vendettas.byId.set(vendetta.id, vendetta);
+        vendettas.all.push(vendetta);
+
+        if (vendetta.householdAId) {
+            if (!vendettas.byHousehold.has(vendetta.householdAId)) {
+                vendettas.byHousehold.set(vendetta.householdAId, new Set());
+            }
+            vendettas.byHousehold.get(vendetta.householdAId).add(vendetta.id);
+        }
+        if (vendetta.householdBId) {
+            if (!vendettas.byHousehold.has(vendetta.householdBId)) {
+                vendettas.byHousehold.set(vendetta.householdBId, new Set());
+            }
+            vendettas.byHousehold.get(vendetta.householdBId).add(vendetta.id);
+        }
+
+        if (vendetta.characterAId) {
+            if (!vendettas.byCharacter.has(vendetta.characterAId)) {
+                vendettas.byCharacter.set(vendetta.characterAId, new Set());
+            }
+            vendettas.byCharacter.get(vendetta.characterAId).add(vendetta.id);
+        }
+        if (vendetta.characterBId) {
+            if (!vendettas.byCharacter.has(vendetta.characterBId)) {
+                vendettas.byCharacter.set(vendetta.characterBId, new Set());
+            }
+            vendettas.byCharacter.get(vendetta.characterBId).add(vendetta.id);
+        }
+
+        return true;
+    }
+
+    function _deindexCrimeFrom(crimes, crime) {
         if (!crime || !crime.id) return;
 
-        _state.crimes.byId.set(crime.id, crime);
-        _state.crimes.all.push(crime);
+        crimes.byId.delete(crime.id);
 
-        // Index by character
         if (crime.perpetratorId) {
-            if (!_state.crimes.byCharacter.has(crime.perpetratorId)) {
-                _state.crimes.byCharacter.set(crime.perpetratorId, new Set());
+            var ps = crimes.byPerpetrator.get(crime.perpetratorId);
+            if (ps) {
+                ps.delete(crime.id);
+                if (ps.size === 0) crimes.byPerpetrator.delete(crime.perpetratorId);
             }
-            _state.crimes.byCharacter.get(crime.perpetratorId).add(crime.id);
         }
-
-        // Index by type
+        if (crime.victimId) {
+            var vs = crimes.byVictim.get(crime.victimId);
+            if (vs) {
+                vs.delete(crime.id);
+                if (vs.size === 0) crimes.byVictim.delete(crime.victimId);
+            }
+        }
         if (crime.type) {
-            if (!_state.crimes.byType.has(crime.type)) {
-                _state.crimes.byType.set(crime.type, new Set());
+            var ts = crimes.byType.get(crime.type);
+            if (ts) {
+                ts.delete(crime.id);
+                if (ts.size === 0) crimes.byType.delete(crime.type);
             }
-            _state.crimes.byType.get(crime.type).add(crime.id);
         }
-
-        // Index by location
         if (crime.locationId) {
-            if (!_state.crimes.byLocation.has(crime.locationId)) {
-                _state.crimes.byLocation.set(crime.locationId, new Set());
+            var ls = crimes.byLocation.get(crime.locationId);
+            if (ls) {
+                ls.delete(crime.id);
+                if (ls.size === 0) crimes.byLocation.delete(crime.locationId);
             }
-            _state.crimes.byLocation.get(crime.locationId).add(crime.id);
         }
 
-        // Track unsolved
-        if (!crime.solved) {
-            _state.crimes.unsolved.add(crime.id);
-        }
+        crimes.unsolved.delete(crime.id);
 
-        _state.lastUpdate = Date.now();
+        var idx = crimes.all.indexOf(crime);
+        if (idx !== -1) crimes.all.splice(idx, 1);
     }
 
-    function _removeCrimeFromCache(crimeId) {
-        var crime = _state.crimes.byId.get(crimeId);
-        if (!crime) return;
-
-        _state.crimes.byId.delete(crimeId);
-
-        // Remove from all indices
-        if (crime.perpetratorId) {
-            var charSet = _state.crimes.byCharacter.get(crime.perpetratorId);
-            if (charSet) {
-                charSet.delete(crimeId);
-                if (charSet.size === 0) {
-                    _state.crimes.byCharacter.delete(crime.perpetratorId);
-                }
-            }
-        }
-
-        if (crime.type) {
-            var typeSet = _state.crimes.byType.get(crime.type);
-            if (typeSet) {
-                typeSet.delete(crimeId);
-                if (typeSet.size === 0) {
-                    _state.crimes.byType.delete(crime.type);
-                }
-            }
-        }
-
-        if (crime.locationId) {
-            var locSet = _state.crimes.byLocation.get(crime.locationId);
-            if (locSet) {
-                locSet.delete(crimeId);
-                if (locSet.size === 0) {
-                    _state.crimes.byLocation.delete(crime.locationId);
-                }
-            }
-        }
-
-        _state.crimes.unsolved.delete(crimeId);
-
-        var index = _state.crimes.all.indexOf(crime);
-        if (index !== -1) {
-            _state.crimes.all.splice(index, 1);
-        }
-
-        _state.lastUpdate = Date.now();
-    }
-
-    function _persistCrimes() {
-        try {
-            if (typeof window.masterData !== 'undefined' && window.masterData.data) {
-                window.masterData.data.crimes = _state.crimes.all;
-                _saveMasterData();
-            }
-        } catch (e) {
-            // Silently handle persistence errors
-        }
-    }
-
-    // =========================================================================
-    // 5. VENDETTA CACHE MANAGEMENT
-    // =========================================================================
-
-    function _addVendettaToCache(vendetta) {
+    function _deindexVendettaFrom(vendettas, vendetta) {
         if (!vendetta || !vendetta.id) return;
 
-        _state.vendettas.byId.set(vendetta.id, vendetta);
-        _state.vendettas.all.push(vendetta);
+        vendettas.byId.delete(vendetta.id);
 
-        // Index by household
         if (vendetta.householdAId) {
-            if (!_state.vendettas.byHousehold.has(vendetta.householdAId)) {
-                _state.vendettas.byHousehold.set(vendetta.householdAId, new Set());
+            var ha = vendettas.byHousehold.get(vendetta.householdAId);
+            if (ha) {
+                ha.delete(vendetta.id);
+                if (ha.size === 0) vendettas.byHousehold.delete(vendetta.householdAId);
             }
-            _state.vendettas.byHousehold.get(vendetta.householdAId).add(vendetta.id);
         }
         if (vendetta.householdBId) {
-            if (!_state.vendettas.byHousehold.has(vendetta.householdBId)) {
-                _state.vendettas.byHousehold.set(vendetta.householdBId, new Set());
+            var hb = vendettas.byHousehold.get(vendetta.householdBId);
+            if (hb) {
+                hb.delete(vendetta.id);
+                if (hb.size === 0) vendettas.byHousehold.delete(vendetta.householdBId);
             }
-            _state.vendettas.byHousehold.get(vendetta.householdBId).add(vendetta.id);
         }
-
-        // Index by character
         if (vendetta.characterAId) {
-            if (!_state.vendettas.byCharacter.has(vendetta.characterAId)) {
-                _state.vendettas.byCharacter.set(vendetta.characterAId, new Set());
+            var ca = vendettas.byCharacter.get(vendetta.characterAId);
+            if (ca) {
+                ca.delete(vendetta.id);
+                if (ca.size === 0) vendettas.byCharacter.delete(vendetta.characterAId);
             }
-            _state.vendettas.byCharacter.get(vendetta.characterAId).add(vendetta.id);
         }
         if (vendetta.characterBId) {
-            if (!_state.vendettas.byCharacter.has(vendetta.characterBId)) {
-                _state.vendettas.byCharacter.set(vendetta.characterBId, new Set());
+            var cb = vendettas.byCharacter.get(vendetta.characterBId);
+            if (cb) {
+                cb.delete(vendetta.id);
+                if (cb.size === 0) vendettas.byCharacter.delete(vendetta.characterBId);
             }
-            _state.vendettas.byCharacter.get(vendetta.characterBId).add(vendetta.id);
         }
 
-        _state.lastUpdate = Date.now();
+        var idx = vendettas.all.indexOf(vendetta);
+        if (idx !== -1) vendettas.all.splice(idx, 1);
     }
 
-    function _removeVendettaFromCache(vendettaId) {
-        var vendetta = _state.vendettas.byId.get(vendettaId);
-        if (!vendetta) return;
+    // =========================================================================
+    // 5. PERSISTENCE (returns structured result; never swallows failures)
+    // =========================================================================
 
-        _state.vendettas.byId.delete(vendettaId);
+    function _persistCrimes() {
+        var masterData = (typeof window.masterData !== 'undefined') ?
+            window.masterData : null;
 
-        // Remove from all indices
-        if (vendetta.householdAId) {
-            var setA = _state.vendettas.byHousehold.get(vendetta.householdAId);
-            if (setA) {
-                setA.delete(vendettaId);
-                if (setA.size === 0) {
-                    _state.vendettas.byHousehold.delete(vendetta.householdAId);
-                }
-            }
-        }
-        if (vendetta.householdBId) {
-            var setB = _state.vendettas.byHousehold.get(vendetta.householdBId);
-            if (setB) {
-                setB.delete(vendettaId);
-                if (setB.size === 0) {
-                    _state.vendettas.byHousehold.delete(vendetta.householdBId);
-                }
-            }
+        if (!masterData || !masterData.data) {
+            return { success: false, error: 'masterData.data is unavailable' };
         }
 
-        if (vendetta.characterAId) {
-            var charSetA = _state.vendettas.byCharacter.get(vendetta.characterAId);
-            if (charSetA) {
-                charSetA.delete(vendettaId);
-                if (charSetA.size === 0) {
-                    _state.vendettas.byCharacter.delete(vendetta.characterAId);
-                }
-            }
+        try {
+            masterData.data.crimes = _state.crimes.all;
+            _saveMasterData();
+            return { success: true };
+        } catch (e) {
+            return { success: false, error: e.message || String(e) };
         }
-        if (vendetta.characterBId) {
-            var charSetB = _state.vendettas.byCharacter.get(vendetta.characterBId);
-            if (charSetB) {
-                charSetB.delete(vendettaId);
-                if (charSetB.size === 0) {
-                    _state.vendettas.byCharacter.delete(vendetta.characterBId);
-                }
-            }
-        }
-
-        var index = _state.vendettas.all.indexOf(vendetta);
-        if (index !== -1) {
-            _state.vendettas.all.splice(index, 1);
-        }
-
-        _state.lastUpdate = Date.now();
     }
 
     function _persistVendettas() {
+        var masterData = (typeof window.masterData !== 'undefined') ?
+            window.masterData : null;
+
+        if (!masterData || !masterData.data) {
+            return { success: false, error: 'masterData.data is unavailable' };
+        }
+
         try {
-            if (typeof window.masterData !== 'undefined' && window.masterData.data) {
-                window.masterData.data.vendettas = _state.vendettas.all;
-                _saveMasterData();
-            }
+            masterData.data.vendettas = _state.vendettas.all;
+            _saveMasterData();
+            return { success: true };
         } catch (e) {
-            // Silently handle persistence errors
+            return { success: false, error: e.message || String(e) };
         }
     }
 
     // =========================================================================
-    // 6. NOTIFICATION SYSTEM
+    // 6. NOTIFICATION
     // =========================================================================
 
-    function _notifySubscribers(event, data) {
+    function _notify(event, data) {
         for (var i = 0; i < _state.subscribers.length; i++) {
             try {
                 _state.subscribers[i]({ type: event, data: data, timestamp: Date.now() });
             } catch (e) {
-                // Silently handle subscriber errors
+                // Subscriber failures must not break the state layer.
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error('[CrimeState] Subscriber threw during "' + event + '":', e);
+                }
             }
         }
     }
 
     // =========================================================================
-    // 7. PUBLIC API - CRIME QUERIES
+    // 7. GUARD HELPERS
+    // =========================================================================
+
+    function _beginMutation() {
+        if (_mutatingState) return false;
+        _mutatingState = true;
+        return true;
+    }
+
+    function _endMutation() {
+        _mutatingState = false;
+    }
+
+    // =========================================================================
+    // 8. CRIME RECORD CONSTRUCTION (internal; enforces invariants)
+    // =========================================================================
+
+    function _buildCrimeRecord(data) {
+        var currentYear = _getCurrentYear();
+
+        var victim = data.victimId ? _getCharacterById(data.victimId) : null;
+        var perpetrator = data.perpetratorId ? _getCharacterById(data.perpetratorId) : null;
+
+        // Lifecycle invariant: a crime is never recorded as already solved.
+        // Solving is a transition performed by solveCrime().
+        var solved = false;
+        var solvedAt = null;
+        var solution = null;
+
+        if (data.solved === true) {
+            // Callers occasionally try to record a pre-solved crime (e.g.
+            // public executions). We honor the intent, but require a solution
+            // value and set solvedAt explicitly from data.solvedAt.
+            solved = true;
+            solvedAt = (typeof data.solvedAt === 'number') ? data.solvedAt : currentYear;
+            solution = data.solution || 'Recorded as solved';
+        }
+
+        return {
+            id: _generateId('crime'),
+            type: data.type || 'unknown',
+            perpetratorId: data.perpetratorId || null,
+            perpetratorName: perpetrator ? (perpetrator.name || 'Unknown') : 'Unknown',
+            victimId: data.victimId || null,
+            victimName: victim ? (victim.name || 'Unknown') : null,
+            year: (typeof data.year === 'number') ? data.year : currentYear,
+            reason: data.reason || 'Unknown reason',
+            location: data.location || null,
+            locationId: data.locationId || null,
+            witnesses: Array.isArray(data.witnesses) ? data.witnesses.slice() : [],
+            evidence: Array.isArray(data.evidence) ? data.evidence.slice() : [],
+            solved: solved,
+            solvedAt: solvedAt,
+            solution: solution,
+            punishment: data.punishment || null,
+            method: data.method || null,
+            severity: (typeof data.severity === 'number') ? data.severity : null,
+            recordedAt: currentYear,
+            notes: data.notes || null,
+            metadata: data.metadata || {},
+
+            // Law-derived fields. These are copied verbatim from the command
+            // layer. State does not fabricate or interpret them.
+            civilViolation: data.civilViolation || null,
+            religiousViolation: data.religiousViolation || null,
+            religionId: data.religionId || null,
+            violatedLaws: Array.isArray(data.violatedLaws) ? data.violatedLaws.slice() : []
+        };
+    }
+
+    // =========================================================================
+    // 9. PUBLIC API - CRIME QUERIES
     // =========================================================================
 
     function getCrime(crimeId) {
@@ -372,50 +511,109 @@
         return _state.crimes.all.slice();
     }
 
-    function getCrimesByCharacter(characterId) {
+    /**
+     * Returns crimes in which the character is the perpetrator.
+     * Use getCrimesInvolvingCharacter() for either side.
+     */
+    function getCrimesByPerpetrator(characterId) {
         _initialize();
-        var crimeIds = _state.crimes.byCharacter.get(characterId);
-        if (!crimeIds) return [];
-        var result = [];
-        for (var id of crimeIds) {
-            var crime = _state.crimes.byId.get(id);
-            if (crime) result.push(crime);
+        var ids = _state.crimes.byPerpetrator.get(characterId);
+        if (!ids) return [];
+        var out = [];
+        for (var id of ids) {
+            var c = _state.crimes.byId.get(id);
+            if (c) out.push(c);
         }
-        return result;
+        return out;
+    }
+
+    /**
+     * Returns crimes in which the character is the victim.
+     */
+    function getCrimesByVictim(characterId) {
+        _initialize();
+        var ids = _state.crimes.byVictim.get(characterId);
+        if (!ids) return [];
+        var out = [];
+        for (var id of ids) {
+            var c = _state.crimes.byId.get(id);
+            if (c) out.push(c);
+        }
+        return out;
+    }
+
+    /**
+     * Returns crimes in which the character is either perpetrator or victim.
+     * Result contains each crime once.
+     */
+    function getCrimesInvolvingCharacter(characterId) {
+        _initialize();
+        var seen = new Set();
+        var out = [];
+
+        var asPerp = _state.crimes.byPerpetrator.get(characterId);
+        if (asPerp) {
+            for (var id of asPerp) {
+                if (!seen.has(id)) {
+                    var c = _state.crimes.byId.get(id);
+                    if (c) { out.push(c); seen.add(id); }
+                }
+            }
+        }
+
+        var asVictim = _state.crimes.byVictim.get(characterId);
+        if (asVictim) {
+            for (var id2 of asVictim) {
+                if (!seen.has(id2)) {
+                    var c2 = _state.crimes.byId.get(id2);
+                    if (c2) { out.push(c2); seen.add(id2); }
+                }
+            }
+        }
+
+        return out;
+    }
+
+    /**
+     * Legacy alias. Prefer getCrimesByPerpetrator or
+     * getCrimesInvolvingCharacter.
+     */
+    function getCrimesByCharacter(characterId) {
+        return getCrimesByPerpetrator(characterId);
     }
 
     function getCrimesByType(type) {
         _initialize();
-        var crimeIds = _state.crimes.byType.get(type);
-        if (!crimeIds) return [];
-        var result = [];
-        for (var id of crimeIds) {
-            var crime = _state.crimes.byId.get(id);
-            if (crime) result.push(crime);
+        var ids = _state.crimes.byType.get(type);
+        if (!ids) return [];
+        var out = [];
+        for (var id of ids) {
+            var c = _state.crimes.byId.get(id);
+            if (c) out.push(c);
         }
-        return result;
+        return out;
     }
 
     function getCrimesByLocation(locationId) {
         _initialize();
-        var crimeIds = _state.crimes.byLocation.get(locationId);
-        if (!crimeIds) return [];
-        var result = [];
-        for (var id of crimeIds) {
-            var crime = _state.crimes.byId.get(id);
-            if (crime) result.push(crime);
+        var ids = _state.crimes.byLocation.get(locationId);
+        if (!ids) return [];
+        var out = [];
+        for (var id of ids) {
+            var c = _state.crimes.byId.get(id);
+            if (c) out.push(c);
         }
-        return result;
+        return out;
     }
 
     function getUnsolvedCrimes() {
         _initialize();
-        var result = [];
+        var out = [];
         for (var id of _state.crimes.unsolved) {
-            var crime = _state.crimes.byId.get(id);
-            if (crime) result.push(crime);
+            var c = _state.crimes.byId.get(id);
+            if (c) out.push(c);
         }
-        return result;
+        return out;
     }
 
     function getCrimeCount() {
@@ -424,123 +622,154 @@
     }
 
     // =========================================================================
-    // 8. PUBLIC API - CRIME COMMANDS
+    // 10. PUBLIC API - CRIME COMMANDS
     // =========================================================================
 
+    /**
+     * Records a new crime. Law-derived fields (civilViolation,
+     * religiousViolation, religionId, violatedLaws) are preserved verbatim.
+     *
+     * @returns {{success: boolean, data?: Object, error?: string}}
+     */
     function recordCrime(data) {
-        if (_processingState) {
-            return { success: false, error: 'Already processing state change' };
+        if (!_beginMutation()) {
+            return { success: false, error: 'CrimeState is already mutating' };
         }
-        _processingState = true;
 
         try {
             _initialize();
+            data = data || {};
 
-            var currentYear = _getCurrentYear();
-            var victim = data.victimId ? _getCharacterById(data.victimId) : null;
-            var perpetrator = data.perpetratorId ? _getCharacterById(data.perpetratorId) : null;
+            var crime = _buildCrimeRecord(data);
 
-            var crime = {
-                id: _generateId('crime'),
-                type: data.type || 'unknown',
-                perpetratorId: data.perpetratorId || null,
-                perpetratorName: perpetrator ? (perpetrator.name || 'Unknown') : 'Unknown',
-                victimId: data.victimId || null,
-                victimName: victim ? (victim.name || 'Unknown') : null,
-                year: data.year || currentYear,
-                reason: data.reason || 'Unknown reason',
-                location: data.location || null,
-                locationId: data.locationId || null,
-                witnesses: data.witnesses || [],
-                evidence: data.evidence || [],
-                solved: data.solved || false,
-                solvedAt: data.solved ? (data.year || currentYear) : null,
-                solution: null,
-                punishment: data.punishment || null,
-                method: data.method || null,
-                severity: data.severity || 5,
-                recordedAt: currentYear,
-                notes: data.notes || null,
-                metadata: data.metadata || {}
-            };
+            if (!_indexCrimeInto(_state.crimes, crime)) {
+                return { success: false, error: 'Crime already indexed: ' + crime.id };
+            }
 
-            _addCrimeToCache(crime);
-            _persistCrimes();
-            _notifySubscribers('crimeRecorded', { crime: crime });
+            var persist = _persistCrimes();
+            if (!persist.success) {
+                // Roll back the in-memory index so state matches persistence.
+                _deindexCrimeFrom(_state.crimes, crime);
+                return {
+                    success: false,
+                    error: 'Failed to persist crime: ' + persist.error
+                };
+            }
+
+            _state.lastUpdate = Date.now();
+            _notify('crimeRecorded', { crime: crime });
 
             return { success: true, data: crime };
 
         } catch (e) {
-            return { success: false, error: e.message || 'Failed to record crime' };
+            return { success: false, error: e.message || String(e) };
         } finally {
-            _processingState = false;
+            _endMutation();
         }
     }
 
-    function solveCrime(crimeId, solution) {
-        if (_processingState) {
-            return { success: false, error: 'Already processing state change' };
+    /**
+     * Marks a crime as solved. This is the only path to a solved crime.
+     *
+     * @param {string} crimeId
+     * @param {string} solution
+     * @param {number} [solvedAtYear] - defaults to current year
+     */
+    function solveCrime(crimeId, solution, solvedAtYear) {
+        if (!_beginMutation()) {
+            return { success: false, error: 'CrimeState is already mutating' };
         }
-        _processingState = true;
 
         try {
             _initialize();
 
             var crime = _state.crimes.byId.get(crimeId);
-            if (!crime) {
-                return { success: false, error: 'Crime not found' };
-            }
-            if (crime.solved) {
-                return { success: false, error: 'Crime already solved' };
-            }
+            if (!crime) return { success: false, error: 'Crime not found' };
+            if (crime.solved) return { success: false, error: 'Crime already solved' };
+
+            var year = (typeof solvedAtYear === 'number') ? solvedAtYear : _getCurrentYear();
 
             crime.solved = true;
-            crime.solvedAt = _getCurrentYear();
+            crime.solvedAt = year;
             crime.solution = solution || 'Solved';
             _state.crimes.unsolved.delete(crimeId);
 
-            _persistCrimes();
-            _notifySubscribers('crimeSolved', { crimeId: crimeId, solution: solution });
+            var persist = _persistCrimes();
+            if (!persist.success) {
+                // Roll back the transition.
+                crime.solved = false;
+                crime.solvedAt = null;
+                crime.solution = null;
+                _state.crimes.unsolved.add(crimeId);
+                return {
+                    success: false,
+                    error: 'Failed to persist solve: ' + persist.error
+                };
+            }
+
+            _state.lastUpdate = Date.now();
+            _notify('crimeSolved', { crimeId: crimeId, solution: crime.solution });
 
             return { success: true, data: crime };
 
         } catch (e) {
-            return { success: false, error: e.message || 'Failed to solve crime' };
+            return { success: false, error: e.message || String(e) };
         } finally {
-            _processingState = false;
+            _endMutation();
         }
     }
 
     function deleteCrime(crimeId) {
-        if (_processingState) {
-            return { success: false, error: 'Already processing state change' };
+        if (!_beginMutation()) {
+            return { success: false, error: 'CrimeState is already mutating' };
         }
-        _processingState = true;
 
         try {
             _initialize();
 
             var crime = _state.crimes.byId.get(crimeId);
-            if (!crime) {
-                return { success: false, error: 'Crime not found' };
+            if (!crime) return { success: false, error: 'Crime not found' };
+
+            _deindexCrimeFrom(_state.crimes, crime);
+
+            var persist = _persistCrimes();
+            if (!persist.success) {
+                // Re-index to keep state and persistence consistent.
+                _indexCrimeInto(_state.crimes, crime);
+                return {
+                    success: false,
+                    error: 'Failed to persist deletion: ' + persist.error
+                };
             }
 
-            _removeCrimeFromCache(crimeId);
-            _persistCrimes();
-            _notifySubscribers('crimeDeleted', { crimeId: crimeId });
+            _state.lastUpdate = Date.now();
+            _notify('crimeDeleted', { crimeId: crimeId });
 
             return { success: true };
 
         } catch (e) {
-            return { success: false, error: e.message || 'Failed to delete crime' };
+            return { success: false, error: e.message || String(e) };
         } finally {
-            _processingState = false;
+            _endMutation();
         }
     }
 
     // =========================================================================
-    // 9. PUBLIC API - VENDETTA QUERIES
+    // 11. PUBLIC API - VENDETTA QUERIES
     // =========================================================================
+    //
+    // includeResolved convention: resolved vendettas are INCLUDED by default.
+    // Pass { includeResolved: false } to exclude them.
+    // Active views should use getActiveVendettas() explicitly.
+
+    function _vendettaMatchesOptions(v, options) {
+        if (!v) return false;
+        if (options && options.includeResolved === false) {
+            var statuses = _getVendettaStatusConstants();
+            if (v.status === statuses.RESOLVED) return false;
+        }
+        return true;
+    }
 
     function getVendetta(vendettaId) {
         _initialize();
@@ -548,54 +777,71 @@
     }
 
     function getAllVendettas(options) {
-        options = options || {};
         _initialize();
-        if (options.includeResolved === false) {
-            return _state.vendettas.all.filter(function(v) {
-                return v.status !== 'resolved';
-            });
+        options = options || {};
+        var out = [];
+        for (var i = 0; i < _state.vendettas.all.length; i++) {
+            var v = _state.vendettas.all[i];
+            if (_vendettaMatchesOptions(v, options)) out.push(v);
         }
-        return _state.vendettas.all.slice();
+        return out;
     }
 
     function getVendettasByHousehold(householdId, options) {
-        options = options || {};
         _initialize();
-        var vendettaIds = _state.vendettas.byHousehold.get(householdId);
-        if (!vendettaIds) return [];
-        var result = [];
-        for (var id of vendettaIds) {
+        options = options || {};
+        var ids = _state.vendettas.byHousehold.get(householdId);
+        if (!ids) return [];
+        var out = [];
+        for (var id of ids) {
             var v = _state.vendettas.byId.get(id);
-            if (v) {
-                if (!options.includeResolved && v.status === 'resolved') {
-                    continue;
-                }
-                result.push(v);
-            }
+            if (v && _vendettaMatchesOptions(v, options)) out.push(v);
         }
-        return result;
+        return out;
     }
 
     function getVendettasByCharacter(characterId, options) {
-        options = options || {};
         _initialize();
-        var vendettaIds = _state.vendettas.byCharacter.get(characterId);
-        if (!vendettaIds) return [];
-        var result = [];
-        for (var id of vendettaIds) {
+        options = options || {};
+        var ids = _state.vendettas.byCharacter.get(characterId);
+        if (!ids) return [];
+        var out = [];
+        for (var id of ids) {
             var v = _state.vendettas.byId.get(id);
-            if (v) {
-                if (!options.includeResolved && v.status === 'resolved') {
-                    continue;
-                }
-                result.push(v);
-            }
+            if (v && _vendettaMatchesOptions(v, options)) out.push(v);
         }
-        return result;
+        return out;
     }
 
+    /**
+     * Returns unresolved vendettas involving the household.
+     * "Unresolved" means status is ACTIVE or ESCALATED.
+     */
     function getActiveVendettas(householdId) {
         return getVendettasByHousehold(householdId, { includeResolved: false });
+    }
+
+    /**
+     * Returns the single unresolved vendetta between two households, or null.
+     * This is the canonical query for the "one active vendetta per pair"
+     * domain invariant.
+     */
+    function getActiveVendettaBetween(householdAId, householdBId) {
+        _initialize();
+        if (!householdAId || !householdBId) return null;
+        if (householdAId === householdBId) return null;
+
+        var statuses = _getVendettaStatusConstants();
+        var candidates = getVendettasByHousehold(householdAId, { includeResolved: false });
+
+        for (var i = 0; i < candidates.length; i++) {
+            var v = candidates[i];
+            if (v.status === statuses.RESOLVED) continue;
+            if (v.householdBId === householdBId || v.householdAId === householdBId) {
+                return v;
+            }
+        }
+        return null;
     }
 
     function getVendettaCount() {
@@ -604,40 +850,47 @@
     }
 
     // =========================================================================
-    // 10. PUBLIC API - VENDETTA COMMANDS
+    // 12. PUBLIC API - VENDETTA COMMANDS
     // =========================================================================
 
+    /**
+     * Creates a vendetta between two distinct households.
+     * Enforces the invariant that at most one unresolved vendetta may exist
+     * between any two households.
+     */
     function createVendetta(data) {
-        if (_processingState) {
-            return { success: false, error: 'Already processing state change' };
+        if (!_beginMutation()) {
+            return { success: false, error: 'CrimeState is already mutating' };
         }
-        _processingState = true;
 
         try {
             _initialize();
+            data = data || {};
 
-            var currentYear = _getCurrentYear();
+            if (!data.householdAId || !data.householdBId) {
+                return { success: false, error: 'Both household IDs are required' };
+            }
+            if (data.householdAId === data.householdBId) {
+                return { success: false, error: 'A vendetta requires two distinct households' };
+            }
 
-            // Validate households
-            var householdA = data.householdAId ? _getHouseholdById(data.householdAId) : null;
-            var householdB = data.householdBId ? _getHouseholdById(data.householdBId) : null;
-
+            var householdA = _getHouseholdById(data.householdAId);
+            var householdB = _getHouseholdById(data.householdBId);
             if (!householdA || !householdB) {
                 return { success: false, error: 'One or both households not found' };
             }
 
-            if (data.householdAId === data.householdBId) {
-                return { success: false, error: 'Cannot create vendetta with same household' };
+            var existing = getActiveVendettaBetween(data.householdAId, data.householdBId);
+            if (existing) {
+                return {
+                    success: false,
+                    error: 'An unresolved vendetta already exists between these households',
+                    existingVendettaId: existing.id
+                };
             }
 
-            // Check for existing active vendetta
-            var existing = getActiveVendettas(data.householdAId);
-            for (var i = 0; i < existing.length; i++) {
-                if (existing[i].householdAId === data.householdBId || 
-                    existing[i].householdBId === data.householdBId) {
-                    return { success: false, error: 'Active vendetta already exists between these households' };
-                }
-            }
+            var statuses = _getVendettaStatusConstants();
+            var currentYear = _getCurrentYear();
 
             var characterA = data.characterAId ? _getCharacterById(data.characterAId) : null;
             var characterB = data.characterBId ? _getCharacterById(data.characterBId) : null;
@@ -652,10 +905,10 @@
                 characterAName: characterA ? (characterA.name || null) : null,
                 characterBId: data.characterBId || null,
                 characterBName: characterB ? (characterB.name || null) : null,
-                cause: data.cause || 'Unknown cause',
-                startedYear: data.year || currentYear,
-                status: 'active',
-                bodyCount: 0,
+                cause: data.cause || null,
+                originCrimeId: data.originCrimeId || null,
+                startedYear: (typeof data.year === 'number') ? data.year : currentYear,
+                status: statuses.ACTIVE,
                 deaths: [],
                 escalatedAt: null,
                 resolvedAt: null,
@@ -665,189 +918,268 @@
                 updatedAt: Date.now()
             };
 
-            _addVendettaToCache(vendetta);
-            _persistVendettas();
-            _notifySubscribers('vendettaCreated', { vendetta: vendetta });
+            if (!_indexVendettaInto(_state.vendettas, vendetta)) {
+                return { success: false, error: 'Vendetta already indexed: ' + vendetta.id };
+            }
+
+            var persist = _persistVendettas();
+            if (!persist.success) {
+                _deindexVendettaFrom(_state.vendettas, vendetta);
+                return {
+                    success: false,
+                    error: 'Failed to persist vendetta: ' + persist.error
+                };
+            }
+
+            _state.lastUpdate = Date.now();
+            _notify('vendettaCreated', { vendetta: vendetta });
 
             return { success: true, data: vendetta };
 
         } catch (e) {
-            return { success: false, error: e.message || 'Failed to create vendetta' };
+            return { success: false, error: e.message || String(e) };
         } finally {
-            _processingState = false;
+            _endMutation();
         }
     }
 
+    /**
+     * Records a death in a vendetta. Automatically escalates when the
+     * escalation threshold is reached. Cannot record deaths on resolved
+     * vendettas.
+     */
     function recordVendettaDeath(vendettaId, deathData) {
-        if (_processingState) {
-            return { success: false, error: 'Already processing state change' };
+        if (!_beginMutation()) {
+            return { success: false, error: 'CrimeState is already mutating' };
         }
-        _processingState = true;
 
         try {
             _initialize();
+            deathData = deathData || {};
 
             var vendetta = _state.vendettas.byId.get(vendettaId);
-            if (!vendetta) {
-                return { success: false, error: 'Vendetta not found' };
-            }
-            if (vendetta.status === 'resolved') {
-                return { success: false, error: 'Vendetta is already resolved' };
+            if (!vendetta) return { success: false, error: 'Vendetta not found' };
+
+            var statuses = _getVendettaStatusConstants();
+            if (vendetta.status === statuses.RESOLVED) {
+                return { success: false, error: 'Vendetta is resolved' };
             }
 
             var victim = deathData.victimId ? _getCharacterById(deathData.victimId) : null;
             var killer = deathData.killerId ? _getCharacterById(deathData.killerId) : null;
 
-            var deathRecord = {
+            var death = {
                 victimId: deathData.victimId || null,
                 victimName: victim ? (victim.name || 'Unknown') : 'Unknown',
                 killerId: deathData.killerId || null,
                 killerName: killer ? (killer.name || 'Unknown') : 'Unknown',
-                year: deathData.year || _getCurrentYear(),
+                year: (typeof deathData.year === 'number') ? deathData.year : _getCurrentYear(),
                 reason: deathData.reason || null,
+                crimeId: deathData.crimeId || null,
                 recordedAt: Date.now()
             };
 
-            vendetta.deaths.push(deathRecord);
-            vendetta.bodyCount = vendetta.deaths.length;
+            vendetta.deaths.push(death);
             vendetta.updatedAt = Date.now();
 
-            // Escalate if body count >= 3
-            if (vendetta.bodyCount >= 3 && vendetta.status === 'active') {
-                vendetta.status = 'escalated';
-                vendetta.escalatedAt = deathData.year || _getCurrentYear();
-                _notifySubscribers('vendettaEscalated', { vendettaId: vendettaId, bodyCount: vendetta.bodyCount });
+            var escalated = false;
+            var threshold = _getEscalationThreshold();
+            if (vendetta.deaths.length >= threshold && vendetta.status === statuses.ACTIVE) {
+                vendetta.status = statuses.ESCALATED;
+                vendetta.escalatedAt = death.year;
+                escalated = true;
             }
 
-            _persistVendettas();
-            _notifySubscribers('vendettaDeath', { vendettaId: vendettaId, death: deathRecord });
+            var persist = _persistVendettas();
+            if (!persist.success) {
+                vendetta.deaths.pop();
+                vendetta.updatedAt = Date.now();
+                if (escalated) {
+                    vendetta.status = statuses.ACTIVE;
+                    vendetta.escalatedAt = null;
+                }
+                return {
+                    success: false,
+                    error: 'Failed to persist vendetta death: ' + persist.error
+                };
+            }
+
+            _state.lastUpdate = Date.now();
+            _notify('vendettaDeath', { vendettaId: vendettaId, death: death, escalated: escalated });
 
             return { success: true, data: vendetta };
 
         } catch (e) {
-            return { success: false, error: e.message || 'Failed to record vendetta death' };
+            return { success: false, error: e.message || String(e) };
         } finally {
-            _processingState = false;
+            _endMutation();
         }
     }
 
+    /**
+     * Resolves a vendetta. Once resolved, no further deaths may be recorded.
+     */
     function resolveVendetta(vendettaId, resolutionData) {
-        if (_processingState) {
-            return { success: false, error: 'Already processing state change' };
+        if (!_beginMutation()) {
+            return { success: false, error: 'CrimeState is already mutating' };
         }
-        _processingState = true;
 
         try {
             _initialize();
+            resolutionData = resolutionData || {};
 
             var vendetta = _state.vendettas.byId.get(vendettaId);
-            if (!vendetta) {
-                return { success: false, error: 'Vendetta not found' };
-            }
-            if (vendetta.status === 'resolved') {
+            if (!vendetta) return { success: false, error: 'Vendetta not found' };
+
+            var statuses = _getVendettaStatusConstants();
+            if (vendetta.status === statuses.RESOLVED) {
                 return { success: false, error: 'Vendetta already resolved' };
             }
 
-            vendetta.status = 'resolved';
-            vendetta.resolvedAt = resolutionData.year || _getCurrentYear();
+            var previousStatus = vendetta.status;
+            var previousResolvedAt = vendetta.resolvedAt;
+            var previousResolution = vendetta.resolution;
+            var previousNotes = vendetta.notes;
+
+            vendetta.status = statuses.RESOLVED;
+            vendetta.resolvedAt = (typeof resolutionData.year === 'number') ?
+                resolutionData.year : _getCurrentYear();
             vendetta.resolution = resolutionData.resolution || 'Resolved';
-            vendetta.notes = resolutionData.notes || vendetta.notes;
+            if (resolutionData.notes) vendetta.notes = resolutionData.notes;
             vendetta.updatedAt = Date.now();
 
-            _persistVendettas();
-            _notifySubscribers('vendettaResolved', { vendettaId: vendettaId, resolution: vendetta.resolution });
+            var persist = _persistVendettas();
+            if (!persist.success) {
+                vendetta.status = previousStatus;
+                vendetta.resolvedAt = previousResolvedAt;
+                vendetta.resolution = previousResolution;
+                vendetta.notes = previousNotes;
+                vendetta.updatedAt = Date.now();
+                return {
+                    success: false,
+                    error: 'Failed to persist resolution: ' + persist.error
+                };
+            }
+
+            _state.lastUpdate = Date.now();
+            _notify('vendettaResolved', { vendettaId: vendettaId, resolution: vendetta.resolution });
 
             return { success: true, data: vendetta };
 
         } catch (e) {
-            return { success: false, error: e.message || 'Failed to resolve vendetta' };
+            return { success: false, error: e.message || String(e) };
         } finally {
-            _processingState = false;
+            _endMutation();
         }
     }
 
     function deleteVendetta(vendettaId) {
-        if (_processingState) {
-            return { success: false, error: 'Already processing state change' };
+        if (!_beginMutation()) {
+            return { success: false, error: 'CrimeState is already mutating' };
         }
-        _processingState = true;
 
         try {
             _initialize();
 
             var vendetta = _state.vendettas.byId.get(vendettaId);
-            if (!vendetta) {
-                return { success: false, error: 'Vendetta not found' };
+            if (!vendetta) return { success: false, error: 'Vendetta not found' };
+
+            _deindexVendettaFrom(_state.vendettas, vendetta);
+
+            var persist = _persistVendettas();
+            if (!persist.success) {
+                _indexVendettaInto(_state.vendettas, vendetta);
+                return {
+                    success: false,
+                    error: 'Failed to persist deletion: ' + persist.error
+                };
             }
 
-            _removeVendettaFromCache(vendettaId);
-            _persistVendettas();
-            _notifySubscribers('vendettaDeleted', { vendettaId: vendettaId });
+            _state.lastUpdate = Date.now();
+            _notify('vendettaDeleted', { vendettaId: vendettaId });
 
             return { success: true };
 
         } catch (e) {
-            return { success: false, error: e.message || 'Failed to delete vendetta' };
+            return { success: false, error: e.message || String(e) };
         } finally {
-            _processingState = false;
+            _endMutation();
         }
     }
 
     // =========================================================================
-    // 11. SUBSCRIPTION
+    // 13. SUBSCRIPTION
     // =========================================================================
 
     function subscribe(callback) {
         if (typeof callback !== 'function') return null;
         _state.subscribers.push(callback);
         return function unsubscribe() {
-            var index = _state.subscribers.indexOf(callback);
-            if (index !== -1) {
-                _state.subscribers.splice(index, 1);
-            }
+            var idx = _state.subscribers.indexOf(callback);
+            if (idx !== -1) _state.subscribers.splice(idx, 1);
         };
     }
 
     // =========================================================================
-    // 12. CACHE MANAGEMENT
+    // 14. CACHE MANAGEMENT
     // =========================================================================
 
-    function invalidateCache() {
-        if (_processingState) return;
-        _processingState = true;
+    /**
+     * Drops all indexes and rebuilds them from masterData. This is a reload,
+     * not a mere invalidation. Callers who need lazy rebuild semantics should
+     * use the module's natural initialize-on-first-access behaviour and not
+     * call this at all.
+     */
+    function reload() {
+        if (_mutatingState) return false;
+
+        _state.crimes = {
+            byId: new Map(),
+            byPerpetrator: new Map(),
+            byVictim: new Map(),
+            byType: new Map(),
+            byLocation: new Map(),
+            unsolved: new Set(),
+            all: []
+        };
+        _state.vendettas = {
+            byId: new Map(),
+            byHousehold: new Map(),
+            byCharacter: new Map(),
+            all: []
+        };
+        _initialized = false;
 
         try {
-            _state.crimes.byId = new Map();
-            _state.crimes.byCharacter = new Map();
-            _state.crimes.byType = new Map();
-            _state.crimes.byLocation = new Map();
-            _state.crimes.unsolved = new Set();
-            _state.crimes.all = [];
-
-            _state.vendettas.byId = new Map();
-            _state.vendettas.byHousehold = new Map();
-            _state.vendettas.byCharacter = new Map();
-            _state.vendettas.all = [];
-
-            _initialized = false;
             _initialize();
-            _notifySubscribers('cacheInvalidated', {});
+            _notify('reloaded', {});
+            return true;
         } catch (e) {
-            // Silently handle
-        } finally {
-            _processingState = false;
+            if (typeof console !== 'undefined' && console.error) {
+                console.error('[CrimeState] Reload failed:', e);
+            }
+            return false;
         }
     }
 
+    // Legacy alias. Preserved so existing callers do not break during migration.
+    // Prefer reload() in new code.
+    function invalidateCache() {
+        return reload();
+    }
+
     // =========================================================================
-    // 13. EXPORTS
+    // 15. EXPORTS
     // =========================================================================
 
     window.CrimeState = {
         // Crime queries
         getCrime: getCrime,
         getAllCrimes: getAllCrimes,
-        getCrimesByCharacter: getCrimesByCharacter,
+        getCrimesByPerpetrator: getCrimesByPerpetrator,
+        getCrimesByVictim: getCrimesByVictim,
+        getCrimesInvolvingCharacter: getCrimesInvolvingCharacter,
+        getCrimesByCharacter: getCrimesByCharacter, // legacy alias
         getCrimesByType: getCrimesByType,
         getCrimesByLocation: getCrimesByLocation,
         getUnsolvedCrimes: getUnsolvedCrimes,
@@ -864,6 +1196,7 @@
         getVendettasByHousehold: getVendettasByHousehold,
         getVendettasByCharacter: getVendettasByCharacter,
         getActiveVendettas: getActiveVendettas,
+        getActiveVendettaBetween: getActiveVendettaBetween,
         getVendettaCount: getVendettaCount,
 
         // Vendetta commands
@@ -875,11 +1208,11 @@
         // Subscription
         subscribe: subscribe,
 
-        // Cache
-        invalidateCache: invalidateCache
+        // Cache management
+        reload: reload,
+        invalidateCache: invalidateCache // legacy alias
     };
 
-    // Legacy aliases
     window._crimeState = window.CrimeState;
 
 })();
