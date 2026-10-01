@@ -2,1061 +2,704 @@
  * =============================================================================
  * STILL WATERS - ROLE COMMANDS (role-commands.js)
  * =============================================================================
- * 
- * This file contains ALL write operations for roles:
- * - Role CRUD
- * - Category management
- * - Role assignment to characters
- * - Skill management
- * - Profession skill updates (direct)
- * - Role specialization management (NEW)
- * 
- * DEPENDENCIES:
- *   - role-state.js (RoleState)
- *   - role-constants.js (UNCATEGORIZED_ID, BASE_SALARY_BY_CATEGORY, DEFAULT_SALARY)
- *   - accessors.js (getCharacterById, getCharacters, getRoleById)
- *   - ids.js (generateId)
- *   - storage.js (saveMasterData)
- * 
+ *
+ * All write operations for the role domain.
+ *
+ * Contract:
+ *   - Validates its inputs and returns structured results.
+ *   - Delegates role-record mutation to RoleState.
+ *   - Delegates character profession mutation to CharacterCommands.
+ *   - Emits domain events via RoleEvents (see below), never directly.
+ *   - Contains NO UI concerns: no toasts, no DOM, no browser events.
+ *
+ * Reentrancy:
+ *   There is no module-wide guard. Commands may call other commands freely
+ *   because every operation is synchronous and side-effect explicit. A guard
+ *   that suppressed composition is what broke bulkAssignRole in the old code.
+ *
+ * Ownership:
+ *   Roles belong to RoleState.
+ *   Professions belong to CharacterCommands.
+ *   Categories belong to RoleState.
+ *   This module orchestrates those three domains; it never mutates another
+ *   domain's state directly.
+ *
+ * DEPENDENCIES (must be loaded first):
+ *   - role-constants.js
+ *   - role-state.js
+ *   - role-queries.js
+ *   - character-commands.js  (CharacterCommands) — profession API only
+ *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
-    // 1. RECURSION GUARDS
+    // 1. HARD DEPENDENCY CHECK
     // =========================================================================
 
-    var _processingCommand = false;
+    if (!window.RoleConstants) {
+        throw new Error('role-commands.js requires role-constants.js first.');
+    }
+    if (!window.RoleState) {
+        throw new Error('role-commands.js requires role-state.js first.');
+    }
+    if (!window.RoleQueries) {
+        throw new Error('role-commands.js requires role-queries.js first.');
+    }
+    if (!window.CharacterCommands) {
+        throw new Error(
+            'role-commands.js requires character-commands.js (CharacterCommands) first.'
+        );
+    }
+
+    var requiredCharacterMethods = [
+        'addProfession',
+        'updateProfession',
+        'removeProfession',
+        'removeProfessionFromAll',
+        'getProfession'
+    ];
+    for (var _m = 0; _m < requiredCharacterMethods.length; _m++) {
+        var _name = requiredCharacterMethods[_m];
+        if (typeof window.CharacterCommands[_name] !== 'function') {
+            throw new Error(
+                'role-commands.js: CharacterCommands.' + _name +
+                ' is required. Extend character-commands.js to expose the ' +
+                'profession API before loading this module.'
+            );
+        }
+    }
+
+    var RC = window.RoleConstants;
+    var RS = window.RoleState;
+    var RQ = window.RoleQueries;
+    var CC = window.CharacterCommands;
 
     // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
+    // 2. RESULT HELPERS
     // =========================================================================
 
-    function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(id);
+    function _ok(data) {
+        var result = { success: true };
+        if (data) {
+            for (var key in data) {
+                if (Object.prototype.hasOwnProperty.call(data, key)) {
+                    result[key] = data[key];
+                }
+            }
         }
-        if (typeof window._getCharacterById === 'function') {
-            return window._getCharacterById(id);
-        }
-        return null;
+        return result;
     }
 
-    function _getCharacters() {
-        if (typeof window.getCharacters === 'function') {
-            return window.getCharacters();
-        }
-        if (typeof window._getCharacters === 'function') {
-            return window._getCharacters();
-        }
-        return [];
-    }
-
-    function _getRoleById(id) {
-        if (typeof window.getRoleById === 'function') {
-            return window.getRoleById(id);
-        }
-        if (typeof window._getRoleById === 'function') {
-            return window._getRoleById(id);
-        }
-        return null;
-    }
-
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
-    function _generateId(prefix) {
-        if (typeof window.generateId === 'function') {
-            return window.generateId(prefix);
-        }
-        if (typeof window._generateId === 'function') {
-            return window._generateId(prefix);
-        }
-        return prefix + '_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
-    }
-
-    function _logEvent(category, type, message, subjects) {
-        if (typeof window.logEvent === 'function') {
-            window.logEvent(category, type, message, subjects);
-        }
-        if (typeof window._logEvent === 'function') {
-            window._logEvent(category, type, message, subjects);
-        }
-    }
-
-    function _showToast(message, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(message, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(message, type);
-        }
-    }
-
-    function _saveMasterData() {
-        if (typeof window.saveMasterData === 'function') {
-            window.saveMasterData();
-        }
-        if (typeof window._saveMasterData === 'function') {
-            window._saveMasterData();
-        }
-    }
-
-    function _getBaseSalaryByCategory(category) {
-        return window.BASE_SALARY_BY_CATEGORY?.[category] || window.DEFAULT_SALARY || 10;
-    }
-
-    function _invalidateAccessorCaches() {
-        if (typeof window.invalidateAccessorCaches === 'function') {
-            window.invalidateAccessorCaches();
-        }
-        if (typeof window._invalidateAccessorCaches === 'function') {
-            window._invalidateAccessorCaches();
-        }
+    function _fail(reason) {
+        return { success: false, reason: reason };
     }
 
     // =========================================================================
-    // 3. ROLE CRUD
+    // 3. INPUT VALIDATION
+    // =========================================================================
+
+    function _validString(v) {
+        return typeof v === 'string' && v.trim() !== '';
+    }
+
+    function _validSalary(v) {
+        if (typeof v !== 'number' || !Number.isFinite(v)) return false;
+        if (v < RC.MIN_SALARY) return false;
+        if (v > RC.MAX_SALARY) return false;
+        return true;
+    }
+
+    function _validSkillLevel(v) {
+        if (typeof v !== 'number' || !Number.isFinite(v)) return false;
+        if (v < 0 || v > 100) return false;
+        return true;
+    }
+
+    function _validLiteracyLevel(v) {
+        return RC.REQUIRABLE_LITERACY_LEVELS.indexOf(v) !== -1;
+    }
+
+    function _validGenderRestriction(v) {
+        return v === 'both' || v === 'male' || v === 'female';
+    }
+
+    function _validCategory(v) {
+        if (v === RC.UNCATEGORIZED_ID) return true;
+        return Object.prototype.hasOwnProperty.call(RC.DEFAULT_ROLE_CATEGORIES, v);
+    }
+
+    // =========================================================================
+    // 4. ROLE CRUD
     // =========================================================================
 
     function createRole(data) {
-        if (_processingCommand) {
-            return null;
+        if (!data || typeof data !== 'object') {
+            return _fail('Role data is required.');
         }
-        _processingCommand = true;
 
-        try {
-            data = data || {};
+        if (!_validString(data.name)) {
+            return _fail('Role name is required.');
+        }
 
-            if (!data.name || typeof data.name !== 'string' || data.name.trim() === '') {
-                _showToast('Role name is required', 'error');
-                return null;
+        var category = data.category || RC.UNCATEGORIZED_ID;
+        if (!_validCategory(category)) {
+            return _fail('Invalid category: ' + category);
+        }
+
+        var gender = data.genderRestriction || 'both';
+        if (!_validGenderRestriction(gender)) {
+            return _fail('Invalid gender restriction.');
+        }
+
+        var baseSalary = data.baseSalary;
+        if (baseSalary === undefined || baseSalary === null) {
+            baseSalary = RC.BASE_SALARY_BY_CATEGORY[category];
+            if (typeof baseSalary !== 'number') baseSalary = RC.DEFAULT_SALARY;
+        }
+        if (!_validSalary(baseSalary)) {
+            return _fail('Base salary must be a number between ' +
+                RC.MIN_SALARY + ' and ' + RC.MAX_SALARY + '.');
+        }
+
+        var requiresLiteracy = data.requiresLiteracy === true;
+        var literacyLevel = null;
+        if (requiresLiteracy) {
+            if (!_validLiteracyLevel(data.literacyLevel)) {
+                return _fail('A valid literacy level is required when literacy is required.');
             }
+            literacyLevel = data.literacyLevel;
+        }
 
-            var categories = RoleState.getCategories();
-            var category = data.category || window.UNCATEGORIZED_ID || 'uncategorized';
-            if (category !== 'uncategorized' && !categories[category]) {
-                _showToast('Invalid category', 'error');
-                return null;
-            }
-
-            var baseSalary = data.baseSalary;
-            if (baseSalary === undefined || baseSalary === null) {
-                baseSalary = _getBaseSalaryByCategory(category);
-            }
-
-            var requiresLiteracy = data.requiresLiteracy || false;
-            var literacyLevel = data.literacyLevel || null;
-
-            if (requiresLiteracy && literacyLevel) {
-                var validLevels = ['basic', 'literate', 'educated', 'scholar'];
-                if (validLevels.indexOf(literacyLevel) === -1) {
-                    _showToast('Invalid literacy level', 'error');
-                    return null;
+        var specializations = [];
+        if (Array.isArray(data.specializations)) {
+            for (var i = 0; i < data.specializations.length; i++) {
+                var spec = data.specializations[i];
+                if (_validString(spec) && specializations.indexOf(spec.trim()) === -1) {
+                    specializations.push(spec.trim());
                 }
             }
-
-            var newRole = {
-                id: _generateId('role'),
-                name: data.name.trim(),
-                category: category,
-                icon: data.icon || 'CIRCLE',
-                specializations: data.specializations || [],
-                notes: data.notes || '',
-                genderRestriction: data.genderRestriction || 'both',
-                baseSalary: Math.max(0, baseSalary),
-                requiresLiteracy: requiresLiteracy,
-                literacyLevel: requiresLiteracy ? literacyLevel : null
-            };
-
-            var result = RoleState._addRole(newRole);
-
-            _logEvent('role', 'Role Created', 'Created role: ' + newRole.name, []);
-
-            var salaryMsg = newRole.baseSalary > 0 ? ' (Salary: ' + newRole.baseSalary + ' gold)' : '';
-            var literacyMsg = requiresLiteracy ? ' (Requires: ' + (window.LITERACY_LEVEL_NAMES?.[literacyLevel] || literacyLevel) + ')' : '';
-            _showToast('Role "' + newRole.name + '" created' + salaryMsg + literacyMsg, 'success');
-
-            if (typeof window.dispatchEvent === 'function') {
-                window.dispatchEvent(new CustomEvent('rolesUpdated', {}));
-            }
-
-            return result;
-
-        } finally {
-            _processingCommand = false;
         }
+
+        var icon = _validString(data.icon) ? data.icon : 'CIRCLE';
+
+        var role = RS.addRole({
+            id: window.generateId ? window.generateId('role')
+                : 'role_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+            name: data.name.trim(),
+            category: category,
+            icon: icon,
+            specializations: specializations,
+            notes: _validString(data.notes) ? data.notes : '',
+            genderRestriction: gender,
+            baseSalary: baseSalary,
+            requiresLiteracy: requiresLiteracy,
+            literacyLevel: literacyLevel
+        });
+
+        return _ok({ role: role });
     }
 
     function updateRole(roleId, updates) {
-        if (_processingCommand) {
-            return null;
+        if (!_validString(roleId)) {
+            return _fail('Role id is required.');
         }
-        _processingCommand = true;
 
-        try {
-            var role = RoleState.getRole(roleId);
-            if (!role) {
-                _showToast('Role not found', 'error');
-                return null;
-            }
-
-            if (updates.category !== undefined && updates.category !== role.category) {
-                var categories = RoleState.getCategories();
-                if (updates.category !== 'uncategorized' && !categories[updates.category]) {
-                    _showToast('Invalid category', 'error');
-                    return null;
-                }
-            }
-
-            if (updates.name !== undefined && updates.name.trim() === '') {
-                _showToast('Role name cannot be empty', 'error');
-                return null;
-            }
-
-            if (updates.requiresLiteracy !== undefined) {
-                updates.requiresLiteracy = !!updates.requiresLiteracy;
-                if (!updates.requiresLiteracy) {
-                    updates.literacyLevel = null;
-                }
-            }
-
-            if (updates.literacyLevel !== undefined && updates.literacyLevel !== null) {
-                var validLevels = ['basic', 'literate', 'educated', 'scholar'];
-                if (validLevels.indexOf(updates.literacyLevel) === -1) {
-                    _showToast('Invalid literacy level', 'error');
-                    return null;
-                }
-            }
-
-            if (updates.baseSalary !== undefined) {
-                updates.baseSalary = Math.max(0, updates.baseSalary);
-                if (updates.baseSalary > window.MAX_SALARY || 200) {
-                    _showToast('Salary too high (max: 200)', 'error');
-                    return null;
-                }
-            }
-
-            var result = RoleState._updateRole(roleId, updates);
-
-            if (result) {
-                _logEvent('role', 'Role Updated', 'Updated role: ' + result.name, []);
-                _showToast('Role "' + result.name + '" updated', 'success');
-
-                if (typeof window.dispatchEvent === 'function') {
-                    window.dispatchEvent(new CustomEvent('rolesUpdated', {}));
-                }
-
-                return result;
-            }
-
-            return null;
-
-        } finally {
-            _processingCommand = false;
+        var current = RS.getRole(roleId);
+        if (!current) {
+            return _fail('Role not found.');
         }
+
+        if (!updates || typeof updates !== 'object') {
+            return _fail('Updates object is required.');
+        }
+
+        var patch = {};
+
+        if (updates.name !== undefined) {
+            if (!_validString(updates.name)) {
+                return _fail('Role name cannot be empty.');
+            }
+            patch.name = updates.name.trim();
+        }
+
+        if (updates.category !== undefined) {
+            if (!_validCategory(updates.category)) {
+                return _fail('Invalid category: ' + updates.category);
+            }
+            patch.category = updates.category;
+        }
+
+        if (updates.genderRestriction !== undefined) {
+            if (!_validGenderRestriction(updates.genderRestriction)) {
+                return _fail('Invalid gender restriction.');
+            }
+            patch.genderRestriction = updates.genderRestriction;
+        }
+
+        if (updates.icon !== undefined) {
+            if (!_validString(updates.icon)) {
+                return _fail('Icon must be a non-empty string.');
+            }
+            patch.icon = updates.icon;
+        }
+
+        if (updates.baseSalary !== undefined) {
+            if (!_validSalary(updates.baseSalary)) {
+                return _fail('Base salary must be a number between ' +
+                    RC.MIN_SALARY + ' and ' + RC.MAX_SALARY + '.');
+            }
+            patch.baseSalary = updates.baseSalary;
+        }
+
+        if (updates.notes !== undefined) {
+            patch.notes = typeof updates.notes === 'string' ? updates.notes : '';
+        }
+
+        if (updates.specializations !== undefined) {
+            if (!Array.isArray(updates.specializations)) {
+                return _fail('Specializations must be an array.');
+            }
+            var cleaned = [];
+            for (var i = 0; i < updates.specializations.length; i++) {
+                var s = updates.specializations[i];
+                if (_validString(s) && cleaned.indexOf(s.trim()) === -1) {
+                    cleaned.push(s.trim());
+                }
+            }
+            patch.specializations = cleaned;
+        }
+
+        // Literacy invariant: requiresLiteracy === false → literacyLevel === null
+        var requiresLiteracy = updates.requiresLiteracy !== undefined
+            ? updates.requiresLiteracy === true
+            : current.requiresLiteracy;
+
+        if (updates.requiresLiteracy !== undefined || updates.literacyLevel !== undefined) {
+            if (requiresLiteracy) {
+                var level = updates.literacyLevel !== undefined
+                    ? updates.literacyLevel
+                    : current.literacyLevel;
+                if (!_validLiteracyLevel(level)) {
+                    return _fail('A valid literacy level is required when literacy is required.');
+                }
+                patch.requiresLiteracy = true;
+                patch.literacyLevel = level;
+            } else {
+                patch.requiresLiteracy = false;
+                patch.literacyLevel = null;
+            }
+        }
+
+        var updated = RS.updateRole(roleId, patch);
+        if (!updated) {
+            return _fail('Failed to update role.');
+        }
+        return _ok({ role: updated });
     }
 
-    function deleteRole(roleId, removeFromCharacters) {
-        if (_processingCommand) {
-            return false;
+    function deleteRole(roleId, options) {
+        options = options || {};
+        var removeFromCharacters = options.removeAssignments !== false;
+
+        if (!_validString(roleId)) {
+            return _fail('Role id is required.');
         }
-        _processingCommand = true;
 
-        try {
-            var role = RoleState.getRole(roleId);
-            if (!role) {
-                _showToast('Role not found', 'error');
-                return false;
-            }
-
-            removeFromCharacters = removeFromCharacters !== undefined ? removeFromCharacters : true;
-
-            if (removeFromCharacters) {
-                var characters = _getCharacters();
-                for (var i = 0; i < characters.length; i++) {
-                    var char = characters[i];
-                    if (char.professions) {
-                        char.professions = char.professions.filter(function(p) {
-                            return p.id !== roleId;
-                        });
-                    }
-                }
-            }
-
-            var result = RoleState._deleteRole(roleId);
-
-            if (result) {
-                _logEvent('role', 'Role Deleted', 'Deleted role: ' + role.name, []);
-                _showToast('Role "' + role.name + '" deleted', 'info');
-
-                if (typeof window.dispatchEvent === 'function') {
-                    window.dispatchEvent(new CustomEvent('rolesUpdated', {}));
-                }
-
-                return true;
-            }
-
-            return false;
-
-        } finally {
-            _processingCommand = false;
+        var role = RS.getRole(roleId);
+        if (!role) {
+            return _fail('Role not found.');
         }
-    }
 
-    function setRoles(roles) {
-        if (_processingCommand) {
-            return false;
-        }
-        _processingCommand = true;
-
-        try {
-            if (!Array.isArray(roles)) {
-                _showToast('Invalid roles array', 'error');
-                return false;
+        var reassignedCount = 0;
+        if (removeFromCharacters) {
+            var result = CC.removeProfessionFromAll(roleId);
+            if (!result || result.success !== true) {
+                return _fail('Failed to remove role from characters: ' +
+                    (result && result.reason ? result.reason : 'unknown error'));
             }
-
-            var result = RoleState._setRoles(roles);
-
-            if (result) {
-                _showToast('Roles updated', 'success');
-
-                if (typeof window.dispatchEvent === 'function') {
-                    window.dispatchEvent(new CustomEvent('rolesUpdated', {}));
-                }
-
-                return true;
-            }
-
-            return false;
-
-        } finally {
-            _processingCommand = false;
+            reassignedCount = result.removedCount || 0;
         }
+
+        var deleted = RS.deleteRole(roleId);
+        if (!deleted) {
+            return _fail('Failed to delete role from state.');
+        }
+
+        return _ok({ roleName: role.name, removedFromCharacters: reassignedCount });
     }
 
     // =========================================================================
-    // 4. CATEGORY MANAGEMENT
+    // 5. CATEGORY MANAGEMENT
     // =========================================================================
 
-    function addCategory(id, name, icon) {
-        if (_processingCommand) {
-            return false;
+    function addCategory(id, name) {
+        if (!_validString(id)) return _fail('Category id is required.');
+        if (!_validString(name)) return _fail('Category name is required.');
+
+        if (RS.getCategories()[id]) {
+            return _fail('Category already exists.');
         }
-        _processingCommand = true;
 
         try {
-            if (!id || typeof id !== 'string' || id.trim() === '') {
-                _showToast('Category ID is required', 'error');
-                return false;
-            }
-
-            if (!name || typeof name !== 'string' || name.trim() === '') {
-                _showToast('Category name is required', 'error');
-                return false;
-            }
-
-            var categories = RoleState.getCategories();
-            if (categories[id]) {
-                _showToast('Category already exists', 'error');
-                return false;
-            }
-
-            categories[id] = {
-                id: id,
-                name: name.trim(),
-                icon: icon || '⌇'
-            };
-
-            RoleState._persistState();
-
-            _showToast('Category "' + name + '" created', 'success');
-
-            if (typeof window.dispatchEvent === 'function') {
-                window.dispatchEvent(new CustomEvent('rolesUpdated', {}));
-            }
-
-            return true;
-
-        } finally {
-            _processingCommand = false;
+            RS.addCategory(id, name.trim());
+        } catch (err) {
+            return _fail(err.message);
         }
+        return _ok({ id: id, name: name.trim() });
     }
 
     function updateCategory(id, updates) {
-        if (_processingCommand) {
-            return false;
+        if (!_validString(id)) return _fail('Category id is required.');
+        if (!updates || typeof updates !== 'object') {
+            return _fail('Updates object is required.');
         }
-        _processingCommand = true;
-
-        try {
-            var categories = RoleState.getCategories();
-            if (!categories[id]) {
-                _showToast('Category not found', 'error');
-                return false;
-            }
-
-            if (updates.name !== undefined && updates.name.trim() === '') {
-                _showToast('Category name cannot be empty', 'error');
-                return false;
-            }
-
-            if (updates.name !== undefined) {
-                categories[id].name = updates.name.trim();
-            }
-
-            if (updates.icon !== undefined) {
-                categories[id].icon = updates.icon;
-            }
-
-            RoleState._persistState();
-
-            _showToast('Category "' + categories[id].name + '" updated', 'success');
-
-            if (typeof window.dispatchEvent === 'function') {
-                window.dispatchEvent(new CustomEvent('rolesUpdated', {}));
-            }
-
-            return true;
-
-        } finally {
-            _processingCommand = false;
+        if (updates.name !== undefined && !_validString(updates.name)) {
+            return _fail('Category name cannot be empty.');
         }
+
+        var patch = {};
+        if (updates.name !== undefined) patch.name = updates.name.trim();
+
+        var ok = RS.updateCategory(id, patch);
+        if (!ok) return _fail('Category not found.');
+        return _ok({ id: id });
     }
 
-    function deleteCategory(id, reassignTo) {
-        if (_processingCommand) {
-            return false;
+    function deleteCategory(id) {
+        if (!_validString(id)) return _fail('Category id is required.');
+        if (id === RC.UNCATEGORIZED_ID) {
+            return _fail('Cannot delete the uncategorized category.');
         }
-        _processingCommand = true;
 
         try {
-            var categories = RoleState.getCategories();
-            if (!categories[id]) {
-                _showToast('Category not found', 'error');
-                return false;
-            }
-
-            if (id === 'uncategorized') {
-                _showToast('Cannot delete uncategorized category', 'error');
-                return false;
-            }
-
-            reassignTo = reassignTo || 'uncategorized';
-            if (!categories[reassignTo]) {
-                _showToast('Reassignment category not found', 'error');
-                return false;
-            }
-
-            var roles = RoleState.getAllRoles();
-            for (var i = 0; i < roles.length; i++) {
-                if (roles[i].category === id) {
-                    roles[i].category = reassignTo;
-                }
-            }
-
-            delete categories[id];
-
-            RoleState._persistState();
-
-            _showToast('Category deleted', 'info');
-
-            if (typeof window.dispatchEvent === 'function') {
-                window.dispatchEvent(new CustomEvent('rolesUpdated', {}));
-            }
-
-            return true;
-
-        } finally {
-            _processingCommand = false;
+            RS.deleteCategory(id);
+        } catch (err) {
+            return _fail(err.message);
         }
+        return _ok({ id: id });
     }
 
     // =========================================================================
-    // 5. SALARY MANAGEMENT
+    // 6. SPECIALIZATION MANAGEMENT
     // =========================================================================
+    //
+    // Specializations are role-level metadata. They live on the role record in
+    // RoleState. Character professions carry their own per-character `specs`
+    // array and are managed by the character domain.
 
-    function updateRoleSalary(roleId, newSalary, reason) {
-        if (_processingCommand) {
-            return null;
-        }
-        _processingCommand = true;
-
-        try {
-            var role = RoleState.getRole(roleId);
-            if (!role) {
-                _showToast('Role not found', 'error');
-                return null;
-            }
-
-            var boundedSalary = Math.max(0, Math.min(200, newSalary));
-            if (role.baseSalary === boundedSalary) {
-                _showToast('Salary is already ' + boundedSalary, 'info');
-                return role;
-            }
-
-            var oldSalary = role.baseSalary;
-            var result = RoleState._updateRole(roleId, { baseSalary: boundedSalary });
-
-            if (result) {
-                var reasonMsg = reason ? ' (' + reason + ')' : '';
-                _logEvent('role', 'Salary Updated',
-                    'Salary for ' + role.name + ' changed from ' + oldSalary + ' to ' + boundedSalary + reasonMsg,
-                    []);
-                _showToast('Salary for "' + role.name + '" updated to ' + boundedSalary + ' gold', 'success');
-
-                if (typeof window.dispatchEvent === 'function') {
-                    window.dispatchEvent(new CustomEvent('rolesUpdated', {}));
-                }
-
-                return result;
-            }
-
-            return null;
-
-        } finally {
-            _processingCommand = false;
-        }
-    }
-
-    function updateRoleLiteracyRequirement(roleId, requiresLiteracy, literacyLevel, reason) {
-        if (_processingCommand) {
-            return null;
-        }
-        _processingCommand = true;
-
-        try {
-            var role = RoleState.getRole(roleId);
-            if (!role) {
-                _showToast('Role not found', 'error');
-                return null;
-            }
-
-            requiresLiteracy = !!requiresLiteracy;
-            var finalLevel = requiresLiteracy ? literacyLevel : null;
-
-            if (requiresLiteracy && finalLevel) {
-                var validLevels = ['basic', 'literate', 'educated', 'scholar'];
-                if (validLevels.indexOf(finalLevel) === -1) {
-                    _showToast('Invalid literacy level', 'error');
-                    return null;
-                }
-            }
-
-            if (role.requiresLiteracy === requiresLiteracy && role.literacyLevel === finalLevel) {
-                _showToast('Literacy requirement is already set to this', 'info');
-                return role;
-            }
-
-            var result = RoleState._updateRole(roleId, {
-                requiresLiteracy: requiresLiteracy,
-                literacyLevel: finalLevel
-            });
-
-            if (result) {
-                var levelName = finalLevel ? window.LITERACY_LEVEL_NAMES?.[finalLevel] || finalLevel : 'None';
-                var reasonMsg = reason ? ' (' + reason + ')' : '';
-                _logEvent('role', 'Literacy Requirement Updated',
-                    'Literacy requirement for ' + role.name + ' changed to ' +
-                    (requiresLiteracy ? levelName : 'None') + reasonMsg,
-                    []);
-                _showToast('Literacy requirement for "' + role.name + '" updated to ' +
-                    (requiresLiteracy ? levelName : 'None'), 'success');
-
-                if (typeof window.dispatchEvent === 'function') {
-                    window.dispatchEvent(new CustomEvent('rolesUpdated', {}));
-                }
-
-                return result;
-            }
-
-            return null;
-
-        } finally {
-            _processingCommand = false;
-        }
-    }
-
-    // =========================================================================
-    // 6. ROLE SPECIALIZATION MANAGEMENT (NEW)
-    // =========================================================================
-
-    /**
-     * Gets all specializations for a role
-     * @param {string} roleId - Role ID
-     * @returns {Array} Array of specialization names
-     */
-    function getRoleSpecializations(roleId) {
-        var role = RoleState.getRole(roleId);
-        if (!role) return [];
-        return role.specializations || [];
-    }
-
-    /**
-     * Adds a specialization to a role
-     * @param {string} roleId - Role ID
-     * @param {string} specialization - Specialization name
-     * @returns {Object} Result object
-     */
     function addRoleSpecialization(roleId, specialization) {
-        if (_processingCommand) {
-            return { success: false, reason: 'Already processing' };
+        if (!_validString(roleId)) return _fail('Role id is required.');
+        if (!_validString(specialization)) return _fail('Specialization is required.');
+
+        var role = RS.getRole(roleId);
+        if (!role) return _fail('Role not found.');
+
+        var spec = specialization.trim();
+        var existing = Array.isArray(role.specializations)
+            ? role.specializations.slice()
+            : [];
+
+        if (existing.indexOf(spec) !== -1) {
+            return _fail('Specialization already exists on this role.');
         }
-        _processingCommand = true;
 
-        try {
-            var role = RoleState.getRole(roleId);
-            if (!role) {
-                return { success: false, reason: 'Role not found' };
-            }
+        existing.push(spec);
+        var updated = RS.updateRole(roleId, { specializations: existing });
+        if (!updated) return _fail('Failed to add specialization.');
 
-            if (!specialization || typeof specialization !== 'string' || specialization.trim() === '') {
-                return { success: false, reason: 'Specialization name is required' };
-            }
-
-            var spec = specialization.trim();
-            if (!role.specializations) {
-                role.specializations = [];
-            }
-
-            if (role.specializations.indexOf(spec) !== -1) {
-                return { success: false, reason: 'Specialization already exists on this role' };
-            }
-
-            role.specializations.push(spec);
-            RoleState._updateRole(roleId, { specializations: role.specializations });
-            _saveMasterData();
-            _invalidateAccessorCaches();
-
-            _showToast('Specialization "' + spec + '" added to role', 'success');
-
-            if (typeof window.dispatchEvent === 'function') {
-                window.dispatchEvent(new CustomEvent('rolesUpdated', {}));
-            }
-
-            return { success: true, role: role, specialization: spec };
-
-        } finally {
-            _processingCommand = false;
-        }
+        return _ok({ role: updated, specialization: spec });
     }
 
-    /**
-     * Removes a specialization from a role
-     * @param {string} roleId - Role ID
-     * @param {string} specialization - Specialization name
-     * @returns {Object} Result object
-     */
     function removeRoleSpecialization(roleId, specialization) {
-        if (_processingCommand) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processingCommand = true;
+        if (!_validString(roleId)) return _fail('Role id is required.');
+        if (!_validString(specialization)) return _fail('Specialization is required.');
 
-        try {
-            var role = RoleState.getRole(roleId);
-            if (!role) {
-                return { success: false, reason: 'Role not found' };
-            }
+        var role = RS.getRole(roleId);
+        if (!role) return _fail('Role not found.');
 
-            if (!role.specializations || role.specializations.length === 0) {
-                return { success: false, reason: 'Role has no specializations' };
-            }
+        var existing = Array.isArray(role.specializations)
+            ? role.specializations.slice()
+            : [];
 
-            var idx = role.specializations.indexOf(specialization);
-            if (idx === -1) {
-                return { success: false, reason: 'Specialization not found on this role' };
-            }
+        var idx = existing.indexOf(specialization);
+        if (idx === -1) return _fail('Specialization not found on this role.');
 
-            role.specializations.splice(idx, 1);
-            RoleState._updateRole(roleId, { specializations: role.specializations });
-            _saveMasterData();
-            _invalidateAccessorCaches();
+        existing.splice(idx, 1);
+        var updated = RS.updateRole(roleId, { specializations: existing });
+        if (!updated) return _fail('Failed to remove specialization.');
 
-            _showToast('Specialization "' + specialization + '" removed from role', 'info');
-
-            if (typeof window.dispatchEvent === 'function') {
-                window.dispatchEvent(new CustomEvent('rolesUpdated', {}));
-            }
-
-            return { success: true, role: role };
-
-        } finally {
-            _processingCommand = false;
-        }
-    }
-
-    /**
-     * Gets all unique specializations across all roles
-     * @returns {Array} Array of unique specialization names
-     */
-    function getAllRoleSpecializations() {
-        var roles = RoleState.getAllRoles();
-        var allSpecs = [];
-        for (var i = 0; i < roles.length; i++) {
-            var specs = roles[i].specializations || [];
-            for (var j = 0; j < specs.length; j++) {
-                if (allSpecs.indexOf(specs[j]) === -1) {
-                    allSpecs.push(specs[j]);
-                }
-            }
-        }
-        return allSpecs.sort();
+        return _ok({ role: updated });
     }
 
     // =========================================================================
     // 7. ROLE ASSIGNMENT
     // =========================================================================
 
-    function _addProfessionDirect(characterId, roleId, options) {
-        // Direct manipulation of character data
-        var char = _getCharacterById(characterId);
-        if (!char) {
-            return { success: false, reason: 'Character not found' };
+    /**
+     * Internal, unguarded assignment. Safe to call from any command that
+     * already holds the role/character references.
+     */
+    function _assignRoleInternal(characterId, role, options) {
+        options = options || {};
+
+        var character = window.getCharacterById(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeceased) return _fail('Character is deceased.');
+
+        if (role.genderRestriction === 'male' && character.gender !== 'male') {
+            return _fail('Role is restricted to males.');
+        }
+        if (role.genderRestriction === 'female' && character.gender !== 'female') {
+            return _fail('Role is restricted to females.');
         }
 
-        var role = _getRoleById(roleId);
-        if (!role) {
-            return { success: false, reason: 'Role not found' };
+        var skillLevel = options.skillLevel !== undefined ? options.skillLevel : 10;
+        if (!_validSkillLevel(skillLevel)) {
+            return _fail('Skill level must be a number between 0 and 100.');
         }
 
-        if (!char.professions) {
-            char.professions = [];
+        var startYear = options.startYear !== undefined ? options.startYear : null;
+        if (startYear !== null && (typeof startYear !== 'number' || !Number.isFinite(startYear))) {
+            return _fail('startYear must be a number or omitted.');
+        }
+        if (startYear === null && typeof window.getCurrentYearSafe === 'function') {
+            startYear = window.getCurrentYearSafe();
         }
 
-        // Check if already exists
-        for (var i = 0; i < char.professions.length; i++) {
-            if (char.professions[i].id === roleId) {
-                // Update existing
-                if (options.skillLevel !== undefined) {
-                    char.professions[i].skillLevel = Math.min(100, Math.max(0, options.skillLevel));
-                }
-                if (options.startYear !== undefined) {
-                    char.professions[i].startYear = options.startYear;
-                }
-                if (options.notes !== undefined) {
-                    char.professions[i].notes = options.notes;
-                }
-                if (options.primary !== undefined) {
-                    char.professions[i].primary = options.primary;
-                }
-                _saveMasterData();
-                return { success: true, character: char, role: role, wasExisting: true };
+        var existing = CC.getProfession(characterId, role.id);
+
+        if (existing) {
+            // Update the existing profession rather than duplicating.
+            var updateResult = CC.updateProfession(characterId, role.id, {
+                skillLevel: skillLevel,
+                startYear: startYear !== null ? startYear : existing.startYear,
+                notes: options.notes !== undefined ? options.notes : existing.notes,
+                primary: options.primary !== undefined ? options.primary : existing.primary
+            });
+            if (!updateResult || updateResult.success !== true) {
+                return _fail(updateResult && updateResult.reason
+                    ? updateResult.reason
+                    : 'Failed to update existing profession.');
             }
+            return _ok({
+                character: character,
+                role: role,
+                wasUpdate: true
+            });
         }
 
-        // Add new profession
-        var newProf = {
-            id: roleId,
+        var addResult = CC.addProfession(characterId, {
+            id: role.id,
             name: role.name,
-            skillLevel: options.skillLevel !== undefined ? Math.min(100, Math.max(0, options.skillLevel)) : 0,
-            startYear: options.startYear || _getCurrentYear(),
-            notes: options.notes || '',
+            skillLevel: skillLevel,
+            startYear: startYear,
+            primary: options.primary === true,
+            notes: options.notes !== undefined
+                ? options.notes
+                : 'Assigned ' + role.name,
             specs: [],
-            primary: options.primary || false
-        };
-        char.professions.push(newProf);
-        _saveMasterData();
+            baseSalary: role.baseSalary,
+            customSalary: null,
+            salaryHistory: [],
+            salaryLastCalculated: null,
+            paysSalary: true
+        });
 
-        return { success: true, character: char, role: role, wasExisting: false };
+        if (!addResult || addResult.success !== true) {
+            return _fail(addResult && addResult.reason
+                ? addResult.reason
+                : 'Failed to add profession.');
+        }
+
+        return _ok({
+            character: character,
+            role: role,
+            wasUpdate: false
+        });
     }
 
     function assignRoleToCharacter(characterId, roleId, options) {
-        if (_processingCommand) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processingCommand = true;
+        if (!_validString(characterId)) return _fail('Character id is required.');
+        if (!_validString(roleId)) return _fail('Role id is required.');
 
-        try {
-            options = options || {};
+        var role = RS.getRole(roleId);
+        if (!role) return _fail('Role not found.');
 
-            var character = _getCharacterById(characterId);
-            var role = RoleState.getRole(roleId);
-
-            if (!character) {
-                return { success: false, reason: 'Character not found' };
-            }
-
-            if (!role) {
-                return { success: false, reason: 'Role not found' };
-            }
-
-            if (character.isDeceased) {
-                return { success: false, reason: 'Character is deceased' };
-            }
-
-            if (role.genderRestriction === 'male' && character.gender !== 'male') {
-                return { success: false, reason: 'Role is restricted to males' };
-            }
-
-            if (role.genderRestriction === 'female' && character.gender !== 'female') {
-                return { success: false, reason: 'Role is restricted to females' };
-            }
-
-            if (character.professions) {
-                for (var i = 0; i < character.professions.length; i++) {
-                    if (character.professions[i].id === roleId) {
-                        // If they already have it, just update the skill
-                        var result = _addProfessionDirect(characterId, roleId, {
-                            skillLevel: options.skillLevel !== undefined ? options.skillLevel : character.professions[i].skillLevel,
-                            startYear: options.startYear || character.professions[i].startYear || _getCurrentYear(),
-                            notes: options.notes || character.professions[i].notes || '',
-                            primary: options.primary !== undefined ? options.primary : character.professions[i].primary
-                        });
-                        if (result && result.success) {
-                            _logEvent('role', 'Role Updated', character.name + ' updated role: ' + role.name, [character]);
-                            _showToast(character.name + '\'s ' + role.name + ' skill updated', 'success');
-                            if (typeof window.dispatchEvent === 'function') {
-                                window.dispatchEvent(new CustomEvent('rolesUpdated', {}));
-                                window.dispatchEvent(new CustomEvent('characterUpdated', {}));
-                            }
-                            return { success: true, character: character, role: role, wasUpdated: true };
-                        }
-                        return { success: false, reason: 'Character already has this role' };
-                    }
-                }
-            }
-
-            var skillLevel = options.skillLevel !== undefined ? options.skillLevel : 10;
-            var startYear = options.startYear || _getCurrentYear();
-            var notes = options.notes || 'Assigned ' + role.name;
-
-            // Use direct profession addition
-            var result = _addProfessionDirect(characterId, roleId, {
-                skillLevel: Math.min(100, Math.max(0, skillLevel)),
-                startYear: startYear,
-                primary: options.primary || false,
-                notes: notes
-            });
-
-            if (result && result.success) {
-                // Add salary fields if this is a new profession
-                var updatedChar = _getCharacterById(characterId);
-                if (updatedChar && updatedChar.professions) {
-                    for (var j = 0; j < updatedChar.professions.length; j++) {
-                        var prof = updatedChar.professions[j];
-                        if (prof.id === roleId) {
-                            if (prof.baseSalary === undefined || prof.baseSalary === null) {
-                                prof.baseSalary = role.baseSalary || 10;
-                            }
-                            if (prof.customSalary === undefined) {
-                                prof.customSalary = null;
-                            }
-                            if (!prof.salaryHistory) {
-                                prof.salaryHistory = [];
-                            }
-                            if (prof.salaryLastCalculated === undefined) {
-                                prof.salaryLastCalculated = null;
-                            }
-                            if (prof.paysSalary === undefined) {
-                                prof.paysSalary = true;
-                            }
-                            break;
-                        }
-                    }
-                    _saveMasterData();
-                }
-
-                _logEvent('role', 'Role Assigned',
-                    character.name + ' assigned role: ' + role.name,
-                    [character]);
-
-                var salaryMsg = role.baseSalary > 0 ? ' (Base salary: ' + role.baseSalary + ' gold)' : '';
-                var literacyMsg = role.requiresLiteracy ? ' (Requires literacy)' : '';
-                _showToast(character.name + ' now has ' + role.name + salaryMsg + literacyMsg, 'success');
-
-                if (typeof window.dispatchEvent === 'function') {
-                    window.dispatchEvent(new CustomEvent('rolesUpdated', {}));
-                    window.dispatchEvent(new CustomEvent('characterUpdated', {}));
-                }
-
-                return { success: true, character: character, role: role };
-            }
-
-            return { success: false, reason: result?.reason || 'Failed to assign role' };
-
-        } finally {
-            _processingCommand = false;
-        }
+        return _assignRoleInternal(characterId, role, options);
     }
 
     function removeRoleFromCharacter(characterId, roleId) {
-        if (_processingCommand) {
-            return { success: false, reason: 'Already processing' };
+        if (!_validString(characterId)) return _fail('Character id is required.');
+        if (!_validString(roleId)) return _fail('Role id is required.');
+
+        var role = RS.getRole(roleId);
+        if (!role) return _fail('Role not found.');
+
+        var result = CC.removeProfession(characterId, roleId);
+        if (!result || result.success !== true) {
+            return _fail(result && result.reason ? result.reason : 'Failed to remove role.');
         }
-        _processingCommand = true;
-
-        try {
-            var character = _getCharacterById(characterId);
-            var role = RoleState.getRole(roleId);
-
-            if (!character) {
-                return { success: false, reason: 'Character not found' };
-            }
-
-            if (!role) {
-                return { success: false, reason: 'Role not found' };
-            }
-
-            if (!character.professions) {
-                return { success: false, reason: 'Character has no roles' };
-            }
-
-            var index = -1;
-            for (var i = 0; i < character.professions.length; i++) {
-                if (character.professions[i].id === roleId) {
-                    index = i;
-                    break;
-                }
-            }
-
-            if (index === -1) {
-                return { success: false, reason: 'Character does not have this role' };
-            }
-
-            character.professions.splice(index, 1);
-
-            _saveMasterData();
-
-            _logEvent('role', 'Role Removed',
-                character.name + ' removed role: ' + role.name,
-                [character]);
-
-            _showToast(character.name + ' no longer has ' + role.name, 'info');
-
-            if (typeof window.dispatchEvent === 'function') {
-                window.dispatchEvent(new CustomEvent('rolesUpdated', {}));
-            }
-
-            return { success: true, character: character, role: role };
-
-        } finally {
-            _processingCommand = false;
-        }
+        return _ok({ characterId: characterId, roleId: roleId });
     }
 
     function updateCharacterSkill(characterId, roleId, skillLevel) {
-        if (_processingCommand) {
-            return { success: false, reason: 'Already processing' };
+        if (!_validString(characterId)) return _fail('Character id is required.');
+        if (!_validString(roleId)) return _fail('Role id is required.');
+        if (!_validSkillLevel(skillLevel)) {
+            return _fail('Skill level must be a number between 0 and 100.');
         }
-        _processingCommand = true;
 
-        try {
-            var character = _getCharacterById(characterId);
-            var role = RoleState.getRole(roleId);
+        var role = RS.getRole(roleId);
+        if (!role) return _fail('Role not found.');
 
-            if (!character) {
-                return { success: false, reason: 'Character not found' };
-            }
-
-            if (!role) {
-                return { success: false, reason: 'Role not found' };
-            }
-
-            var boundedLevel = Math.min(100, Math.max(0, skillLevel));
-
-            // Use direct update
-            var result = _addProfessionDirect(characterId, roleId, {
-                skillLevel: boundedLevel
-            });
-
-            if (result && result.success) {
-                _showToast(character.name + '\'s ' + role.name + ' skill updated to ' + boundedLevel, 'success');
-
-                if (typeof window.dispatchEvent === 'function') {
-                    window.dispatchEvent(new CustomEvent('rolesUpdated', {}));
-                    window.dispatchEvent(new CustomEvent('characterUpdated', {}));
-                }
-
-                return { success: true, character: character, role: role, newLevel: boundedLevel };
-            }
-
-            return { success: false, reason: 'Failed to update skill' };
-
-        } finally {
-            _processingCommand = false;
+        var result = CC.updateProfession(characterId, roleId, { skillLevel: skillLevel });
+        if (!result || result.success !== true) {
+            return _fail(result && result.reason ? result.reason : 'Failed to update skill.');
         }
+        return _ok({ characterId: characterId, roleId: roleId, skillLevel: skillLevel });
     }
 
+    /**
+     * Assigns a role to many characters.
+     *
+     * This is the exact call that broke in the old implementation because a
+     * module-wide reentrancy guard blocked the nested calls. Here the loop
+     * calls _assignRoleInternal directly, so composition works.
+     */
     function bulkAssignRole(characterIds, roleId, options) {
-        if (_processingCommand) {
-            return { success: 0, failed: 0, errors: [] };
+        if (!Array.isArray(characterIds)) {
+            return { success: 0, failed: 0, errors: [{ reason: 'characterIds must be an array' }] };
         }
-        _processingCommand = true;
-
-        try {
-            options = options || {};
-            var results = { success: 0, failed: 0, errors: [] };
-
-            for (var i = 0; i < characterIds.length; i++) {
-                var charId = characterIds[i];
-                var result = assignRoleToCharacter(charId, roleId, options);
-
-                if (result.success) {
-                    results.success++;
-                } else {
-                    results.failed++;
-                    results.errors.push({
-                        characterId: charId,
-                        reason: result.reason
-                    });
-                }
-            }
-
-            if (results.success > 0) {
-                _showToast('Assigned role to ' + results.success + ' characters', 'success');
-            }
-
-            if (results.failed > 0) {
-                _showToast(results.failed + ' assignments failed', 'warning');
-            }
-
-            return results;
-
-        } finally {
-            _processingCommand = false;
+        if (!_validString(roleId)) {
+            return { success: 0, failed: 0, errors: [{ reason: 'Role id is required' }] };
         }
+
+        var role = RS.getRole(roleId);
+        if (!role) {
+            return { success: 0, failed: 0, errors: [{ reason: 'Role not found' }] };
+        }
+
+        var successCount = 0;
+        var failedCount = 0;
+        var errors = [];
+
+        for (var i = 0; i < characterIds.length; i++) {
+            var characterId = characterIds[i];
+            var result = _assignRoleInternal(characterId, role, options);
+            if (result.success) {
+                successCount++;
+            } else {
+                failedCount++;
+                errors.push({ characterId: characterId, reason: result.reason });
+            }
+        }
+
+        return { success: successCount, failed: failedCount, errors: errors };
     }
 
     // =========================================================================
-    // 8. PROFESSION SKILL MANAGEMENT (DIRECT UPDATE)
+    // 8. SALARY MANAGEMENT
     // =========================================================================
 
-    function updateProfessionSkill(characterId, roleId, skillLevel) {
-        if (_processingCommand) {
-            return false;
+    function updateRoleSalary(roleId, newSalary, reason) {
+        if (!_validString(roleId)) return _fail('Role id is required.');
+        if (!_validSalary(newSalary)) {
+            return _fail('Salary must be a number between ' +
+                RC.MIN_SALARY + ' and ' + RC.MAX_SALARY + '.');
         }
-        _processingCommand = true;
 
-        try {
-            var result = _addProfessionDirect(characterId, roleId, {
-                skillLevel: Math.min(100, Math.max(0, skillLevel))
-            });
+        var role = RS.getRole(roleId);
+        if (!role) return _fail('Role not found.');
 
-            if (result && result.success) {
-                if (typeof window.dispatchEvent === 'function') {
-                    window.dispatchEvent(new CustomEvent('characterUpdated', {}));
-                    window.dispatchEvent(new CustomEvent('rolesUpdated', {}));
-                }
-                return true;
+        if (role.baseSalary === newSalary) {
+            return _ok({ role: role, unchanged: true });
+        }
+
+        var updated = RS.updateRole(roleId, { baseSalary: newSalary });
+        if (!updated) return _fail('Failed to update salary.');
+
+        return _ok({
+            role: updated,
+            previousSalary: role.baseSalary,
+            reason: reason || null
+        });
+    }
+
+    function updateRoleLiteracyRequirement(roleId, requiresLiteracy, literacyLevel, reason) {
+        if (!_validString(roleId)) return _fail('Role id is required.');
+
+        var role = RS.getRole(roleId);
+        if (!role) return _fail('Role not found.');
+
+        var requires = requiresLiteracy === true;
+        var level = null;
+        if (requires) {
+            if (!_validLiteracyLevel(literacyLevel)) {
+                return _fail('A valid literacy level is required when literacy is required.');
             }
-
-            return false;
-
-        } finally {
-            _processingCommand = false;
+            level = literacyLevel;
         }
+
+        if (role.requiresLiteracy === requires && role.literacyLevel === level) {
+            return _ok({ role: role, unchanged: true });
+        }
+
+        var updated = RS.updateRole(roleId, {
+            requiresLiteracy: requires,
+            literacyLevel: level
+        });
+        if (!updated) return _fail('Failed to update literacy requirement.');
+
+        return _ok({
+            role: updated,
+            previousRequiresLiteracy: role.requiresLiteracy,
+            previousLiteracyLevel: role.literacyLevel,
+            reason: reason || null
+        });
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 9. BULK / SET ROLES
+    // =========================================================================
+
+    function setRoles(roles) {
+        if (!Array.isArray(roles)) {
+            return _fail('Roles must be an array.');
+        }
+
+        // Validate every entry first; commit only if all are valid.
+        var validated = [];
+        for (var i = 0; i < roles.length; i++) {
+            var r = roles[i];
+            if (!r || typeof r !== 'object') {
+                return _fail('Role at index ' + i + ' is not an object.');
+            }
+            if (!_validString(r.id)) {
+                return _fail('Role at index ' + i + ' is missing an id.');
+            }
+            if (!_validString(r.name)) {
+                return _fail('Role at index ' + i + ' is missing a name.');
+            }
+            if (r.category !== undefined && !_validCategory(r.category)) {
+                return _fail('Role at index ' + i + ' has invalid category: ' + r.category);
+            }
+            validated.push(r);
+        }
+
+        try {
+            RS.setRoles(validated);
+        } catch (err) {
+            return _fail(err.message);
+        }
+        return _ok({ count: validated.length });
+    }
+
+    // =========================================================================
+    // 10. EXPORTS
     // =========================================================================
 
     window.RoleCommands = {
@@ -1066,72 +709,27 @@
         deleteRole: deleteRole,
         setRoles: setRoles,
 
-        // Category Management
+        // Categories
         addCategory: addCategory,
         updateCategory: updateCategory,
         deleteCategory: deleteCategory,
 
-        // Role Specialization Management (NEW)
-        getRoleSpecializations: getRoleSpecializations,
+        // Specializations
         addRoleSpecialization: addRoleSpecialization,
         removeRoleSpecialization: removeRoleSpecialization,
-        getAllRoleSpecializations: getAllRoleSpecializations,
 
-        // Role Assignment
+        // Assignment
         assignRoleToCharacter: assignRoleToCharacter,
         removeRoleFromCharacter: removeRoleFromCharacter,
         updateCharacterSkill: updateCharacterSkill,
         bulkAssignRole: bulkAssignRole,
 
-        // Salary Management
+        // Salary / literacy
         updateRoleSalary: updateRoleSalary,
-        updateRoleLiteracyRequirement: updateRoleLiteracyRequirement,
-
-        // Direct Skill Update
-        updateProfessionSkill: updateProfessionSkill
+        updateRoleLiteracyRequirement: updateRoleLiteracyRequirement
     };
 
-    // Legacy aliases
-    window._createRole = createRole;
-    window._updateRole = updateRole;
-    window._deleteRole = deleteRole;
-    window._setRoles = setRoles;
-    window._addCategory = addCategory;
-    window._updateCategory = updateCategory;
-    window._deleteCategory = deleteCategory;
-    window._assignRoleToCharacter = assignRoleToCharacter;
-    window._removeRoleFromCharacter = removeRoleFromCharacter;
-    window._updateCharacterSkill = updateCharacterSkill;
-    window._bulkAssignRole = bulkAssignRole;
-    window._updateRoleSalary = updateRoleSalary;
-    window._updateRoleLiteracyRequirement = updateRoleLiteracyRequirement;
-    window._updateProfessionSkill = updateProfessionSkill;
-    window._getRoleSpecializations = getRoleSpecializations;
-    window._addRoleSpecialization = addRoleSpecialization;
-    window._removeRoleSpecialization = removeRoleSpecialization;
-    window._getAllRoleSpecializations = getAllRoleSpecializations;
-
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            createRole: createRole,
-            updateRole: updateRole,
-            deleteRole: deleteRole,
-            setRoles: setRoles,
-            addCategory: addCategory,
-            updateCategory: updateCategory,
-            deleteCategory: deleteCategory,
-            getRoleSpecializations: getRoleSpecializations,
-            addRoleSpecialization: addRoleSpecialization,
-            removeRoleSpecialization: removeRoleSpecialization,
-            getAllRoleSpecializations: getAllRoleSpecializations,
-            assignRoleToCharacter: assignRoleToCharacter,
-            removeRoleFromCharacter: removeRoleFromCharacter,
-            updateCharacterSkill: updateCharacterSkill,
-            bulkAssignRole: bulkAssignRole,
-            updateRoleSalary: updateRoleSalary,
-            updateRoleLiteracyRequirement: updateRoleLiteracyRequirement,
-            updateProfessionSkill: updateProfessionSkill
-        };
+        module.exports = window.RoleCommands;
     }
-
 })();
