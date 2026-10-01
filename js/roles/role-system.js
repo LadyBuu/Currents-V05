@@ -1,253 +1,249 @@
 /**
  * =============================================================================
- * STILL WATERS - ROLE SYSTEM (Wrapper)
+ * STILL WATERS - ROLE SYSTEM COMPATIBILITY SHIM (role-system.js)
  * =============================================================================
- * 
+ *
  * LOCATION: js/systems/roles/role-system.js
- * 
- * This file re-exports all role functions from the modular structure.
- * Kept for backward compatibility with existing code.
- * 
+ *
+ * Purpose: expose the pre-refactor global API as one-way aliases onto the
+ * canonical modules, for the remaining callers that have not yet been
+ * migrated.
+ *
+ * This file:
+ *   - declares NO constants
+ *   - provides NO fallback implementations
+ *   - returns NO fake empty data
+ *   - contains NO business logic
+ *   - defines NO domain behaviour
+ *
+ * If a canonical module is missing, this file throws. Silent degradation is
+ * not a compatibility feature; it is how the previous architecture survived
+ * six refactors.
+ *
+ * Migration policy:
+ *   Every alias below is one-way. New code must call RoleConstants,
+ *   RoleState, RoleQueries, RoleCommands, SkillUtils directly. The aliases
+ *   exist so existing call sites keep working during the transition. Each
+ *   alias should be removed once no caller references it.
+ *
+ *   To find remaining consumers:  grep -rn "window\.getRoles\b" js/
+ *   (repeat for each alias; delete the alias when the count reaches zero.)
+ *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
-    // 1. CONSTANTS (from role-constants.js)
+    // 1. HARD DEPENDENCY CHECK
     // =========================================================================
 
-    if (typeof window.UNCATEGORIZED_ID === 'undefined') {
-        window.UNCATEGORIZED_ID = 'uncategorized';
+    var REQUIRED = [
+        ['RoleConstants', 'role-constants.js'],
+        ['RoleState',     'role-state.js'],
+        ['RoleQueries',   'role-queries.js'],
+        ['RoleCommands',  'role-commands.js'],
+        ['SkillUtils',    'skill-utils.js']
+    ];
+    var missing = [];
+    for (var i = 0; i < REQUIRED.length; i++) {
+        if (typeof window[REQUIRED[i][0]] === 'undefined') {
+            missing.push(REQUIRED[i][0] + ' (' + REQUIRED[i][1] + ')');
+        }
+    }
+    if (missing.length > 0) {
+        throw new Error(
+            'role-system.js cannot install legacy aliases. Missing canonical modules: ' +
+            missing.join(', ')
+        );
     }
 
-    if (typeof window.UNCATEGORIZED_NAME === 'undefined') {
-        window.UNCATEGORIZED_NAME = 'Uncategorized';
-    }
-
-    if (typeof window.UNCATEGORIZED_ICON === 'undefined') {
-        window.UNCATEGORIZED_ICON = '⌇';
-    }
-
-    if (typeof window.TEACHING_THRESHOLDS === 'undefined') {
-        window.TEACHING_THRESHOLDS = {
-            NOVICE: 0,
-            APPRENTICE: 26,
-            JOURNEYMAN: 51,
-            EXPERT: 76,
-            MASTER: 91
-        };
-    }
-
-    if (typeof window.DEFAULT_ROLE_CATEGORIES === 'undefined') {
-        window.DEFAULT_ROLE_CATEGORIES = {
-            combat: { id: 'combat', name: 'Combat & Military', icon: '⚔' },
-            craft: { id: 'craft', name: 'Craftsmanship', icon: '⌇' },
-            trade: { id: 'trade', name: 'Trade & Commerce', icon: '⌇' },
-            agriculture: { id: 'agriculture', name: 'Agriculture & Fishing', icon: '⌇' },
-            academic: { id: 'academic', name: 'Academic & Scholar', icon: '⌇' },
-            medical: { id: 'medical', name: 'Medical & Healing', icon: '⌇' },
-            religious: { id: 'religious', name: 'Religious', icon: '⌆' },
-            admin: { id: 'admin', name: 'Administration', icon: '⌇' },
-            service: { id: 'service', name: 'Service', icon: '⌇' },
-            art: { id: 'art', name: 'Artistic', icon: '⌇' }
-        };
-    }
+    var RC = window.RoleConstants;
+    var RS = window.RoleState;
+    var RQ = window.RoleQueries;
+    var RCMD = window.RoleCommands;
+    var SU = window.SkillUtils;
 
     // =========================================================================
-    // 2. STATE RE-EXPORTS
+    // 2. CONSTANTS (aliases onto RoleConstants)
     // =========================================================================
 
-    if (typeof window.RoleState !== 'undefined') {
-        if (typeof window.subscribeRoles === 'undefined') {
-            window.subscribeRoles = function(callback) {
-                return window.RoleState.subscribe(callback);
-            };
-        }
-        if (typeof window.getAllRoles === 'undefined') {
-            window.getAllRoles = function() {
-                return window.RoleState.getAllRoles();
-            };
-        }
-        if (typeof window.getRole === 'undefined') {
-            window.getRole = function(id) {
-                return window.RoleState.getRole(id);
-            };
-        }
-        if (typeof window.getRoleByName === 'undefined') {
-            window.getRoleByName = function(name) {
-                return window.RoleState.getRoleByName(name);
-            };
-        }
-        if (typeof window.getRolesByCategory === 'undefined') {
-            window.getRolesByCategory = function(categoryId) {
-                return window.RoleState.getRolesByCategory(categoryId);
-            };
-        }
-        if (typeof window.getRoleCategories === 'undefined') {
-            window.getRoleCategories = function() {
-                return window.RoleState.getCategories();
-            };
-        }
-    }
+    window.UNCATEGORIZED_ID   = RC.UNCATEGORIZED_ID;
+    window.UNCATEGORIZED_NAME = RC.UNCATEGORIZED_NAME;
+    window.TEACHING_THRESHOLDS = RC.TEACHING_THRESHOLDS;
+    window.DEFAULT_ROLE_CATEGORIES = RC.DEFAULT_ROLE_CATEGORIES;
+    window.BASE_SALARY_BY_CATEGORY = RC.BASE_SALARY_BY_CATEGORY;
+    window.DEFAULT_SALARY = RC.DEFAULT_SALARY;
+    window.MIN_SALARY = RC.MIN_SALARY;
+    window.MAX_SALARY = RC.MAX_SALARY;
+    window.SALARY_SKILL_MULTIPLIER_MIN = RC.SALARY_SKILL_MULTIPLIER_MIN;
+    window.SALARY_SKILL_MULTIPLIER_MAX = RC.SALARY_SKILL_MULTIPLIER_MAX;
+    window.SALARY_EXPERIENCE_BONUS_PER_YEAR = RC.SALARY_EXPERIENCE_BONUS_PER_YEAR;
+    window.SALARY_EXPERIENCE_BONUS_CAP = RC.SALARY_EXPERIENCE_BONUS_CAP;
+    window.SALARY_EXPERIENCE_YEARS_CAP = RC.SALARY_EXPERIENCE_YEARS_CAP;
+    window.SALARY_URBAN_MODIFIER = RC.SALARY_URBAN_MODIFIER;
+    window.SALARY_RURAL_MODIFIER = RC.SALARY_RURAL_MODIFIER;
+    window.LITERACY_LEVELS = RC.LITERACY_LEVELS;
+    window.LITERACY_LEVEL_NAMES = RC.LITERACY_LEVEL_NAMES;
+    window.LITERACY_LEVEL_THRESHOLDS = RC.LITERACY_LEVEL_THRESHOLDS;
+
+    // Legacy name kept as an alias for the renamed constant.
+    window.SALARY_EXPERIENCE_BONUS_MAX = RC.SALARY_EXPERIENCE_BONUS_CAP;
+    window.SALARY_EXPERIENCE_CAP = RC.SALARY_EXPERIENCE_YEARS_CAP;
+
+    // UNCATEGORIZED_ICON is deliberately NOT aliased. Icons are a UI concern
+    // and are provided by icons.js. Any caller still reading this global
+    // should be updated to resolve the icon through the icon system.
 
     // =========================================================================
-    // 3. QUERY RE-EXPORTS
+    // 3. STATE ALIASES (read helpers onto RoleState)
     // =========================================================================
 
-    if (typeof window.RoleQueries !== 'undefined') {
-        if (typeof window.getRoles === 'undefined') {
-            window.getRoles = window.RoleQueries.getRoles;
-        }
-        if (typeof window.getCharactersWithRoleDetails === 'undefined') {
-            window.getCharactersWithRoleDetails = window.RoleQueries.getCharactersWithRoleDetails;
-        }
-        if (typeof window.getCharactersWithRole === 'undefined') {
-            window.getCharactersWithRole = window.RoleQueries.getCharactersWithRole;
-        }
-        if (typeof window.getRoleStatistics === 'undefined') {
-            window.getRoleStatistics = window.RoleQueries.getRoleStatistics;
-        }
-        if (typeof window.getRoleCategoryList === 'undefined') {
-            window.getRoleCategoryList = window.RoleQueries.getRoleCategoryList;
-        }
-        if (typeof window.searchRoles === 'undefined') {
-            window.searchRoles = window.RoleQueries.searchRoles;
-        }
-        if (typeof window.getRoleCategoriesWithCounts === 'undefined') {
-            window.getRoleCategoriesWithCounts = window.RoleQueries.getRoleCategoriesWithCounts;
-        }
-        if (typeof window.getTeachingThresholdName === 'undefined') {
-            window.getTeachingThresholdName = window.RoleQueries.getTeachingThresholdName;
-        }
-    }
+    window.subscribeRoles = function (callback) {
+        return RS.subscribe(callback);
+    };
+    window.getAllRoles = function () {
+        return RS.getAllRoles();
+    };
+    window.getRole = function (id) {
+        return RS.getRole(id);
+    };
+    window.getRoleByName = function (name) {
+        return RS.getRoleByName(name);
+    };
+    window.getRolesByCategory = function (categoryId) {
+        return RS.getRolesByCategory(categoryId);
+    };
+    window.getRoleCategories = function () {
+        return RS.getCategories();
+    };
+
+    // Legacy underscore-prefixed aliases used by older modules.
+    window._getRoles = RS.getAllRoles;
+    window._getRoleById = RS.getRole;
+    window._getRoleCategories = RS.getCategories;
 
     // =========================================================================
-    // 4. COMMAND RE-EXPORTS
+    // 4. QUERY ALIASES (onto RoleQueries)
     // =========================================================================
 
-    if (typeof window.RoleCommands !== 'undefined') {
-        if (typeof window.createRole === 'undefined') {
-            window.createRole = window.RoleCommands.createRole;
-        }
-        if (typeof window.updateRole === 'undefined') {
-            window.updateRole = window.RoleCommands.updateRole;
-        }
-        if (typeof window.deleteRole === 'undefined') {
-            window.deleteRole = window.RoleCommands.deleteRole;
-        }
-        if (typeof window.setRoles === 'undefined') {
-            window.setRoles = window.RoleCommands.setRoles;
-        }
-        if (typeof window.addCategory === 'undefined') {
-            window.addCategory = window.RoleCommands.addCategory;
-        }
-        if (typeof window.updateCategory === 'undefined') {
-            window.updateCategory = window.RoleCommands.updateCategory;
-        }
-        if (typeof window.deleteCategory === 'undefined') {
-            window.deleteCategory = window.RoleCommands.deleteCategory;
-        }
-        if (typeof window.assignRoleToCharacter === 'undefined') {
-            window.assignRoleToCharacter = window.RoleCommands.assignRoleToCharacter;
-        }
-        if (typeof window.removeRoleFromCharacter === 'undefined') {
-            window.removeRoleFromCharacter = window.RoleCommands.removeRoleFromCharacter;
-        }
-        if (typeof window.updateCharacterSkill === 'undefined') {
-            window.updateCharacterSkill = window.RoleCommands.updateCharacterSkill;
-        }
-        if (typeof window.bulkAssignRole === 'undefined') {
-            window.bulkAssignRole = window.RoleCommands.bulkAssignRole;
-        }
-    }
+    window.getRoles = RQ.getRoles;
+    window.searchRoles = RQ.searchRoles;
+    window.getCharactersWithRole = RQ.getCharactersWithRole;
+    window.getCharactersWithRoleDetails = RQ.getCharactersWithRoleDetails;
+    window.getRoleStatistics = RQ.getRoleStatistics;
+    window.getRoleCategoryList = function () {
+        // Legacy shape: array of category objects. Derived from the
+        // canonical category-with-counts query so it stays consistent.
+        return RQ.getRoleCategoriesWithCounts().map(function (c) {
+            return { id: c.id, name: c.name };
+        });
+    };
+    window.getRoleCategoriesWithCounts = RQ.getRoleCategoriesWithCounts;
+    window.getTeachingThresholdName = function (level) {
+        return SU.getTier(level).name;
+    };
+    window.getSkillLevel = RQ.getSkillLevel;
+
+    window._getCharactersWithRole = RQ.getCharactersWithRole;
+    window._getCharactersWithRoleDetails = RQ.getCharactersWithRoleDetails;
+    window._getRoleStatistics = RQ.getRoleStatistics;
+    window._getRoleCategoryList = window.getRoleCategoryList;
+    window._getRoleCategoriesWithCounts = RQ.getRoleCategoriesWithCounts;
+    window._getTeachingThresholdName = window.getTeachingThresholdName;
+    window._getSkillLevel = RQ.getSkillLevel;
 
     // =========================================================================
-    // 5. INTERNAL FUNCTIONS (for wrappers)
+    // 5. COMMAND ALIASES (onto RoleCommands)
     // =========================================================================
 
-    if (typeof window._getRoles === 'undefined') {
-        window._getRoles = function() {
-            if (typeof window.getAllRoles === 'function') {
-                return window.getAllRoles();
-            }
-            return [];
-        };
-    }
+    window.createRole = RCMD.createRole;
+    window.updateRole = RCMD.updateRole;
+    window.deleteRole = RCMD.deleteRole;
+    window.setRoles = RCMD.setRoles;
 
-    if (typeof window._getRoleById === 'undefined') {
-        window._getRoleById = function(id) {
-            if (typeof window.getRole === 'function') {
-                return window.getRole(id);
-            }
-            return null;
-        };
-    }
+    window.addCategory = RCMD.addCategory;
+    window.updateCategory = RCMD.updateCategory;
+    window.deleteCategory = RCMD.deleteCategory;
 
-    if (typeof window._getRoleCategories === 'undefined') {
-        window._getRoleCategories = function() {
-            if (typeof window.getRoleCategories === 'function') {
-                return window.getRoleCategories();
-            }
-            return {};
-        };
-    }
+    window.assignRoleToCharacter = RCMD.assignRoleToCharacter;
+    window.removeRoleFromCharacter = RCMD.removeRoleFromCharacter;
+    window.updateCharacterSkill = RCMD.updateCharacterSkill;
+    window.bulkAssignRole = RCMD.bulkAssignRole;
 
-    if (typeof window._getCharactersWithRole === 'undefined') {
-        window._getCharactersWithRole = function(roleId, mastersOnly) {
-            if (typeof window.getCharactersWithRole === 'function') {
-                return window.getCharactersWithRole(roleId, mastersOnly);
-            }
-            return [];
-        };
-    }
+    window.updateRoleSalary = RCMD.updateRoleSalary;
+    window.updateRoleLiteracyRequirement = RCMD.updateRoleLiteracyRequirement;
 
-    if (typeof window._getCharactersWithRoleDetails === 'undefined') {
-        window._getCharactersWithRoleDetails = function(roleId, mastersOnly) {
-            if (typeof window.getCharactersWithRoleDetails === 'function') {
-                return window.getCharactersWithRoleDetails(roleId, mastersOnly);
-            }
-            return [];
-        };
-    }
+    window.getRoleSpecializations = RQ.getRoleSpecializations;
+    window.getAllRoleSpecializations = RQ.getAllRoleSpecializations;
+    window.addRoleSpecialization = RCMD.addRoleSpecialization;
+    window.removeRoleSpecialization = RCMD.removeRoleSpecialization;
 
-    if (typeof window._getRoleStatistics === 'undefined') {
-        window._getRoleStatistics = function(roleId) {
-            if (typeof window.getRoleStatistics === 'function') {
-                return window.getRoleStatistics(roleId);
-            }
-            return {};
-        };
+    window._createRole = RCMD.createRole;
+    window._updateRole = RCMD.updateRole;
+    window._deleteRole = RCMD.deleteRole;
+    window._setRoles = RCMD.setRoles;
+    window._addCategory = RCMD.addCategory;
+    window._updateCategory = RCMD.updateCategory;
+    window._deleteCategory = RCMD.deleteCategory;
+    window._assignRoleToCharacter = RCMD.assignRoleToCharacter;
+    window._removeRoleFromCharacter = RCMD.removeRoleFromCharacter;
+    window._updateCharacterSkill = RCMD.updateCharacterSkill;
+    window._bulkAssignRole = RCMD.bulkAssignRole;
+    window._updateRoleSalary = RCMD.updateRoleSalary;
+    window._updateRoleLiteracyRequirement = RCMD.updateRoleLiteracyRequirement;
+
+    // NOTE: window._updateProfessionSkill is NOT aliased here. It has no
+    // equivalent: profession skill updates go through CharacterCommands
+    // directly, or through RoleCommands.updateCharacterSkill for the
+    // role-scoped use case. Any caller still using the old global should
+    // migrate to one of those two.
+
+    // =========================================================================
+    // 6. DELETED ALIASES (intentionally not reinstated)
+    // =========================================================================
+    //
+    // The following globals existed in the pre-refactor module and are
+    // deliberately not provided. They either returned domain data that is
+    // now computed elsewhere, or they leaked presentation into the domain.
+    //
+    //   UNCATEGORIZED_ICON              → resolve via Icons (UI layer)
+    //   SUGGESTED_ROLES                 → removed; roles are user-created
+    //   _updateProfessionSkill          → see CharacterCommands / RoleCommands
+    //   _getRoleSpecializations (old)   → now RQ.getRoleSpecializations
+    //   _getAllRoleSpecializations      → now RQ.getAllRoleSpecializations
+    //   _addRoleSpecialization          → now RCMD.addRoleSpecialization
+    //   _removeRoleSpecialization       → now RCMD.removeRoleSpecialization
+    //
+    // If any of these are still referenced by name, fix the caller rather
+    // than reinstating the alias. Reinstating them would be how the previous
+    // architecture survives the current refactor.
+
+    // =========================================================================
+    // 7. DIAGNOSTIC
+    // =========================================================================
+
+    if (window.console && typeof window.console.debug === 'function') {
+        window.console.debug(
+            'role-system.js: legacy aliases installed (compatibility shim). ' +
+            'New code should use RoleConstants / RoleState / RoleQueries / ' +
+            'RoleCommands / SkillUtils directly.'
+        );
     }
 
     // =========================================================================
-    // 6. MODAL HELPER FUNCTIONS (for modals)
+    // 8. COMMONJS EXPORT
     // =========================================================================
-
-    if (typeof window._getRoleCategories === 'undefined') {
-        window._getRoleCategories = function() {
-            if (typeof window.RoleState !== 'undefined') {
-                return window.RoleState.getCategories();
-            }
-            return window.DEFAULT_ROLE_CATEGORIES || {};
-        };
-    }
-
-    // =========================================================================
-    // 7. LOGGING
-    // =========================================================================
-
-    console.log('✅ role-system.js loaded (modular wrapper)');
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
             // Constants
             UNCATEGORIZED_ID: window.UNCATEGORIZED_ID,
             UNCATEGORIZED_NAME: window.UNCATEGORIZED_NAME,
-            UNCATEGORIZED_ICON: window.UNCATEGORIZED_ICON,
             TEACHING_THRESHOLDS: window.TEACHING_THRESHOLDS,
             DEFAULT_ROLE_CATEGORIES: window.DEFAULT_ROLE_CATEGORIES,
+            BASE_SALARY_BY_CATEGORY: window.BASE_SALARY_BY_CATEGORY,
 
             // State
             subscribeRoles: window.subscribeRoles,
@@ -259,13 +255,13 @@
 
             // Queries
             getRoles: window.getRoles,
-            getCharactersWithRoleDetails: window.getCharactersWithRoleDetails,
-            getCharactersWithRole: window.getCharactersWithRole,
-            getRoleStatistics: window.getRoleStatistics,
-            getRoleCategoryList: window.getRoleCategoryList,
             searchRoles: window.searchRoles,
+            getCharactersWithRole: window.getCharactersWithRole,
+            getCharactersWithRoleDetails: window.getCharactersWithRoleDetails,
+            getRoleStatistics: window.getRoleStatistics,
             getRoleCategoriesWithCounts: window.getRoleCategoriesWithCounts,
             getTeachingThresholdName: window.getTeachingThresholdName,
+            getSkillLevel: window.getSkillLevel,
 
             // Commands
             createRole: window.createRole,
@@ -278,8 +274,11 @@
             assignRoleToCharacter: window.assignRoleToCharacter,
             removeRoleFromCharacter: window.removeRoleFromCharacter,
             updateCharacterSkill: window.updateCharacterSkill,
-            bulkAssignRole: window.bulkAssignRole
+            bulkAssignRole: window.bulkAssignRole,
+            updateRoleSalary: window.updateRoleSalary,
+            updateRoleLiteracyRequirement: window.updateRoleLiteracyRequirement,
+            addRoleSpecialization: window.addRoleSpecialization,
+            removeRoleSpecialization: window.removeRoleSpecialization
         };
     }
-
 })();
