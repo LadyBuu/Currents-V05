@@ -2,397 +2,573 @@
  * =============================================================================
  * STILL WATERS - ROLE STATE (role-state.js)
  * =============================================================================
- * 
- * This file is the SINGLE SOURCE OF TRUTH for role data.
- * - Caching for fast lookups
- * - Change notifications (subscribe/unsubscribe)
- * - UI state management
- * - NO business logic
- * 
- * UPDATED: Added baseSalary, requiresLiteracy, literacyLevel to role schema
- * 
+ *
+ * The authoritative in-memory store for role records and role categories.
+ *
+ * Ownership contract:
+ *
+ *     RoleState owns:
+ *         - the in-memory role array
+ *         - the in-memory category map
+ *         - derived indexes (byId, byName, byCategory)
+ *         - subscription/notification
+ *
+ *     RoleState does NOT own:
+ *         - persistence format (delegated to storage.js)
+ *         - business rules (delegated to RoleCommands)
+ *         - UI state (lives in the UI layer)
+ *
+ * Persistence contract:
+ *
+ *     Every mutation explicitly writes the canonical representation into
+ *     masterData.data before calling storage. There is no object aliasing
+ *     between _state.roles and masterData.data.roles. The two are kept in
+ *     sync by assignment, not by sharing a reference.
+ *
+ * Initialisation contract:
+ *
+ *     RoleState must be explicitly initialised via RoleState.init() AFTER
+ *     masterData has loaded. Calling any public reader before init() throws.
+ *     This is deliberate: silent initialisation against an empty store is
+ *     how "where did all the roles go?" bugs are born.
+ *
+ * Schema normalisation:
+ *
+ *     Roles arriving from persistence may be missing fields that were added
+ *     in later versions of the schema. Normalisation runs once, at init()
+ *     time, over the persisted array. Reads do not mutate roles.
+ *
  * DEPENDENCIES:
- *   - accessors.js (getCharacters, getRoles)
- *   - storage.js (saveMasterData)
- * 
+ *   - role-constants.js (RoleConstants)
+ *   - storage.js        (saveMasterData)
+ *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
-    // 1. RECURSION GUARDS
+    // 1. HARD DEPENDENCY CHECK
     // =========================================================================
 
-    var _processingStateUpdate = false;
+    if (!window.RoleConstants) {
+        throw new Error(
+            'role-state.js requires role-constants.js to be loaded first.'
+        );
+    }
+
+    var RC = window.RoleConstants;
 
     // =========================================================================
     // 2. PRIVATE STATE
     // =========================================================================
 
-    var _state = {
-        roles: [],
-        categories: null,
-        cache: {
-            byId: new Map(),
-            byName: new Map(),
-            byCategory: new Map()
-        },
-        uiState: {
-            selectedRoleId: null,
-            searchTerm: '',
-            filterCategory: 'all',
-            filterGender: 'all',
-            viewMode: 'list',
-            expandedRoleId: null,
-            filterMasterOnly: false
-        },
-        subscribers: [],
-        lastUpdated: null,
-        _initialized: false
+    var _roles = [];              // canonical in-memory role array
+    var _categories = {};         // canonical in-memory category map
+    var _cache = {
+        byId: new Map(),
+        byName: new Map(),
+        byCategory: new Map()
     };
+    var _subscribers = [];
+    var _initialized = false;
 
     // =========================================================================
-    // 3. DEPENDENCY WRAPPERS
+    // 3. DEPENDENCY WRAPPERS (storage)
     // =========================================================================
 
-    function _getRoles() {
-        if (typeof window.getRoles === 'function') {
-            return window.getRoles();
+    function _persist() {
+        if (typeof window.saveMasterData !== 'function') {
+            throw new Error(
+                'role-state.js: saveMasterData is not available. ' +
+                'storage.js must be loaded before state mutations occur.'
+            );
         }
-        return window.masterData?.data?.roles || [];
-    }
-
-    function _getCharacters() {
-        if (typeof window.getCharacters === 'function') {
-            return window.getCharacters();
-        }
-        return [];
-    }
-
-    function _saveMasterData() {
-        if (typeof window.saveMasterData === 'function') {
-            window.saveMasterData();
-        }
-    }
-
-    function _invalidateAccessorCaches() {
-        if (typeof window.invalidateAccessorCaches === 'function') {
-            window.invalidateAccessorCaches();
-        }
+        window.saveMasterData();
     }
 
     // =========================================================================
-    // 4. PRIVATE HELPERS
+    // 4. SCHEMA NORMALISATION
     // =========================================================================
+    //
+    // Runs over freshly loaded role records only. After init(), every role in
+    // memory satisfies the current schema. Reads never normalise.
 
-    function _initializeState() {
-        if (_state._initialized) return;
+    function _normaliseRole(raw) {
+        var role = {
+            id: raw.id,
+            name: typeof raw.name === 'string' ? raw.name : '',
+            category: typeof raw.category === 'string' && raw.category
+                ? raw.category
+                : RC.UNCATEGORIZED_ID,
+            icon: typeof raw.icon === 'string' && raw.icon
+                ? raw.icon
+                : 'CIRCLE',
+            specializations: Array.isArray(raw.specializations)
+                ? raw.specializations.slice()
+                : [],
+            notes: typeof raw.notes === 'string' ? raw.notes : '',
+            genderRestriction: (raw.genderRestriction === 'male' || raw.genderRestriction === 'female')
+                ? raw.genderRestriction
+                : 'both',
+            baseSalary: _normaliseSalary(raw.baseSalary, raw.category),
+            requiresLiteracy: raw.requiresLiteracy === true,
+            literacyLevel: null
+        };
 
-        _state.roles = _getRoles();
-        _state.categories = _buildCategories();
-        _rebuildCaches();
-        _state._initialized = true;
-        _state.lastUpdated = Date.now();
+        if (role.requiresLiteracy && typeof raw.literacyLevel === 'string' &&
+            RC.REQUIRABLE_LITERACY_LEVELS.indexOf(raw.literacyLevel) !== -1) {
+            role.literacyLevel = raw.literacyLevel;
+        } else {
+            role.requiresLiteracy = false;
+            role.literacyLevel = null;
+        }
+
+        return role;
+    }
+
+    function _normaliseSalary(value, category) {
+        if (typeof value === 'number' && Number.isFinite(value)) {
+            if (value < RC.MIN_SALARY) return RC.MIN_SALARY;
+            if (value > RC.MAX_SALARY) return RC.MAX_SALARY;
+            return value;
+        }
+        var catSalary = RC.BASE_SALARY_BY_CATEGORY[category];
+        return typeof catSalary === 'number' ? catSalary : RC.DEFAULT_SALARY;
     }
 
     function _buildCategories() {
-        var categories = {};
-
-        var defaults = window.DEFAULT_ROLE_CATEGORIES || {};
+        // Start from the canonical vocabulary.
+        var result = {};
+        var defaults = RC.DEFAULT_ROLE_CATEGORIES;
         for (var key in defaults) {
-            if (defaults.hasOwnProperty(key)) {
-                categories[key] = { ...defaults[key] };
+            if (Object.prototype.hasOwnProperty.call(defaults, key)) {
+                result[key] = { id: defaults[key].id, name: defaults[key].name };
             }
         }
 
-        categories[window.UNCATEGORIZED_ID || 'uncategorized'] = {
-            id: window.UNCATEGORIZED_ID || 'uncategorized',
-            name: window.UNCATEGORIZED_NAME || 'Uncategorized',
-            icon: window.UNCATEGORIZED_ICON || '⌇'
+        // The uncategorized bucket always exists.
+        result[RC.UNCATEGORIZED_ID] = {
+            id: RC.UNCATEGORIZED_ID,
+            name: RC.UNCATEGORIZED_NAME
         };
 
-        if (window.masterData?.data?.roleCategories) {
-            var saved = window.masterData.data.roleCategories;
-            if (typeof saved === 'object' && saved !== null) {
-                for (var key in saved) {
-                    if (saved.hasOwnProperty(key) && saved[key] && saved[key].id) {
-                        categories[key] = saved[key];
-                    }
-                }
-            }
-        }
-
-        return categories;
+        return result;
     }
 
-    function _rebuildCaches() {
-        _state.cache.byId.clear();
-        _state.cache.byName.clear();
-        _state.cache.byCategory.clear();
+    function _applyPersistedCategories(base) {
+        var persisted = window.masterData &&
+                         window.masterData.data &&
+                         window.masterData.data.roleCategories;
 
-        for (var i = 0; i < _state.roles.length; i++) {
-            var role = _state.roles[i];
-            if (!role) continue;
+        if (!persisted || typeof persisted !== 'object') return base;
 
-            _ensureRoleInitialized(role);
-
-            _state.cache.byId.set(role.id, role);
-
-            if (role.name) {
-                _state.cache.byName.set(role.name.toLowerCase(), role);
-            }
-
-            var category = role.category || window.UNCATEGORIZED_ID || 'uncategorized';
-            if (!_state.cache.byCategory.has(category)) {
-                _state.cache.byCategory.set(category, []);
-            }
-            _state.cache.byCategory.get(category).push(role);
-        }
-    }
-
-    function _ensureRoleInitialized(role) {
-        if (!role) return;
-
-        if (!role.category) role.category = window.UNCATEGORIZED_ID || 'uncategorized';
-        if (!role.icon) role.icon = '◉';
-        if (!role.specializations) role.specializations = [];
-        if (!role.notes) role.notes = '';
-        if (!role.genderRestriction) role.genderRestriction = 'both';
-
-        // NEW: Salary fields
-        if (role.baseSalary === undefined || role.baseSalary === null) {
-            var categorySalary = window.BASE_SALARY_BY_CATEGORY?.[role.category];
-            role.baseSalary = categorySalary !== undefined ? categorySalary : window.DEFAULT_SALARY || 10;
+        for (var key in persisted) {
+            if (!Object.prototype.hasOwnProperty.call(persisted, key)) continue;
+            var entry = persisted[key];
+            if (!entry || typeof entry !== 'object') continue;
+            if (typeof entry.id !== 'string' || typeof entry.name !== 'string') continue;
+            base[key] = { id: entry.id, name: entry.name };
         }
 
-        // NEW: Literacy requirement fields
-        if (role.requiresLiteracy === undefined) {
-            role.requiresLiteracy = false;
-        }
-        if (role.literacyLevel === undefined) {
-            role.literacyLevel = null;
-        }
-    }
+        // Uncategorized can never be removed by persisted data.
+        base[RC.UNCATEGORIZED_ID] = {
+            id: RC.UNCATEGORIZED_ID,
+            name: RC.UNCATEGORIZED_NAME
+        };
 
-    function _notifySubscribers(eventType, data) {
-        if (_processingStateUpdate) {
-            return;
-        }
-
-        _processingStateUpdate = true;
-        try {
-            var subscribers = _state.subscribers.slice();
-            for (var i = 0; i < subscribers.length; i++) {
-                try {
-                    subscribers[i]({
-                        type: eventType,
-                        data: data,
-                        timestamp: Date.now()
-                    });
-                } catch (err) {
-                    // Silently handle
-                }
-            }
-        } finally {
-            _processingStateUpdate = false;
-        }
-    }
-
-    function _persistState() {
-        _state.categories = _buildCategories();
-        if (window.masterData && window.masterData.data) {
-            window.masterData.data.roleCategories = _state.categories;
-        }
-        _saveMasterData();
-        _invalidateAccessorCaches();
-        _state.lastUpdated = Date.now();
+        return base;
     }
 
     // =========================================================================
-    // 5. PUBLIC STATE API
+    // 5. CACHE REBUILD
+    // =========================================================================
+
+    function _rebuildCaches() {
+        _cache.byId.clear();
+        _cache.byName.clear();
+        _cache.byCategory.clear();
+
+        for (var i = 0; i < _roles.length; i++) {
+            var role = _roles[i];
+
+            _cache.byId.set(role.id, role);
+
+            if (role.name) {
+                _cache.byName.set(role.name.toLowerCase(), role);
+            }
+
+            var category = role.category || RC.UNCATEGORIZED_ID;
+            if (!_cache.byCategory.has(category)) {
+                _cache.byCategory.set(category, []);
+            }
+            _cache.byCategory.get(category).push(role);
+        }
+    }
+
+    // =========================================================================
+    // 6. PERSISTENCE SYNC (explicit, one-way)
+    // =========================================================================
+    //
+    // After every mutation:
+    //   - masterData.data.roles is reassigned to a plain-array copy of _roles
+    //   - masterData.data.roleCategories is reassigned to a plain-object copy
+    //   - storage is notified
+    //
+    // There is no sharing of references between _state and masterData. Both
+    // are authored by this module and written together.
+
+    function _syncToMasterData() {
+        if (!window.masterData || !window.masterData.data) {
+            throw new Error(
+                'role-state.js: masterData is not available. ' +
+                'RoleState.init() must not run before masterData loads.'
+            );
+        }
+
+        window.masterData.data.roles = _roles.slice();
+        window.masterData.data.roleCategories = _cloneCategories(_categories);
+    }
+
+    function _cloneCategories(source) {
+        var out = {};
+        for (var key in source) {
+            if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+            out[key] = { id: source[key].id, name: source[key].name };
+        }
+        return out;
+    }
+
+    // =========================================================================
+    // 7. NOTIFICATION
+    // =========================================================================
+    //
+    // Notifications are synchronous and compositional. A subscriber may mutate
+    // state in response to an event; that mutation will emit its own event.
+    // There is no blanket suppression guard. If a cycle exists, it is solved
+    // at the command/event boundary, not here.
+
+    function _notify(type, data) {
+        var subscribers = _subscribers.slice();
+        for (var i = 0; i < subscribers.length; i++) {
+            try {
+                subscribers[i]({ type: type, data: data });
+            } catch (err) {
+                // A broken subscriber must not silently corrupt unrelated
+                // state updates. Surface the failure in the console so it
+                // can be diagnosed, but continue notifying other subscribers.
+                if (window.console && typeof window.console.error === 'function') {
+                    window.console.error('RoleState subscriber threw:', err);
+                }
+            }
+        }
+    }
+
+    // =========================================================================
+    // 8. INITIALISATION
+    // =========================================================================
+
+    function init() {
+        if (_initialized) return;
+
+        var masterData = window.masterData;
+        if (!masterData || !masterData.data) {
+            throw new Error(
+                'role-state.js: cannot initialise before masterData is loaded.'
+            );
+        }
+
+        var persistedRoles = masterData.data.roles;
+        if (persistedRoles !== undefined && !Array.isArray(persistedRoles)) {
+            throw new Error(
+                'role-state.js: masterData.data.roles must be an array or undefined.'
+            );
+        }
+
+        _roles = [];
+        if (Array.isArray(persistedRoles)) {
+            for (var i = 0; i < persistedRoles.length; i++) {
+                _roles.push(_normaliseRole(persistedRoles[i]));
+            }
+        }
+
+        _categories = _applyPersistedCategories(_buildCategories());
+
+        _rebuildCaches();
+        _syncToMasterData();
+        _initialized = true;
+    }
+
+    function _assertInitialised() {
+        if (!_initialized) {
+            throw new Error(
+                'role-state.js: RoleState.init() must be called after masterData loads.'
+            );
+        }
+    }
+
+    // =========================================================================
+    // 9. PUBLIC READ API
+    // =========================================================================
+
+    function getAllRoles() {
+        _assertInitialised();
+        return _roles.slice();
+    }
+
+    function getRole(id) {
+        _assertInitialised();
+        if (typeof id !== 'string' || !id) return null;
+        return _cache.byId.get(id) || null;
+    }
+
+    function getRoleByName(name) {
+        _assertInitialised();
+        if (typeof name !== 'string' || !name) return null;
+        return _cache.byName.get(name.toLowerCase()) || null;
+    }
+
+    function getRolesByCategory(categoryId) {
+        _assertInitialised();
+        if (typeof categoryId !== 'string' || !categoryId) return [];
+        return (_cache.byCategory.get(categoryId) || []).slice();
+    }
+
+    function getCategories() {
+        _assertInitialised();
+        return _cloneCategories(_categories);
+    }
+
+    // =========================================================================
+    // 10. SUBSCRIPTIONS
     // =========================================================================
 
     function subscribe(callback) {
         if (typeof callback !== 'function') {
-            return function() {};
+            return function () {};
         }
-
-        _state.subscribers.push(callback);
+        _subscribers.push(callback);
         return function unsubscribe() {
-            var index = _state.subscribers.indexOf(callback);
-            if (index !== -1) {
-                _state.subscribers.splice(index, 1);
-            }
+            var idx = _subscribers.indexOf(callback);
+            if (idx !== -1) _subscribers.splice(idx, 1);
         };
     }
 
-    function getAllRoles() {
-        _initializeState();
-        return _state.roles.slice();
-    }
-
-    function getRole(id) {
-        _initializeState();
-        if (!id || typeof id !== 'string') return null;
-        return _state.cache.byId.get(id) || null;
-    }
-
-    function getRoleByName(name) {
-        _initializeState();
-        if (!name) return null;
-        return _state.cache.byName.get(name.toLowerCase()) || null;
-    }
-
-    function getRolesByCategory(categoryId) {
-        _initializeState();
-        if (!categoryId) return [];
-        return _state.cache.byCategory.get(categoryId) || [];
-    }
-
-    function getCategories() {
-        _initializeState();
-        return { ..._state.categories };
-    }
-
-    function getUIState() {
-        _initializeState();
-        return { ..._state.uiState };
-    }
-
-    function updateUIState(updates) {
-        _initializeState();
-        for (var key in updates) {
-            if (updates.hasOwnProperty(key)) {
-                _state.uiState[key] = updates[key];
-            }
-        }
-        _notifySubscribers('uiStateChanged', _state.uiState);
-    }
-
     // =========================================================================
-    // 6. INTERNAL STATE MUTATORS (For Commands)
+    // 11. INTERNAL MUTATIONS (invoked by RoleCommands)
     // =========================================================================
+    //
+    // These are the only sanctioned ways to change role state. They are named
+    // without a leading underscore because they are the state's public
+    // mutation API, not a private back door. RoleCommands is their sole
+    // intended caller.
 
-    function _addRole(role) {
-        _initializeState();
-        _ensureRoleInitialized(role);
-        _state.roles.push(role);
+    function addRole(role) {
+        _assertInitialised();
+
+        var normalised = _normaliseRole(role);
+        _roles.push(normalised);
         _rebuildCaches();
-        _persistState();
-        _notifySubscribers('roleAdded', role);
-        return role;
+        _syncToMasterData();
+        _persist();
+        _notify('roleAdded', _cloneRoleForSubscriber(normalised));
+        return _cloneRoleForSubscriber(normalised);
     }
 
-    function _updateRole(id, updates) {
-        _initializeState();
-        var role = _state.cache.byId.get(id);
+    function updateRole(id, updates) {
+        _assertInitialised();
+
+        var role = _cache.byId.get(id);
         if (!role) return null;
 
-        for (var key in updates) {
-            if (updates.hasOwnProperty(key)) {
-                role[key] = updates[key];
-            }
-        }
+        // Build a candidate record, normalise it, then commit. If normalisation
+        // rejects a field (e.g. invalid literacy level), the committed record
+        // reflects the corrected value rather than the raw input.
+        var candidate = {
+            id: role.id,
+            name: updates.name !== undefined ? updates.name : role.name,
+            category: updates.category !== undefined ? updates.category : role.category,
+            icon: updates.icon !== undefined ? updates.icon : role.icon,
+            specializations: updates.specializations !== undefined
+                ? updates.specializations
+                : role.specializations,
+            notes: updates.notes !== undefined ? updates.notes : role.notes,
+            genderRestriction: updates.genderRestriction !== undefined
+                ? updates.genderRestriction
+                : role.genderRestriction,
+            baseSalary: updates.baseSalary !== undefined
+                ? updates.baseSalary
+                : role.baseSalary,
+            requiresLiteracy: updates.requiresLiteracy !== undefined
+                ? updates.requiresLiteracy
+                : role.requiresLiteracy,
+            literacyLevel: updates.literacyLevel !== undefined
+                ? updates.literacyLevel
+                : role.literacyLevel
+        };
 
-        _ensureRoleInitialized(role);
+        var normalised = _normaliseRole(candidate);
+
+        var idx = _roles.indexOf(role);
+        if (idx === -1) return null;
+        _roles[idx] = normalised;
 
         _rebuildCaches();
-        _persistState();
-        _notifySubscribers('roleUpdated', { id: id, updates: updates });
-        return role;
+        _syncToMasterData();
+        _persist();
+        _notify('roleUpdated', _cloneRoleForSubscriber(normalised));
+        return _cloneRoleForSubscriber(normalised);
     }
 
-    function _deleteRole(id) {
-        _initializeState();
-        var index = -1;
-        for (var i = 0; i < _state.roles.length; i++) {
-            if (_state.roles[i].id === id) {
-                index = i;
-                break;
-            }
-        }
-        if (index === -1) return false;
+    function deleteRole(id) {
+        _assertInitialised();
 
-        var role = _state.roles[index];
-        _state.roles.splice(index, 1);
+        var idx = -1;
+        for (var i = 0; i < _roles.length; i++) {
+            if (_roles[i].id === id) { idx = i; break; }
+        }
+        if (idx === -1) return false;
+
+        var removed = _roles[idx];
+        _roles.splice(idx, 1);
+
         _rebuildCaches();
-        _persistState();
-        _notifySubscribers('roleDeleted', role);
+        _syncToMasterData();
+        _persist();
+        _notify('roleDeleted', _cloneRoleForSubscriber(removed));
         return true;
     }
 
-    function _setRoles(roles) {
-        _initializeState();
-        for (var i = 0; i < roles.length; i++) {
-            _ensureRoleInitialized(roles[i]);
+    function setRoles(roles) {
+        _assertInitialised();
+
+        if (!Array.isArray(roles)) {
+            throw new Error('RoleState.setRoles expects an array.');
         }
-        _state.roles = roles;
+
+        var next = [];
+        for (var i = 0; i < roles.length; i++) {
+            next.push(_normaliseRole(roles[i]));
+        }
+
+        _roles = next;
+
         _rebuildCaches();
-        _persistState();
-        _notifySubscribers('rolesSet', roles);
+        _syncToMasterData();
+        _persist();
+        _notify('rolesSet', getAllRoles());
         return true;
     }
 
     // =========================================================================
-    // 7. EXPORTS
+    // 12. SUBSCRIBER-SAFE ROLE COPIES
+    // =========================================================================
+    //
+    // Subscribers receive frozen snapshots. They may read freely. They may not
+    // mutate state by accident through a shared reference.
+
+    function _cloneRoleForSubscriber(role) {
+        return Object.freeze({
+            id: role.id,
+            name: role.name,
+            category: role.category,
+            icon: role.icon,
+            specializations: Object.freeze(role.specializations.slice()),
+            notes: role.notes,
+            genderRestriction: role.genderRestriction,
+            baseSalary: role.baseSalary,
+            requiresLiteracy: role.requiresLiteracy,
+            literacyLevel: role.literacyLevel
+        });
+    }
+
+    // =========================================================================
+    // 13. CATEGORY MANAGEMENT (invoked by RoleCommands)
+    // =========================================================================
+
+    function addCategory(id, name) {
+        _assertInitialised();
+
+        if (_categories[id]) {
+            throw new Error('RoleState.addCategory: category "' + id + '" already exists.');
+        }
+        _categories[id] = { id: id, name: name };
+        _syncToMasterData();
+        _persist();
+        _notify('categoryAdded', { id: id, name: name });
+    }
+
+    function updateCategory(id, updates) {
+        _assertInitialised();
+
+        var category = _categories[id];
+        if (!category) return false;
+        if (updates.name !== undefined) category.name = updates.name;
+        _syncToMasterData();
+        _persist();
+        _notify('categoryUpdated', { id: id, name: category.name });
+        return true;
+    }
+
+    function deleteCategory(id) {
+        _assertInitialised();
+
+        if (id === RC.UNCATEGORIZED_ID) {
+            throw new Error('RoleState.deleteCategory: cannot delete the uncategorized category.');
+        }
+        if (!_categories[id]) return false;
+
+        // Reassign every role in this category to uncategorized.
+        var touched = [];
+        for (var i = 0; i < _roles.length; i++) {
+            if (_roles[i].category === id) {
+                _roles[i].category = RC.UNCATEGORIZED_ID;
+                touched.push(_roles[i].id);
+            }
+        }
+
+        delete _categories[id];
+
+        _rebuildCaches();
+        _syncToMasterData();
+        _persist();
+        _notify('categoryDeleted', { id: id, reassignedRoleIds: touched });
+        return true;
+    }
+
+    // =========================================================================
+    // 14. EXPORTS
     // =========================================================================
 
     window.RoleState = {
+        // Lifecycle
+        init: init,
+        isInitialised: function () { return _initialized; },
+
+        // Subscriptions
         subscribe: subscribe,
+
+        // Reads
         getAllRoles: getAllRoles,
         getRole: getRole,
         getRoleByName: getRoleByName,
         getRolesByCategory: getRolesByCategory,
         getCategories: getCategories,
-        getUIState: getUIState,
-        updateUIState: updateUIState,
 
-        _addRole: _addRole,
-        _updateRole: _updateRole,
-        _deleteRole: _deleteRole,
-        _setRoles: _setRoles,
-        _rebuildCaches: _rebuildCaches,
-        _persistState: _persistState,
-        _initializeState: _initializeState,
-        _ensureRoleInitialized: _ensureRoleInitialized,
+        // Mutations (RoleCommands is the intended caller)
+        addRole: addRole,
+        updateRole: updateRole,
+        deleteRole: deleteRole,
+        setRoles: setRoles,
 
-        _getState: function() { return _state; }
+        // Category mutations (RoleCommands is the intended caller)
+        addCategory: addCategory,
+        updateCategory: updateCategory,
+        deleteCategory: deleteCategory
     };
-
-    // =========================================================================
-    // 8. LEGACY ALIASES
-    // =========================================================================
-
-    window._getRoles = function() {
-        return RoleState.getAllRoles();
-    };
-
-    window._getRoleById = function(id) {
-        return RoleState.getRole(id);
-    };
-
-    window._getRoleCategories = function() {
-        return RoleState.getCategories();
-    };
-
-    // =========================================================================
-    // 9. INITIALIZE ON LOAD
-    // =========================================================================
-
-    _initializeState();
 
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            RoleState: window.RoleState,
-            subscribe: subscribe,
-            getAllRoles: getAllRoles,
-            getRole: getRole,
-            getRoleByName: getRoleByName,
-            getRolesByCategory: getRolesByCategory,
-            getCategories: getCategories
-        };
+        module.exports = window.RoleState;
     }
-
 })();
