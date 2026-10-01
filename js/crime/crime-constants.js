@@ -2,20 +2,32 @@
  * =============================================================================
  * STILL WATERS - CRIME CONSTANTS (crime-constants.js)
  * =============================================================================
- * 
+ *
  * LOCATION: js/core/crime/crime-constants.js
- * 
- * This file contains ALL crime, vendetta, and religious law related constants.
- * These are referenced from the main constants.js but can stand alone.
- * 
- * UPDATED: Removed hardcoded punishments and execution reasons.
- *          These are now defined dynamically by civil and religious laws.
- *          Kept CRIME_TYPES and CRIME_SEVERITY as defaults.
- * 
- * DEPENDENCIES: None (pure constants)
- * 
+ *
+ * PURPOSE:
+ *   Vocabulary and defaults for the Crime domain. This module is pure data
+ *   plus small, side-effect-free helpers over that data. It does not read
+ *   state, does not depend on other domain modules, and does not decide
+ *   legal consequences.
+ *
+ * OWNERSHIP:
+ *   - CRIME_TYPES, CRIME_SEVERITY (defaults), VENDETTA_STATUS
+ *   - MURDER_REASONS (UI/input vocabulary, not legal truth)
+ *   - EXECUTION_METHODS (UI/system selection vocabulary; legal eligibility
+ *     and permitted methods are determined by the law layer)
+ *   - RELIGIOUS_PUNISHMENTS (vocabulary; actual punishments come from laws)
+ *
+ * WHAT THIS MODULE DOES NOT DO:
+ *   - It does not map crimes to law domains. That is owned by the law layer.
+ *   - It does not define punishments. Those come from laws.
+ *   - It does not invent fallbacks for unknown crime types. Unknown is
+ *     unknown; callers must handle it explicitly.
+ *
+ * DEPENDENCIES: None.
+ *
  * ICON POLICY: No emojis. No icons.
- * 
+ *
  * =============================================================================
  */
 
@@ -42,7 +54,7 @@
         FRAUD: 'fraud',
         FORGERY: 'forgery',
         SMUGGLING: 'smuggling',
-        
+
         // Religious crimes
         HERESY: 'heresy',
         BLASPHEMY: 'blasphemy',
@@ -57,37 +69,59 @@
         DESECRATION: 'desecration'
     };
 
+    // Canonical categorization of crime types.
+    // SECULAR_CRIME_TYPES and RELIGIOUS_CRIME_TYPES are the single source.
+    // Any new crime type must be added to exactly one of these arrays.
+    // The helper functions below derive from these, so nothing else needs
+    // to be updated when a crime type is added.
+
+    var SECULAR_CRIME_TYPES = [
+        CRIME_TYPES.MURDER,
+        CRIME_TYPES.EXECUTION,
+        CRIME_TYPES.CRIME_OF_PASSION,
+        CRIME_TYPES.ADULTERY,
+        CRIME_TYPES.TREASON,
+        CRIME_TYPES.THEFT,
+        CRIME_TYPES.ESPIONAGE,
+        CRIME_TYPES.ASSAULT,
+        CRIME_TYPES.VENDETTA,
+        CRIME_TYPES.VIOLENCE,
+        CRIME_TYPES.ROBBERY,
+        CRIME_TYPES.FRAUD,
+        CRIME_TYPES.FORGERY,
+        CRIME_TYPES.SMUGGLING
+    ];
+
+    var RELIGIOUS_CRIME_TYPES = [
+        CRIME_TYPES.HERESY,
+        CRIME_TYPES.BLASPHEMY,
+        CRIME_TYPES.APOSTASY,
+        CRIME_TYPES.SACRILEGE,
+        CRIME_TYPES.WITCHCRAFT,
+        CRIME_TYPES.IDOLATRY,
+        CRIME_TYPES.SCHISM,
+        CRIME_TYPES.EXCOMMUNICATION_VIOLATION,
+        CRIME_TYPES.RELIGIOUS_IMPERSONATION,
+        CRIME_TYPES.FALSE_PROPHECY,
+        CRIME_TYPES.DESECRATION
+    ];
+
     // =========================================================================
-    // 2. LAW TYPES
+    // 2. LAW VOCABULARY (classification only; consequences come from laws)
     // =========================================================================
 
-    /**
-     * Types of laws/guidelines
-     * law: Enforced legal code with consequences
-     * taboo: Strongly prohibited, usually social/spiritual consequences
-     * guideline: Recommended behavior, minimal consequences
-     */
     var LAW_TYPES = {
         LAW: 'law',
         TABOO: 'taboo',
         GUIDELINE: 'guideline'
     };
 
-    /**
-     * Categories of law (who defines/enforces it)
-     * religious: Defined by religious authority
-     * civil: Defined by secular government
-     * custom: Cultural norms/traditions
-     */
     var LAW_CATEGORIES = {
         RELIGIOUS: 'religious',
         CIVIL: 'civil',
         CUSTOM: 'custom'
     };
 
-    /**
-     * Domains of law (what area of life it affects)
-     */
     var LAW_DOMAINS = {
         MARRIAGE: 'marriage',
         BEHAVIOR: 'behavior',
@@ -101,10 +135,6 @@
         DEATH: 'death'
     };
 
-    // =========================================================================
-    // 3. LAW SEVERITY
-    // =========================================================================
-
     var LAW_SEVERITY = {
         MINOR: 'minor',
         MAJOR: 'major',
@@ -112,11 +142,15 @@
     };
 
     // =========================================================================
-    // 4. CRIME SEVERITY (1-10) - DEFAULTS ONLY, OVERRIDDEN BY LAWS
+    // 3. CRIME SEVERITY (defaults, overridden by laws)
     // =========================================================================
 
+    // Defaults only. Laws may override per crime type via crimeMapping.
+    // A crime type absent from this map has no default severity. Callers
+    // must treat that as "unknown" rather than silently substituting a value.
+
     var CRIME_SEVERITY = {
-        // Secular crimes
+        // Secular
         'theft': 3,
         'robbery': 5,
         'fraud': 4,
@@ -133,8 +167,8 @@
         'murder': 10,
         'vendetta': 9,
         'execution': 10,
-        
-        // Religious crimes
+
+        // Religious
         'heresy': 9,
         'apostasy': 8,
         'sacrilege': 8,
@@ -147,14 +181,7 @@
     };
 
     // =========================================================================
-    // 5. REMOVED: CRIME_PUNISHMENTS - Now dynamic from laws
-    // 6. REMOVED: CRIME_TO_DOMAIN - Now dynamic from laws
-    // 7. REMOVED: EXECUTION_REASONS - Now dynamic from laws
-    // 8. REMOVED: EXECUTION_METHODS - Now dynamic from laws (kept in modals)
-    // =========================================================================
-
-    // =========================================================================
-    // 9. VENDETTA STATUS
+    // 4. VENDETTA STATUS
     // =========================================================================
 
     var VENDETTA_STATUS = {
@@ -163,14 +190,16 @@
         RESOLVED: 'resolved'
     };
 
+    // Escalation threshold. Single source of truth for "3 deaths escalates".
+    var VENDETTA_ESCALATION_THRESHOLD = 3;
+
     // =========================================================================
-    // 10. RELIGIOUS PUNISHMENT TYPES
+    // 5. RELIGIOUS PUNISHMENT VOCABULARY
     // =========================================================================
 
-    /**
-     * Special punishments specific to religious law
-     * These are in addition to secular punishments
-     */
+    // These are labels for consequences that laws may prescribe.
+    // They are not consequences in themselves; a law must reference them.
+
     var RELIGIOUS_PUNISHMENTS = {
         EXCOMMUNICATION: 'excommunication',
         ANATHEMA: 'anathema',
@@ -185,8 +214,12 @@
     };
 
     // =========================================================================
-    // 11. MURDER REASONS (Categorized - Kept for UI suggestions)
+    // 6. MURDER REASONS (UI/input vocabulary)
     // =========================================================================
+
+    // These are suggestions for UI and manual data entry. They are not the
+    // legal cause of death and do not determine consequences. A murder may
+    // be recorded with any free-text reason.
 
     var MURDER_REASONS = {
         political: [
@@ -269,8 +302,12 @@
     };
 
     // =========================================================================
-    // 12. EXECUTION METHODS (Kept for UI selection)
+    // 7. EXECUTION METHODS (UI/system selection vocabulary)
     // =========================================================================
+
+    // Legal eligibility and permitted methods are determined by the law
+    // layer. This catalog only enumerates the methods that may be selected
+    // once a law has prescribed execution.
 
     var EXECUTION_METHODS = {
         beheading: { id: 'beheading', name: 'Beheading' },
@@ -290,213 +327,93 @@
     };
 
     // =========================================================================
-    // 13. HELPER FUNCTIONS
+    // 8. HELPER FUNCTIONS (pure, no state, no fallbacks)
     // =========================================================================
 
-    /**
-     * Gets all crime types (secular + religious)
-     */
     function getAllCrimeTypes() {
         return Object.values(CRIME_TYPES);
     }
 
-    /**
-     * Gets secular crime types only
-     */
     function getSecularCrimeTypes() {
-        return [
-            CRIME_TYPES.MURDER,
-            CRIME_TYPES.EXECUTION,
-            CRIME_TYPES.CRIME_OF_PASSION,
-            CRIME_TYPES.ADULTERY,
-            CRIME_TYPES.TREASON,
-            CRIME_TYPES.THEFT,
-            CRIME_TYPES.ESPIONAGE,
-            CRIME_TYPES.ASSAULT,
-            CRIME_TYPES.VENDETTA,
-            CRIME_TYPES.VIOLENCE,
-            CRIME_TYPES.ROBBERY,
-            CRIME_TYPES.FRAUD,
-            CRIME_TYPES.FORGERY,
-            CRIME_TYPES.SMUGGLING
-        ];
+        return SECULAR_CRIME_TYPES.slice();
     }
 
-    /**
-     * Gets religious crime types only
-     */
     function getReligiousCrimeTypes() {
-        return [
-            CRIME_TYPES.HERESY,
-            CRIME_TYPES.BLASPHEMY,
-            CRIME_TYPES.APOSTASY,
-            CRIME_TYPES.SACRILEGE,
-            CRIME_TYPES.WITCHCRAFT,
-            CRIME_TYPES.IDOLATRY,
-            CRIME_TYPES.SCHISM,
-            CRIME_TYPES.EXCOMMUNICATION_VIOLATION,
-            CRIME_TYPES.RELIGIOUS_IMPERSONATION,
-            CRIME_TYPES.FALSE_PROPHECY,
-            CRIME_TYPES.DESECRATION
-        ];
+        return RELIGIOUS_CRIME_TYPES.slice();
     }
 
-    /**
-     * Checks if a crime type is religious
-     */
     function isReligiousCrime(crimeType) {
-        return getReligiousCrimeTypes().includes(crimeType);
+        return RELIGIOUS_CRIME_TYPES.indexOf(crimeType) !== -1;
+    }
+
+    function isSecularCrime(crimeType) {
+        return SECULAR_CRIME_TYPES.indexOf(crimeType) !== -1;
+    }
+
+    function isKnownCrimeType(crimeType) {
+        return Object.prototype.hasOwnProperty.call(CRIME_TYPES, crimeType) ||
+               getAllCrimeTypes().indexOf(crimeType) !== -1;
     }
 
     /**
-     * Gets the default severity for a crime type
-     * @param {string} crimeType - Crime type
-     * @returns {number} Default severity (1-10)
+     * Returns the default severity for a crime type, or undefined if the
+     * crime type has no configured default. Unknown crime types are NOT
+     * silently assigned a severity.
+     *
+     * @param {string} crimeType
+     * @returns {number|undefined}
      */
     function getDefaultCrimeSeverity(crimeType) {
-        return CRIME_SEVERITY[crimeType] || 5;
-    }
-
-    /**
-     * Gets the law domain for a crime type
-     */
-    function getCrimeDomain(crimeType) {
-        // This is now dynamic - use LAW_DOMAINS mapping
-        var domainMap = {
-            'murder': LAW_DOMAINS.VIOLENCE,
-            'execution': LAW_DOMAINS.POLITICAL,
-            'crime_of_passion': LAW_DOMAINS.VIOLENCE,
-            'adultery': LAW_DOMAINS.SEXUAL,
-            'treason': LAW_DOMAINS.POLITICAL,
-            'theft': LAW_DOMAINS.ECONOMIC,
-            'espionage': LAW_DOMAINS.POLITICAL,
-            'assault': LAW_DOMAINS.VIOLENCE,
-            'vendetta': LAW_DOMAINS.VIOLENCE,
-            'violence': LAW_DOMAINS.VIOLENCE,
-            'robbery': LAW_DOMAINS.ECONOMIC,
-            'fraud': LAW_DOMAINS.ECONOMIC,
-            'forgery': LAW_DOMAINS.ECONOMIC,
-            'smuggling': LAW_DOMAINS.ECONOMIC,
-            'heresy': LAW_DOMAINS.WORSHIP,
-            'blasphemy': LAW_DOMAINS.WORSHIP,
-            'apostasy': LAW_DOMAINS.WORSHIP,
-            'sacrilege': LAW_DOMAINS.WORSHIP,
-            'witchcraft': LAW_DOMAINS.WORSHIP,
-            'idolatry': LAW_DOMAINS.WORSHIP,
-            'schism': LAW_DOMAINS.WORSHIP,
-            'excommunication_violation': LAW_DOMAINS.WORSHIP,
-            'religious_impersonation': LAW_DOMAINS.WORSHIP,
-            'false_prophecy': LAW_DOMAINS.WORSHIP,
-            'desecration': LAW_DOMAINS.WORSHIP
-        };
-        return domainMap[crimeType] || LAW_DOMAINS.BEHAVIOR;
+        return Object.prototype.hasOwnProperty.call(CRIME_SEVERITY, crimeType)
+            ? CRIME_SEVERITY[crimeType]
+            : undefined;
     }
 
     // =========================================================================
-    // 14. EXPORTS
+    // 9. EXPORTS
     // =========================================================================
 
-    // Crime types
-    if (typeof window.CRIME_TYPES === 'undefined') {
-        window.CRIME_TYPES = CRIME_TYPES;
-    }
-    
-    // Law types
-    if (typeof window.LAW_TYPES === 'undefined') {
-        window.LAW_TYPES = LAW_TYPES;
-    }
-    
-    // Law categories
-    if (typeof window.LAW_CATEGORIES === 'undefined') {
-        window.LAW_CATEGORIES = LAW_CATEGORIES;
-    }
-    
-    // Law domains
-    if (typeof window.LAW_DOMAINS === 'undefined') {
-        window.LAW_DOMAINS = LAW_DOMAINS;
-    }
-    
-    // Law severity
-    if (typeof window.LAW_SEVERITY === 'undefined') {
-        window.LAW_SEVERITY = LAW_SEVERITY;
-    }
-    
-    // Crime severity (defaults)
-    if (typeof window.CRIME_SEVERITY === 'undefined') {
-        window.CRIME_SEVERITY = CRIME_SEVERITY;
-    }
-    
-    // Murder reasons (UI suggestions)
-    if (typeof window.MURDER_REASONS === 'undefined') {
-        window.MURDER_REASONS = MURDER_REASONS;
-    }
-    
-    // Execution methods (UI selection)
-    if (typeof window.EXECUTION_METHODS === 'undefined') {
-        window.EXECUTION_METHODS = EXECUTION_METHODS;
-    }
-    
-    // Vendetta status
-    if (typeof window.VENDETTA_STATUS === 'undefined') {
-        window.VENDETTA_STATUS = VENDETTA_STATUS;
-    }
-    
-    // Religious punishments
-    if (typeof window.RELIGIOUS_PUNISHMENTS === 'undefined') {
-        window.RELIGIOUS_PUNISHMENTS = RELIGIOUS_PUNISHMENTS;
-    }
-
-    // Export as CrimeConstants for explicit access
+    // Canonical API. New code should use CrimeConstants.* exclusively.
     window.CrimeConstants = {
+        // Vocabulary
         CRIME_TYPES: CRIME_TYPES,
         LAW_TYPES: LAW_TYPES,
         LAW_CATEGORIES: LAW_CATEGORIES,
         LAW_DOMAINS: LAW_DOMAINS,
         LAW_SEVERITY: LAW_SEVERITY,
         CRIME_SEVERITY: CRIME_SEVERITY,
+        VENDETTA_STATUS: VENDETTA_STATUS,
+        VENDETTA_ESCALATION_THRESHOLD: VENDETTA_ESCALATION_THRESHOLD,
+        RELIGIOUS_PUNISHMENTS: RELIGIOUS_PUNISHMENTS,
         MURDER_REASONS: MURDER_REASONS,
         EXECUTION_METHODS: EXECUTION_METHODS,
-        VENDETTA_STATUS: VENDETTA_STATUS,
-        RELIGIOUS_PUNISHMENTS: RELIGIOUS_PUNISHMENTS,
+
+        // Helpers
         getAllCrimeTypes: getAllCrimeTypes,
         getSecularCrimeTypes: getSecularCrimeTypes,
         getReligiousCrimeTypes: getReligiousCrimeTypes,
         isReligiousCrime: isReligiousCrime,
-        getDefaultCrimeSeverity: getDefaultCrimeSeverity,
-        getCrimeDomain: getCrimeDomain
+        isSecularCrime: isSecularCrime,
+        isKnownCrimeType: isKnownCrimeType,
+        getDefaultCrimeSeverity: getDefaultCrimeSeverity
     };
 
+    // Legacy global aliases. Retained during migration so that older modules
+    // (and any UI still reading window.CRIME_TYPES) continue to work.
+    // New code should not read these directly.
+    window.CRIME_TYPES = CRIME_TYPES;
+    window.LAW_TYPES = LAW_TYPES;
+    window.LAW_CATEGORIES = LAW_CATEGORIES;
+    window.LAW_DOMAINS = LAW_DOMAINS;
+    window.LAW_SEVERITY = LAW_SEVERITY;
+    window.CRIME_SEVERITY = CRIME_SEVERITY;
+    window.VENDETTA_STATUS = VENDETTA_STATUS;
+    window.RELIGIOUS_PUNISHMENTS = RELIGIOUS_PUNISHMENTS;
+    window.MURDER_REASONS = MURDER_REASONS;
+    window.EXECUTION_METHODS = EXECUTION_METHODS;
+
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            CRIME_TYPES: CRIME_TYPES,
-            LAW_TYPES: LAW_TYPES,
-            LAW_CATEGORIES: LAW_CATEGORIES,
-            LAW_DOMAINS: LAW_DOMAINS,
-            LAW_SEVERITY: LAW_SEVERITY,
-            CRIME_SEVERITY: CRIME_SEVERITY,
-            MURDER_REASONS: MURDER_REASONS,
-            EXECUTION_METHODS: EXECUTION_METHODS,
-            VENDETTA_STATUS: VENDETTA_STATUS,
-            RELIGIOUS_PUNISHMENTS: RELIGIOUS_PUNISHMENTS,
-            CrimeConstants: {
-                CRIME_TYPES: CRIME_TYPES,
-                LAW_TYPES: LAW_TYPES,
-                LAW_CATEGORIES: LAW_CATEGORIES,
-                LAW_DOMAINS: LAW_DOMAINS,
-                LAW_SEVERITY: LAW_SEVERITY,
-                CRIME_SEVERITY: CRIME_SEVERITY,
-                MURDER_REASONS: MURDER_REASONS,
-                EXECUTION_METHODS: EXECUTION_METHODS,
-                VENDETTA_STATUS: VENDETTA_STATUS,
-                RELIGIOUS_PUNISHMENTS: RELIGIOUS_PUNISHMENTS,
-                getAllCrimeTypes: getAllCrimeTypes,
-                getSecularCrimeTypes: getSecularCrimeTypes,
-                getReligiousCrimeTypes: getReligiousCrimeTypes,
-                isReligiousCrime: isReligiousCrime,
-                getDefaultCrimeSeverity: getDefaultCrimeSeverity,
-                getCrimeDomain: getCrimeDomain
-            }
-        };
+        module.exports = window.CrimeConstants;
     }
 
 })();
