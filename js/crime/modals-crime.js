@@ -2,31 +2,47 @@
  * =============================================================================
  * STILL WATERS - CRIME MODALS (modals-crime.js)
  * =============================================================================
- * 
+ *
  * LOCATION: js/core/crime/modals-crime.js
- * 
- * This file contains ALL modal dialogs for crime and vendetta operations.
- * 
- * EXPORTED FUNCTIONS:
- *   - CrimeModals.openMurderModal(options)
- *   - CrimeModals.openExecutionModal(options)
- *   - CrimeModals.openVendettaModal(options)
- *   - CrimeModals.openCrimeDetailsModal(crimeId)
- *   - CrimeModals.openVendettaDetailsModal(vendettaId)
- *   - CrimeModals.openCrimeStatsModal(locationId)
- * 
- * DEPENDENCIES:
- *   - modals-core.js: openModal, closeTopModal, _escapeHtml, _getIcon, _showToast
- *   - modals-char-select.js: openCharacterSelector, FILTER_PRESETS
- *   - locationDropdown.js: getFilteredLocationOptions, createLocationSelector
+ *
+ * PURPOSE:
+ *   Modal dialogs for crime and vendetta operations. This layer collects
+ *   input and hands it to CrimeCommands; it renders data supplied by
+ *   CrimeQueries. It does not decide domain rules, does not mutate records
+ *   directly, and does not carry its own vocabulary of crime types,
+ *   vendetta statuses, or punishments.
+ *
+ * OWNERSHIP:
+ *   - modal construction and lifecycle
+ *   - input collection and obvious UI-level validation
+ *   - presentation formatting (human-readable labels from canonical ids)
+ *   - delegating actions to CrimeCommands
+ *   - delegating reads to CrimeQueries
+ *
+ * WHAT THIS MODULE DOES NOT DO:
+ *   - It does not mutate crime records, characters, households, or vendettas.
+ *   - It does not carry a fallback crime taxonomy.
+ *   - It does not hardcode vendetta status identifiers.
+ *   - It does not fabricate years, causes, or punishment text.
+ *   - It does not use a module-wide "processing" guard. Modals do not
+ *     recursively construct themselves.
+ *
+ * DEPENDENCIES (required):
+ *   - modals-core.js: openModal, _escapeHtml, _getIcon, _showToast
+ *   - modals-char-select.js: openCharacterSelector
  *   - modals-household-selector.js: openHouseholdSelector
+ *   - locationDropdown.js: getFilteredLocationOptions
  *   - crime-commands.js: CrimeCommands
  *   - crime-queries.js: CrimeQueries
- *   - accessors.js: getCharacterById, getPlaceById, getPlaceName
+ *   - crime-constants.js: CrimeConstants
+ *   - accessors.js: getCharacterById, getPlaceById, getPlaceName, getHouseholdById
  *   - time.js: getCurrentYearSafe
- * 
- * ICON POLICY: No emojis. Uses icons.js via _getIcon.
- * 
+ *
+ * Missing required dependencies fail loudly. UI is the wrong place to hide
+ * a broken boot order behind a silent fallback.
+ *
+ * ICON POLICY: No emojis. Icons come from icons.js via _getIcon.
+ *
  * =============================================================================
  */
 
@@ -34,281 +50,366 @@
     'use strict';
 
     // =========================================================================
-    // 0. RECURSION GUARD
+    // 0. DEPENDENCY RESOLUTION
     // =========================================================================
 
-    var _processingModal = false;
-
-    // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
-    // =========================================================================
-
-    function _openModal(options) {
-        if (typeof window.openModal === 'function') {
-            return window.openModal(options);
+    function _require(name, obj) {
+        if (typeof obj === 'undefined' || obj === null) {
+            throw new Error('[CrimeModals] Required dependency ' + name + ' is not available.');
         }
-        return null;
+        return obj;
     }
 
-    function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') {
-            window.closeTopModal();
-        }
+    function _openModal(options) {
+        return _require('openModal', window.openModal)(options);
     }
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
-        }
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
-        if (!str) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
+        return _require('_escapeHtml', window._escapeHtml)(str);
     }
 
     function _getIcon(name) {
-        if (typeof window._getIcon === 'function') {
-            return window._getIcon(name);
+        if (typeof window._getIcon !== 'function') {
+            throw new Error('[CrimeModals] Required dependency _getIcon is not available.');
         }
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
-        return '';
+        return window._getIcon(name);
     }
 
     function _showToast(message, type) {
         if (typeof window._showToast === 'function') {
             window._showToast(message, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
+            return;
         }
+        if (typeof window.showToast === 'function') {
+            window.showToast(message, type);
+            return;
+        }
+        throw new Error('[CrimeModals] No toast function is available.');
     }
 
     function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
+        return _require('getCurrentYearSafe', window.getCurrentYearSafe)();
+    }
 
     function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(id);
-        }
-        return null;
+        if (typeof window.getCharacterById !== 'function') return null;
+        return window.getCharacterById(id);
+    }
+
+    function _getHouseholdById(id) {
+        if (typeof window.getHouseholdById !== 'function') return null;
+        return window.getHouseholdById(id);
     }
 
     function _getPlaceById(id) {
-        if (typeof window.getPlaceById === 'function') {
-            return window.getPlaceById(id);
-        }
-        return null;
+        if (typeof window.getPlaceById !== 'function') return null;
+        return window.getPlaceById(id);
     }
 
     function _getPlaceName(id) {
-        if (typeof window.getPlaceName === 'function') {
-            return window.getPlaceName(id);
-        }
+        if (typeof window.getPlaceName === 'function') return window.getPlaceName(id);
         var place = _getPlaceById(id);
-        return place ? place.displayName : 'Unknown';
+        return place ? place.displayName : null;
     }
 
     function _getFilteredLocationOptions(selectedId) {
-        if (typeof window.getFilteredLocationOptions === 'function') {
-            return window.getFilteredLocationOptions(selectedId);
-        }
-        return '<option value="">No locations available</option>';
+        return _require('getFilteredLocationOptions', window.getFilteredLocationOptions)(selectedId);
     }
 
     function _openCharacterSelector(options) {
-        if (typeof window.openCharacterSelector === 'function') {
-            return window.openCharacterSelector(options);
-        }
-        return null;
+        return _require('openCharacterSelector', window.openCharacterSelector)(options);
     }
 
     function _openHouseholdSelector(options) {
-        if (typeof window.openHouseholdSelector === 'function') {
-            return window.openHouseholdSelector(options);
+        return _require('openHouseholdSelector', window.openHouseholdSelector)(options);
+    }
+
+    function _getCommands() {
+        return _require('CrimeCommands', window.CrimeCommands);
+    }
+
+    function _getQueries() {
+        return _require('CrimeQueries', window.CrimeQueries);
+    }
+
+    function _getConstants() {
+        return _require('CrimeConstants', window.CrimeConstants);
+    }
+
+    // =========================================================================
+    // 1. PRESENTATION HELPERS
+    // =========================================================================
+    //
+    // Canonical identifiers are storage-level values. The UI needs display
+    // strings. These formatters are the only place in the crime UI where
+    // that translation happens. If a new crime type is added to
+    // CrimeConstants, only this file needs updating for the UI.
+
+    var _TYPE_LABELS = {
+        murder: 'Murder',
+        execution: 'Execution',
+        crime_of_passion: 'Crime of Passion',
+        adultery: 'Adultery',
+        treason: 'Treason',
+        theft: 'Theft',
+        espionage: 'Espionage',
+        assault: 'Assault',
+        vendetta: 'Vendetta Violence',
+        violence: 'Violence',
+        robbery: 'Robbery',
+        fraud: 'Fraud',
+        forgery: 'Forgery',
+        smuggling: 'Smuggling',
+        heresy: 'Heresy',
+        blasphemy: 'Blasphemy',
+        apostasy: 'Apostasy',
+        sacrilege: 'Sacrilege',
+        witchcraft: 'Witchcraft',
+        idolatry: 'Idolatry',
+        schism: 'Schism',
+        excommunication_violation: 'Violation of Excommunication',
+        religious_impersonation: 'Religious Impersonation',
+        false_prophecy: 'False Prophecy',
+        desecration: 'Desecration'
+    };
+
+    function formatCrimeType(type) {
+        if (!type) return 'Unknown';
+        if (Object.prototype.hasOwnProperty.call(_TYPE_LABELS, type)) {
+            return _TYPE_LABELS[type];
         }
-        return null;
+        // Fallback: convert snake_case to Title Case so unknown types still
+        // render legibly without inventing a taxonomy.
+        return String(type)
+            .split('_')
+            .map(function(word) {
+                return word.charAt(0).toUpperCase() + word.slice(1);
+            })
+            .join(' ');
     }
 
-    function _getCrimeTypes() {
-        return window.CRIME_TYPES || {
-            MURDER: 'murder',
-            EXECUTION: 'execution',
-            THEFT: 'theft',
-            ADULTERY: 'adultery',
-            TREASON: 'treason'
-        };
+    function formatVendettaStatus(status) {
+        var constants = _getConstants();
+        var s = constants.VENDETTA_STATUS;
+        switch (status) {
+            case s.ACTIVE: return 'Active';
+            case s.ESCALATED: return 'Escalated';
+            case s.RESOLVED: return 'Resolved';
+            default: return status ? String(status) : 'Unknown';
+        }
+    }
+
+    function formatSeverity(severity) {
+        if (typeof severity !== 'number') return 'Unknown';
+        return severity + '/10';
+    }
+
+    function formatPersonName(character) {
+        if (!character) return 'Unknown';
+        var name = character.name || 'Unknown';
+        if (character.surname) name += ' ' + character.surname;
+        return name;
+    }
+
+    // Icons: single source. If an icon name changes in icons.js, only this
+    // map needs updating.
+    function iconForCrimeType(type) {
+        switch (type) {
+            case 'murder':
+            case 'execution':
+            case 'crime_of_passion':
+                return _getIcon('X_HEAVY');
+            case 'treason':
+            case 'espionage':
+                return _getIcon('SHIELD');
+            case 'assault':
+            case 'violence':
+            case 'vendetta':
+                return _getIcon('SWORD');
+            case 'theft':
+            case 'robbery':
+            case 'fraud':
+            case 'forgery':
+            case 'smuggling':
+                return _getIcon('WARNING');
+            case 'adultery':
+                return _getIcon('HEART_OUTLINE');
+            default:
+                return _getIcon('CIRCLE_DOT');
+        }
     }
 
     // =========================================================================
-    // 2. ICON HELPERS
+    // 2. SMALL RENDER HELPERS (reduce string-concatenation noise)
     // =========================================================================
 
-    function _getIconSafe(name) {
-        var icon = _getIcon(name);
-        return icon || '';
+    function _detail(label, value) {
+        return '' +
+            '<div style="padding: 8px; background: var(--bg3); border-radius: 6px;">' +
+            '<div style="font-size: 0.5rem; color: var(--dim);">' +
+            _escapeHtml(label) +
+            '</div>' +
+            '<div style="font-size: 0.75rem;">' +
+            value +
+            '</div>' +
+            '</div>';
     }
 
-    function _getCrimeIcon(type) {
-        var icons = {
-            'murder': 'X_HEAVY',
-            'execution': 'X_HEAVY',
-            'theft': 'WARNING',
-            'adultery': 'HEART_OUTLINE',
-            'treason': 'SHIELD',
-            'assault': 'SWORD',
-            'vendetta': 'FLAG'
-        };
-        return _getIconSafe(icons[type] || 'CIRCLE_DOT');
+    function _detailGrid(cells) {
+        return '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-bottom: 12px;">' +
+            cells.join('') +
+            '</div>';
+    }
+
+    function _selectButton(id, displayId, placeholder, iconName) {
+        return '' +
+            '<button id="' + id + '" class="btn" style="' +
+            'width: 100%; padding: 8px; background: var(--bg3); ' +
+            'border: 1px solid var(--border); border-radius: 6px; ' +
+            'cursor: pointer; font-size: 0.7rem; text-align: left;">' +
+            _getIcon(iconName) + ' ' +
+            '<span id="' + displayId + '">' + _escapeHtml(placeholder) + '</span>' +
+            '</button>';
+    }
+
+    function _labelledField(label, innerHtml) {
+        return '' +
+            '<div>' +
+            '<label style="display: block; font-size: 0.65rem; color: var(--accent); margin-bottom: 4px;">' +
+            _escapeHtml(label) +
+            '</label>' +
+            innerHtml +
+            '</div>';
+    }
+
+    function _textInput(id, value, placeholder) {
+        return '<input type="text" id="' + id + '" value="' +
+            _escapeHtml(value == null ? '' : value) +
+            '" placeholder="' + _escapeHtml(placeholder || '') +
+            '" style="width: 100%; padding: 6px 8px; background: var(--bg); ' +
+            'border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">';
+    }
+
+    function _numberInput(id, value) {
+        return '<input type="number" id="' + id + '" value="' +
+            _escapeHtml(value == null ? '' : String(value)) +
+            '" style="width: 100%; padding: 6px 8px; background: var(--bg); ' +
+            'border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">';
+    }
+
+    function _textarea(id, value, rows) {
+        return '<textarea id="' + id + '" rows="' + (rows || 2) + '" style="' +
+            'width: 100%; padding: 6px 8px; background: var(--bg); ' +
+            'border: 1px solid var(--border); border-radius: 6px; ' +
+            'font-size: 0.65rem; resize: vertical;">' +
+            _escapeHtml(value == null ? '' : value) +
+            '</textarea>';
     }
 
     // =========================================================================
     // 3. MURDER MODAL
     // =========================================================================
 
-    /**
-     * Opens the murder modal
-     * @param {Object} options
-     * @param {string} options.title - Modal title (default: 'Record Murder')
-     * @param {string} options.victimId - Pre-selected victim ID
-     * @param {string} options.killerId - Pre-selected killer ID
-     * @param {number} options.year - Year (default: current)
-     * @param {function} options.onComplete - Callback after murder
-     * @returns {Object|null} Modal reference
-     */
     function openMurderModal(options) {
-        if (_processingModal) {
-            _showToast('Modal is already processing', 'warning');
-            return null;
-        }
-        _processingModal = true;
+        options = options || {};
+        var title = options.title || 'Record Murder';
+        var defaultYear = (typeof options.year === 'number') ? options.year : _getCurrentYear();
 
-        try {
-            options = options || {};
-            var title = options.title || 'Record Murder';
-            var currentYear = _getCurrentYear();
-            var year = options.year || currentYear;
+        var content = '' +
+            '<div style="margin-bottom: 12px;">' +
+            _detailGrid([
+                _labelledField('Victim',
+                    _selectButton('crimeSelectVictim', 'crimeVictimDisplay', 'Select victim...', 'PERSON') +
+                    '<input type="hidden" id="crimeVictimId" value="">'
+                ),
+                _labelledField('Killer',
+                    _selectButton('crimeSelectKiller', 'crimeKillerDisplay', 'Select killer...', 'PERSON') +
+                    '<input type="hidden" id="crimeKillerId" value="">'
+                )
+            ]) +
+            _detailGrid([
+                _labelledField('Year', _numberInput('crimeYear', defaultYear)),
+                _labelledField('Location',
+                    '<select id="crimeLocation" style="width: 100%; padding: 6px 8px; ' +
+                    'background: var(--bg); border: 1px solid var(--border); ' +
+                    'border-radius: 6px; font-size: 0.65rem;">' +
+                    _getFilteredLocationOptions(null) +
+                    '</select>'
+                )
+            ]) +
+            '<div style="margin-bottom: 12px;">' +
+            _labelledField('Reason',
+                _textInput('crimeReason', '', 'e.g., Political rivalry, Jealousy...') +
+                '<div style="margin-top: 4px; font-size: 0.5rem; color: var(--dim);">' +
+                'Leave blank for a random reason from the vocabulary.' +
+                '</div>'
+            ) +
+            '</div>' +
+            '<div style="margin-bottom: 12px;">' +
+            '<label style="display: flex; align-items: center; gap: 8px; font-size: 0.65rem; cursor: pointer;">' +
+            '<input type="checkbox" id="crimeStartVendetta" checked>' +
+            'Start vendetta' +
+            '</label>' +
+            '</div>' +
+            '<div style="margin-bottom: 12px;">' +
+            _labelledField('Notes', _textarea('crimeNotes', '', 2)) +
+            '</div>' +
+            '</div>';
 
-            var locationSelectHtml = _getFilteredLocationOptions(null);
+        return _openModal({
+            title: title,
+            content: content,
+            confirmText: 'Record Murder',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var victimId = document.getElementById('crimeVictimId').value;
+                var killerId = document.getElementById('crimeKillerId').value;
+                var yearRaw = document.getElementById('crimeYear').value;
+                var yearVal = yearRaw === '' ? _getCurrentYear() : parseInt(yearRaw, 10);
+                var locationId = document.getElementById('crimeLocation').value || null;
+                var reasonRaw = document.getElementById('crimeReason').value;
+                var reason = reasonRaw === '' ? null : reasonRaw;
+                var startVendetta = document.getElementById('crimeStartVendetta').checked;
+                var notesRaw = document.getElementById('crimeNotes').value;
+                var notes = notesRaw === '' ? null : notesRaw;
 
-            var modalContent =
-                '<div style="margin-bottom: 12px;">' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">' +
-                '<div>' +
-                '<label style="display: block; font-size: 0.65rem; color: var(--accent); margin-bottom: 4px;">Victim</label>' +
-                '<button id="crimeSelectVictim" class="btn" style="width: 100%; padding: 8px; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 0.7rem; text-align: left;">' +
-                _getIconSafe('PERSON') + ' <span id="crimeVictimDisplay">Select victim...</span>' +
-                '</button>' +
-                '<input type="hidden" id="crimeVictimId" value="">' +
-                '</div>' +
-                '<div>' +
-                '<label style="display: block; font-size: 0.65rem; color: var(--accent); margin-bottom: 4px;">Killer</label>' +
-                '<button id="crimeSelectKiller" class="btn" style="width: 100%; padding: 8px; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 0.7rem; text-align: left;">' +
-                _getIconSafe('PERSON') + ' <span id="crimeKillerDisplay">Select killer...</span>' +
-                '</button>' +
-                '<input type="hidden" id="crimeKillerId" value="">' +
-                '</div>' +
-                '</div>' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">' +
-                '<div>' +
-                '<label style="display: block; font-size: 0.65rem; color: var(--accent); margin-bottom: 4px;">Year</label>' +
-                '<input type="number" id="crimeYear" value="' + year + '" style="width: 100%; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">' +
-                '</div>' +
-                '<div>' +
-                '<label style="display: block; font-size: 0.65rem; color: var(--accent); margin-bottom: 4px;">Location</label>' +
-                '<select id="crimeLocation" style="width: 100%; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.65rem;">' +
-                locationSelectHtml +
-                '</select>' +
-                '</div>' +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.65rem; color: var(--accent); margin-bottom: 4px;">Reason</label>' +
-                '<input type="text" id="crimeReason" placeholder="e.g., Political rivalry, Jealousy, Revenge..." style="width: 100%; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">' +
-                '<div style="margin-top: 4px; font-size: 0.5rem; color: var(--dim);">Leave blank for random reason</div>' +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: flex; align-items: center; gap: 8px; font-size: 0.65rem; cursor: pointer;">' +
-                '<input type="checkbox" id="crimeStartVendetta" checked>' +
-                'Start vendetta' +
-                '</label>' +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.65rem; color: var(--accent); margin-bottom: 4px;">Notes</label>' +
-                '<textarea id="crimeNotes" rows="2" style="width: 100%; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.65rem; resize: vertical;"></textarea>' +
-                '</div>' +
-                '</div>';
-
-            var modal = _openModal({
-                title: title,
-                content: modalContent,
-                confirmText: 'Record Murder',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var victimId = document.getElementById('crimeVictimId').value;
-                    var killerId = document.getElementById('crimeKillerId').value;
-                    var yearVal = parseInt(document.getElementById('crimeYear').value) || _getCurrentYear();
-                    var locationId = document.getElementById('crimeLocation').value || null;
-                    var reason = document.getElementById('crimeReason').value || null;
-                    var startVendetta = document.getElementById('crimeStartVendetta').checked;
-                    var notes = document.getElementById('crimeNotes').value || null;
-
-                    if (!victimId) {
-                        _showToast('Please select a victim', 'error');
-                        return;
-                    }
-                    if (!killerId) {
-                        _showToast('Please select a killer', 'error');
-                        return;
-                    }
-                    if (victimId === killerId) {
-                        _showToast('Victim and killer cannot be the same', 'error');
-                        return;
-                    }
-
-                    var result = window.CrimeCommands.triggerMurder(victimId, killerId, {
-                        year: yearVal,
-                        reason: reason,
-                        locationId: locationId,
-                        startVendetta: startVendetta,
-                        notes: notes
-                    });
-
-                    if (result.success) {
-                        _showToast('Murder recorded successfully', 'success');
-                        if (options.onComplete) {
-                            options.onComplete(result.data);
-                        }
-                    } else {
-                        _showToast('Failed to record murder: ' + result.error, 'error');
-                    }
-                },
-                onOpen: function() {
-                    _attachMurderModalEvents(options);
+                if (!victimId) { _showToast('Please select a victim', 'error'); return; }
+                if (!killerId) { _showToast('Please select a killer', 'error'); return; }
+                if (victimId === killerId) {
+                    _showToast('Victim and killer cannot be the same', 'error');
+                    return;
                 }
-            });
+                if (isNaN(yearVal)) { _showToast('Year must be a number', 'error'); return; }
 
-            return modal;
+                var result = _getCommands().triggerMurder(victimId, killerId, {
+                    year: yearVal,
+                    locationId: locationId,
+                    reason: reason,
+                    startVendetta: startVendetta,
+                    notes: notes
+                });
 
-        } finally {
-            _processingModal = false;
-        }
+                if (result.success) {
+                    _showToast('Murder recorded', 'success');
+                    if (typeof options.onComplete === 'function') options.onComplete(result.data);
+                } else {
+                    _showToast('Failed to record murder: ' + result.error, 'error');
+                }
+            },
+            onOpen: function() {
+                _attachMurderEvents(options);
+            }
+        });
     }
 
-    function _attachMurderModalEvents(options) {
-        // Victim selection
+    function _attachMurderEvents(options) {
         var victimBtn = document.getElementById('crimeSelectVictim');
         var victimDisplay = document.getElementById('crimeVictimDisplay');
         var victimHidden = document.getElementById('crimeVictimId');
+
+        var killerBtn = document.getElementById('crimeSelectKiller');
+        var killerDisplay = document.getElementById('crimeKillerDisplay');
+        var killerHidden = document.getElementById('crimeKillerId');
 
         if (victimBtn) {
             victimBtn.addEventListener('click', function() {
@@ -316,17 +417,12 @@
                     title: 'Select Victim',
                     filters: { showDeceased: false },
                     onSelect: function(char) {
-                        victimDisplay.textContent = char.name + (char.surname ? ' ' + char.surname : '');
+                        victimDisplay.textContent = formatPersonName(char);
                         victimHidden.value = char.id;
                     }
                 });
             });
         }
-
-        // Killer selection
-        var killerBtn = document.getElementById('crimeSelectKiller');
-        var killerDisplay = document.getElementById('crimeKillerDisplay');
-        var killerHidden = document.getElementById('crimeKillerId');
 
         if (killerBtn) {
             killerBtn.addEventListener('click', function() {
@@ -334,26 +430,24 @@
                     title: 'Select Killer',
                     filters: { showDeceased: false },
                     onSelect: function(char) {
-                        killerDisplay.textContent = char.name + (char.surname ? ' ' + char.surname : '');
+                        killerDisplay.textContent = formatPersonName(char);
                         killerHidden.value = char.id;
                     }
                 });
             });
         }
 
-        // Pre-select if provided
         if (options.victimId) {
             var victim = _getCharacterById(options.victimId);
             if (victim) {
-                victimDisplay.textContent = victim.name + (victim.surname ? ' ' + victim.surname : '');
+                victimDisplay.textContent = formatPersonName(victim);
                 victimHidden.value = victim.id;
             }
         }
-
         if (options.killerId) {
             var killer = _getCharacterById(options.killerId);
             if (killer) {
-                killerDisplay.textContent = killer.name + (killer.surname ? ' ' + killer.surname : '');
+                killerDisplay.textContent = formatPersonName(killer);
                 killerHidden.value = killer.id;
             }
         }
@@ -363,127 +457,112 @@
     // 4. EXECUTION MODAL
     // =========================================================================
 
-    /**
-     * Opens the execution modal
-     * @param {Object} options
-     * @param {string} options.title - Modal title (default: 'Record Execution')
-     * @param {string} options.condemnedId - Pre-selected condemned ID
-     * @param {number} options.year - Year (default: current)
-     * @param {function} options.onComplete - Callback after execution
-     * @returns {Object|null} Modal reference
-     */
     function openExecutionModal(options) {
-        if (_processingModal) {
-            _showToast('Modal is already processing', 'warning');
-            return null;
+        options = options || {};
+        var title = options.title || 'Record Execution';
+        var defaultYear = (typeof options.year === 'number') ? options.year : _getCurrentYear();
+
+        var methods = _getConstants().EXECUTION_METHODS || {};
+        var methodOptions = '<option value="">Default (state selection)</option>';
+        for (var key in methods) {
+            if (!Object.prototype.hasOwnProperty.call(methods, key)) continue;
+            var m = methods[key];
+            methodOptions += '<option value="' + _escapeHtml(m.name) + '">' +
+                _escapeHtml(m.name) + '</option>';
         }
-        _processingModal = true;
 
-        try {
-            options = options || {};
-            var title = options.title || 'Record Execution';
-            var currentYear = _getCurrentYear();
-            var year = options.year || currentYear;
+        var content = '' +
+            '<div style="margin-bottom: 12px;">' +
+            _labelledField('Condemned',
+                _selectButton('crimeSelectCondemned', 'crimeCondemnedDisplay', 'Select condemned...', 'PERSON') +
+                '<input type="hidden" id="crimeCondemnedId" value="">'
+            ) +
+            '</div>' +
+            _detailGrid([
+                _labelledField('Year', _numberInput('crimeExecYear', defaultYear)),
+                _labelledField('Location',
+                    '<select id="crimeExecLocation" style="width: 100%; padding: 6px 8px; ' +
+                    'background: var(--bg); border: 1px solid var(--border); ' +
+                    'border-radius: 6px; font-size: 0.65rem;">' +
+                    _getFilteredLocationOptions(null) +
+                    '</select>'
+                )
+            ]) +
+            '<div style="margin-bottom: 12px;">' +
+            _labelledField('Reason',
+                _textInput('crimeExecReason', '', 'e.g., Treason, Murder, Adultery...')
+            ) +
+            '</div>' +
+            '<div style="margin-bottom: 12px;">' +
+            _labelledField('Method',
+                '<select id="crimeExecMethod" style="width: 100%; padding: 6px 8px; ' +
+                'background: var(--bg); border: 1px solid var(--border); ' +
+                'border-radius: 6px; font-size: 0.7rem;">' +
+                methodOptions +
+                '</select>'
+            ) +
+            '</div>' +
+            '<div style="margin-bottom: 12px;">' +
+            _labelledField('Notes', _textarea('crimeExecNotes', '', 2)) +
+            '</div>';
 
-            var locationSelectHtml = _getFilteredLocationOptions(null);
+        return _openModal({
+            title: title,
+            content: content,
+            confirmText: 'Record Execution',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var condemnedId = document.getElementById('crimeCondemnedId').value;
+                var yearRaw = document.getElementById('crimeExecYear').value;
+                var yearVal = yearRaw === '' ? _getCurrentYear() : parseInt(yearRaw, 10);
+                var locationId = document.getElementById('crimeExecLocation').value || null;
+                var reasonRaw = document.getElementById('crimeExecReason').value;
+                var reason = reasonRaw === '' ? null : reasonRaw;
+                var methodRaw = document.getElementById('crimeExecMethod').value;
+                var method = methodRaw === '' ? null : methodRaw;
+                var notesRaw = document.getElementById('crimeExecNotes').value;
+                var notes = notesRaw === '' ? null : notesRaw;
 
-            var modalContent =
-                '<div style="margin-bottom: 12px;">' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.65rem; color: var(--accent); margin-bottom: 4px;">Condemned</label>' +
-                '<button id="crimeSelectCondemned" class="btn" style="width: 100%; padding: 8px; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 0.7rem; text-align: left;">' +
-                _getIconSafe('PERSON') + ' <span id="crimeCondemnedDisplay">Select condemned...</span>' +
-                '</button>' +
-                '<input type="hidden" id="crimeCondemnedId" value="">' +
-                '</div>' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">' +
-                '<div>' +
-                '<label style="display: block; font-size: 0.65rem; color: var(--accent); margin-bottom: 4px;">Year</label>' +
-                '<input type="number" id="crimeExecYear" value="' + year + '" style="width: 100%; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">' +
-                '</div>' +
-                '<div>' +
-                '<label style="display: block; font-size: 0.65rem; color: var(--accent); margin-bottom: 4px;">Location</label>' +
-                '<select id="crimeExecLocation" style="width: 100%; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.65rem;">' +
-                locationSelectHtml +
-                '</select>' +
-                '</div>' +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.65rem; color: var(--accent); margin-bottom: 4px;">Reason</label>' +
-                '<input type="text" id="crimeExecReason" placeholder="e.g., Treason, Murder, Adultery..." style="width: 100%; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">' +
-                '<div style="margin-top: 4px; font-size: 0.5rem; color: var(--dim);">Leave blank for random reason</div>' +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.65rem; color: var(--accent); margin-bottom: 4px;">Method</label>' +
-                '<input type="text" id="crimeExecMethod" placeholder="e.g., Beheading, Hanging, Burning..." style="width: 100%; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">' +
-                '<div style="margin-top: 4px; font-size: 0.5rem; color: var(--dim);">Leave blank for random method</div>' +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.65rem; color: var(--accent); margin-bottom: 4px;">Notes</label>' +
-                '<textarea id="crimeExecNotes" rows="2" style="width: 100%; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.65rem; resize: vertical;"></textarea>' +
-                '</div>' +
-                '</div>';
-
-            var modal = _openModal({
-                title: title,
-                content: modalContent,
-                confirmText: 'Record Execution',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var condemnedId = document.getElementById('crimeCondemnedId').value;
-                    var yearVal = parseInt(document.getElementById('crimeExecYear').value) || _getCurrentYear();
-                    var locationId = document.getElementById('crimeExecLocation').value || null;
-                    var reason = document.getElementById('crimeExecReason').value || null;
-                    var method = document.getElementById('crimeExecMethod').value || null;
-                    var notes = document.getElementById('crimeExecNotes').value || null;
-
-                    if (!condemnedId) {
-                        _showToast('Please select a condemned character', 'error');
-                        return;
-                    }
-
-                    var result = window.CrimeCommands.triggerExecution(condemnedId, {
-                        year: yearVal,
-                        reason: reason,
-                        method: method,
-                        locationId: locationId,
-                        notes: notes
-                    });
-
-                    if (result.success) {
-                        _showToast('Execution recorded successfully', 'success');
-                        if (options.onComplete) {
-                            options.onComplete(result.data);
-                        }
-                    } else {
-                        _showToast('Failed to record execution: ' + result.error, 'error');
-                    }
-                },
-                onOpen: function() {
-                    _attachExecutionModalEvents(options);
+                if (!condemnedId) {
+                    _showToast('Please select a condemned character', 'error');
+                    return;
                 }
-            });
+                if (isNaN(yearVal)) { _showToast('Year must be a number', 'error'); return; }
 
-            return modal;
+                var result = _getCommands().triggerExecution(condemnedId, {
+                    year: yearVal,
+                    locationId: locationId,
+                    reason: reason,
+                    method: method,
+                    notes: notes
+                });
 
-        } finally {
-            _processingModal = false;
-        }
+                if (result.success) {
+                    _showToast('Execution recorded', 'success');
+                    if (typeof options.onComplete === 'function') options.onComplete(result.data);
+                } else {
+                    _showToast('Failed to record execution: ' + result.error, 'error');
+                }
+            },
+            onOpen: function() {
+                _attachExecutionEvents(options);
+            }
+        });
     }
 
-    function _attachExecutionModalEvents(options) {
-        var condemnedBtn = document.getElementById('crimeSelectCondemned');
-        var condemnedDisplay = document.getElementById('crimeCondemnedDisplay');
-        var condemnedHidden = document.getElementById('crimeCondemnedId');
+    function _attachExecutionEvents(options) {
+        var btn = document.getElementById('crimeSelectCondemned');
+        var display = document.getElementById('crimeCondemnedDisplay');
+        var hidden = document.getElementById('crimeCondemnedId');
 
-        if (condemnedBtn) {
-            condemnedBtn.addEventListener('click', function() {
+        if (btn) {
+            btn.addEventListener('click', function() {
                 _openCharacterSelector({
                     title: 'Select Condemned',
                     filters: { showDeceased: false },
                     onSelect: function(char) {
-                        condemnedDisplay.textContent = char.name + (char.surname ? ' ' + char.surname : '');
-                        condemnedHidden.value = char.id;
+                        display.textContent = formatPersonName(char);
+                        hidden.value = char.id;
                     }
                 });
             });
@@ -492,8 +571,8 @@
         if (options.condemnedId) {
             var condemned = _getCharacterById(options.condemnedId);
             if (condemned) {
-                condemnedDisplay.textContent = condemned.name + (condemned.surname ? ' ' + condemned.surname : '');
-                condemnedHidden.value = condemned.id;
+                display.textContent = formatPersonName(condemned);
+                hidden.value = condemned.id;
             }
         }
     }
@@ -502,157 +581,127 @@
     // 5. VENDETTA MODAL
     // =========================================================================
 
-    /**
-     * Opens the vendetta modal
-     * @param {Object} options
-     * @param {string} options.title - Modal title (default: 'Create Vendetta')
-     * @param {string} options.householdAId - Pre-selected household A ID
-     * @param {string} options.householdBId - Pre-selected household B ID
-     * @param {number} options.year - Year (default: current)
-     * @param {function} options.onComplete - Callback after vendetta creation
-     * @returns {Object|null} Modal reference
-     */
     function openVendettaModal(options) {
-        if (_processingModal) {
-            _showToast('Modal is already processing', 'warning');
-            return null;
-        }
-        _processingModal = true;
+        options = options || {};
+        var title = options.title || 'Create Vendetta';
+        var defaultYear = (typeof options.year === 'number') ? options.year : _getCurrentYear();
 
-        try {
-            options = options || {};
-            var title = options.title || 'Create Vendetta';
-            var currentYear = _getCurrentYear();
-            var year = options.year || currentYear;
+        var content = '' +
+            _detailGrid([
+                _labelledField('Household A',
+                    _selectButton('crimeSelectHouseholdA', 'crimeHouseholdADisplay', 'Select household...', 'HOUSEHOLD') +
+                    '<input type="hidden" id="crimeHouseholdAId" value="">'
+                ),
+                _labelledField('Household B',
+                    _selectButton('crimeSelectHouseholdB', 'crimeHouseholdBDisplay', 'Select household...', 'HOUSEHOLD') +
+                    '<input type="hidden" id="crimeHouseholdBId" value="">'
+                )
+            ]) +
+            '<div style="margin-bottom: 12px;">' +
+            _labelledField('Year', _numberInput('crimeVendettaYear', defaultYear)) +
+            '</div>' +
+            '<div style="margin-bottom: 12px;">' +
+            _labelledField('Cause',
+                _textInput('crimeVendettaCause', '', 'e.g., Blood feud, Land dispute, Honor...') +
+                '<div style="margin-top: 4px; font-size: 0.5rem; color: var(--dim);">' +
+                'Leave blank to record the cause as unspecified.' +
+                '</div>'
+            ) +
+            '</div>' +
+            '<div style="margin-bottom: 12px;">' +
+            _labelledField('Notes', _textarea('crimeVendettaNotes', '', 2)) +
+            '</div>';
 
-            var modalContent =
-                '<div style="margin-bottom: 12px;">' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">' +
-                '<div>' +
-                '<label style="display: block; font-size: 0.65rem; color: var(--accent); margin-bottom: 4px;">Household A</label>' +
-                '<button id="crimeSelectHouseholdA" class="btn" style="width: 100%; padding: 8px; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 0.7rem; text-align: left;">' +
-                _getIconSafe('HOUSEHOLD') + ' <span id="crimeHouseholdADisplay">Select household...</span>' +
-                '</button>' +
-                '<input type="hidden" id="crimeHouseholdAId" value="">' +
-                '</div>' +
-                '<div>' +
-                '<label style="display: block; font-size: 0.65rem; color: var(--accent); margin-bottom: 4px;">Household B</label>' +
-                '<button id="crimeSelectHouseholdB" class="btn" style="width: 100%; padding: 8px; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 0.7rem; text-align: left;">' +
-                _getIconSafe('HOUSEHOLD') + ' <span id="crimeHouseholdBDisplay">Select household...</span>' +
-                '</button>' +
-                '<input type="hidden" id="crimeHouseholdBId" value="">' +
-                '</div>' +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.65rem; color: var(--accent); margin-bottom: 4px;">Year</label>' +
-                '<input type="number" id="crimeVendettaYear" value="' + year + '" style="width: 100%; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">' +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.65rem; color: var(--accent); margin-bottom: 4px;">Cause</label>' +
-                '<input type="text" id="crimeVendettaCause" placeholder="e.g., Blood feud, Land dispute, Honor..." style="width: 100%; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem;">' +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.65rem; color: var(--accent); margin-bottom: 4px;">Notes</label>' +
-                '<textarea id="crimeVendettaNotes" rows="2" style="width: 100%; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.65rem; resize: vertical;"></textarea>' +
-                '</div>' +
-                '</div>';
+        return _openModal({
+            title: title,
+            content: content,
+            confirmText: 'Create Vendetta',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var householdAId = document.getElementById('crimeHouseholdAId').value;
+                var householdBId = document.getElementById('crimeHouseholdBId').value;
+                var yearRaw = document.getElementById('crimeVendettaYear').value;
+                var yearVal = yearRaw === '' ? _getCurrentYear() : parseInt(yearRaw, 10);
+                var causeRaw = document.getElementById('crimeVendettaCause').value;
+                var cause = causeRaw === '' ? null : causeRaw;
+                var notesRaw = document.getElementById('crimeVendettaNotes').value;
+                var notes = notesRaw === '' ? null : notesRaw;
 
-            var modal = _openModal({
-                title: title,
-                content: modalContent,
-                confirmText: 'Create Vendetta',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var householdAId = document.getElementById('crimeHouseholdAId').value;
-                    var householdBId = document.getElementById('crimeHouseholdBId').value;
-                    var yearVal = parseInt(document.getElementById('crimeVendettaYear').value) || _getCurrentYear();
-                    var cause = document.getElementById('crimeVendettaCause').value || 'Unknown cause';
-                    var notes = document.getElementById('crimeVendettaNotes').value || null;
-
-                    if (!householdAId || !householdBId) {
-                        _showToast('Please select both households', 'error');
-                        return;
-                    }
-                    if (householdAId === householdBId) {
-                        _showToast('Households cannot be the same', 'error');
-                        return;
-                    }
-
-                    var result = window.CrimeCommands.createVendetta({
-                        householdAId: householdAId,
-                        householdBId: householdBId,
-                        cause: cause,
-                        year: yearVal,
-                        notes: notes
-                    });
-
-                    if (result.success) {
-                        _showToast('Vendetta created successfully', 'success');
-                        if (options.onComplete) {
-                            options.onComplete(result.data);
-                        }
-                    } else {
-                        _showToast('Failed to create vendetta: ' + result.error, 'error');
-                    }
-                },
-                onOpen: function() {
-                    _attachVendettaModalEvents(options);
+                if (!householdAId || !householdBId) {
+                    _showToast('Please select both households', 'error');
+                    return;
                 }
-            });
+                if (householdAId === householdBId) {
+                    _showToast('Households cannot be the same', 'error');
+                    return;
+                }
+                if (isNaN(yearVal)) { _showToast('Year must be a number', 'error'); return; }
 
-            return modal;
+                var result = _getCommands().createVendetta({
+                    householdAId: householdAId,
+                    householdBId: householdBId,
+                    year: yearVal,
+                    cause: cause,
+                    notes: notes
+                });
 
-        } finally {
-            _processingModal = false;
-        }
+                if (result.success) {
+                    _showToast('Vendetta created', 'success');
+                    if (typeof options.onComplete === 'function') options.onComplete(result.data);
+                } else {
+                    _showToast('Failed to create vendetta: ' + result.error, 'error');
+                }
+            },
+            onOpen: function() {
+                _attachVendettaEvents(options);
+            }
+        });
     }
 
-    function _attachVendettaModalEvents(options) {
-        var householdABtn = document.getElementById('crimeSelectHouseholdA');
-        var householdADisplay = document.getElementById('crimeHouseholdADisplay');
-        var householdAHidden = document.getElementById('crimeHouseholdAId');
+    function _attachVendettaEvents(options) {
+        var btnA = document.getElementById('crimeSelectHouseholdA');
+        var displayA = document.getElementById('crimeHouseholdADisplay');
+        var hiddenA = document.getElementById('crimeHouseholdAId');
 
-        var householdBBtn = document.getElementById('crimeSelectHouseholdB');
-        var householdBDisplay = document.getElementById('crimeHouseholdBDisplay');
-        var householdBHidden = document.getElementById('crimeHouseholdBId');
+        var btnB = document.getElementById('crimeSelectHouseholdB');
+        var displayB = document.getElementById('crimeHouseholdBDisplay');
+        var hiddenB = document.getElementById('crimeHouseholdBId');
 
-        if (householdABtn) {
-            householdABtn.addEventListener('click', function() {
+        if (btnA) {
+            btnA.addEventListener('click', function() {
                 _openHouseholdSelector({
                     title: 'Select Household A',
                     onSelect: function(household) {
-                        householdADisplay.textContent = household.name;
-                        householdAHidden.value = household.id;
+                        displayA.textContent = household.name || 'Unknown';
+                        hiddenA.value = household.id;
                     }
                 });
             });
         }
-
-        if (householdBBtn) {
-            householdBBtn.addEventListener('click', function() {
+        if (btnB) {
+            btnB.addEventListener('click', function() {
                 _openHouseholdSelector({
                     title: 'Select Household B',
                     onSelect: function(household) {
-                        householdBDisplay.textContent = household.name;
-                        householdBHidden.value = household.id;
+                        displayB.textContent = household.name || 'Unknown';
+                        hiddenB.value = household.id;
                     }
                 });
             });
         }
 
         if (options.householdAId) {
-            var householdA = typeof window.getHouseholdById === 'function' ? window.getHouseholdById(options.householdAId) : null;
-            if (householdA) {
-                householdADisplay.textContent = householdA.name;
-                householdAHidden.value = householdA.id;
+            var hA = _getHouseholdById(options.householdAId);
+            if (hA) {
+                displayA.textContent = hA.name || 'Unknown';
+                hiddenA.value = hA.id;
             }
         }
-
         if (options.householdBId) {
-            var householdB = typeof window.getHouseholdById === 'function' ? window.getHouseholdById(options.householdBId) : null;
-            if (householdB) {
-                householdBDisplay.textContent = householdB.name;
-                householdBHidden.value = householdB.id;
+            var hB = _getHouseholdById(options.householdBId);
+            if (hB) {
+                displayB.textContent = hB.name || 'Unknown';
+                hiddenB.value = hB.id;
             }
         }
     }
@@ -661,13 +710,8 @@
     // 6. CRIME DETAILS MODAL
     // =========================================================================
 
-    /**
-     * Opens the crime details modal
-     * @param {string} crimeId - Crime ID
-     * @returns {Object|null} Modal reference
-     */
     function openCrimeDetailsModal(crimeId) {
-        var crime = window.CrimeQueries.getCrime(crimeId);
+        var crime = _getQueries().getCrime(crimeId);
         if (!crime) {
             _showToast('Crime not found', 'error');
             return null;
@@ -675,67 +719,52 @@
 
         var perpetrator = crime.perpetratorId ? _getCharacterById(crime.perpetratorId) : null;
         var victim = crime.victimId ? _getCharacterById(crime.victimId) : null;
-        var location = crime.locationId ? _getPlaceById(crime.locationId) : null;
+        var locationName = crime.locationId ? _getPlaceName(crime.locationId) : null;
 
-        var content =
-            '<div style="padding: 4px 0;">' +
-            '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">' +
-            '<div style="padding: 8px; background: var(--bg3); border-radius: 6px;">' +
-            '<div style="font-size: 0.5rem; color: var(--dim);">Type</div>' +
-            '<div style="font-size: 0.75rem;">' + _escapeHtml(crime.type) + '</div>' +
-            '</div>' +
-            '<div style="padding: 8px; background: var(--bg3); border-radius: 6px;">' +
-            '<div style="font-size: 0.5rem; color: var(--dim);">Year</div>' +
-            '<div style="font-size: 0.75rem;">' + _escapeHtml(crime.year) + '</div>' +
-            '</div>' +
-            '</div>' +
-            '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">' +
-            '<div style="padding: 8px; background: var(--bg3); border-radius: 6px;">' +
-            '<div style="font-size: 0.5rem; color: var(--dim);">Perpetrator</div>' +
-            '<div style="font-size: 0.75rem;">' + (perpetrator ? _escapeHtml(perpetrator.name + (perpetrator.surname ? ' ' + perpetrator.surname : '')) : 'Unknown') + '</div>' +
-            '</div>' +
-            '<div style="padding: 8px; background: var(--bg3); border-radius: 6px;">' +
-            '<div style="font-size: 0.5rem; color: var(--dim);">Victim</div>' +
-            '<div style="font-size: 0.75rem;">' + (victim ? _escapeHtml(victim.name + (victim.surname ? ' ' + victim.surname : '')) : 'None') + '</div>' +
-            '</div>' +
-            '</div>' +
-            '<div style="margin-bottom: 12px;">' +
-            '<div style="padding: 8px; background: var(--bg3); border-radius: 6px;">' +
-            '<div style="font-size: 0.5rem; color: var(--dim);">Location</div>' +
-            '<div style="font-size: 0.75rem;">' + (location ? _escapeHtml(location.displayName) : 'Unknown') + '</div>' +
-            '</div>' +
-            '</div>' +
-            '<div style="margin-bottom: 12px;">' +
-            '<div style="padding: 8px; background: var(--bg3); border-radius: 6px;">' +
-            '<div style="font-size: 0.5rem; color: var(--dim);">Reason</div>' +
-            '<div style="font-size: 0.75rem;">' + _escapeHtml(crime.reason || 'Unknown') + '</div>' +
-            '</div>' +
-            '</div>' +
-            '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">' +
-            '<div style="padding: 8px; background: var(--bg3); border-radius: 6px;">' +
-            '<div style="font-size: 0.5rem; color: var(--dim);">Status</div>' +
-            '<div style="font-size: 0.75rem;">' + (crime.solved ? 'Solved' : 'Unsolved') + '</div>' +
-            '</div>' +
-            '<div style="padding: 8px; background: var(--bg3); border-radius: 6px;">' +
-            '<div style="font-size: 0.5rem; color: var(--dim);">Severity</div>' +
-            '<div style="font-size: 0.75rem;">' + (crime.severity || 5) + '/10</div>' +
-            '</div>' +
-            '</div>';
+        var cells = [
+            _detail('Type', _escapeHtml(formatCrimeType(crime.type))),
+            _detail('Year', _escapeHtml(String(crime.year != null ? crime.year : '?'))),
+            _detail('Perpetrator',
+                _escapeHtml(crime.perpetratorName ||
+                    (perpetrator ? formatPersonName(perpetrator) : 'Unknown'))),
+            _detail('Victim',
+                _escapeHtml(crime.victimName ||
+                    (victim ? formatPersonName(victim) : 'None'))),
+            _detail('Location', _escapeHtml(locationName || 'Unknown')),
+            _detail('Reason', _escapeHtml(crime.reason || 'Unknown')),
+            _detail('Status', crime.solved ? 'Solved' : 'Unsolved'),
+            _detail('Severity', _escapeHtml(formatSeverity(crime.severity)))
+        ];
+
+        var content = '<div style="padding: 4px 0;">' +
+            _detailGrid(cells);
 
         if (crime.solved && crime.solution) {
-            content +=
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; margin-bottom: 12px;">' +
-                '<div style="font-size: 0.5rem; color: var(--dim);">Solution</div>' +
-                '<div style="font-size: 0.75rem;">' + _escapeHtml(crime.solution) + '</div>' +
-                '</div>';
+            content += _detail('Solution', _escapeHtml(crime.solution));
+        }
+
+        // Law-derived fields
+        if (crime.civilViolation) {
+            content += _detail(
+                'Civil Violation',
+                _escapeHtml(crime.civilViolation.lawName || 'Law unspecified') +
+                (crime.civilViolation.punishment
+                    ? ' — ' + _escapeHtml(crime.civilViolation.punishment)
+                    : '')
+            );
+        }
+        if (crime.religiousViolation) {
+            content += _detail(
+                'Religious Violation',
+                _escapeHtml(crime.religiousViolation.lawName || 'Law unspecified') +
+                (crime.religiousViolation.punishment
+                    ? ' — ' + _escapeHtml(crime.religiousViolation.punishment)
+                    : '')
+            );
         }
 
         if (crime.notes) {
-            content +=
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px;">' +
-                '<div style="font-size: 0.5rem; color: var(--dim);">Notes</div>' +
-                '<div style="font-size: 0.7rem;">' + _escapeHtml(crime.notes) + '</div>' +
-                '</div>';
+            content += _detail('Notes', _escapeHtml(crime.notes));
         }
 
         content += '</div>';
@@ -752,88 +781,56 @@
     // 7. VENDETTA DETAILS MODAL
     // =========================================================================
 
-    /**
-     * Opens the vendetta details modal
-     * @param {string} vendettaId - Vendetta ID
-     * @returns {Object|null} Modal reference
-     */
     function openVendettaDetailsModal(vendettaId) {
-        var vendetta = window.CrimeQueries.getVendetta(vendettaId);
+        var vendetta = _getQueries().getVendetta(vendettaId);
         if (!vendetta) {
             _showToast('Vendetta not found', 'error');
             return null;
         }
 
-        var statusDisplay = vendetta.status === 'resolved' ? 'Resolved' :
-                           vendetta.status === 'escalated' ? 'Escalated' : 'Active';
+        var constants = _getConstants();
+        var deaths = Array.isArray(vendetta.deaths) ? vendetta.deaths : [];
 
-        var deathsHtml = '';
-        if (vendetta.deaths && vendetta.deaths.length > 0) {
-            deathsHtml = '<div style="margin-top: 8px;">' +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-bottom: 4px;">Deaths (' + vendetta.deaths.length + ')</div>';
-            for (var i = 0; i < vendetta.deaths.length; i++) {
-                var d = vendetta.deaths[i];
-                deathsHtml += '<div style="padding: 4px 8px; background: var(--bg3); border-radius: 4px; margin-bottom: 4px; font-size: 0.65rem;">' +
-                    (d.victimName || 'Unknown') + ' killed by ' + (d.killerName || 'Unknown') + ' (' + d.year + ')' +
-                    (d.reason ? ' - ' + _escapeHtml(d.reason) : '') +
-                    '</div>';
-            }
-            deathsHtml += '</div>';
-        }
+        var cells = [
+            _detail('Household A', _escapeHtml(vendetta.householdAName || 'Unknown')),
+            _detail('Household B', _escapeHtml(vendetta.householdBName || 'Unknown')),
+            _detail('Started', _escapeHtml(String(vendetta.startedYear != null ? vendetta.startedYear : '?'))),
+            _detail('Status', _escapeHtml(formatVendettaStatus(vendetta.status))),
+            _detail('Body Count', _escapeHtml(String(deaths.length)))
+        ];
 
-        var content =
-            '<div style="padding: 4px 0;">' +
-            '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">' +
-            '<div style="padding: 8px; background: var(--bg3); border-radius: 6px;">' +
-            '<div style="font-size: 0.5rem; color: var(--dim);">Household A</div>' +
-            '<div style="font-size: 0.75rem;">' + _escapeHtml(vendetta.householdAName || 'Unknown') + '</div>' +
-            '</div>' +
-            '<div style="padding: 8px; background: var(--bg3); border-radius: 6px;">' +
-            '<div style="font-size: 0.5rem; color: var(--dim);">Household B</div>' +
-            '<div style="font-size: 0.75rem;">' + _escapeHtml(vendetta.householdBName || 'Unknown') + '</div>' +
-            '</div>' +
-            '</div>' +
-            '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px;">' +
-            '<div style="padding: 8px; background: var(--bg3); border-radius: 6px;">' +
-            '<div style="font-size: 0.5rem; color: var(--dim);">Started</div>' +
-            '<div style="font-size: 0.75rem;">' + _escapeHtml(vendetta.startedYear || 'Unknown') + '</div>' +
-            '</div>' +
-            '<div style="padding: 8px; background: var(--bg3); border-radius: 6px;">' +
-            '<div style="font-size: 0.5rem; color: var(--dim);">Status</div>' +
-            '<div style="font-size: 0.75rem;">' + statusDisplay + '</div>' +
-            '</div>' +
-            '<div style="padding: 8px; background: var(--bg3); border-radius: 6px;">' +
-            '<div style="font-size: 0.5rem; color: var(--dim);">Body Count</div>' +
-            '<div style="font-size: 0.75rem;">' + (vendetta.bodyCount || 0) + '</div>' +
-            '</div>' +
-            '</div>';
+        var content = '<div style="padding: 4px 0;">' +
+            _detailGrid(cells);
 
         if (vendetta.cause) {
-            content +=
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; margin-bottom: 12px;">' +
-                '<div style="font-size: 0.5rem; color: var(--dim);">Cause</div>' +
-                '<div style="font-size: 0.75rem;">' + _escapeHtml(vendetta.cause) + '</div>' +
-                '</div>';
+            content += _detail('Cause', _escapeHtml(vendetta.cause));
         }
 
-        if (deathsHtml) {
-            content += deathsHtml;
+        if (deaths.length > 0) {
+            content += '<div style="margin-top: 8px;">' +
+                '<div style="font-size: 0.55rem; color: var(--dim); margin-bottom: 4px;">' +
+                'Deaths (' + deaths.length + ')' +
+                '</div>';
+            for (var i = 0; i < deaths.length; i++) {
+                var d = deaths[i];
+                content += '<div style="padding: 4px 8px; background: var(--bg3); ' +
+                    'border-radius: 4px; margin-bottom: 4px; font-size: 0.65rem;">' +
+                    _escapeHtml(d.victimName || 'Unknown') +
+                    ' killed by ' +
+                    _escapeHtml(d.killerName || 'Unknown') +
+                    ' (' + _escapeHtml(String(d.year != null ? d.year : '?')) + ')' +
+                    (d.reason ? ' — ' + _escapeHtml(d.reason) : '') +
+                    '</div>';
+            }
+            content += '</div>';
         }
 
-        if (vendetta.resolution) {
-            content +=
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; margin-top: 12px;">' +
-                '<div style="font-size: 0.5rem; color: var(--dim);">Resolution</div>' +
-                '<div style="font-size: 0.75rem;">' + _escapeHtml(vendetta.resolution) + '</div>' +
-                '</div>';
+        if (vendetta.status === constants.VENDETTA_STATUS.RESOLVED && vendetta.resolution) {
+            content += _detail('Resolution', _escapeHtml(vendetta.resolution));
         }
 
         if (vendetta.notes) {
-            content +=
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; margin-top: 12px;">' +
-                '<div style="font-size: 0.5rem; color: var(--dim);">Notes</div>' +
-                '<div style="font-size: 0.7rem;">' + _escapeHtml(vendetta.notes) + '</div>' +
-                '</div>';
+            content += _detail('Notes', _escapeHtml(vendetta.notes));
         }
 
         content += '</div>';
@@ -850,89 +847,70 @@
     // 8. CRIME STATS MODAL
     // =========================================================================
 
-    /**
-     * Opens the crime statistics modal
-     * @param {string} locationId - Location ID (optional)
-     * @returns {Object|null} Modal reference
-     */
-    function openCrimeStatsModal(locationId) {
-        var stats;
-
-        if (locationId) {
-            stats = window.CrimeQueries.getLocationCrimeStats(locationId);
-        } else {
-            stats = window.CrimeQueries.getOverallCrimeStats();
-        }
+    function openCrimeStatsModal(locationId, year) {
+        var stats = locationId
+            ? _getQueries().getLocationCrimeStats(locationId, year)
+            : _getQueries().getOverallCrimeStats(year);
 
         var locationName = locationId ? _getPlaceName(locationId) : 'Global';
+        var period = stats.period || null;
 
-        var content =
-            '<div style="padding: 4px 0;">' +
-            '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px;">' +
-            '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; text-align: center;">' +
-            '<div style="font-size: 0.5rem; color: var(--dim);">Total Crimes</div>' +
-            '<div style="font-size: 1rem; font-weight: bold;">' + (stats.totalCrimes || 0) + '</div>' +
-            '</div>' +
-            '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; text-align: center;">' +
-            '<div style="font-size: 0.5rem; color: var(--dim);">Solve Rate</div>' +
-            '<div style="font-size: 1rem; font-weight: bold;">' + Math.round(stats.solvedRate || 0) + '%</div>' +
-            '</div>' +
-            '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; text-align: center;">' +
-            '<div style="font-size: 0.5rem; color: var(--dim);">Unsolved</div>' +
-            '<div style="font-size: 1rem; font-weight: bold;">' + (stats.unsolvedCrimes || 0) + '</div>' +
-            '</div>' +
-            '</div>';
+        var content = '<div style="padding: 4px 0;">';
+
+        if (period) {
+            content += '<div style="font-size: 0.55rem; color: var(--dim); margin-bottom: 8px;">' +
+                'Recent window: ' + period.startYear + '–' + period.endYear +
+                ' (' + period.windowYears + ' years)' +
+                '</div>';
+        }
+
+        content += _detailGrid([
+            _detail('Total Crimes', String(stats.totalCrimes || 0)),
+            _detail('Solve Rate', Math.round(stats.solvedRate || 0) + '%'),
+            _detail('Unsolved', String(stats.unsolvedCrimes || 0)),
+            _detail('Recent', String(stats.recentCrimes || 0))
+        ]);
 
         if (stats.typeDistribution) {
-            content +=
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; margin-bottom: 12px;">' +
+            content += '<div style="padding: 8px; background: var(--bg3); ' +
+                'border-radius: 6px; margin-bottom: 12px;">' +
                 '<div style="font-size: 0.55rem; color: var(--dim); margin-bottom: 4px;">Crime Types</div>';
-            var typeEntries = Object.entries(stats.typeDistribution).sort(function(a, b) { return b[1] - a[1]; });
-            for (var i = 0; i < Math.min(typeEntries.length, 5); i++) {
-                content += '<div style="display: flex; justify-content: space-between; font-size: 0.7rem; padding: 2px 0;">' +
-                    '<span>' + _escapeHtml(typeEntries[i][0]) + '</span>' +
-                    '<span>' + typeEntries[i][1] + '</span>' +
+            var entries = Object.keys(stats.typeDistribution)
+                .map(function(k) { return [k, stats.typeDistribution[k]]; })
+                .sort(function(a, b) { return b[1] - a[1]; });
+            for (var i = 0; i < Math.min(entries.length, 5); i++) {
+                content += '<div style="display: flex; justify-content: space-between; ' +
+                    'font-size: 0.7rem; padding: 2px 0;">' +
+                    '<span>' + _escapeHtml(formatCrimeType(entries[i][0])) + '</span>' +
+                    '<span>' + entries[i][1] + '</span>' +
                     '</div>';
             }
             content += '</div>';
         }
 
         if (stats.severityBreakdown) {
-            content +=
-                '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 4px; margin-bottom: 12px;">' +
-                '<div style="padding: 6px; background: var(--bg3); border-radius: 4px; text-align: center; font-size: 0.65rem;">' +
-                'Low: ' + (stats.severityBreakdown.low || 0) +
-                '</div>' +
-                '<div style="padding: 6px; background: var(--bg3); border-radius: 4px; text-align: center; font-size: 0.65rem;">' +
-                'Medium: ' + (stats.severityBreakdown.medium || 0) +
-                '</div>' +
-                '<div style="padding: 6px; background: var(--bg3); border-radius: 4px; text-align: center; font-size: 0.65rem;">' +
-                'High: ' + (stats.severityBreakdown.high || 0) +
-                '</div>' +
-                '<div style="padding: 6px; background: var(--bg3); border-radius: 4px; text-align: center; font-size: 0.65rem;">' +
-                'Critical: ' + (stats.severityBreakdown.critical || 0) +
-                '</div>' +
-                '</div>';
+            content += _detailGrid([
+                _detail('Low', String(stats.severityBreakdown.low || 0)),
+                _detail('Medium', String(stats.severityBreakdown.medium || 0)),
+                _detail('High', String(stats.severityBreakdown.high || 0)),
+                _detail('Critical', String(stats.severityBreakdown.critical || 0))
+            ]);
         }
 
-        if (stats.averageCrimeSeverity !== undefined) {
-            content +=
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; margin-bottom: 12px; font-size: 0.7rem;">' +
-                'Average Severity: ' + stats.averageCrimeSeverity.toFixed(1) + '/10' +
-                '</div>';
+        if (typeof stats.averageCrimeSeverity === 'number') {
+            content += _detail('Average Severity',
+                stats.averageCrimeSeverity.toFixed(1) + '/10');
         }
 
         if (stats.mostCommonCrime) {
-            content +=
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.7rem;">' +
-                'Most Common Crime: ' + _escapeHtml(stats.mostCommonCrime) +
-                '</div>';
+            content += _detail('Most Common Crime',
+                _escapeHtml(formatCrimeType(stats.mostCommonCrime)));
         }
 
         content += '</div>';
 
         return _openModal({
-            title: 'Crime Statistics - ' + _escapeHtml(locationName),
+            title: 'Crime Statistics — ' + _escapeHtml(locationName || 'Global'),
             content: content,
             confirmText: 'Close',
             cancelText: ''
@@ -949,10 +927,17 @@
         openVendettaModal: openVendettaModal,
         openCrimeDetailsModal: openCrimeDetailsModal,
         openVendettaDetailsModal: openVendettaDetailsModal,
-        openCrimeStatsModal: openCrimeStatsModal
+        openCrimeStatsModal: openCrimeStatsModal,
+
+        // Presentation helpers exposed for reuse by crime-ui-stats.js and
+        // any other crime UI that needs the same labels.
+        formatCrimeType: formatCrimeType,
+        formatVendettaStatus: formatVendettaStatus,
+        formatSeverity: formatSeverity,
+        formatPersonName: formatPersonName,
+        iconForCrimeType: iconForCrimeType
     };
 
-    // Legacy aliases
     window._crimeModals = window.CrimeModals;
 
 })();
