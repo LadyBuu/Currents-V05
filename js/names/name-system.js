@@ -23,7 +23,8 @@
  *     getRandomNameFromCountry         NameQueries.getRandomName
  *     getRandomSurnameFromCountry      NameQueries.getRandomSurname
  *     getCountrySurnameRules           NameQueries.getCountrySurnameRules
- *     getAncestorFirstName             NameQueries.getAncestorData(.firstName)
+ *     getAncestorFirstName             NameRules.getBaseFirstName(
+ *                                          NameQueries.getAncestorData(...))
  *     getAncestorSurname               NameQueries.getAncestorData(.surname)
  *     getSurnameHistory                NameQueries.getSurnameHistory
  *     getBirthSurname                  NameQueries.getBirthSurname
@@ -38,40 +39,26 @@
  * The wrapper does NOT:
  *   - implement any name or surname logic
  *   - fabricate fake character objects to reach a query
- *   - return hardcoded policies (e.g. a fixed marriage rule)
+ *   - return hardcoded policies
  *   - return empty results to hide a missing dependency
  *   - cache, persist, or mutate anything itself
  *   - reconstruct domain facts the canonical API no longer provides
  *
  * RETURN SHAPE:
  *   Commands in this wrapper return the canonical `{ success, reason,
- *   ... }` shape, not the old `null`-on-failure shape. Callers that
- *   inspected the return value must migrate to checking `result.success`.
- *   Command results are the only shape this file deliberately changed;
- *   reads preserve their legacy null-vs-empty semantics.
+ *   ... }` shape, not the old `null`-on-failure shape.
  *
  * DEPENDENCY POLICY:
- *   Required dependencies are checked once at load. If a canonical
- *   module is missing, the wrapper throws immediately. It does not fall
- *   through to "return ''" or "return []". A missing dependency is an
- *   application wiring failure, not a legitimate data state.
- *
- *   The eager check is intentional. This file is a global compatibility
- *   shim; it is loaded as part of the name-system bootstrap. A partial
- *   load is always a wiring bug.
+ *   Required dependencies are checked once at load. A partial load is a
+ *   wiring bug, not a data state.
  *
  * REMOVED FUNCTIONS:
- *   Functions that have no canonical equivalent are retained only as
- *   throwing stubs, so any surviving caller gets a clear, actionable
- *   error rather than a fabricated value. See section 8.
+ *   Functions with no canonical equivalent are retained only as
+ *   throwing stubs. See section 7.
  *
  * REMOVAL PLAN:
- *   This file exists to give old callers a migration path. Each export
- *   carries a @deprecated note. The intended lifecycle is:
- *     1. Grep for callers, definitions, and aliases.
- *     2. Migrate them to the canonical API.
- *     3. Delete the corresponding wrapper.
- *   Nothing here should become a permanent API.
+ *   Grep for callers, definitions, and aliases. Migrate to the canonical
+ *   API. Delete the wrapper.
  *
  * DEPENDENCIES (REQUIRED):
  *   - name-queries.js:  NameQueries
@@ -121,26 +108,12 @@
     // =========================================================================
     // 2. RULE APPLICATION ADAPTERS
     // =========================================================================
-    //
-    // The old API exposed separate functions for family / patronymic /
-    // chain generation. The canonical API has one entry point
-    // (NameRules.generateSurnameFromRules) that dispatches on rule type.
-    //
-    // These adapters reconstruct the appropriate outer rule shell and
-    // delegate. They do NOT fill in missing sub-fields; validation of
-    // the constructed rule is NameRules' job.
 
     /**
      * @deprecated Use NameRules.generateSurnameFromRules with a FAMILY
      * rule instead.
      *
      * Legacy signature: (father, mother, rules)
-     * rules is the family sub-object:
-     *   { source, order, count, position, connector, customConnector }
-     *
-     * If `rules` is missing or invalid, NameRules.validateRules rejects
-     * it and generateSurnameFromRules throws. The adapter does not
-     * substitute a default.
      */
     function generateFamilySurname(father, mother, rules) {
         var rule = {
@@ -155,20 +128,12 @@
      * PATRONYMIC rule instead.
      *
      * Legacy signature: (parent, childGender, rules)
-     * rules is the patronymic sub-object.
-     *
-     * If `rules.source` is missing or invalid, validation rejects it.
-     * The adapter does not default to 'father'.
      */
     function generatePatronymicSurnameFromRules(parent, childGender, rules) {
         var rule = {
             type: window.NameRules.RULE_TYPES.PATRONYMIC,
             patronymic: rules
         };
-        // The canonical signature is (mother, father, childGender, rule).
-        // The legacy signature carried a single `parent`; place it in
-        // the slot the rule's `source` names. If source is invalid or
-        // missing, validation fails before the slot matters.
         var source = rules && rules.source;
         var mother = source === 'mother' ? parent : null;
         var father = source === 'father' ? parent : null;
@@ -180,14 +145,8 @@
      * rule instead.
      *
      * Legacy signature: (character, rules)
-     * rules is the chain sub-object:
-     *   { order, source, connector, customConnector }
-     * `order` is a complete, ordered list of absolute ancestor slots.
-     * There is no `depth`; `order.length` is the depth.
-     *
-     * The canonical chain rule walks from the father when present,
-     * otherwise the mother. The legacy adapter passes the given
-     * character as the father slot so the walk begins from it.
+     * rules.order is a complete, ordered list of absolute ancestor slots.
+     * There is no `depth`; order.length is the depth.
      */
     function generateChainSurnameFromRules(character, rules) {
         if (!character) return null;
@@ -200,16 +159,14 @@
 
     /**
      * @deprecated Use NameRules.generateSurnameFromRules directly. The
-     * legacy and canonical signatures are compatible; this alias exists
-     * only so the old global name still resolves.
+     * legacy and canonical signatures are compatible.
      */
     function generateSurnameFromRules(mother, father, childGender, rules) {
         return window.NameRules.generateSurnameFromRules(mother, father, childGender, rules);
     }
 
     /**
-     * @deprecated Use NameRules.determineNewbornSurname instead. The
-     * legacy and canonical signatures are compatible.
+     * @deprecated Use NameRules.determineNewbornSurname instead.
      */
     function determineNewbornSurname(mother, father, countryId) {
         return window.NameRules.determineNewbornSurname(mother, father, countryId);
@@ -245,12 +202,18 @@
     // =========================================================================
 
     /**
-     * @deprecated Use NameQueries.getAncestorData(character, slot)
-     * .firstName instead. The two-argument signature is unchanged.
+     * @deprecated Use NameRules.getBaseFirstName(NameQueries
+     * .getAncestorData(character, slot)) instead.
+     *
+     * The two-argument signature is unchanged, but the composition has
+     * moved: NameQueries.getAncestorData now returns the ancestor's raw
+     * `name` field, and the base-name transformation is owned by
+     * NameRules. This adapter composes the two.
      */
     function getAncestorFirstName(character, slot) {
         var data = window.NameQueries.getAncestorData(character, slot);
-        return data ? data.firstName : '';
+        if (!data) return '';
+        return window.NameRules.getBaseFirstName({ name: data.firstName });
     }
 
     /**
@@ -265,12 +228,6 @@
     // =========================================================================
     // 5. SURNAME HISTORY READ ADAPTERS
     // =========================================================================
-    //
-    // These preserve the old signature (a character object) by delegating
-    // to the canonical ID-based query. `getBirthSurname` preserves the
-    // old empty-string-on-missing contract; the canonical query returns
-    // null and that distinction is meaningful, so the coercion is
-    // documented here rather than silently applied.
 
     /**
      * @deprecated Use NameQueries.getSurnameHistory(characterId) instead.
@@ -314,12 +271,12 @@
     //
     // The old commands took a character object. The new commands take an
     // ID and return { success, reason, ... }. These adapters preserve the
-    // old signature and return the new result shape.
+    // old signature and pass through the canonical result shape.
 
     /**
      * @deprecated Use NameCommands.recordSurnameChange(characterId,
-     * newSurname, year, reason, options) instead. Return shape is
-     * { success, reason, change }.
+     * newSurname, year, reason, options) instead.
+     * Return shape: { success, reason, change }.
      */
     function recordSurnameChange(character, newSurname, year, reason, options) {
         if (!character || typeof character.id !== 'string') {
@@ -336,8 +293,8 @@
 
     /**
      * @deprecated Use NameCommands.recordBirthSurname(characterId,
-     * birthSurname) instead. Return shape is
-     * { success, reason, history }.
+     * birthSurname) instead.
+     * Return shape: { success, reason, history }.
      */
     function recordBirthSurname(character, birthSurname) {
         if (!character || typeof character.id !== 'string') {
@@ -348,8 +305,8 @@
 
     /**
      * @deprecated Use NameCommands.revertLastSurnameChange(characterId)
-     * instead. Return shape is
-     * { success, reason, revertedChange, restoredSurname }.
+     * instead.
+     * Return shape: { success, reason, revertedChange, restoredSurname }.
      */
     function revertLastSurnameChange(character) {
         if (!character || typeof character.id !== 'string') {
@@ -381,8 +338,7 @@
 
     /**
      * @deprecated Use NameRules.calculateMarriageSurnames(person, spouse,
-     * rule) instead. This is policy, not orchestration; it lives in
-     * NameRules now.
+     * rule) instead. This is policy, not orchestration.
      */
     function calculateMarriageSurnames(person, spouse, rule) {
         return window.NameRules.calculateMarriageSurnames(person, spouse, rule);
@@ -393,21 +349,14 @@
     // =========================================================================
     //
     // These functions existed in the old wrapper but have no canonical
-    // replacement, either because the canonical module stopped exposing
-    // the information or because the function was never domain-correct.
-    // Each throws a clear, actionable error. None returns a fabricated
+    // replacement. Each throws a clear error. None returns a fabricated
     // value.
 
     /**
      * @deprecated REMOVED. There is no canonical replacement.
      *
      * The old implementation returned a hardcoded 'wife_takes_husband'
-     * for every country, ignoring its countryId argument. Country-
-     * specific marriage rules, if they exist, belong in a marriage or
-     * relationship policy module, not in the name system.
-     *
-     * Callers must decide the rule explicitly and pass it to
-     * NameCommands.applyMarriageSurnames.
+     * for every country. Callers must decide the rule explicitly.
      */
     function getMarriageSurnameRule(/* countryId */) {
         throw new Error(
@@ -420,14 +369,8 @@
     /**
      * @deprecated REMOVED. There is no canonical replacement.
      *
-     * The old implementation returned [] unconditionally, which made a
-     * "no ancestors found" result indistinguishable from a broken call.
-     * Callers should use NameQueries.getAncestorNames(character, order,
-     * source), which does real traversal and returns [] only when there
-     * genuinely are no resolvable ancestors.
-     *
-     * Note: the canonical signature dropped the `depth` parameter. The
-     * length of `order` is the depth.
+     * Use NameQueries.getAncestorNames(character, order, source). There
+     * is no `depth` parameter; order.length is the depth.
      */
     function _getAncestorNamesForChain(/* character, order, depth, source */) {
         throw new Error(
@@ -440,10 +383,8 @@
     /**
      * @deprecated REMOVED. There is no canonical replacement.
      *
-     * The old implementation returned the raw connector value for a
-     * connector type, with a ' ' fallback for unknown types. Invalid
-     * connector types are now rejected during rule validation, and
-     * valid connector resolution is internal to NameRules.
+     * Connector resolution is internal to NameRules; invalid connectors
+     * are rejected during rule validation.
      */
     function _getConnectorValue(/* connectorType, customConnector */) {
         throw new Error(
@@ -456,11 +397,8 @@
     /**
      * @deprecated REMOVED. There is no canonical replacement.
      *
-     * The old implementation split a surname string. That operation is
-     * now a private helper inside NameRules, exercised through the
-     * FAMILY rule's `position` option. Callers who need to split a
-     * surname should do so directly or use NameRules via
-     * generateSurnameFromRules.
+     * Surname splitting is internal to NameRules; use the FAMILY rule's
+     * 'position' option, or split the string directly.
      */
     function _splitSurname(/* surname */) {
         throw new Error(
@@ -473,8 +411,8 @@
     /**
      * @deprecated REMOVED. There is no canonical replacement.
      *
-     * The old implementation extracted a surname part. Same reasoning
-     * as _splitSurname.
+     * Surname part extraction is internal to NameRules; use the FAMILY
+     * rule's 'position' option instead.
      */
     function _getSurnamePart(/* character, position */) {
         throw new Error(
@@ -488,14 +426,9 @@
      * @deprecated REMOVED. There is no canonical replacement.
      *
      * The old implementation fabricated ancestor records with placeholder
-     * fields (surname: '', gender: 'unknown', characterId: null) to
-     * reconstruct a shape the canonical query no longer produces.
-     * Reconstructing domain facts from a names array is not possible in
-     * the general case.
-     *
-     * Use NameQueries.getAncestorData(character, slot) for one slot's
-     * record, or NameQueries.getAncestorNames(character, order, source)
-     * for a resolved list of names.
+     * fields. Use NameQueries.getAncestorData(character, slot) for a
+     * single slot's record, or NameQueries.getAncestorNames(character,
+     * order, source) for a resolved list of names.
      */
     function getAncestorChain(/* character, maxDepth */) {
         throw new Error(
