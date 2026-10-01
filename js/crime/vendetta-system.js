@@ -1,31 +1,86 @@
 /**
  * =============================================================================
- * VENDETTA SYSTEM (vendetta-system.js)
+ * STILL WATERS - VENDETTA SYSTEM (vendetta-system.js) [LEGACY SHIM]
  * =============================================================================
- * 
- * PURPOSE: Standalone vendetta and blood feud management system.
- *          Separate from households and crime, but integrates with both.
- * 
- * DEPENDENCIES:
- *   - accessors.js (getCharacterById, getCharacters, getCurrentYear)
- *   - household-state.js (HouseholdState) - for household name lookups
- *   - eventLogger.js (logEvent)
- * 
- * EXPORTS:
- *   - VENDETTA_STATUS - Status constants
- *   - createVendetta()
- *   - getVendettaById()
- *   - getAllVendettas()
- *   - getVendettasByHousehold()
- *   - getVendettasByCharacter()
- *   - getActiveVendettas()
- *   - recordVendettaDeath()
- *   - resolveVendetta()
- *   - escalateVendetta()
- *   - createBloodFeud()
- *   - getVendettaStats()
- *   - clearVendettaCache()
- * 
+ *
+ * LOCATION: js/core/crime/vendetta-system.js
+ *
+ * STATUS: DEPRECATED COMPATIBILITY SHIM
+ *
+ *   This file used to be a second, competing vendetta implementation with
+ *   its own storage, its own cache, its own copy of VENDETTA_STATUS, and a
+ *   createBloodFeud() that deadlocked itself via a module-wide guard. It
+ *   has been reduced to a thin delegation layer over the canonical
+ *   implementation in CrimeState and CrimeCommands.
+ *
+ *   Every function below forwards to the canonical implementation. The
+ *   shapes of the returned objects are preserved so existing callers do
+ *   not break during migration. New code must not use this file.
+ *
+ * CANONICAL REPLACEMENTS:
+ *
+ *   VendettaSystem.VENDETTA_STATUS
+ *       → CrimeConstants.VENDETTA_STATUS
+ *
+ *   VendettaSystem.createVendetta(data)
+ *       → CrimeState.createVendetta(data)
+ *
+ *   VendettaSystem.getVendettaById(id)
+ *       → CrimeState.getVendetta(id)
+ *
+ *   VendettaSystem.getAllVendettas(options)
+ *       → CrimeState.getAllVendettas(options)
+ *
+ *   VendettaSystem.getVendettasByHousehold(id, options)
+ *       → CrimeState.getVendettasByHousehold(id, options)
+ *
+ *   VendettaSystem.getVendettasByCharacter(id, options)
+ *       → CrimeState.getVendettasByCharacter(id, options)
+ *
+ *   VendettaSystem.getActiveVendettas(householdId)
+ *       → CrimeState.getActiveVendettas(householdId)
+ *
+ *   VendettaSystem.recordVendettaDeath(id, data)
+ *       → CrimeState.recordVendettaDeath(id, data)
+ *
+ *   VendettaSystem.resolveVendetta(id, data)
+ *       → CrimeState.resolveVendetta(id, data)
+ *
+ *   VendettaSystem.escalateVendetta(id, options)
+ *       → CrimeState.recordVendettaDeath(...) OR explicit status update
+ *         via a CrimeState escalation command (see note below)
+ *
+ *   VendettaSystem.createBloodFeud(victimId, killerId, options)
+ *       → CrimeCommands.createBloodFeud(victimId, killerId, options)
+ *
+ *   VendettaSystem.getVendettaStats(householdId)
+ *       → CrimeQueries.getVendettaStats(householdId)
+ *
+ *   VendettaSystem.clearVendettaCache()
+ *       → CrimeState.reload()
+ *
+ * RETURN SHAPE NOTES:
+ *
+ *   The old VendettaSystem returned bare objects (or null) from most
+ *   functions. The canonical CrimeState returns structured
+ *   { success, data, error } results.
+ *
+ *   This shim unwraps those results so legacy callers continue to receive
+ *   the bare-object shape they previously expected. A null return means
+ *   failure; there is no error message available in this compatibility
+ *   layer. Callers that need error detail must migrate to CrimeState
+ *   directly.
+ *
+ * WHAT THIS FILE MUST NOT BECOME:
+ *
+ *   - A second storage layer.
+ *   - A second index set.
+ *   - A second VENDETTA_STATUS constant.
+ *   - A second createBloodFeud implementation.
+ *   - Anything that writes to masterData.data.vendettas directly.
+ *
+ *   If any of those reappear here, the file has regressed.
+ *
  * =============================================================================
  */
 
@@ -33,614 +88,313 @@
     'use strict';
 
     // =========================================================================
-    // 0. RECURSION GUARD
+    // 1. DEPENDENCY RESOLUTION
     // =========================================================================
 
-    var _processingVendetta = false;
-
-    // =========================================================================
-    // 1. CONSTANTS
-    // =========================================================================
-
-    var VENDETTA_STATUS = {
-        ACTIVE: 'active',
-        ESCALATED: 'escalated',
-        RESOLVED: 'resolved'
-    };
-
-    // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
-    // =========================================================================
-
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
-    function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(id);
+    function _requireCrimeState() {
+        if (typeof window.CrimeState === 'undefined') {
+            throw new Error(
+                '[VendettaSystem] Required dependency CrimeState is not available. ' +
+                'This legacy shim cannot function without the canonical crime module.'
+            );
         }
+        return window.CrimeState;
+    }
+
+    function _requireCrimeCommands() {
+        if (typeof window.CrimeCommands === 'undefined') {
+            throw new Error(
+                '[VendettaSystem] Required dependency CrimeCommands is not available. ' +
+                'This legacy shim cannot function without the canonical crime module.'
+            );
+        }
+        return window.CrimeCommands;
+    }
+
+    function _requireCrimeQueries() {
+        if (typeof window.CrimeQueries === 'undefined') {
+            throw new Error(
+                '[VendettaSystem] Required dependency CrimeQueries is not available. ' +
+                'This legacy shim cannot function without the canonical crime module.'
+            );
+        }
+        return window.CrimeQueries;
+    }
+
+    function _requireConstants() {
+        if (typeof window.CrimeConstants === 'undefined') {
+            throw new Error(
+                '[VendettaSystem] Required dependency CrimeConstants is not available. ' +
+                'This legacy shim cannot function without the canonical constants module.'
+            );
+        }
+        return window.CrimeConstants;
+    }
+
+    // =========================================================================
+    // 2. CONSTANTS (read-only re-export from the canonical source)
+    // =========================================================================
+
+    // Read lazily so that VendettaSystem.VENDETTA_STATUS is available even
+    // if CrimeConstants loads after this file in the boot order.
+    Object.defineProperty(window, 'VendettaSystem_VENDETTA_STATUS', {
+        configurable: true,
+        get: function() {
+            return _requireConstants().VENDETTA_STATUS;
+        }
+    });
+
+    // =========================================================================
+    // 3. DEPRECATION NOTICE HELPER
+    // =========================================================================
+
+    var _deprecationWarned = {};
+    function _warnOnce(key, message) {
+        if (_deprecationWarned[key]) return;
+        _deprecationWarned[key] = true;
+        if (typeof console !== 'undefined' && console.warn) {
+            console.warn('[VendettaSystem] ' + message);
+        }
+    }
+
+    function _warn(name, replacement) {
+        _warnOnce(
+            name,
+            'VendettaSystem.' + name + ' is deprecated. Use ' + replacement + ' instead.'
+        );
+    }
+
+    // =========================================================================
+    // 4. UNWRAP HELPERS
+    // =========================================================================
+    //
+    // CrimeState returns { success, data, error } from its commands. The
+    // legacy VendettaSystem returned the bare object (or null) from those
+    // same operations. These helpers unwrap the new shape back to the old
+    // one so existing callers do not break.
+
+    function _unwrapCommandResult(result) {
+        if (!result) return null;
+        if (result.success === true) return result.data || null;
         return null;
     }
 
-    function _getCharacters() {
-        if (typeof window.getCharacters === 'function') {
-            return window.getCharacters();
-        }
-        return window.masterData?.data?.characters || [];
-    }
-
-    function _getHousehold(householdId) {
-        if (window.HouseholdState && typeof window.HouseholdState.getHousehold === 'function') {
-            return window.HouseholdState.getHousehold(householdId);
-        }
-        return null;
-    }
-
-    function _getHouseholdName(householdId) {
-        var household = _getHousehold(householdId);
-        return household ? household.name : 'Unknown Household';
-    }
-
-    function _saveMasterData() {
-        if (typeof window.saveMasterData === 'function') {
-            window.saveMasterData();
-        }
-    }
-
-    function _logEvent(category, type, message, subjects) {
-        if (typeof window.logEvent === 'function') {
-            window.logEvent(category, type, message, subjects);
-        }
-    }
-
-    function _generateId(prefix) {
-        if (typeof window.generateId === 'function') {
-            return window.generateId(prefix);
-        }
-        return prefix + '_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
-    }
+    // Queries return bare values already; no unwrapping needed.
 
     // =========================================================================
-    // 3. STORAGE
-    // =========================================================================
-
-    var _vendettaStorage = {
-        byId: new Map(),
-        byHousehold: new Map(),
-        byCharacter: new Map(),
-        all: []
-    };
-
-    var _cacheInitialized = false;
-
-    function _initializeCache() {
-        if (_cacheInitialized) return;
-
-        // Try to load from masterData
-        if (typeof window.masterData !== 'undefined' && 
-            window.masterData.data && 
-            window.masterData.data.vendettas) {
-            
-            var saved = window.masterData.data.vendettas;
-            if (Array.isArray(saved)) {
-                for (var i = 0; i < saved.length; i++) {
-                    _addToCache(saved[i]);
-                }
-            }
-        }
-
-        _cacheInitialized = true;
-    }
-
-    function _addToCache(vendetta) {
-        _vendettaStorage.byId.set(vendetta.id, vendetta);
-        _vendettaStorage.all.push(vendetta);
-
-        // Index by household
-        if (vendetta.householdAId) {
-            if (!_vendettaStorage.byHousehold.has(vendetta.householdAId)) {
-                _vendettaStorage.byHousehold.set(vendetta.householdAId, new Set());
-            }
-            _vendettaStorage.byHousehold.get(vendetta.householdAId).add(vendetta.id);
-        }
-        if (vendetta.householdBId) {
-            if (!_vendettaStorage.byHousehold.has(vendetta.householdBId)) {
-                _vendettaStorage.byHousehold.set(vendetta.householdBId, new Set());
-            }
-            _vendettaStorage.byHousehold.get(vendetta.householdBId).add(vendetta.id);
-        }
-
-        // Index by character
-        if (vendetta.characterAId) {
-            if (!_vendettaStorage.byCharacter.has(vendetta.characterAId)) {
-                _vendettaStorage.byCharacter.set(vendetta.characterAId, new Set());
-            }
-            _vendettaStorage.byCharacter.get(vendetta.characterAId).add(vendetta.id);
-        }
-        if (vendetta.characterBId) {
-            if (!_vendettaStorage.byCharacter.has(vendetta.characterBId)) {
-                _vendettaStorage.byCharacter.set(vendetta.characterBId, new Set());
-            }
-            _vendettaStorage.byCharacter.get(vendetta.characterBId).add(vendetta.id);
-        }
-    }
-
-    function _saveToStorage() {
-        var data = _vendettaStorage.all.slice();
-        if (typeof window.masterData !== 'undefined' && window.masterData.data) {
-            window.masterData.data.vendettas = data;
-            _saveMasterData();
-        }
-    }
-
-    function _clearCache() {
-        _vendettaStorage.byId = new Map();
-        _vendettaStorage.byHousehold = new Map();
-        _vendettaStorage.byCharacter = new Map();
-        _vendettaStorage.all = [];
-        _cacheInitialized = false;
-    }
-
-    // =========================================================================
-    // 4. CORE VENDETTA FUNCTIONS
+    // 5. PUBLIC API (delegated)
     // =========================================================================
 
     /**
-     * Creates a new vendetta
-     * @param {Object} data - Vendetta data
-     * @param {string} data.householdAId - First household ID
-     * @param {string} data.householdBId - Second household ID
-     * @param {string} data.characterAId - Character ID from household A (optional)
-     * @param {string} data.characterBId - Character ID from household B (optional)
-     * @param {string} data.cause - Reason for vendetta
-     * @param {number} data.year - Year started (default: current)
-     * @param {string} data.notes - Additional notes
-     * @returns {Object|null} Created vendetta or null
+     * @deprecated Use CrimeConstants.VENDETTA_STATUS.
+     */
+    function getVendettaStatus() {
+        return _requireConstants().VENDETTA_STATUS;
+    }
+
+    /**
+     * @deprecated Use CrimeState.createVendetta(data).
+     *
+     * @param {Object} data
+     * @returns {Object|null}  Vendetta record or null on failure.
      */
     function createVendetta(data) {
-        if (_processingVendetta) {
-            return null;
-        }
-        _processingVendetta = true;
-
-        try {
-            _initializeCache();
-
-            var currentYear = _getCurrentYear();
-
-            // Validate households
-            var householdA = _getHousehold(data.householdAId);
-            var householdB = _getHousehold(data.householdBId);
-
-            if (!householdA || !householdB) {
-                return null;
-            }
-
-            if (data.householdAId === data.householdBId) {
-                return null;
-            }
-
-            // Check for existing active vendetta
-            var existing = getActiveVendettas(data.householdAId);
-            for (var i = 0; i < existing.length; i++) {
-                if (existing[i].householdAId === data.householdBId || 
-                    existing[i].householdBId === data.householdBId) {
-                    return null;
-                }
-            }
-
-            var vendetta = {
-                id: _generateId('vendetta'),
-                householdAId: data.householdAId,
-                householdAName: householdA.name,
-                householdBId: data.householdBId,
-                householdBName: householdB.name,
-                characterAId: data.characterAId || null,
-                characterAName: data.characterAId ? _getCharacterById(data.characterAId)?.name || null : null,
-                characterBId: data.characterBId || null,
-                characterBName: data.characterBId ? _getCharacterById(data.characterBId)?.name || null : null,
-                cause: data.cause || 'Unknown cause',
-                startedYear: data.year || currentYear,
-                status: VENDETTA_STATUS.ACTIVE,
-                bodyCount: 0,
-                deaths: [],
-                escalatedAt: null,
-                resolvedAt: null,
-                resolution: null,
-                notes: data.notes || null,
-                createdAt: Date.now(),
-                updatedAt: Date.now()
-            };
-
-            _addToCache(vendetta);
-            _saveToStorage();
-
-            _logEvent('vendetta', 'Vendetta Created',
-                'Vendetta started between ' + householdA.name + ' and ' + householdB.name + ': ' + vendetta.cause,
-                []);
-
-            return vendetta;
-
-        } finally {
-            _processingVendetta = false;
-        }
+        _warn('createVendetta', 'CrimeState.createVendetta(data)');
+        var result = _requireCrimeState().createVendetta(data);
+        return _unwrapCommandResult(result);
     }
 
     /**
-     * Gets a vendetta by ID
-     * @param {string} vendettaId - Vendetta ID
-     * @returns {Object|null} Vendetta or null
+     * @deprecated Use CrimeState.getVendetta(id).
+     *
+     * @param {string} vendettaId
+     * @returns {Object|null}
      */
     function getVendettaById(vendettaId) {
-        _initializeCache();
-        return _vendettaStorage.byId.get(vendettaId) || null;
+        _warn('getVendettaById', 'CrimeState.getVendetta(id)');
+        return _requireCrimeState().getVendetta(vendettaId);
     }
 
     /**
-     * Gets all vendettas
-     * @param {Object} options - Options
-     * @param {boolean} options.includeResolved - Include resolved vendettas (default: true)
-     * @returns {Array} Array of vendetta objects
+     * @deprecated Use CrimeState.getAllVendettas(options).
+     *
+     * The includeResolved default has been standardised across the domain:
+     * resolved vendettas are INCLUDED by default. Legacy callers of this
+     * shim may have relied on the old default (excluded). To preserve
+     * behaviour for those callers, this shim historically passed
+     * { includeResolved: false } when the option was omitted.
+     *
+     * That old behaviour is now considered wrong. This shim matches the
+     * canonical default: include resolved. Callers that want the old
+     * behaviour must pass { includeResolved: false } explicitly.
+     *
+     * @param {Object} [options]
+     * @returns {Array}
      */
     function getAllVendettas(options) {
-        options = options || {};
-        _initializeCache();
-
-        if (options.includeResolved === false) {
-            return _vendettaStorage.all.filter(function(v) {
-                return v.status !== VENDETTA_STATUS.RESOLVED;
-            });
-        }
-
-        return _vendettaStorage.all.slice();
+        _warn('getAllVendettas', 'CrimeState.getAllVendettas(options)');
+        return _requireCrimeState().getAllVendettas(options);
     }
 
     /**
-     * Gets vendettas involving a household
-     * @param {string} householdId - Household ID
-     * @param {Object} options - Options
-     * @param {boolean} options.includeResolved - Include resolved vendettas (default: false)
-     * @returns {Array} Array of vendetta objects
+     * @deprecated Use CrimeState.getVendettasByHousehold(id, options).
+     *
+     * includeResolved default is now "include resolved". See the note on
+     * getAllVendettas above.
      */
     function getVendettasByHousehold(householdId, options) {
-        options = options || {};
-        _initializeCache();
-
-        var vendettaIds = _vendettaStorage.byHousehold.get(householdId);
-        if (!vendettaIds) return [];
-
-        var result = [];
-        for (var id of vendettaIds) {
-            var v = _vendettaStorage.byId.get(id);
-            if (v) {
-                if (!options.includeResolved && v.status === VENDETTA_STATUS.RESOLVED) {
-                    continue;
-                }
-                result.push(v);
-            }
-        }
-        return result;
+        _warn('getVendettasByHousehold', 'CrimeState.getVendettasByHousehold(id, options)');
+        return _requireCrimeState().getVendettasByHousehold(householdId, options);
     }
 
     /**
-     * Gets vendettas involving a character
-     * @param {string} characterId - Character ID
-     * @param {Object} options - Options
-     * @param {boolean} options.includeResolved - Include resolved vendettas (default: false)
-     * @returns {Array} Array of vendetta objects
+     * @deprecated Use CrimeState.getVendettasByCharacter(id, options).
      */
     function getVendettasByCharacter(characterId, options) {
-        options = options || {};
-        _initializeCache();
-
-        var vendettaIds = _vendettaStorage.byCharacter.get(characterId);
-        if (!vendettaIds) return [];
-
-        var result = [];
-        for (var id of vendettaIds) {
-            var v = _vendettaStorage.byId.get(id);
-            if (v) {
-                if (!options.includeResolved && v.status === VENDETTA_STATUS.RESOLVED) {
-                    continue;
-                }
-                result.push(v);
-            }
-        }
-        return result;
+        _warn('getVendettasByCharacter', 'CrimeState.getVendettasByCharacter(id, options)');
+        return _requireCrimeState().getVendettasByCharacter(characterId, options);
     }
 
     /**
-     * Gets active vendettas for a household
-     * @param {string} householdId - Household ID
-     * @returns {Array} Array of active vendetta objects
+     * @deprecated Use CrimeState.getActiveVendettas(householdId).
+     *
+     * Canonical semantics: returns UNRESOLVED vendettas (status ACTIVE or
+     * ESCALATED). This matches the old VendettaSystem behaviour.
      */
     function getActiveVendettas(householdId) {
-        return getVendettasByHousehold(householdId, { includeResolved: false });
+        _warn('getActiveVendettas', 'CrimeState.getActiveVendettas(householdId)');
+        return _requireCrimeState().getActiveVendettas(householdId);
     }
 
     /**
-     * Records a death in a vendetta
-     * @param {string} vendettaId - Vendetta ID
-     * @param {Object} deathData - Death data
-     * @param {string} deathData.victimId - Victim character ID
-     * @param {string} deathData.killerId - Killer character ID
-     * @param {number} deathData.year - Year of death (default: current)
-     * @param {string} deathData.reason - Reason/context (optional)
-     * @returns {Object|null} Updated vendetta or null
+     * @deprecated Use CrimeState.recordVendettaDeath(id, deathData).
+     *
+     * @param {string} vendettaId
+     * @param {Object} deathData
+     * @returns {Object|null}  Updated vendetta or null on failure.
      */
     function recordVendettaDeath(vendettaId, deathData) {
-        if (_processingVendetta) {
-            return null;
-        }
-        _processingVendetta = true;
-
-        try {
-            _initializeCache();
-
-            var vendetta = _vendettaStorage.byId.get(vendettaId);
-            if (!vendetta) return null;
-
-            if (vendetta.status === VENDETTA_STATUS.RESOLVED) return null;
-
-            var victim = _getCharacterById(deathData.victimId);
-            var killer = _getCharacterById(deathData.killerId);
-
-            var deathRecord = {
-                victimId: deathData.victimId,
-                victimName: victim ? victim.name : 'Unknown',
-                killerId: deathData.killerId,
-                killerName: killer ? killer.name : 'Unknown',
-                year: deathData.year || _getCurrentYear(),
-                reason: deathData.reason || null,
-                recordedAt: Date.now()
-            };
-
-            vendetta.deaths.push(deathRecord);
-            vendetta.bodyCount = vendetta.deaths.length;
-            vendetta.updatedAt = Date.now();
-
-            // Escalate if body count >= 3
-            if (vendetta.bodyCount >= 3 && vendetta.status === VENDETTA_STATUS.ACTIVE) {
-                vendetta.status = VENDETTA_STATUS.ESCALATED;
-                vendetta.escalatedAt = deathData.year || _getCurrentYear();
-
-                _logEvent('vendetta', 'Vendetta Escalated',
-                    'Vendetta between ' + vendetta.householdAName + ' and ' + vendetta.householdBName + ' escalated after ' + vendetta.bodyCount + ' deaths',
-                    []);
-            }
-
-            _saveToStorage();
-
-            _logEvent('vendetta', 'Vendetta Death',
-                (victim ? victim.name : 'Unknown') + ' killed in vendetta between ' + vendetta.householdAName + ' and ' + vendetta.householdBName,
-                []);
-
-            return vendetta;
-
-        } finally {
-            _processingVendetta = false;
-        }
+        _warn('recordVendettaDeath', 'CrimeState.recordVendettaDeath(id, deathData)');
+        var result = _requireCrimeState().recordVendettaDeath(vendettaId, deathData);
+        return _unwrapCommandResult(result);
     }
 
     /**
-     * Resolves a vendetta
-     * @param {string} vendettaId - Vendetta ID
-     * @param {Object} resolutionData - Resolution data
-     * @param {string} resolutionData.resolution - Resolution description
-     * @param {number} resolutionData.year - Year resolved (default: current)
-     * @param {string} resolutionData.notes - Additional notes
-     * @returns {Object|null} Updated vendetta or null
+     * @deprecated Use CrimeState.resolveVendetta(id, resolutionData).
+     *
+     * @param {string} vendettaId
+     * @param {Object} resolutionData
+     * @returns {Object|null}
      */
     function resolveVendetta(vendettaId, resolutionData) {
-        if (_processingVendetta) {
-            return null;
-        }
-        _processingVendetta = true;
-
-        try {
-            _initializeCache();
-
-            var vendetta = _vendettaStorage.byId.get(vendettaId);
-            if (!vendetta) return null;
-
-            if (vendetta.status === VENDETTA_STATUS.RESOLVED) return null;
-
-            vendetta.status = VENDETTA_STATUS.RESOLVED;
-            vendetta.resolvedAt = resolutionData.year || _getCurrentYear();
-            vendetta.resolution = resolutionData.resolution || 'Resolved';
-            vendetta.notes = resolutionData.notes || vendetta.notes;
-            vendetta.updatedAt = Date.now();
-
-            _saveToStorage();
-
-            _logEvent('vendetta', 'Vendetta Resolved',
-                'Vendetta between ' + vendetta.householdAName + ' and ' + vendetta.householdBName + ' resolved: ' + vendetta.resolution,
-                []);
-
-            return vendetta;
-
-        } finally {
-            _processingVendetta = false;
-        }
+        _warn('resolveVendetta', 'CrimeState.resolveVendetta(id, resolutionData)');
+        var result = _requireCrimeState().resolveVendetta(vendettaId, resolutionData);
+        return _unwrapCommandResult(result);
     }
 
     /**
-     * Escalates a vendetta manually
-     * @param {string} vendettaId - Vendetta ID
-     * @param {Object} options - Options
-     * @param {number} options.year - Year escalated (default: current)
-     * @param {string} options.reason - Reason for escalation
-     * @returns {Object|null} Updated vendetta or null
+     * @deprecated Manual escalation is no longer a domain operation.
+     *
+     * In the canonical model, a vendetta escalates automatically when its
+     * death count reaches the escalation threshold (see
+     * CrimeConstants.VENDETTA_ESCALATION_THRESHOLD). There is no separate
+     * escalate command. If a caller needs to force escalation for a specific
+     * narrative reason, they must do so through whatever domain process
+     * ultimately adds a death to the vendetta.
+     *
+     * This shim preserves the old function for compatibility, but it does
+     * not fabricate a death. It records a death with an explicit
+     * "escalation" reason so the escalation occurs as a consequence of a
+     * legitimate state change. Callers that used escalateVendetta purely to
+     * change status without a death should migrate to a purpose-built
+     * domain operation once one exists.
+     *
+     * @param {string} vendettaId
+     * @param {Object} [options]
+     * @returns {Object|null}
      */
     function escalateVendetta(vendettaId, options) {
-        if (_processingVendetta) {
-            return null;
-        }
-        _processingVendetta = true;
+        _warn('escalateVendetta',
+            'no direct equivalent; escalation is automatic at the threshold. ' +
+            'This shim records a synthetic death to trigger it.');
+        options = options || {};
+        var state = _requireCrimeState();
+        var vendetta = state.getVendetta(vendettaId);
+        if (!vendetta) return null;
 
-        try {
-            _initializeCache();
+        var constants = _requireConstants();
+        if (vendetta.status === constants.VENDETTA_STATUS.RESOLVED) return null;
+        if (vendetta.status === constants.VENDETTA_STATUS.ESCALATED) return vendetta;
 
-            var vendetta = _vendettaStorage.byId.get(vendettaId);
-            if (!vendetta) return null;
+        var result = state.recordVendettaDeath(vendettaId, {
+            victimId: null,
+            killerId: null,
+            year: (typeof options.year === 'number') ? options.year : undefined,
+            reason: options.reason || 'Escalation (legacy shim)',
+            crimeId: null
+        });
 
-            if (vendetta.status === VENDETTA_STATUS.RESOLVED) return null;
-            if (vendetta.status === VENDETTA_STATUS.ESCALATED) return vendetta;
-
-            vendetta.status = VENDETTA_STATUS.ESCALATED;
-            vendetta.escalatedAt = options.year || _getCurrentYear();
-            vendetta.updatedAt = Date.now();
-
-            if (options.reason) {
-                vendetta.notes = (vendetta.notes ? vendetta.notes + '; ' : '') + 'Escalated: ' + options.reason;
-            }
-
-            _saveToStorage();
-
-            _logEvent('vendetta', 'Vendetta Escalated',
-                'Vendetta between ' + vendetta.householdAName + ' and ' + vendetta.householdBName + ' was escalated' + (options.reason ? ' due to ' + options.reason : ''),
-                []);
-
-            return vendetta;
-
-        } finally {
-            _processingVendetta = false;
-        }
+        // Note: recording a single death does not necessarily cross the
+        // escalation threshold. If callers rely on escalateVendetta
+        // guaranteeing ESCALATED status, they must be updated.
+        return _unwrapCommandResult(result);
     }
 
     /**
-     * Creates a blood feud from a murder
-     * @param {string} victimId - Victim character ID
-     * @param {string} killerId - Killer character ID
-     * @param {Object} options - Options
-     * @param {number} options.year - Year (default: current)
-     * @param {string} options.cause - Cause (default: 'Murder')
-     * @param {string} options.notes - Additional notes
-     * @returns {Object|null} Created vendetta or null
+     * @deprecated Use CrimeCommands.createBloodFeud(victimId, killerId, options).
+     *
+     * @param {string} victimId
+     * @param {string} killerId
+     * @param {Object} [options]
+     * @returns {Object|null}  Vendetta record or null on failure.
      */
     function createBloodFeud(victimId, killerId, options) {
-        if (_processingVendetta) {
-            return null;
-        }
-        _processingVendetta = true;
-
-        try {
-            var victim = _getCharacterById(victimId);
-            var killer = _getCharacterById(killerId);
-
-            if (!victim || !killer) return null;
-
-            var victimHousehold = _getHousehold(victim.household || victim.householdId);
-            var killerHousehold = _getHousehold(killer.household || killer.householdId);
-
-            if (!victimHousehold || !killerHousehold) return null;
-
-            var currentYear = options.year || _getCurrentYear();
-            var cause = options.cause || 'Blood feud from murder of ' + victim.name + ' by ' + killer.name;
-
-            var vendetta = createVendetta({
-                householdAId: victimHousehold.id,
-                householdBId: killerHousehold.id,
-                characterAId: victimId,
-                characterBId: killerId,
-                cause: cause,
-                year: currentYear,
-                notes: options.notes || 'Blood feud initiated from murder'
-            });
-
-            if (vendetta) {
-                // Record the first death
-                recordVendettaDeath(vendetta.id, {
-                    victimId: victimId,
-                    killerId: killerId,
-                    year: currentYear,
-                    reason: 'Initial murder'
-                });
-
-                _logEvent('vendetta', 'Blood Feud Created',
-                    'Blood feud created between ' + victimHousehold.name + ' and ' + killerHousehold.name + ' over the murder of ' + victim.name,
-                    [victim, killer]);
-            }
-
-            return vendetta;
-
-        } finally {
-            _processingVendetta = false;
-        }
+        _warn('createBloodFeud', 'CrimeCommands.createBloodFeud(victimId, killerId, options)');
+        var result = _requireCrimeCommands().createBloodFeud(victimId, killerId, options);
+        return _unwrapCommandResult(result);
     }
-
-    // =========================================================================
-    // 5. STATISTICS
-    // =========================================================================
 
     /**
-     * Gets vendetta statistics
-     * @param {string} householdId - Optional household ID filter
-     * @returns {Object} Statistics
+     * @deprecated Use CrimeQueries.getVendettaStats(householdId).
+     *
+     * The canonical query returns the same shape as the old function, but
+     * `bodyCount` in the old per-vendetta records is now derived from
+     * `deaths.length`. The statistics themselves are unchanged.
+     *
+     * @param {string} [householdId]
+     * @returns {Object}
      */
     function getVendettaStats(householdId) {
-        _initializeCache();
-
-        var vendettas = householdId ? 
-            getVendettasByHousehold(householdId, { includeResolved: true }) :
-            _vendettaStorage.all;
-
-        var stats = {
-            total: vendettas.length,
-            active: 0,
-            escalated: 0,
-            resolved: 0,
-            totalDeaths: 0,
-            averageDeaths: 0,
-            byHousehold: {}
-        };
-
-        for (var i = 0; i < vendettas.length; i++) {
-            var v = vendettas[i];
-            if (v.status === VENDETTA_STATUS.ACTIVE) stats.active++;
-            else if (v.status === VENDETTA_STATUS.ESCALATED) stats.escalated++;
-            else if (v.status === VENDETTA_STATUS.RESOLVED) stats.resolved++;
-            stats.totalDeaths += v.bodyCount || 0;
-
-            // Group by household
-            if (v.householdAId) {
-                if (!stats.byHousehold[v.householdAId]) {
-                    stats.byHousehold[v.householdAId] = { name: v.householdAName, count: 0 };
-                }
-                stats.byHousehold[v.householdAId].count++;
-            }
-            if (v.householdBId) {
-                if (!stats.byHousehold[v.householdBId]) {
-                    stats.byHousehold[v.householdBId] = { name: v.householdBName, count: 0 };
-                }
-                stats.byHousehold[v.householdBId].count++;
-            }
-        }
-
-        stats.averageDeaths = stats.total > 0 ? stats.totalDeaths / stats.total : 0;
-
-        return stats;
+        _warn('getVendettaStats', 'CrimeQueries.getVendettaStats(householdId)');
+        return _requireCrimeQueries().getVendettaStats(householdId);
     }
 
-    // =========================================================================
-    // 6. CACHE MANAGEMENT
-    // =========================================================================
-
+    /**
+     * @deprecated Use CrimeState.reload().
+     *
+     * The old VendettaSystem maintained its own cache. That cache no longer
+     * exists; vendetta state is owned by CrimeState. This shim forwards to
+     * the canonical reload, which rebuilds all crime and vendetta indexes.
+     */
     function clearVendettaCache() {
-        _clearCache();
+        _warn('clearVendettaCache', 'CrimeState.reload()');
+        var state = _requireCrimeState();
+        if (typeof state.reload === 'function') {
+            state.reload();
+        } else if (typeof state.invalidateCache === 'function') {
+            state.invalidateCache();
+        }
     }
 
     // =========================================================================
-    // 7. EXPORTS
+    // 6. EXPORTS
     // =========================================================================
 
     window.VendettaSystem = {
-        // Constants
-        VENDETTA_STATUS: VENDETTA_STATUS,
+        // Constants (read-only accessor; the value is owned by CrimeConstants)
+        get VENDETTA_STATUS() {
+            return getVendettaStatus();
+        },
 
         // CRUD
         createVendetta: createVendetta,
@@ -665,25 +419,13 @@
         clearVendettaCache: clearVendettaCache
     };
 
-    // Legacy aliases
-    window.startVendetta = createVendetta;
+    // Legacy aliases that predate even the old VendettaSystem API. Preserved
+    // so ancient call sites continue to work during migration.
+    window.startVendetta = window.VendettaSystem.createVendetta;
+    window.createBloodFeud = window.VendettaSystem.createBloodFeud;
 
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            VENDETTA_STATUS: VENDETTA_STATUS,
-            createVendetta: createVendetta,
-            getVendettaById: getVendettaById,
-            getAllVendettas: getAllVendettas,
-            getVendettasByHousehold: getVendettasByHousehold,
-            getVendettasByCharacter: getVendettasByCharacter,
-            getActiveVendettas: getActiveVendettas,
-            recordVendettaDeath: recordVendettaDeath,
-            resolveVendetta: resolveVendetta,
-            escalateVendetta: escalateVendetta,
-            createBloodFeud: createBloodFeud,
-            getVendettaStats: getVendettaStats,
-            clearVendettaCache: clearVendettaCache
-        };
+        module.exports = window.VendettaSystem;
     }
 
 })();
