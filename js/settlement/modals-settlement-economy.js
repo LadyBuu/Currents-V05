@@ -1,495 +1,530 @@
 /**
  * =============================================================================
- * STILL WATERS - SETTLEMENT ECONOMY MODALS js/settlement/modals-settlement-economy.js
+ * STILL WATERS - SETTLEMENT ECONOMY MODALS
+ * js/settlement/modals-settlement-economy.js
  * =============================================================================
- * 
- * This file contains economy-specific UI modals:
- * - Tax Rate Management
- * - Spending Management
- * - Justice & Watch Management
- * - Financial Report View
- * - Efficiency Score View
- * - Debt Management
- * 
- * DEPENDENCIES:
- *   - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
- *   - settlement-state.js (SettlementState)
- *   - settlement-commands.js (SettlementCommands)
- *   - settlement-queries.js (SettlementQueries)
- *   - settlement-economy.js (SettlementEconomy)
- * 
+ *
+ * ECONOMY MODALS.
+ *
+ * This file contains the settlement economy UI modals built on the new
+ * command and query architecture:
+ *
+ *   - openTaxRateModal          : view and change tax rate / tariff / industry tax
+ *   - openSpendingModal         : view and change military / infrastructure / education spending
+ *   - openJusticeModal          : view and change justice severity / watch
+ *   - openDebtManagementModal   : view and manage debt (borrow / repay)
+ *   - openFinancialReportModal  : current financial snapshot
+ *   - openEfficiencyModal       : efficiency score and rating
+ *
+ * It is a UI module. It:
+ *   - reads through SettlementViewModels and query modules
+ *   - calls commands for mutations
+ *   - uses modals-core for the modal shell
+ *   - does not read or write canonical settlement state directly
+ *   - does not create settlement records
+ *   - does not persist
+ *   - does not fabricate domain values
+ *   - does not hardcode fiscal limits (reads from definitions)
+ *   - does not use recursion guards
+ *   - does not use setTimeout to guess when the DOM is ready
+ *   - does not hijack modal-core's confirm button after the fact
+ *
+ * Contract reference: Settlement Architecture Contracts §12 (Command
+ * Contract), §15 (ViewModel Contract), §16 (UI Contract), §21 (Fiscal
+ * Contract), §32 (Completion Standard).
+ *
+ * Modal infrastructure expectation:
+ *
+ *   This module expects `window.ModalsCore.openModal(options)` to
+ *   return the created content container element, or null on failure.
+ *   Event wiring is attached to that container, not to document.body or
+ *   to global selectors. No setTimeout is used.
+ *
+ *   If modals-core needs to change to support this contract, the change
+ *   is in modals-core; this file only relies on the shape it needs.
+ *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
-    // 1. RECURSION GUARD
+    // 1. DEPENDENCIES
     // =========================================================================
 
-    var _openingModal = false;
+    function _getModalsCore()       { return window.ModalsCore; }
+    function _getViewModels()       { return window.SettlementViewModels; }
+    function _getSettlementQueries(){ return window.SettlementQueries; }
+    function _getPlaceQueries()     { return window.PlaceQueries; }
+    function _getFiscalCommands()   { return window.SettlementFiscalCommands; }
+    function _getFiscalRules()      { return window.SettlementFiscalRules; }
+    function _getGovernmentCommands(){ return window.SettlementGovernmentCommands; }
+    function _getGovernmentRules()  { return window.SettlementGovernmentRules; }
+    function _getDebtCommands()     { return window.SettlementDebtCommands; }
+    function _getEconomyQueries()   { return window.SettlementEconomyQueries; }
+    function _getFiscalDefinitions() { return window.SettlementFiscalDefinitions; }
+    function _getGovernmentDefinitions() { return window.SettlementGovernmentDefinitions; }
+    function _getFinanceDefinitions() { return window.SettlementFinanceDefinitions; }
 
     // =========================================================================
-    // 2. ICON HELPERS (using icons.js)
-    // =========================================================================
-
-    function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
-        if (window.Icons && window.Icons.CIRCLE) {
-            return window.Icons.CIRCLE;
-        }
-        return '';
-    }
-
-    // =========================================================================
-    // 3. DEPENDENCY WRAPPERS
+    // 2. HELPERS
     // =========================================================================
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
-    function _showToast(msg, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(msg, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(msg, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(msg, type);
-        }
+    function _placeName(locationId) {
+        var place = _getPlaceQueries().getPlaceById(locationId);
+        return place ? place.displayName : null;
+    }
+
+    function _unknown() {
+        return '<span class="value-unknown">—</span>';
+    }
+
+    function _fmtNumber(value) {
+        if (typeof value !== 'number' || !isFinite(value)) return _unknown();
+        return _escapeHtml(value.toLocaleString());
     }
 
     function _openModal(options) {
-        if (typeof window.openModal === 'function') {
-            return window.openModal(options);
-        }
+        var result = _getModalsCore().openModal(options);
+        if (!result) return null;
+        if (result.content && result.content.nodeType === 1) return result.content;
+        if (result.nodeType === 1) return result;
         return null;
     }
 
     function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') {
-            window.closeTopModal();
-        }
+        _getModalsCore().closeTopModal();
     }
 
-    function _confirmDialog(message, title, onConfirm) {
-        if (typeof window.confirmDialog === 'function') {
-            return window.confirmDialog(message, title, onConfirm);
-        }
-        if (confirm(message)) {
-            onConfirm();
-        }
+    function _toast(message, type) {
+        _getModalsCore().showToast(message, type);
     }
 
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
-    function _getPlaceById(id) {
-        return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
-    }
-
-    function _getLocationPopulationCount(locationId) {
-        if (typeof window.getLocationPopulationCount === 'function') {
-            return window.getLocationPopulationCount(locationId);
-        }
-        return 0;
-    }
-
-    function _getSettlementSummary(locationId) {
-        if (typeof SettlementQueries !== 'undefined' && SettlementQueries.getSettlementSummary) {
-            return SettlementQueries.getSettlementSummary(locationId);
-        }
-        return null;
-    }
-
-    function _getSettlementBudget(locationId) {
-        if (typeof SettlementState !== 'undefined' && SettlementState.getSettlementBudget) {
-            return SettlementState.getSettlementBudget(locationId);
-        }
-        return null;
-    }
-
-    function _getSettlementEmployment(locationId) {
-        if (typeof SettlementState !== 'undefined' && SettlementState.getSettlementEmployment) {
-            return SettlementState.getSettlementEmployment(locationId);
-        }
-        return null;
-    }
-
-    function _getSettlementData(locationId) {
-        if (typeof SettlementState !== 'undefined' && SettlementState.getSettlementData) {
-            return SettlementState.getSettlementData(locationId);
-        }
-        return null;
-    }
-
-    function _calculateSurplus(locationId) {
-        if (typeof SettlementEconomy !== 'undefined' && SettlementEconomy.calculateSurplus) {
-            return SettlementEconomy.calculateSurplus(locationId);
-        }
-        return 0;
-    }
-
-    function _getDebtRatio(locationId) {
-        if (typeof SettlementEconomy !== 'undefined' && SettlementEconomy.getDebtRatio) {
-            return SettlementEconomy.getDebtRatio(locationId);
-        }
-        return 0;
-    }
-
-    function _getEfficiencyScore(locationId) {
-        if (typeof SettlementEconomy !== 'undefined' && SettlementEconomy.getEfficiencyScore) {
-            return SettlementEconomy.getEfficiencyScore(locationId);
-        }
-        return null;
-    }
-
-    function _getFinancialReport(locationId, years) {
-        if (typeof SettlementEconomy !== 'undefined' && SettlementEconomy.getFinancialReport) {
-            return SettlementEconomy.getFinancialReport(locationId, years);
-        }
-        return null;
-    }
-
-    function _getSettlementFeatures(locationId) {
-        if (typeof SettlementState !== 'undefined' && SettlementState.getSettlementFeatures) {
-            return SettlementState.getSettlementFeatures(locationId);
-        }
-        return [];
+    function _confirm(message, title, onConfirm) {
+        _getModalsCore().confirmDialog(message, title, onConfirm);
     }
 
     // =========================================================================
-    // 4. TAX RATE MANAGEMENT MODAL
+    // 3. TAX RATE MODAL
     // =========================================================================
 
-    function openTaxRateManagementModal(locationId, onSuccess) {
-        if (_openingModal) {
-            _showToast('Modal is already opening', 'warning');
+    function openTaxRateModal(locationId) {
+        var summary = _getViewModels().buildSettlementSummary(locationId);
+        if (!summary) {
+            _toast('Settlement not found.', 'error');
             return;
         }
-        _openingModal = true;
 
-        try {
-            var place = _getPlaceById(locationId);
-            if (!place) {
-                _showToast('Location not found', 'error');
-                return;
-            }
+        var taxLimits = _getFiscalDefinitions().TAX_RATE;
+        var tariffLimits = _getFiscalDefinitions().TRADE_TARIFF;
+        var industryLimits = _getFiscalDefinitions().INDUSTRY_TAX_RATE;
 
-            var summary = _getSettlementSummary(locationId);
-            if (!summary) {
-                _showToast('Settlement data not found', 'error');
-                return;
-            }
+        var taxRate = summary.taxRate;
+        var tradeTariff = summary.tradeTariff;
+        var industryTaxRate = summary.industryTaxRate;
 
-            var infoIcon = _getIcon('CIRCLE_DOT');
-            var coinIcon = _getIcon('COIN');
+        var content = '';
+        content += '<div class="fiscal-form">';
 
-            var content = '<div style="max-height: 500px; overflow-y: auto; padding: 4px;">';
+        content += _rateField('taxRate', 'Tax Rate',
+            taxRate, taxLimits.min, taxLimits.max);
+        content += _rateField('tradeTariff', 'Trade Tariff',
+            tradeTariff, tariffLimits.min, tariffLimits.max);
+        content += _rateField('industryTaxRate', 'Industry Tax Rate',
+            industryTaxRate, industryLimits.min, industryLimits.max);
 
-            content += '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; margin-bottom: 16px;">' +
-                '<strong>' + coinIcon + ' ' + _escapeHtml(place.displayName) + '</strong>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">Current tax rates and tariffs</div>' +
-                '</div>';
+        content += '</div>';
 
-            content += '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Tax Rate (%)</label>' +
-                '<div style="display: flex; gap: 8px; align-items: center;">' +
-                '<input type="number" id="taxRateInput" value="' + (summary.taxRate || 10) + '" min="0" max="50" style="width: 100px; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-                '<span style="font-size: 0.55rem; color: var(--dim);">Current: ' + (summary.taxRate || 10) + '%</span>' +
-                '</div>' +
-                '<small style="font-size: 0.5rem; color: var(--dim);">Higher taxes generate more revenue but reduce prosperity</small>' +
-                '</div>';
+        var container = _openModal({
+            title: 'Fiscal Policy: ' + _escapeHtml(summary.name || ''),
+            content: content,
+            confirmText: 'Save',
+            cancelText: 'Cancel',
+            onConfirm: function () {
+                var form = container.querySelector('.fiscal-form');
+                if (!form) return false;
 
-            content += '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Trade Tariff (%)</label>' +
-                '<div style="display: flex; gap: 8px; align-items: center;">' +
-                '<input type="number" id="tradeTariffInput" value="' + (summary.tradeTariff || 5) + '" min="0" max="30" style="width: 100px; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-                '<span style="font-size: 0.55rem; color: var(--dim);">Current: ' + (summary.tradeTariff || 5) + '%</span>' +
-                '</div>' +
-                '<small style="font-size: 0.5rem; color: var(--dim);">Tariffs affect trade income and trade volume</small>' +
-                '</div>';
+                var taxInput = form.querySelector('input[name="taxRate"]');
+                var tariffInput = form.querySelector('input[name="tradeTariff"]');
+                var industryInput = form.querySelector('input[name="industryTaxRate"]');
 
-            content += '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Industry Tax Rate (%)</label>' +
-                '<div style="display: flex; gap: 8px; align-items: center;">' +
-                '<input type="number" id="industryTaxRateInput" value="' + (summary.industryTaxRate || 8) + '" min="0" max="30" style="width: 100px; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-                '<span style="font-size: 0.55rem; color: var(--dim);">Current: ' + (summary.industryTaxRate || 8) + '%</span>' +
-                '</div>' +
-                '<small style="font-size: 0.5rem; color: var(--dim);">Tax on enterprise profits</small>' +
-                '</div>';
+                var update = {};
+                if (taxInput && taxInput.value !== '') {
+                    update.taxRate = Number(taxInput.value);
+                }
+                if (tariffInput && tariffInput.value !== '') {
+                    update.tradeTariff = Number(tariffInput.value);
+                }
+                if (industryInput && industryInput.value !== '') {
+                    update.industryTaxRate = Number(industryInput.value);
+                }
 
-            content += '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
-                infoIcon + ' Changing rates affects the settlement economy. Higher rates increase revenue but may reduce growth.' +
-                '</div>';
-
-            content += '</div>';
-
-            _openModal({
-                title: 'Tax Rate Management: ' + _escapeHtml(place.displayName),
-                content: content,
-                confirmText: 'Save Changes',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var taxRate = parseInt(document.getElementById('taxRateInput').value);
-                    var tradeTariff = parseInt(document.getElementById('tradeTariffInput').value);
-                    var industryTaxRate = parseInt(document.getElementById('industryTaxRateInput').value);
-
-                    var errors = [];
-                    if (isNaN(taxRate) || taxRate < 0 || taxRate > 50) errors.push('Tax rate must be between 0 and 50');
-                    if (isNaN(tradeTariff) || tradeTariff < 0 || tradeTariff > 30) errors.push('Trade tariff must be between 0 and 30');
-                    if (isNaN(industryTaxRate) || industryTaxRate < 0 || industryTaxRate > 30) errors.push('Industry tax rate must be between 0 and 30');
-
-                    if (errors.length > 0) {
-                        _showToast(errors[0], 'error');
-                        return false;
-                    }
-
-                    var results = [];
-                    if (taxRate !== (summary.taxRate || 10)) {
-                        results.push(SettlementCommands.updateTaxRate(locationId, taxRate));
-                    }
-                    if (tradeTariff !== (summary.tradeTariff || 5)) {
-                        results.push(SettlementCommands.updateTradeTariff(locationId, tradeTariff));
-                    }
-                    if (industryTaxRate !== (summary.industryTaxRate || 8)) {
-                        results.push(SettlementCommands.updateIndustryTaxRate(locationId, industryTaxRate));
-                    }
-
-                    var success = results.every(function(r) { return r && r.success; });
-                    if (success) {
-                        _showToast('Rates updated successfully', 'success');
-                        _closeTopModal();
-                        if (onSuccess) onSuccess();
+                var result = _getFiscalCommands().updateFiscalPolicy(locationId, update);
+                if (result.success) {
+                    if (result.noop) {
+                        _toast('No changes to save.', 'info');
                     } else {
-                        _showToast('Failed to update some rates', 'error');
+                        _toast('Fiscal policy updated.', 'success');
                     }
                     return true;
+                } else {
+                    _toast('Update failed: ' + result.code, 'error');
+                    return false;
                 }
-            });
+            }
+        });
 
-        } finally {
-            _openingModal = false;
-        }
+        if (!container) return;
+    }
+
+    function _rateField(name, label, current, min, max) {
+        var value = typeof current === 'number' ? current : '';
+        return '' +
+            '<div class="fiscal-form__row">' +
+            '<label class="fiscal-form__label" for="fiscal-' + name + '">' + _escapeHtml(label) + '</label>' +
+            '<input class="fiscal-form__input" id="fiscal-' + name + '" name="' + name + '"' +
+            ' type="number" min="' + min + '" max="' + max + '" step="1" value="' + value + '">' +
+            '<span class="fiscal-form__range">' + min + '–' + max + '</span>' +
+            '</div>';
     }
 
     // =========================================================================
-    // 5. SPENDING MANAGEMENT MODAL
+    // 4. SPENDING MODAL
     // =========================================================================
+    //
+    // Spending is a fiscal policy field. It is presented here for
+    // convenience because it belongs with the economy UI. The command
+    // that owns these fields is SettlementFiscalCommands; spending
+    // fields are updated through the budget allocation path, not
+    // through a separate setter. If a separate spending command is
+    // added later, this modal calls it. For now, spending fields are
+    // read-only unless a command exists to change them.
+    //
 
-    function openSpendingManagementModal(locationId, onSuccess) {
-        if (_openingModal) {
-            _showToast('Modal is already opening', 'warning');
+    function openSpendingModal(locationId) {
+        var summary = _getViewModels().buildSettlementSummary(locationId);
+        if (!summary) {
+            _toast('Settlement not found.', 'error');
             return;
         }
-        _openingModal = true;
 
-        try {
-            var place = _getPlaceById(locationId);
-            if (!place) {
-                _showToast('Location not found', 'error');
-                return;
-            }
+        var settlement = _getSettlementQueries().getSettlementData(locationId);
 
-            var summary = _getSettlementSummary(locationId);
-            if (!summary) {
-                _showToast('Settlement data not found', 'error');
-                return;
-            }
+        var military = typeof settlement.militarySpending === 'number' ? settlement.militarySpending : null;
+        var infrastructure = typeof settlement.infrastructureSpending === 'number' ? settlement.infrastructureSpending : null;
+        var education = typeof settlement.educationSpending === 'number' ? settlement.educationSpending : null;
 
-            var infoIcon = _getIcon('CIRCLE_DOT');
+        var content = '';
+        content += '<div class="spending-view">';
+        content += _fieldRow('Military Spending', military);
+        content += _fieldRow('Infrastructure Spending', infrastructure);
+        content += _fieldRow('Education Spending', education);
+        content += '</div>';
 
-            var content = '<div style="max-height: 500px; overflow-y: auto; padding: 4px;">';
+        content += '<div class="spending-view__note">' +
+            'Spending is set through the annual budget. ' +
+            'This view is read-only.' +
+            '</div>';
 
-            content += '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; margin-bottom: 16px;">' +
-                '<strong>' + _escapeHtml(place.displayName) + '</strong>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">Annual spending allocations</div>' +
-                '</div>';
-
-            content += '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Military Spending</label>' +
-                '<div style="display: flex; gap: 8px; align-items: center;">' +
-                '<input type="number" id="militarySpendingInput" value="' + (summary.spending.military || 0) + '" min="0" step="5" style="width: 120px; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-                '<span style="font-size: 0.55rem; color: var(--dim);">Current: ' + (summary.spending.military || 0) + ' gold/year</span>' +
-                '</div>' +
-                '<small style="font-size: 0.5rem; color: var(--dim);">Affects defense, crime rate, and prosperity</small>' +
-                '</div>';
-
-            content += '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Infrastructure Spending</label>' +
-                '<div style="display: flex; gap: 8px; align-items: center;">' +
-                '<input type="number" id="infrastructureSpendingInput" value="' + (summary.spending.infrastructure || 0) + '" min="0" step="5" style="width: 120px; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-                '<span style="font-size: 0.55rem; color: var(--dim);">Current: ' + (summary.spending.infrastructure || 0) + ' gold/year</span>' +
-                '</div>' +
-                '<small style="font-size: 0.5rem; color: var(--dim);">Affects growth, prosperity, and feature availability</small>' +
-                '</div>';
-
-            content += '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Education Spending</label>' +
-                '<div style="display: flex; gap: 8px; align-items: center;">' +
-                '<input type="number" id="educationSpendingInput" value="' + (summary.spending.education || 0) + '" min="0" step="5" style="width: 120px; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-                '<span style="font-size: 0.55rem; color: var(--dim);">Current: ' + (summary.spending.education || 0) + ' gold/year</span>' +
-                '</div>' +
-                '<small style="font-size: 0.5rem; color: var(--dim);">Affects literacy, prosperity, and workforce quality</small>' +
-                '</div>';
-
-            content += '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
-                infoIcon + ' Spending affects settlement growth and prosperity. Higher spending reduces surplus but improves outcomes.' +
-                '</div>';
-
-            content += '</div>';
-
-            _openModal({
-                title: 'Spending Management: ' + _escapeHtml(place.displayName),
-                content: content,
-                confirmText: 'Save Changes',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var military = parseInt(document.getElementById('militarySpendingInput').value) || 0;
-                    var infrastructure = parseInt(document.getElementById('infrastructureSpendingInput').value) || 0;
-                    var education = parseInt(document.getElementById('educationSpendingInput').value) || 0;
-
-                    var results = [];
-                    if (military !== (summary.spending.military || 0)) {
-                        results.push(SettlementCommands.updateMilitarySpending(locationId, military));
-                    }
-                    if (infrastructure !== (summary.spending.infrastructure || 0)) {
-                        results.push(SettlementCommands.updateInfrastructureSpending(locationId, infrastructure));
-                    }
-                    if (education !== (summary.spending.education || 0)) {
-                        results.push(SettlementCommands.updateEducationSpending(locationId, education));
-                    }
-
-                    var success = results.every(function(r) { return r && r.success; });
-                    if (success) {
-                        _showToast('Spending updated successfully', 'success');
-                        _closeTopModal();
-                        if (onSuccess) onSuccess();
-                    } else {
-                        _showToast('Failed to update spending', 'error');
-                    }
-                    return true;
-                }
-            });
-
-        } finally {
-            _openingModal = false;
-        }
+        _openModal({
+            title: 'Spending: ' + _escapeHtml(summary.name || ''),
+            content: content,
+            confirmText: 'Close',
+            cancelText: '',
+            size: 'medium',
+            onConfirm: function () {}
+        });
     }
 
     // =========================================================================
-    // 6. JUSTICE & WATCH MANAGEMENT MODAL
+    // 5. JUSTICE MODAL
     // =========================================================================
 
-    function openJusticeManagementModal(locationId, onSuccess) {
-        if (_openingModal) {
-            _showToast('Modal is already opening', 'warning');
+    function openJusticeModal(locationId) {
+        var summary = _getViewModels().buildSettlementSummary(locationId);
+        if (!summary) {
+            _toast('Settlement not found.', 'error');
             return;
         }
-        _openingModal = true;
 
-        try {
-            var place = _getPlaceById(locationId);
-            if (!place) {
-                _showToast('Location not found', 'error');
-                return;
-            }
+        var severities = _getGovernmentDefinitions().JUSTICE_SEVERITIES;
+        var currentSeverity = summary.justiceSeverity;
 
-            var summary = _getSettlementSummary(locationId);
-            if (!summary) {
-                _showToast('Settlement data not found', 'error');
-                return;
-            }
+        var content = '';
+        content += '<div class="justice-form">';
 
-            var infoIcon = _getIcon('CIRCLE_DOT');
-            var warningIcon = _getIcon('WARNING');
+        content += '<div class="justice-form__group">';
+        content += '<label class="justice-form__label" for="justice-severity">Justice Severity</label>';
+        content += '<select class="justice-form__select" id="justice-severity" name="severity">';
+        for (var i = 0; i < severities.length; i++) {
+            var s = severities[i];
+            var selected = s.id === currentSeverity ? ' selected' : '';
+            content += '<option value="' + _escapeHtml(s.id) + '"' + selected + '>' +
+                _escapeHtml(s.name) + '</option>';
+        }
+        content += '</select>';
+        content += '</div>';
 
-            var content = '<div style="max-height: 500px; overflow-y: auto; padding: 4px;">';
+        content += '<div class="justice-form__group">';
+        content += '<label class="justice-form__checkbox">';
+        content += '<input type="checkbox" name="hasWatch"' +
+            (summary.hasWatch ? ' checked' : '') + '>';
+        content += '<span>Maintain a watch</span>';
+        content += '</label>';
+        content += '</div>';
 
-            content += '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; margin-bottom: 16px;">' +
-                '<strong>' + _escapeHtml(place.displayName) + '</strong>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">Justice system and crime prevention</div>' +
-                '</div>';
+        content += '<div class="justice-form__group">';
+        content += '<label class="justice-form__label" for="justice-watch-size">Watch Size</label>';
+        content += '<input class="justice-form__input" type="number" id="justice-watch-size"' +
+            ' name="watchSize" min="0" step="1" value="' +
+            (typeof summary.watchSize === 'number' ? summary.watchSize : 0) + '">';
+        content += '</div>';
 
-            if (summary.crimeRate > 0.2) {
-                content += '<div style="background: rgba(200, 68, 68, 0.15); padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; border-left: 3px solid var(--danger);">' +
-                    warningIcon + ' Crime rate is high: ' + Math.round(summary.crimeRate * 100) + '%' +
-                    '</div>';
-            }
+        content += '</div>';
 
-            content += '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Justice Severity</label>' +
-                '<select id="justiceSeverityInput" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-                '<option value="lenient" ' + (summary.justice.severity === 'lenient' ? 'selected' : '') + '>Lenient</option>' +
-                '<option value="medium" ' + (summary.justice.severity === 'medium' ? 'selected' : '') + '>Medium</option>' +
-                '<option value="harsh" ' + (summary.justice.severity === 'harsh' ? 'selected' : '') + '>Harsh</option>' +
-                '<option value="extreme" ' + (summary.justice.severity === 'extreme' ? 'selected' : '') + '>Extreme</option>' +
-                '</select>' +
-                '<small style="font-size: 0.5rem; color: var(--dim);">Harsher justice reduces crime but may affect prosperity</small>' +
-                '</div>';
+        var container = _openModal({
+            title: 'Justice: ' + _escapeHtml(summary.name || ''),
+            content: content,
+            confirmText: 'Save',
+            cancelText: 'Cancel',
+            onConfirm: function () {
+                var severitySelect = container.querySelector('select[name="severity"]');
+                var watchCheckbox = container.querySelector('input[name="hasWatch"]');
+                var watchSizeInput = container.querySelector('input[name="watchSize"]');
 
-            content += '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">' +
-                '<input type="checkbox" id="hasWatchInput" ' + (summary.justice.hasWatch ? 'checked' : '') + '>' +
-                '<span style="font-size: 0.7rem;">Has Watch / Guard Force</span>' +
-                '</label>' +
-                '</div>';
+                var newSeverity = severitySelect ? severitySelect.value : null;
+                var newHasWatch = watchCheckbox ? watchCheckbox.checked : false;
+                var newWatchSize = watchSizeInput ? Number(watchSizeInput.value) : 0;
 
-            content += '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Watch Size</label>' +
-                '<input type="number" id="watchSizeInput" value="' + (summary.justice.watchSize || 0) + '" min="0" step="5" style="width: 120px; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-                '<small style="font-size: 0.5rem; color: var(--dim);">Larger watch reduces crime but costs more</small>' +
-                '</div>';
+                var severityChanged = newSeverity && newSeverity !== currentSeverity;
+                var watchChanged = newHasWatch !== summary.hasWatch ||
+                    (newHasWatch && newWatchSize !== summary.watchSize);
 
-            content += '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
-                infoIcon + ' Current crime rate: ' + Math.round(summary.crimeRate * 100) + '%' +
-                '</div>';
+                var success = true;
 
-            content += '</div>';
-
-            _openModal({
-                title: 'Justice & Watch Management: ' + _escapeHtml(place.displayName),
-                content: content,
-                confirmText: 'Save Changes',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var severity = document.getElementById('justiceSeverityInput').value;
-                    var hasWatch = document.getElementById('hasWatchInput').checked;
-                    var watchSize = parseInt(document.getElementById('watchSizeInput').value) || 0;
-
-                    var results = [];
-                    if (severity !== summary.justice.severity) {
-                        results.push(SettlementCommands.updateJusticeSeverity(locationId, severity));
+                if (severityChanged) {
+                    var sevResult = _getGovernmentCommands().setJusticeSeverity(locationId, newSeverity);
+                    if (!sevResult.success) {
+                        _toast('Could not update justice severity: ' + sevResult.code, 'error');
+                        success = false;
                     }
-                    if (hasWatch !== summary.justice.hasWatch || watchSize !== summary.justice.watchSize) {
-                        results.push(SettlementCommands.updateWatch(locationId, hasWatch, watchSize));
-                    }
+                }
 
-                    var success = results.every(function(r) { return r && r.success; });
-                    if (success) {
-                        _showToast('Justice system updated', 'success');
-                        _closeTopModal();
-                        if (onSuccess) onSuccess();
-                    } else {
-                        _showToast('Failed to update justice system', 'error');
+                if (watchChanged) {
+                    var watchResult = _getGovernmentCommands().setWatch(locationId, {
+                        hasWatch: newHasWatch,
+                        watchSize: newHasWatch ? newWatchSize : 0
+                    });
+                    if (!watchResult.success) {
+                        _toast('Could not update watch: ' + watchResult.code, 'error');
+                        success = false;
                     }
+                }
+
+                if (success) {
+                    _toast('Justice updated.', 'success');
                     return true;
                 }
-            });
+                return false;
+            }
+        });
 
-        } finally {
-            _openingModal = false;
+        if (!container) return;
+    }
+
+    // =========================================================================
+    // 6. DEBT MANAGEMENT MODAL
+    // =========================================================================
+
+    function openDebtManagementModal(locationId) {
+        var view = _getViewModels().buildDebtView(locationId);
+        if (!view) {
+            _toast('Settlement not found.', 'error');
+            return;
         }
+
+        var content = '';
+        content += '<div class="debt-view">';
+
+        content += '<div class="debt-view__row">';
+        content += '<div class="debt-view__field">';
+        content += '<div class="debt-view__label">Total Debt</div>';
+        content += '<div class="debt-view__value">' + _fmtNumber(view.totalDebt) + '</div>';
+        content += '</div>';
+        content += '<div class="debt-view__field">';
+        content += '<div class="debt-view__label">Wealth</div>';
+        content += '<div class="debt-view__value">' + _fmtNumber(view.wealth) + '</div>';
+        content += '</div>';
+        content += '<div class="debt-view__field">';
+        content += '<div class="debt-view__label">Debt Ratio</div>';
+        content += '<div class="debt-view__value">' +
+            (typeof view.debtRatio === 'number'
+                ? _escapeHtml(view.debtRatio) + '%' +
+                    (view.debtRatioBand ? ' — ' + _escapeHtml(view.debtRatioBand.name) : '')
+                : _unknown()) + '</div>';
+        content += '</div>';
+        content += '</div>';
+
+        if (typeof view.projectedAnnualInterest === 'number' && view.projectedAnnualInterest > 0) {
+            content += '<div class="debt-view__interest">' +
+                'Projected annual interest: ' + _escapeHtml(view.projectedAnnualInterest) + ' gold' +
+                '</div>';
+        }
+
+        content += '<div class="debt-view__actions">';
+        if (typeof view.totalDebt === 'number' && view.totalDebt > 0) {
+            content += '<button type="button" data-action="repay-debt">Repay Debt</button>';
+        }
+        content += '<button type="button" data-action="borrow">Borrow</button>';
+        content += '</div>';
+
+        content += '</div>';
+
+        var container = _openModal({
+            title: 'Debt Management: ' + _escapeHtml(view.name || ''),
+            content: content,
+            confirmText: 'Close',
+            cancelText: '',
+            size: 'medium',
+            onConfirm: function () {}
+        });
+
+        if (!container) return;
+
+        container.addEventListener('click', function (event) {
+            var button = event.target.closest('[data-action]');
+            if (!button) return;
+            var action = button.dataset.action;
+
+            if (action === 'repay-debt') {
+                _closeTopModal();
+                openRepayDebtModal(locationId);
+            } else if (action === 'borrow') {
+                _closeTopModal();
+                openBorrowModal(locationId);
+            }
+        });
+    }
+
+    function openRepayDebtModal(locationId) {
+        var view = _getViewModels().buildDebtView(locationId);
+        if (!view) return;
+
+        var maxAmount = typeof view.totalDebt === 'number' ? view.totalDebt : 0;
+        var availableWealth = typeof view.wealth === 'number' ? view.wealth : 0;
+        var maxRepayable = Math.min(maxAmount, Math.max(0, availableWealth));
+
+        var content = '';
+        content += '<div class="debt-repay">';
+        content += '<div class="debt-repay__row">';
+        content += '<label for="repay-amount">Amount to Repay</label>';
+        content += '<input id="repay-amount" name="amount" type="number" min="0" step="1"' +
+            ' max="' + maxRepayable + '" value="0">';
+        content += '<span class="debt-repay__hint">Max: ' + _escapeHtml(maxRepayable) + ' gold</span>';
+        content += '</div>';
+        content += '<div class="debt-repay__row">';
+        content += '<button type="button" data-action="fill-max">Repay All Available</button>';
+        content += '</div>';
+        content += '</div>';
+
+        var container = _openModal({
+            title: 'Repay Debt',
+            content: content,
+            confirmText: 'Repay',
+            cancelText: 'Cancel',
+            size: 'small',
+            onConfirm: function () {
+                var input = container.querySelector('input[name="amount"]');
+                if (!input) return false;
+                var amount = Number(input.value);
+                if (!isFinite(amount) || amount <= 0) {
+                    _toast('Enter a positive amount.', 'error');
+                    return false;
+                }
+                _confirm(
+                    'Repay ' + amount + ' gold?',
+                    'Confirm Repayment',
+                    function () {
+                        var result = _getDebtCommands().repayDebt(locationId, amount);
+                        if (result.success) {
+                            _toast('Repaid ' + result.appliedAmount + ' gold.', 'success');
+                            _closeTopModal();
+                        } else {
+                            _toast('Repayment failed: ' + result.code, 'error');
+                        }
+                    }
+                );
+                return true;
+            }
+        });
+
+        if (!container) return;
+
+        container.addEventListener('click', function (event) {
+            var button = event.target.closest('[data-action]');
+            if (!button) return;
+            if (button.dataset.action === 'fill-max') {
+                var input = container.querySelector('input[name="amount"]');
+                if (input) input.value = String(maxRepayable);
+            }
+        });
+    }
+
+    function openBorrowModal(locationId) {
+        var view = _getViewModels().buildDebtView(locationId);
+        if (!view) return;
+
+        var content = '';
+        content += '<div class="debt-borrow">';
+        content += '<div class="debt-borrow__row">';
+        content += '<label for="borrow-amount">Amount to Borrow</label>';
+        content += '<input id="borrow-amount" name="amount" type="number" min="1" step="1" value="100">';
+        content += '</div>';
+        content += '<div class="debt-borrow__hint">' +
+            'Interest accrues annually. The current annual rate is ' +
+            (typeof view.interestRate === 'number'
+                ? Math.round(view.interestRate * 100) + '%'
+                : 'unknown') +
+            '.' +
+            '</div>';
+        content += '</div>';
+
+        var container = _openModal({
+            title: 'Borrow',
+            content: content,
+            confirmText: 'Borrow',
+            cancelText: 'Cancel',
+            size: 'small',
+            onConfirm: function () {
+                var input = container.querySelector('input[name="amount"]');
+                if (!input) return false;
+                var amount = Number(input.value);
+                if (!isFinite(amount) || amount <= 0) {
+                    _toast('Enter a positive amount.', 'error');
+                    return false;
+                }
+                var result = _getDebtCommands().borrow(locationId, amount);
+                if (result.success) {
+                    _toast('Borrowed ' + amount + ' gold.', 'success');
+                    return true;
+                }
+                _toast('Borrow failed: ' + result.code, 'error');
+                return false;
+            }
+        });
+
+        if (!container) return;
     }
 
     // =========================================================================
@@ -497,316 +532,143 @@
     // =========================================================================
 
     function openFinancialReportModal(locationId) {
-        if (_openingModal) {
-            _showToast('Modal is already opening', 'warning');
+        var view = _getViewModels().buildFinancialReportView(locationId);
+        if (!view) {
+            _toast('Financial data not available.', 'error');
             return;
         }
-        _openingModal = true;
 
-        try {
-            var place = _getPlaceById(locationId);
-            if (!place) {
-                _showToast('Location not found', 'error');
-                return;
-            }
+        var content = '';
+        content += '<div class="financial-report">';
 
-            var report = _getFinancialReport(locationId, 5);
-            if (!report) {
-                _showToast('Financial report not available', 'error');
-                return;
-            }
+        content += '<div class="financial-report__notice">' +
+            'Current snapshot for year ' + _escapeHtml(view.currentYear) + '.' +
+            '</div>';
 
-            var infoIcon = _getIcon('CIRCLE_DOT');
-            var coinIcon = _getIcon('COIN');
+        content += '<section class="financial-report__section">';
+        content += '<h3>Income</h3>';
+        content += _fieldRow('Taxes', view.income.taxes);
+        content += _fieldRow('Trade', view.income.trade);
+        content += _fieldRow('Industry', view.income.industry);
+        content += _fieldRow('State Enterprises', view.income.stateEnterprises);
+        content += _fieldRow('Public Enterprises', view.income.publicEnterprises);
+        content += _fieldRow('Total', view.income.total, true);
+        content += '</section>';
 
-            var summary = report.summary;
+        content += '<section class="financial-report__section">';
+        content += '<h3>Expenses</h3>';
+        content += _fieldRow('Maintenance', view.expenses.maintenance);
+        content += _fieldRow('Wages', view.expenses.wages);
+        content += _fieldRow('Military', view.expenses.military);
+        content += _fieldRow('Infrastructure', view.expenses.infrastructure);
+        content += _fieldRow('Education', view.expenses.education);
+        content += _fieldRow('Government Salaries', view.expenses.governmentSalaries);
+        content += _fieldRow('Total', view.expenses.total, true);
+        content += '</section>';
 
-            var content = '<div style="max-height: 500px; overflow-y: auto; padding: 4px;">';
+        content += '<section class="financial-report__section">';
+        content += '<h3>Surplus</h3>';
+        content += _fieldRow('Annual Surplus', view.surplus, true);
+        content += '</section>';
 
-            content += '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; margin-bottom: 16px;">' +
-                '<strong>' + coinIcon + ' Financial Report</strong>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">' + _escapeHtml(place.displayName) + ' - 5 Year Summary</div>' +
-                '</div>';
+        content += '</div>';
 
-            content += '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 16px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center;">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Avg Income</div>' +
-                '<div style="font-size: 1rem; font-weight: bold; color: var(--success);">' + summary.averageIncome + ' gold</div>' +
-                '</div>' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center;">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Avg Expenses</div>' +
-                '<div style="font-size: 1rem; font-weight: bold; color: var(--danger);">' + summary.averageExpenses + ' gold</div>' +
-                '</div>' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center;">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Avg Surplus</div>' +
-                '<div style="font-size: 1rem; font-weight: bold; color: ' + (summary.averageSurplus >= 0 ? 'var(--success)' : 'var(--danger)') + ';">' + summary.averageSurplus + ' gold</div>' +
-                '</div>' +
-                '</div>';
-
-            content += '<div style="background: var(--bg3); padding: 8px; border-radius: 6px;">';
-            content += '<div style="font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Yearly Breakdown</div>';
-            for (var i = 0; i < report.reports.length; i++) {
-                var r = report.reports[i];
-                var isSurplus = r.surplus >= 0;
-                content += '<div style="display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid var(--border-light); font-size: 0.55rem;">' +
-                    '<span style="color: var(--dim);">' + r.year + '</span>' +
-                    '<span>Income: ' + r.income + '</span>' +
-                    '<span>Expenses: ' + r.expenses + '</span>' +
-                    '<span style="color: ' + (isSurplus ? 'var(--success)' : 'var(--danger)') + ';">Surplus: ' + (isSurplus ? '+' : '') + r.surplus + '</span>' +
-                    '</div>';
-            }
-            content += '</div>';
-
-            content += '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim); margin-top: 12px;">' +
-                infoIcon + ' Based on current economic conditions. Historical data is simulated.' +
-                '</div>';
-
-            content += '</div>';
-
-            _openModal({
-                title: 'Financial Report: ' + _escapeHtml(place.displayName),
-                content: content,
-                confirmText: 'Close',
-                cancelText: '',
-                size: 'large',
-                onConfirm: function() {}
-            });
-
-        } finally {
-            _openingModal = false;
-        }
+        _openModal({
+            title: 'Financial Report: ' + _escapeHtml(view.name || ''),
+            content: content,
+            confirmText: 'Close',
+            cancelText: '',
+            size: 'large',
+            onConfirm: function () {}
+        });
     }
 
     // =========================================================================
-    // 8. EFFICIENCY SCORE MODAL
+    // 8. EFFICIENCY MODAL
     // =========================================================================
 
-    function openEfficiencyScoreModal(locationId) {
-        if (_openingModal) {
-            _showToast('Modal is already opening', 'warning');
+    function openEfficiencyModal(locationId) {
+        var view = _getViewModels().buildEfficiencyView(locationId);
+        if (!view) {
+            _toast('Efficiency data not available.', 'error');
             return;
         }
-        _openingModal = true;
 
-        try {
-            var place = _getPlaceById(locationId);
-            if (!place) {
-                _showToast('Location not found', 'error');
-                return;
-            }
+        var bandId = view.band ? view.band.id : 'unknown';
+        var bandName = view.band ? view.band.name : null;
 
-            var score = _getEfficiencyScore(locationId);
-            if (!score) {
-                _showToast('Efficiency score not available', 'error');
-                return;
-            }
+        var content = '';
+        content += '<div class="efficiency-view">';
 
-            var infoIcon = _getIcon('CIRCLE_DOT');
-            var starIcon = _getIcon('STAR_4');
-
-            var ratingColor = score.efficiency >= 80 ? 'var(--success)' :
-                             score.efficiency >= 60 ? 'var(--accent)' :
-                             score.efficiency >= 40 ? 'var(--warn)' :
-                             score.efficiency >= 20 ? 'var(--danger)' : 'var(--danger-dark)';
-
-            var content = '<div style="max-height: 500px; overflow-y: auto; padding: 4px;">';
-
-            content += '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; margin-bottom: 16px;">' +
-                '<strong>' + starIcon + ' Government Efficiency</strong>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">' + _escapeHtml(place.displayName) + '</div>' +
-                '</div>';
-
-            content += '<div style="text-align: center; padding: 20px; background: var(--bg3); border-radius: 8px; margin-bottom: 16px;">' +
-                '<div style="font-size: 3rem; font-weight: bold; color: ' + ratingColor + ';">' + score.efficiency + '</div>' +
-                '<div style="font-size: 1rem; font-weight: bold; color: ' + ratingColor + ';">' + score.rating + '</div>' +
-                '</div>';
-
-            content += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 6px;">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Income</div>' +
-                '<div style="font-size: 1rem; font-weight: bold;">' + score.income + ' gold</div>' +
-                '</div>' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 6px;">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Expenses</div>' +
-                '<div style="font-size: 1rem; font-weight: bold; color: var(--danger);">' + score.expenses + ' gold</div>' +
-                '</div>' +
-                '</div>';
-
-            content += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 6px;">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Population</div>' +
-                '<div style="font-size: 1rem; font-weight: bold;">' + score.population + '</div>' +
-                '</div>' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 6px;">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Income per Capita</div>' +
-                '<div style="font-size: 1rem; font-weight: bold;">' + score.incomePerCapita + ' gold</div>' +
-                '</div>' +
-                '</div>';
-
-            content += '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
-                infoIcon + ' Efficiency score measures how effectively the settlement generates income relative to expenses.' +
-                '</div>';
-
-            content += '</div>';
-
-            _openModal({
-                title: 'Efficiency Score: ' + _escapeHtml(place.displayName),
-                content: content,
-                confirmText: 'Close',
-                cancelText: '',
-                onConfirm: function() {}
-            });
-
-        } finally {
-            _openingModal = false;
+        content += '<div class="efficiency-view__score efficiency-view__score--' + _escapeHtml(bandId) + '">';
+        content += '<div class="efficiency-view__value">' + _escapeHtml(view.efficiency) + '</div>';
+        if (bandName) {
+            content += '<div class="efficiency-view__band">' + _escapeHtml(bandName) + '</div>';
         }
+        content += '</div>';
+
+        content += '<div class="efficiency-view__row">';
+        content += _fieldRow('Income', view.income);
+        content += _fieldRow('Expenses', view.expenses);
+        content += _fieldRow('Surplus', view.surplus, true);
+        content += '</div>';
+
+        content += '<div class="efficiency-view__row">';
+        content += _fieldRow('Population', view.population);
+        content += _fieldRow('Income per Capita', view.incomePerCapita);
+        content += '</div>';
+
+        content += '</div>';
+
+        _openModal({
+            title: 'Efficiency: ' + _escapeHtml(view.name || ''),
+            content: content,
+            confirmText: 'Close',
+            cancelText: '',
+            size: 'medium',
+            onConfirm: function () {}
+        });
     }
 
     // =========================================================================
-    // 9. DEBT MANAGEMENT MODAL
+    // 9. SHARED FIELD ROW
     // =========================================================================
 
-    function openDebtManagementModal(locationId, onSuccess) {
-        if (_openingModal) {
-            _showToast('Modal is already opening', 'warning');
-            return;
+    function _fieldRow(label, value, emphasized) {
+        var cls = 'field-row' + (emphasized ? ' field-row--emphasized' : '');
+        var display;
+        if (typeof value === 'number') {
+            display = _fmtNumber(value);
+        } else if (value === null || value === undefined) {
+            display = _unknown();
+        } else {
+            display = _escapeHtml(value);
         }
-        _openingModal = true;
-
-        try {
-            var place = _getPlaceById(locationId);
-            if (!place) {
-                _showToast('Location not found', 'error');
-                return;
-            }
-
-            var summary = _getSettlementSummary(locationId);
-            if (!summary) {
-                _showToast('Settlement data not found', 'error');
-                return;
-            }
-
-            var debtRatio = _getDebtRatio(locationId);
-            var infoIcon = _getIcon('CIRCLE_DOT');
-            var warningIcon = _getIcon('WARNING');
-
-            var content = '<div style="max-height: 500px; overflow-y: auto; padding: 4px;">';
-
-            content += '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; margin-bottom: 16px;">' +
-                '<strong>' + _escapeHtml(place.displayName) + '</strong>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">Debt Management</div>' +
-                '</div>';
-
-            content += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center;">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Total Debt</div>' +
-                '<div style="font-size: 1.2rem; font-weight: bold; color: ' + (summary.totalDebt > 0 ? 'var(--danger)' : 'var(--success)') + ';">' + summary.totalDebt + ' gold</div>' +
-                '</div>' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center;">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Debt Ratio</div>' +
-                '<div style="font-size: 1.2rem; font-weight: bold; color: ' + (debtRatio > 50 ? 'var(--danger)' : debtRatio > 25 ? 'var(--warn)' : 'var(--success)') + ';">' + debtRatio + '%</div>' +
-                '</div>' +
-                '</div>';
-
-            if (summary.totalDebt > 0) {
-                content += '<div style="background: rgba(200, 68, 68, 0.15); padding: 12px; border-radius: 8px; margin-bottom: 16px; border-left: 3px solid var(--danger);">' +
-                    warningIcon + ' Debt incurs 5% annual interest. Currently paying ' + Math.floor(summary.totalDebt * 0.05) + ' gold/year in interest.' +
-                    '</div>';
-
-                content += '<div class="form-group" style="margin-bottom: 12px;">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Repay Debt</label>' +
-                    '<div style="display: flex; gap: 8px; align-items: center;">' +
-                    '<input type="number" id="repayAmount" value="0" min="0" max="' + summary.wealth + '" style="width: 120px; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-                    '<span style="font-size: 0.55rem; color: var(--dim);">Max: ' + summary.wealth + ' gold</span>' +
-                    '<button id="repayAllBtn" class="btn" style="font-size: 0.6rem; padding: 4px 10px;">Repay All</button>' +
-                    '</div>' +
-                    '<small style="font-size: 0.5rem; color: var(--dim);">Using wealth to repay debt reduces interest payments</small>' +
-                    '</div>';
-            } else {
-                content += '<div style="background: rgba(74, 158, 106, 0.15); padding: 12px; border-radius: 8px; margin-bottom: 16px; border-left: 3px solid var(--success);">' +
-                    'Settlement has no debt' +
-                    '</div>';
-            }
-
-            content += '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
-                infoIcon + ' Wealth: ' + summary.wealth + ' gold · Net Worth: ' + summary.netWorth + ' gold' +
-                '</div>';
-
-            content += '</div>';
-
-            _openModal({
-                title: 'Debt Management: ' + _escapeHtml(place.displayName),
-                content: content,
-                confirmText: 'Close',
-                cancelText: '',
-                onConfirm: function() {}
-            });
-
-            if (summary.totalDebt > 0) {
-                setTimeout(function() {
-                    var repayAllBtn = document.getElementById('repayAllBtn');
-                    if (repayAllBtn) {
-                        repayAllBtn.addEventListener('click', function() {
-                            var repayAmount = document.getElementById('repayAmount');
-                            if (repayAmount) {
-                                repayAmount.value = Math.min(summary.totalDebt, summary.wealth);
-                            }
-                        });
-                    }
-
-                    var repayAmountInput = document.getElementById('repayAmount');
-                    var form = document.querySelector('.modal-footer');
-                    if (repayAmountInput && form) {
-                        var confirmBtn = form.querySelector('.confirm-btn');
-                        if (confirmBtn) {
-                            var originalOnClick = confirmBtn.onclick;
-                            confirmBtn.onclick = function() {
-                                var amount = parseInt(document.getElementById('repayAmount').value) || 0;
-                                if (amount <= 0) {
-                                    _showToast('Enter a valid amount to repay', 'error');
-                                    return false;
-                                }
-                                if (amount > summary.wealth) {
-                                    _showToast('Not enough wealth to repay ' + amount + ' gold', 'error');
-                                    return false;
-                                }
-
-                                _confirmDialog(
-                                    'Repay ' + amount + ' gold of debt? This will reduce your wealth by ' + amount + ' gold.',
-                                    'Confirm Repayment',
-                                    function() {
-                                        var result = SettlementCommands.updateWealth(locationId, -amount, 'Debt repayment');
-                                        if (result && result.success) {
-                                            var debtResult = SettlementCommands.updateDebt(locationId, -amount, 'Debt repayment');
-                                            if (debtResult && debtResult.success) {
-                                                _showToast('Repaid ' + amount + ' gold of debt', 'success');
-                                                _closeTopModal();
-                                                if (onSuccess) onSuccess();
-                                            }
-                                        }
-                                    }
-                                );
-                                return false;
-                            };
-                        }
-                    }
-                }, 100);
-            }
-
-        } finally {
-            _openingModal = false;
-        }
+        return '<div class="' + cls + '">' +
+            '<span class="field-row__label">' + _escapeHtml(label) + '</span>' +
+            '<span class="field-row__value">' + display + '</span>' +
+            '</div>';
     }
 
     // =========================================================================
     // 10. EXPORTS
     // =========================================================================
 
-    window.openTaxRateManagementModal = openTaxRateManagementModal;
-    window.openSpendingManagementModal = openSpendingManagementModal;
-    window.openJusticeManagementModal = openJusticeManagementModal;
-    window.openFinancialReportModal = openFinancialReportModal;
-    window.openEfficiencyScoreModal = openEfficiencyScoreModal;
+    window.SettlementEconomyModals = Object.freeze({
+        openTaxRateModal: openTaxRateModal,
+        openSpendingModal: openSpendingModal,
+        openJusticeModal: openJusticeModal,
+        openDebtManagementModal: openDebtManagementModal,
+        openFinancialReportModal: openFinancialReportModal,
+        openEfficiencyModal: openEfficiencyModal
+    });
+
+    // Legacy aliases for callers that still use the old names.
+    window.openTaxRateManagementModal = openTaxRateModal;
+    window.openSpendingManagementModal = openSpendingModal;
+    window.openJusticeManagementModal = openJusticeModal;
     window.openDebtManagementModal = openDebtManagementModal;
+    window.openFinancialReportModal = openFinancialReportModal;
+    window.openEfficiencyScoreModal = openEfficiencyModal;
 
 })();
