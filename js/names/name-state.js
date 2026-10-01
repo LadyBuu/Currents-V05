@@ -24,86 +24,51 @@
  *
  * SEMANTIC RULES:
  *   - This module does NOT own persisted data. It caches and projects.
- *     It never writes to masterData. It never repairs schema.
- *   - Required dependencies throw at load. There are no `typeof X ===
- *     'function' ? ... : fallback` wrappers.
+ *   - Required dependencies throw at load.
  *   - Cache lookups distinguish "not cached" from "cached falsy value"
  *     via Map.has().
- *   - `invalidateSurnameHistory` and `invalidateNameList` are targeted.
- *     There is no "nuke everything" invalidation; callers rarely want
- *     that. `clearAllCaches` exists for masterData reload.
- *   - UI state is validated. `setUiState` rejects unknown keys, rejects
- *     explicit `undefined`, and validates enum values against
- *     NameRules.RULE_TYPES where the value is a rule type.
- *   - Subscriber exceptions are logged, not silently swallowed, and do
- *     not prevent other subscribers from receiving the event.
+ *   - Targeted invalidation only. clearAllCaches for masterData reload.
+ *   - Subscriber exceptions are logged, not silently swallowed.
  *   - Malformed canonical data throws. Corruption is not the same as
- *     "not configured", and this module does not collapse the two.
- *   - Read accessors return either the mutable live reference (for
- *     commands) or a frozen snapshot (for everyone else). Which is
- *     which is documented on each function.
+ *     "not configured."
  *
  * CACHE OWNERSHIP:
- *   - surnameHistoryCache: characterId → surname history object. The
- *     authoritative history is on the character record; this cache is
- *     a projection. Invalidation: invalidateSurnameHistory(id), or
- *     clearAllCaches() on masterData reload.
- *   - nameListCache: countryId → name list. The authoritative list is
- *     in masterData.nameLists; this cache is a projection. Invalidation:
- *     invalidateNameList(countryId), or clearAllCaches().
- *
- *   Nothing else is cached. Random name selections are not cached
- *   anywhere: caching a random result turns getRandomName into "get the
- *   previously chosen name", which is not what the function says.
+ *   - surnameHistoryCache: characterId → surname history object.
+ *   - nameListCache: countryId → name list.
  *
  * ACCESSOR MUTABILITY CONTRACT:
- *   getNameList        → returns the LIVE MUTABLE reference. Used by
- *                        name-commands.js for add/remove.
- *   getSurnameHistory  → returns a FROZEN SHALLOW SNAPSHOT. Safe for
- *                        UI and read-only callers. Commands that need
- *                        to mutate history mutate the character record
- *                        directly.
- *   getUiState         → returns a FROZEN SHALLOW SNAPSHOT. Callers
- *                        must use setUiState to change it.
+ *   Cache accessors are named getMutable* to make it explicit that they
+ *   return the LIVE canonical reference. They are intended for use by
+ *   NameCommands (which mutate through them) and by NameQueries as an
+ *   internal cache hint (which then clones). Public read-only access
+ *   goes through NameQueries.
  *
- *   There is a deliberate asymmetry between getNameList (mutable) and
- *   getSurnameHistory (frozen). It reflects the actual usage pattern:
- *   name lists are mutated in place by list-editing commands; surname
- *   history is appended to by surname-change commands that own the
- *   character record. Do not "fix" the asymmetry without checking both
- *   call sites.
+ *     getMutableSurnameHistory  → LIVE reference. Do not mutate from UI.
+ *     getMutableNameList        → LIVE reference. Do not mutate from UI.
+ *     getUiState                → FROZEN shallow snapshot.
  *
  * SUBSCRIPTIONS:
- *   NameState is a listener, not a source of truth. Two external events
- *   drive it:
+ *   External events drive invalidation:
  *     - characterChanged (action 'surnameChange' / 'surnameRevert' /
- *       'surnameHistoryCleared' / 'birthSurname') → invalidates the
- *       affected surname-history cache entries.
- *     - nameListChanged → invalidates the affected name-list cache entry.
- *   NameState re-emits internal events to its own subscribers:
+ *       'surnameHistoryCleared' / 'birthSurname')
+ *     - nameListChanged
+ *
+ *   Internal events to subscribers:
  *     - { type: 'cachesCleared' }
  *     - { type: 'surnameHistoryInvalidated', characterId }
  *     - { type: 'nameListInvalidated', countryId }
  *     - { type: 'uiStateChanged', uiState }
- *   These are private callbacks, not DOM events.
  *
  * LIFECYCLE:
  *   There is no initialize(). The module is usable as soon as it loads.
- *   External event listeners are attached at load. On masterData reload
- *   or import, the caller must invoke clearAllCaches(). There is no
- *   auto-wiring because the loaded dependency set does not include a
- *   masterData-reload event.
+ *   On masterData reload or import, the caller must invoke clearAllCaches().
  *
  * DEPENDENCIES (REQUIRED):
  *   - accessors.js:   getCharacterById, getNameLists
- *   - name-rules.js:  NameRules (for RULE_TYPES; used to validate the
- *                     generationMode UI field without duplicating the
- *                     rule vocabulary)
+ *   - name-rules.js:  NameRules (for RULE_TYPES)
  *
  * DEPENDENCIES (OPTIONAL):
- *   - None. This module subscribes to events that other modules emit,
- *     but does not require those modules to be loaded. If an event
- *     never fires, the cache simply is not invalidated by it.
+ *   - None.
  *
  * ICON POLICY: No emojis. No icons.
  *
@@ -142,13 +107,9 @@
     // 1. INTERNAL STATE
     // =========================================================================
 
-    // Caches. Both are keyed by string ID. Map.has() distinguishes
-    // "not cached" from "cached null".
     var _surnameHistoryCache = new Map();
     var _nameListCache = new Map();
 
-    // UI generation state. Scoped to the name generator modal. Flat;
-    // no nested objects. Shallow-frozen snapshots are sufficient.
     var _uiState = {
         selectedCountryId: null,
         selectedGender: 'all',
@@ -157,7 +118,6 @@
         generationMode: 'random'
     };
 
-    // Subscribers. Each entry is a callback receiving an event object.
     var _subscribers = [];
 
     // =========================================================================
@@ -205,11 +165,6 @@
         }
     }
 
-    /**
-     * Returns the set of valid generation-mode values, derived from the
-     * canonical rule vocabulary. This is the only place the UI's mode
-     * selector vocabulary is defined.
-     */
     function _getValidGenerationModes() {
         var types = window.NameRules.RULE_TYPES;
         var out = [];
@@ -226,11 +181,7 @@
 
     /**
      * Clears every cache and re-notifies subscribers. Called on
-     * masterData reload or import. Does not touch UI state: reloading
-     * canonical data should not reset the user's current selection.
-     *
-     * This is the ONLY supported way to reset caches. There is no
-     * initialize(). The module is usable as soon as it loads.
+     * masterData reload or import. Does not touch UI state.
      */
     function clearAllCaches() {
         _surnameHistoryCache.clear();
@@ -243,52 +194,36 @@
     // =========================================================================
 
     /**
-     * Returns a frozen shallow snapshot of the surname history for a
-     * character, reading through the cache when possible.
+     * Returns the LIVE surname history for a character, reading through
+     * the cache. Do not mutate the result from UI code.
      *
-     * Returns:
-     *   - null when the character does not exist
-     *   - null when the character exists but has no surnameHistory field
-     *   - a frozen snapshot of the history object otherwise
-     *
-     * A surnameHistory field that is present but not a plain object is
-     * malformed and throws. "Absent" and "corrupt" are different states.
-     *
-     * The returned snapshot is frozen at the top level. Nested arrays
-     * and objects are the same references as canonical data; do not
-     * mutate them. This accessor is intended for read-only consumers
-     * (queries, UI). Commands that need to mutate history operate on
-     * the character record directly.
+     * Returns null when the character does not exist, or when it has no
+     * surnameHistory field. A surnameHistory field present but not a
+     * plain object throws.
      */
-    function getSurnameHistory(characterId) {
+    function getMutableSurnameHistory(characterId) {
         if (!_hasId(characterId)) return null;
 
-        var history;
         if (_surnameHistoryCache.has(characterId)) {
-            history = _surnameHistoryCache.get(characterId);
-        } else {
-            var character = window.getCharacterById(characterId);
-            if (!character) return null;
-
-            var canonical = character.surnameHistory;
-            if (_isMissing(canonical)) return null;
-            if (!_isPlainObject(canonical)) {
-                throw new Error(
-                    'name-state.js: surnameHistory for "' + characterId +
-                    '" is malformed (expected object or null)'
-                );
-            }
-
-            _surnameHistoryCache.set(characterId, canonical);
-            history = canonical;
+            return _surnameHistoryCache.get(characterId);
         }
 
-        return Object.freeze(Object.assign({}, history));
+        var character = window.getCharacterById(characterId);
+        if (!character) return null;
+
+        var canonical = character.surnameHistory;
+        if (_isMissing(canonical)) return null;
+        if (!_isPlainObject(canonical)) {
+            throw new Error(
+                'name-state.js: surnameHistory for "' + characterId +
+                '" is malformed (expected object or null)'
+            );
+        }
+
+        _surnameHistoryCache.set(characterId, canonical);
+        return canonical;
     }
 
-    /**
-     * Drops the cached surname history for one character.
-     */
     function invalidateSurnameHistory(characterId) {
         if (!_hasId(characterId)) return;
         _surnameHistoryCache.delete(characterId);
@@ -303,21 +238,14 @@
     // =========================================================================
 
     /**
-     * Returns the LIVE MUTABLE name list for a country, reading through
-     * the cache. Used by name-commands.js for add/remove operations.
+     * Returns the LIVE MUTABLE name list for a country. Used by
+     * NameCommands for add/remove. Read-only consumers use
+     * NameQueries.getNameList, which returns a clone.
      *
-     * Returns:
-     *   - null when the country has no configured list
-     *   - the live list object otherwise
-     *
-     * A name list that is present but not a plain object is malformed
-     * and throws.
-     *
-     * Callers MUST NOT mutate the returned object unless they are
-     * name-commands.js performing a list edit. Read-only consumers
-     * should use NameQueries.getNameList, which returns a clone.
+     * Returns null when the country has no configured list. A list
+     * present but not a plain object throws.
      */
-    function getNameList(countryId) {
+    function getMutableNameList(countryId) {
         if (!_hasId(countryId)) return null;
 
         if (_nameListCache.has(countryId)) {
@@ -345,9 +273,6 @@
         return list;
     }
 
-    /**
-     * Drops the cached name list for one country.
-     */
     function invalidateNameList(countryId) {
         if (!_hasId(countryId)) return;
         _nameListCache.delete(countryId);
@@ -363,10 +288,6 @@
 
     /**
      * Returns a frozen shallow snapshot of the UI generation state.
-     *
-     * The snapshot is safe to read but not to mutate. Use setUiState to
-     * change the underlying state. UI state is flat; a shallow freeze is
-     * sufficient.
      */
     function getUiState() {
         return Object.freeze(Object.assign({}, _uiState));
@@ -381,15 +302,9 @@
      *     to leave it unchanged.
      *   - `null` is permitted only for `selectedCountryId` and
      *     `selectedGender`.
-     *   - `selectedGender` is validated against the gender vocabulary.
+     *   - `previewName` and `previewSurname` must be strings.
      *   - `generationMode` is validated against NameRules.RULE_TYPES.
-     *   - `previewName` and `previewSurname` must be strings; `null` is
-     *     not accepted (use '' to clear).
-     *   - Nested objects are not supported. Add a dedicated field with
-     *     an explicit contract if you need nested state.
-     *
-     * @param {Object} updates
-     * @throws {Error} for unknown keys, explicit undefined, or invalid values
+     *   - Nested objects are not supported.
      */
     function setUiState(updates) {
         if (!_isPlainObject(updates)) {
@@ -452,9 +367,6 @@
         });
     }
 
-    /**
-     * Resets UI state to defaults. Does not touch caches.
-     */
     function resetUiState() {
         _uiState.selectedCountryId = null;
         _uiState.selectedGender = 'all';
@@ -471,18 +383,6 @@
     // 8. SUBSCRIPTIONS
     // =========================================================================
 
-    /**
-     * Subscribes to NameState internal events.
-     *
-     * Events:
-     *   - { type: 'cachesCleared' }
-     *   - { type: 'surnameHistoryInvalidated', characterId }
-     *   - { type: 'nameListInvalidated', countryId }
-     *   - { type: 'uiStateChanged', uiState }
-     *
-     * @param {Function} callback
-     * @returns {Function} unsubscribe
-     */
     function subscribe(callback) {
         if (typeof callback !== 'function') {
             throw new Error('NameState.subscribe: callback must be a function');
@@ -497,10 +397,6 @@
     // =========================================================================
     // 9. EXTERNAL EVENT LISTENERS
     // =========================================================================
-    //
-    // These keep caches coherent without requiring the emitters to know
-    // NameState exists. If the emitters are absent, no event fires and
-    // the caches are simply not auto-invalidated.
 
     function _handleCharacterChanged(event) {
         var detail = event && event.detail;
@@ -532,23 +428,18 @@
     // =========================================================================
 
     window.NameState = {
-        // Lifecycle
         clearAllCaches: clearAllCaches,
 
-        // Surname history cache
-        getSurnameHistory: getSurnameHistory,
+        getMutableSurnameHistory: getMutableSurnameHistory,
         invalidateSurnameHistory: invalidateSurnameHistory,
 
-        // Name list cache (LIVE reference — see module header)
-        getNameList: getNameList,
+        getMutableNameList: getMutableNameList,
         invalidateNameList: invalidateNameList,
 
-        // UI state
         getUiState: getUiState,
         setUiState: setUiState,
         resetUiState: resetUiState,
 
-        // Subscriptions
         subscribe: subscribe
     };
 
