@@ -1,1552 +1,520 @@
 /**
- * =============================================================================
- * STILL WATERS - FAMILY MODALS (modals-family.js)
- * =============================================================================
- * 
- * This file contains ALL family-specific UI modals:
- * - Set Birth Parents
- * - Create Adoption/Guardianship
- * - Edit Adoption
- * - Remove Adoption
- * - Adoption Search
- * - Legitimization
- * 
- * UPDATED: Uses FamilyLogic from family-logic.js
- * 
- * =============================================================================
+ * modals-family.js
+ *
+ * Family modals. UI only. Dispatches to FamilyCommands.
+ * No domain logic, no state access, no persistence.
  */
 
-// =============================================================================
-// 1. ICON HELPERS
-// =============================================================================
+(function() {
+    'use strict';
 
-function _getIcon(name) {
-    if (window.Icons && window.Icons[name]) {
-        return window.Icons[name];
+    // -------------------------------------------------------------------------
+    // HELPERS
+    // -------------------------------------------------------------------------
+
+    function _icon(name) {
+        if (window.Icons && window.Icons[name]) return window.Icons[name];
+        if (window.Icons && window.Icons.CIRCLE) return window.Icons.CIRCLE;
+        return '<svg viewBox="0 0 20 20" width="1em" height="1em" style="display:inline-block;fill:currentColor;stroke:currentColor;vertical-align:middle;"><circle cx="10" cy="10" r="5.71" fill="currentColor"/></svg>';
     }
-    if (window.Icons && window.Icons.CIRCLE) {
-        return window.Icons.CIRCLE;
+
+    function _escape(str) {
+        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
+        if (!str) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
-    return '<svg viewBox="0 0 20 20" width="1em" height="1em" style="display:inline-block;fill:currentColor;stroke:currentColor;vertical-align:middle;"><circle cx="10" cy="10" r="5.71" fill="currentColor"/></svg>';
-}
 
-// =============================================================================
-// 2. DEPENDENCY WRAPPERS
-// =============================================================================
-
-function _escapeHtml(str) {
-    if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-    if (!str) return '';
-    return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
-
-function _showToast(msg, type) {
-    if (typeof window.showToast === 'function') window.showToast(msg, type);
-    else if (typeof window.showToastMessage === 'function') window.showToastMessage(msg, type);
-}
-
-function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
-function _getCharacterById(id) {
-    return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
-}
-
-function _getCharacters() {
-    return typeof window.getCharacters === 'function' ? window.getCharacters() : [];
-}
-
-function _getPlaces() {
-    return typeof window.getPlaces === 'function' ? window.getPlaces() : [];
-}
-
-function _getPlaceById(id) {
-    return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
-}
-
-function _getCurrentLocation(character) {
-    return typeof window.getCurrentLocation === 'function' ? window.getCurrentLocation(character) : 'Unknown';
-}
-
-function _getCharacterHousehold(characterId) {
-    if (typeof window.getCharacterHousehold === 'function') {
-        return window.getCharacterHousehold(characterId);
+    function _toast(msg, type) {
+        if (typeof window.showToast === 'function') window.showToast(msg, type);
+        else if (typeof window.showToastMessage === 'function') window.showToastMessage(msg, type);
     }
-    return null;
-}
 
-function _getAllHouseholds() {
-    if (typeof window.getAllHouseholds === 'function') {
-        return window.getAllHouseholds();
-    }
-    return window.masterData?.data?.households || [];
-}
-
-function _getHousehold(id) {
-    if (typeof window.getHousehold === 'function') {
-        return window.getHousehold(id);
-    }
-    var households = _getAllHouseholds();
-    for (var i = 0; i < households.length; i++) {
-        if (households[i].id === id) return households[i];
-    }
-    return null;
-}
-
-function _calculateAge(birthYear, isDeceased, deathYear) {
-    // Delegates to time.js — do not reimplement age logic here.
-    if (typeof window.calculateAge === 'function') {
-        return window.calculateAge(birthYear, isDeceased, deathYear);
-    }
-    return null;
-}
-
-function _getAge(char) {
-    return _calculateAge(char.birthYear, char.isDeceased, char.deathYear);
-}
-
-function _saveMasterData() {
-    if (typeof window.saveMasterData === 'function') window.saveMasterData();
-}
-
-function _openModal(options) {
-    if (typeof window.openModal === 'function') return window.openModal(options);
-    return null;
-}
-
-function _closeTopModal() {
-    if (typeof window.closeTopModal === 'function') window.closeTopModal();
-}
-
-function _confirmDialog(message, title, onConfirm) {
-    if (typeof window.confirmDialog === 'function') {
-        window.confirmDialog(message, title, onConfirm);
-    } else if (confirm(message)) {
-        onConfirm();
-    }
-}
-
-function _recordMove(character, year, locationId, note) {
-    if (typeof window.recordMove === 'function') {
-        return window.recordMove(character, year, locationId, note);
-    }
-    return false;
-}
-
-function _recordHouseholdChange(characterId, householdId, year, action, reason, options) {
-    if (typeof window.recordHouseholdChange === 'function') {
-        return window.recordHouseholdChange(characterId, householdId, year, action, reason, options || {});
-    }
-    return false;
-}
-
-function _addHouseholdMember(householdId, characterId, type, options) {
-    if (typeof window.addHouseholdMember === 'function') {
-        return window.addHouseholdMember(householdId, characterId, type, options);
-    }
-    return false;
-}
-
-function _removeHouseholdMember(householdId, characterId) {
-    if (typeof window.removeHouseholdMember === 'function') {
-        return window.removeHouseholdMember(householdId, characterId);
-    }
-    return false;
-}
-
-function _createHousehold(name, location, options) {
-    if (typeof window.createHousehold === 'function') {
-        return window.createHousehold(name, location, options);
-    }
-    return null;
-}
-
-// =============================================================================
-// 3. FAMILY LOGIC WRAPPERS
-// =============================================================================
-
-function _setParent(childId, parentId, parentType, options) {
-    if (typeof window.FamilyLogic !== 'undefined') {
-        return window.FamilyLogic.setParent(childId, parentId, parentType, options);
-    }
-    if (typeof window.setParent === 'function') {
-        return window.setParent(childId, parentId, parentType, options);
-    }
-    return null;
-}
-
-function _removeParent(childId, parentId, options) {
-    if (typeof window.FamilyLogic !== 'undefined') {
-        return window.FamilyLogic.removeParent(childId, parentId, options);
-    }
-    if (typeof window.removeParent === 'function') {
-        return window.removeParent(childId, parentId, options);
-    }
-    return false;
-}
-
-function _getParents(childId) {
-    if (typeof window.FamilyLogic !== 'undefined') {
-        return window.FamilyLogic.getParents(childId);
-    }
-    if (typeof window.getParents === 'function') {
-        return window.getParents(childId);
-    }
-    return { father: null, mother: null };
-}
-
-function _getChildren(characterId) {
-    if (typeof window.FamilyLogic !== 'undefined') {
-        return window.FamilyLogic.getChildren(characterId);
-    }
-    if (typeof window.getChildren === 'function') {
-        return window.getChildren(characterId);
-    }
-    return [];
-}
-
-function _getSiblings(characterId) {
-    if (typeof window.FamilyLogic !== 'undefined') {
-        return window.FamilyLogic.getSiblings(characterId);
-    }
-    if (typeof window.getSiblings === 'function') {
-        return window.getSiblings(characterId);
-    }
-    return [];
-}
-
-function _getConsanguinityDegree(id1, id2) {
-    if (typeof window.FamilyLogic !== 'undefined') {
-        return window.FamilyLogic.getConsanguinityDegree(id1, id2);
-    }
-    if (typeof window.getConsanguinityDegree === 'function') {
-        return window.getConsanguinityDegree(id1, id2);
-    }
-    return null;
-}
-
-function _getRelationshipDescription(id1, id2) {
-    if (typeof window.FamilyLogic !== 'undefined') {
-        return window.FamilyLogic.getRelationshipDescription(id1, id2);
-    }
-    if (typeof window.getRelationshipDescription === 'function') {
-        return window.getRelationshipDescription(id1, id2);
-    }
-    return null;
-}
-
-// =============================================================================
-// 4. ADOPTION HELPERS
-// =============================================================================
-
-function _createAdoption(parentId, childId, options) {
-    if (typeof window.createAdoption === 'function') {
-        return window.createAdoption(parentId, childId, options);
-    }
-    // Fallback: create using setParent
-    return _setParent(childId, parentId, options.parentType || 'guardian', {
-        biological: false,
-        startYear: options.year,
-        notes: options.notes || options.type || 'Adoption'
-    });
-}
-
-function _removeAdoption(parentId, childId, options) {
-    if (typeof window.removeAdoption === 'function') {
-        return window.removeAdoption(parentId, childId, options);
-    }
-    return _removeParent(childId, parentId, options);
-}
-
-function _getAdoptionRecord(parentId, childId) {
-    if (typeof window.getAdoptionRecord === 'function') {
-        return window.getAdoptionRecord(parentId, childId);
-    }
-    return null;
-}
-
-function _isAdoptiveParent(parentId, childId) {
-    if (typeof window.isAdoptiveParent === 'function') {
-        return window.isAdoptiveParent(parentId, childId);
-    }
-    return false;
-}
-
-function _getAdoptiveParents(childId) {
-    if (typeof window.getAdoptiveParents === 'function') {
-        return window.getAdoptiveParents(childId);
-    }
-    return [];
-}
-
-function _getAdoptedChildren(parentId) {
-    if (typeof window.getAdoptedChildren === 'function') {
-        return window.getAdoptedChildren(parentId);
-    }
-    return [];
-}
-
-function _getFullRelationshipDescription(id1, id2) {
-    if (typeof window.getFullRelationshipDescription === 'function') {
-        return window.getFullRelationshipDescription(id1, id2);
-    }
-    return null;
-}
-
-function _getRelationshipBetween(id1, id2) {
-    if (typeof window.getRelationshipBetween === 'function') {
-        return window.getRelationshipBetween(id1, id2);
-    }
-    return null;
-}
-
-// =============================================================================
-// 5. CHARACTER SELECTOR
-// =============================================================================
-
-function _openCharacterSelectorForFamily(title, onSelect, options) {
-    options = options || {};
-    
-    if (typeof window.openUnifiedCharacterSelector === 'function') {
-        window.openUnifiedCharacterSelector({
-            title: title || 'Select Character',
-            targetId: options.targetId || null,
-            onSelect: onSelect,
-            filters: {
-                gender: options.gender || 'all',
-                status: options.status || 'all',
-                showDeceased: options.showDeceased || false,
-                location: options.locationFilter || 'all',
-                ageMin: options.ageMin || null,
-                ageMax: options.ageMax || null
-            },
-            preset: options.preset || null
-        });
-        return true;
-    }
-    
-    if (typeof window.openCharacterSelector === 'function') {
-        window.openCharacterSelector({
-            title: title || 'Select Character',
-            targetId: options.targetId || null,
-            onSelect: onSelect,
-            filters: {
-                gender: options.gender || 'all',
-                status: options.status || 'all',
-                showDeceased: options.showDeceased || false,
-                location: options.locationFilter || 'all'
-            },
-            preset: options.preset || null
-        });
-        return true;
-    }
-    
-    _showToast('Character selector not available', 'error');
-    return false;
-}
-
-// =============================================================================
-// 6. SET BIRTH PARENTS MODAL
-// =============================================================================
-
-function openSetBirthParentsModal(child, father, mother, onSuccess) {
-    if (!child) {
-        _showToast('Child not found', 'error');
-        return;
-    }
-    
-    var childAge = _getAge(child);
-    var parentLocation = father ? _getCurrentLocation(father) : (mother ? _getCurrentLocation(mother) : null);
-    var childLocation = _getCurrentLocation(child);
-    var currentYear = _getCurrentYear();
-    
-    var existingParents = _getParents(child.id);
-    var existingFather = existingParents.father;
-    var existingMother = existingParents.mother;
-    
-    var warningIcon = _getIcon('WARNING');
-    var infoIcon = _getIcon('CIRCLE_DOT');
-    var personIcon = _getIcon('PERSON');
-    var locationIcon = _getIcon('LOCATION');
-    var checkIcon = _getIcon('CHECK_SIMPLE');
-    
-    var warningHtml = '';
-    if (existingFather && father && existingFather.id !== father.id) {
-        warningHtml += '<div style="background: rgba(200, 68, 68, 0.15); padding: 6px; border-radius: 6px; margin-bottom: 8px; color: var(--warn);">' +
-            warningIcon + ' Warning: ' + child.name + ' already has a father (' + existingFather.name + '). This will replace them.</div>';
-    }
-    if (existingMother && mother && existingMother.id !== mother.id) {
-        warningHtml += '<div style="background: rgba(200, 68, 68, 0.15); padding: 6px; border-radius: 6px; margin-bottom: 8px; color: var(--warn);">' +
-            warningIcon + ' Warning: ' + child.name + ' already has a mother (' + existingMother.name + '). This will replace them.</div>';
-    }
-    
-    var modalContent = '<div class="info-box" style="background: var(--bg3); padding: 12px; border-radius: 8px; margin-bottom: 16px;">' +
-        '<div style="margin-bottom: 8px;">' +
-            '<strong>' + personIcon + ' Child: ' + _escapeHtml(child.name) + ' ' + _escapeHtml(child.surname || '') + '</strong><br>' +
-            locationIcon + ' Current location: ' + _escapeHtml(childLocation) + ' · ' + childAge + ' years old' +
-            (child.birthYear ? '<br>' + infoIcon + ' Current birth year: ' + child.birthYear : '') +
-        '</div>' +
-        '<div style="margin-bottom: 8px;">' +
-            '<strong>Father: ' + (father ? _escapeHtml(father.name) + ' ' + (father.surname || '') : 'Unknown') + '</strong><br>' +
-            (father ? locationIcon + ' Location: ' + _escapeHtml(_getCurrentLocation(father)) + ' · ' + _getAge(father) + ' years' : '') +
-        '</div>' +
-        '<div style="margin-bottom: 8px;">' +
-            '<strong>Mother: ' + (mother ? _escapeHtml(mother.name) + ' ' + (mother.surname || '') : 'Unknown') + '</strong><br>' +
-            (mother ? locationIcon + ' Location: ' + _escapeHtml(_getCurrentLocation(mother)) + ' · ' + _getAge(mother) + ' years' : '') +
-        '</div>' +
-        warningHtml +
-        '<div style="margin-top: 8px; padding: 6px; background: var(--bg2); border-radius: 6px; font-size: 0.65rem;">' +
-            infoIcon + ' ' + child.name + ' will be recorded as born in ' + (parentLocation || 'the parent\'s location') + '.' +
-        '</div>' +
-    '</div>' +
-    
-    '<div class="form-group" style="margin-bottom: 12px;">' +
-        '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Birth Year (if not already set)</label>' +
-        '<input type="number" id="birthYear" value="' + (child.birthYear || currentYear) + '" min="1" max="' + currentYear + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-        '<small style="font-size: 0.55rem;">Leave as is if already correct</small>' +
-    '</div>' +
-    
-    '<div class="form-group" style="margin-bottom: 12px;">' +
-        '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes (optional)</label>' +
-        '<textarea id="birthNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);" placeholder="e.g., Legitimized, Birth record found..."></textarea>' +
-    '</div>';
-    
-    _openModal({
-        title: 'Set Birth Parents: ' + child.name,
-        content: modalContent,
-        confirmText: 'Set Birth Parents',
-        cancelText: 'Cancel',
-        onConfirm: function() {
-            var notes = document.getElementById('birthNotes') ? document.getElementById('birthNotes').value : '';
-            var birthYear = parseInt(document.getElementById('birthYear') ? document.getElementById('birthYear').value : 0);
-            
-            if (father) {
-                _setParent(child.id, father.id, 'father', {
-                    biological: true,
-                    startYear: birthYear || child.birthYear,
-                    notes: notes
-                });
-            }
-            if (mother) {
-                _setParent(child.id, mother.id, 'mother', {
-                    biological: true,
-                    startYear: birthYear || child.birthYear,
-                    notes: notes
-                });
-            }
-            
-            if (!child.birthYear && !isNaN(birthYear) && birthYear > 0 && birthYear <= currentYear) {
-                child.birthYear = birthYear;
-            }
-            
-            if (notes) {
-                child.notes = child.notes ? child.notes + '\n' + notes : notes;
-            }
-            
-            if (parentLocation && childLocation !== parentLocation && child.birthYear) {
-                var places = _getPlaces();
-                var targetPlace = null;
-                for (var i = 0; i < places.length; i++) {
-                    if (places[i].displayName === parentLocation) {
-                        targetPlace = places[i];
-                        break;
-                    }
-                }
-                if (targetPlace) {
-                    _recordMove(child, child.birthYear, targetPlace.id, 'Born in ' + parentLocation + ' to ' + (father ? father.name : '') + (mother ? ' and ' + mother.name : ''));
-                    _showToast(child.name + ' recorded as born in ' + parentLocation, 'info');
-                }
-            }
-            
-            _saveMasterData();
-            _showToast(child.name + '\'s birth parents have been set!', 'success');
-            if (onSuccess) onSuccess();
+    function _openModal(opts) {
+        if (typeof window.openModal !== 'function') {
+            throw new Error('modals-family.js: openModal required');
         }
-    });
-}
+        return window.openModal(opts);
+    }
 
-// =============================================================================
-// 7. CREATE ADOPTION/GUARDIANSHIP MODAL
-// =============================================================================
+    function _closeModal() {
+        if (typeof window.closeTopModal === 'function') window.closeTopModal();
+    }
 
-function openCreateAdoptionModal(child, guardian, partner, onSuccess) {
-    if (!child || !guardian) {
-        _showToast('Child and guardian are required', 'error');
-        return;
+    function _getCharacter(id) {
+        if (typeof window.getCharacterById !== 'function') {
+            throw new Error('modals-family.js: getCharacterById required');
+        }
+        return window.getCharacterById(id);
     }
-    
-    if (_isAdoptiveParent(guardian.id, child.id)) {
-        _showToast(child.name + ' is already adopted by ' + guardian.name, 'error');
-        return;
+
+    function _getCurrentYear() {
+        if (typeof window.getCurrentYearSafe !== 'function') {
+            throw new Error('modals-family.js: getCurrentYearSafe required');
+        }
+        return window.getCurrentYearSafe();
     }
-    if (partner && _isAdoptiveParent(partner.id, child.id)) {
-        _showToast(child.name + ' is already adopted by ' + partner.name, 'error');
-        return;
+
+    function _age(character) {
+        if (!character) return 0;
+        if (typeof window.calculateAge === 'function') {
+            return window.calculateAge(character.birthYear, character.isDeceased, character.deathYear);
+        }
+        return 0;
     }
-    
-    var childAge = _getAge(child);
-    var guardianAge = _getAge(guardian);
-    var partnerAge = partner ? _getAge(partner) : null;
-    var currentYear = _getCurrentYear();
-    var childLocation = _getCurrentLocation(child);
-    var guardianLocation = _getCurrentLocation(guardian);
-    var isCouple = !!partner;
-    var relation = _getFullRelationshipDescription(child.id, guardian.id);
-    var isRelative = !!relation;
-    
-    var suggestedYear = currentYear;
-    
-    var personIcon = _getIcon('PERSON');
-    var infoIcon = _getIcon('CIRCLE_DOT');
-    var warningIcon = _getIcon('WARNING');
-    var locationIcon = _getIcon('LOCATION');
-    var householdIcon = _getIcon('HOUSEHOLD');
-    var checkIcon = _getIcon('CHECK_SIMPLE');
-    var crossIcon = _getIcon('X_HEAVY');
-    
-    var modalContent = '<div class="info-box" style="background: var(--bg3); padding: 12px; border-radius: 8px; margin-bottom: 16px;">' +
-        '<div style="margin-bottom: 8px;">' +
-            '<strong>' + personIcon + ' Child: ' + _escapeHtml(child.name) + ' ' + _escapeHtml(child.surname || '') + '</strong><br>' +
-            locationIcon + ' Current location: ' + _escapeHtml(childLocation) + ' · ' + childAge + ' years old' +
-        '</div>' +
-        '<div style="margin-bottom: 8px;">' +
-            '<strong>' + (isCouple ? personIcon + ' Parents:' : 'Guardian:') + ' ' + _escapeHtml(guardian.name) + ' ' + _escapeHtml(guardian.surname || '') + '</strong>' + (isCouple ? ' & ' + _escapeHtml(partner.name) + ' ' + _escapeHtml(partner.surname || '') : '') + '<br>' +
-            locationIcon + ' Location: ' + _escapeHtml(guardianLocation) + ' · ' + guardianAge + ' years old' + (partnerAge ? ' & ' + partnerAge + ' years' : '') +
-        '</div>' +
-        (isRelative ? '<div class="warning-text" style="background: rgba(200, 70, 70, 0.2); padding: 8px; border-radius: 6px; margin-top: 8px;">' + warningIcon + ' WARNING: ' + _escapeHtml(relation) + '!</div>' : '') +
-        '<div style="margin-top: 8px; font-size: 0.65rem; color: var(--dim);">' +
-            infoIcon + ' ' + child.name + ' will move to ' + guardian.name + '\'s location at the time of ' + (isCouple ? 'adoption' : 'guardianship') +
-        '</div>' +
-        '<div style="margin-top: 8px; font-size: 0.65rem; color: var(--accent);">' +
-            infoIcon + ' No age restrictions - anyone can adopt or be adopted at any age' +
-        '</div>' +
-    '</div>' +
-    
-    '<div class="form-group" style="margin-bottom: 12px;">' +
-        '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Type of Arrangement</label>' +
-        '<select id="adoptionTypeSelect" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-            '<option value="legal">Legal Adoption (full parental rights)</option>' +
-            '<option value="guardianship">Guardianship (caregiver, not legal parent)</option>' +
-            '<option value="foster">Foster Care (temporary placement)</option>' +
-        '</select>' +
-    '</div>' +
-    
-    '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">' +
-        '<div class="form-group">' +
-            '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Child\'s Age at ' + (isCouple ? 'Adoption' : 'Guardianship') + '</label>' +
-            '<input type="number" id="adoptionAge" value="' + childAge + '" min="0" max="200" step="1" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-            '<small style="font-size: 0.55rem;">Any age allowed (including adults)</small>' +
-        '</div>' +
-        '<div class="form-group">' +
-            '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Year</label>' +
-            '<input type="number" id="adoptionYear" value="' + suggestedYear + '" min="0" max="' + (currentYear + 10) + '" step="1" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-            '<small style="font-size: 0.55rem;">Can be in the past (retroactive) or future</small>' +
-        '</div>' +
-    '</div>' +
-    
-    '<div class="form-group" style="margin-bottom: 12px;">' +
-        '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Household Assignment</label>' +
-        '<select id="adoptionHouseholdChoice" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
-            '<option value="guardian">Add child to guardian\'s household</option>' +
-            '<option value="separate">Child starts independent household</option>' +
-            '<option value="none">No household assignment</option>' +
-        '</select>' +
-        '<small style="font-size: 0.55rem;">Where will the child live after adoption/guardianship?</small>' +
-    '</div>' +
-    
-    '<div class="form-group" style="margin-bottom: 12px;">' +
-        '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes (optional)</label>' +
-        '<textarea id="adoptionNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);" placeholder="e.g., For inheritance purposes, Adult adoption..."></textarea>' +
-    '</div>';
-    
-    _openModal({
-        title: (isCouple ? 'Adoption' : 'Guardianship') + ': ' + child.name,
-        content: modalContent,
-        confirmText: 'Confirm',
-        cancelText: 'Cancel',
-        onConfirm: function() {
-            var adoptionAge = parseInt(document.getElementById('adoptionAge') ? document.getElementById('adoptionAge').value : 0);
-            var adoptionYear = parseInt(document.getElementById('adoptionYear') ? document.getElementById('adoptionYear').value : 0);
-            var adoptionType = document.getElementById('adoptionTypeSelect') ? document.getElementById('adoptionTypeSelect').value : 'legal';
-            var householdChoice = document.getElementById('adoptionHouseholdChoice') ? document.getElementById('adoptionHouseholdChoice').value : 'guardian';
-            var notes = document.getElementById('adoptionNotes') ? document.getElementById('adoptionNotes').value : '';
-            
-            if (isNaN(adoptionAge)) adoptionAge = childAge;
-            if (isNaN(adoptionYear)) adoptionYear = currentYear;
-            
-            if (child.birthYear && adoptionAge >= 0) {
-                adoptionYear = child.birthYear + adoptionAge;
-            }
-            
-            var places = _getPlaces();
-            var targetPlace = null;
-            for (var i = 0; i < places.length; i++) {
-                if (places[i].displayName === guardianLocation) {
-                    targetPlace = places[i];
-                    break;
+
+    // -------------------------------------------------------------------------
+    // SET BIRTH PARENTS
+    // -------------------------------------------------------------------------
+
+    /**
+     * openSetBirthParentsModal(child, father, mother, onSuccess)
+     * father/mother may be null. At least one must be present.
+     */
+    function openSetBirthParentsModal(child, father, mother, onSuccess) {
+        if (!child) {
+            _toast('Child not found', 'error');
+            return;
+        }
+        if (!father && !mother) {
+            _toast('At least one parent is required', 'error');
+            return;
+        }
+
+        var currentYear = _getCurrentYear();
+        var childAge = _age(child);
+        var personIcon = _icon('PERSON');
+        var infoIcon = _icon('CIRCLE_DOT');
+        var checkIcon = _icon('CHECK_SIMPLE');
+
+        var html = '' +
+            '<div style="background:var(--bg3);padding:12px;border-radius:8px;margin-bottom:16px;">' +
+                '<div style="margin-bottom:6px;">' +
+                    '<strong>' + personIcon + ' ' + _escape(child.name) + ' ' + _escape(child.surname || '') + '</strong>' +
+                    ' <span style="color:var(--dim);font-size:0.65rem;">' + childAge + 'y</span>' +
+                '</div>' +
+                (father ? '<div>Father: <strong>' + _escape(father.name) + ' ' + _escape(father.surname || '') + '</strong></div>' : '') +
+                (mother ? '<div>Mother: <strong>' + _escape(mother.name) + ' ' + _escape(mother.surname || '') + '</strong></div>' : '') +
+            '</div>' +
+
+            '<div style="margin-bottom:12px;">' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Birth Year</label>' +
+                '<input type="number" id="famBirthYear" value="' + (child.birthYear || currentYear) + '" ' +
+                    'min="1" max="' + currentYear + '" ' +
+                    'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                '<small style="font-size:0.55rem;color:var(--dim);">' + infoIcon + ' Used to set parent relationship start year</small>' +
+            '</div>' +
+
+            '<div style="margin-bottom:12px;">' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes (optional)</label>' +
+                '<textarea id="famBirthNotes" rows="2" ' +
+                    'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);" ' +
+                    'placeholder="e.g., Legitimized, birth record found..."></textarea>' +
+            '</div>';
+
+        _openModal({
+            title: 'Set Birth Parents: ' + child.name,
+            content: html,
+            confirmText: checkIcon + ' Set Parents',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var birthYear = parseInt(document.getElementById('famBirthYear').value, 10);
+                var notes = document.getElementById('famBirthNotes').value || '';
+                if (isNaN(birthYear)) {
+                    _toast('Invalid birth year', 'error');
+                    return;
                 }
-            }
-            if (targetPlace && childLocation !== guardianLocation) {
-                _recordMove(child, adoptionYear, targetPlace.id, 'Moved to ' + guardian.name + (isCouple ? ' and ' + partner.name : '') + '\'s location for ' + adoptionType);
-                _showToast(child.name + ' moved to ' + guardianLocation, 'info');
-            }
-            
-            var result = _createAdoption(guardian.id, child.id, {
-                year: adoptionYear,
-                type: adoptionType,
-                notes: notes || adoptionType + ' at age ' + adoptionAge,
-                parentType: guardian.gender === 'male' ? 'father' : 'mother'
-            });
-            
-            if (isCouple && partner && result) {
-                _createAdoption(partner.id, child.id, {
-                    year: adoptionYear,
-                    type: adoptionType,
-                    notes: notes || adoptionType + ' at age ' + adoptionAge + ' (as couple)',
-                    parentType: partner.gender === 'male' ? 'father' : 'mother'
-                });
-            }
-            
-            if (result) {
-                var typeName = adoptionType === 'legal' ? 'adopted by' : (adoptionType === 'guardianship' ? 'under guardianship of' : 'in foster care with');
-                _showToast(child.name + ' is now ' + typeName + ' ' + guardian.name + (isCouple ? ' and ' + partner.name : ''), 'success');
-                
-                if (householdChoice === 'guardian') {
-                    var guardianHousehold = _getCharacterHousehold(guardian.id);
-                    if (guardianHousehold) {
-                        var previousHousehold = _getCharacterHousehold(child.id);
-                        if (previousHousehold && previousHousehold.id !== guardianHousehold.id) {
-                            _recordHouseholdChange(child.id, null, adoptionYear, 'left',
-                                'Left previous household due to ' + adoptionType,
-                                { previousHouseholdId: previousHousehold.id, previousHouseholdName: previousHousehold.name });
-                        }
-                        
-                        _addHouseholdMember(guardianHousehold.id, child.id, 'family', {
-                            role: 'Child',
-                            joinedYear: adoptionYear,
-                            notes: 'Added via ' + adoptionType
-                        });
-                        
-                        _recordHouseholdChange(child.id, guardianHousehold.id, adoptionYear, 'joined',
-                            adoptionType + ' by ' + guardian.name + (isCouple ? ' and ' + partner.name : ''),
-                            { newRole: 'Child' });
-                    }
-                    
-                    if (isCouple && partner) {
-                        var partnerHousehold = _getCharacterHousehold(partner.id);
-                        if (partnerHousehold && (!guardianHousehold || partnerHousehold.id !== guardianHousehold.id)) {
-                            _addHouseholdMember(partnerHousehold.id, child.id, 'family', {
-                                role: 'Child',
-                                joinedYear: adoptionYear,
-                                notes: 'Added via ' + adoptionType + ' (co-parent)'
-                            });
-                            _recordHouseholdChange(child.id, partnerHousehold.id, adoptionYear, 'joined',
-                                adoptionType + ' by ' + partner.name,
-                                { newRole: 'Child' });
-                        }
-                    }
-                } else if (householdChoice === 'separate') {
-                    var location = _getCurrentLocation(guardian) || _getCurrentLocation(child);
-                    var childHousehold = _createHousehold(child.name + '\'s Household', location, {
-                        foundedYear: adoptionYear,
-                        notes: 'Created via ' + adoptionType
+
+                var anySuccess = false;
+                var lastErr = null;
+
+                if (father) {
+                    var rf = window.FamilyCommands.setParent(child.id, father.id, {
+                        parentRole: 'father',
+                        parentType: 'biological',
+                        startYear: birthYear,
+                        notes: notes
                     });
-                    if (childHousehold) {
-                        _addHouseholdMember(childHousehold.id, child.id, 'family', {
-                            role: 'Head of Household',
-                            joinedYear: adoptionYear,
-                            isHead: true,
-                            notes: 'Created via ' + adoptionType
-                        });
-                        _recordHouseholdChange(child.id, childHousehold.id, adoptionYear, 'created',
-                            'Created independent household due to ' + adoptionType,
-                            { newRole: 'Head of Household' });
-                    }
+                    if (rf.success) anySuccess = true; else lastErr = rf;
                 }
-                
-                _saveMasterData();
-                if (onSuccess) onSuccess();
-            } else {
-                _showToast('Failed to create adoption/guardianship', 'error');
+                if (mother) {
+                    var rm = window.FamilyCommands.setParent(child.id, mother.id, {
+                        parentRole: 'mother',
+                        parentType: 'biological',
+                        startYear: birthYear,
+                        notes: notes
+                    });
+                    if (rm.success) anySuccess = true; else lastErr = rm;
+                }
+
+                if (!anySuccess) {
+                    _toast((lastErr && lastErr.message) || 'Failed to set parents', 'error');
+                    return;
+                }
+
+                _toast('Birth parents set', 'success');
+                if (typeof onSuccess === 'function') onSuccess();
+                _closeModal();
             }
-        }
-    });
-    
-    setTimeout(function() {
-        var ageInput = document.getElementById('adoptionAge');
-        var yearInput = document.getElementById('adoptionYear');
-        
-        if (ageInput && yearInput && child.birthYear) {
-            var isUserChanging = false;
-            
-            var updateFromAge = function() {
-                if (isUserChanging) return;
-                isUserChanging = true;
-                var age = parseInt(ageInput.value);
-                if (!isNaN(age) && age >= 0) {
-                    yearInput.value = child.birthYear + age;
-                }
-                isUserChanging = false;
-            };
-            
-            var updateFromYear = function() {
-                if (isUserChanging) return;
-                isUserChanging = true;
-                var year = parseInt(yearInput.value);
-                if (!isNaN(year)) {
-                    var newAge = year - child.birthYear;
-                    if (newAge >= 0) {
-                        ageInput.value = newAge;
-                    }
-                }
-                isUserChanging = false;
-            };
-            
-            ageInput.addEventListener('input', updateFromAge);
-            yearInput.addEventListener('input', updateFromYear);
-        }
-    }, 50);
-}
-
-// =============================================================================
-// 8. EDIT ADOPTION MODAL
-// =============================================================================
-
-function openEditAdoptionModal(child, parent, adoptionRecord, onSuccess) {
-    if (!child || !parent) {
-        _showToast('Child and parent are required', 'error');
-        return;
+        });
     }
-    
-    var currentYear = _getCurrentYear();
-    var record = adoptionRecord || _getAdoptionRecord(parent.id, child.id);
-    
-    if (!record) {
-        _showToast('Adoption record not found', 'error');
-        return;
-    }
-    
-    var typeNames = {
-        legal: 'Legal Adoption',
-        guardianship: 'Guardianship',
-        foster: 'Foster Care'
-    };
-    
-    var personIcon = _getIcon('PERSON');
-    var infoIcon = _getIcon('CIRCLE_DOT');
-    var editIcon = _getIcon('EDIT');
-    var checkIcon = _getIcon('CHECK_SIMPLE');
-    var crossIcon = _getIcon('X_HEAVY');
-    
-    var modalContent = '<div class="info-box" style="background: var(--bg2); padding: 12px; border-radius: 8px; margin-bottom: 16px;">' +
-        '<div><strong>' + personIcon + ' Child:</strong> ' + _escapeHtml(child.name) + ' ' + _escapeHtml(child.surname || '') + '</div>' +
-        '<div><strong>' + personIcon + ' Parent:</strong> ' + _escapeHtml(parent.name) + ' ' + _escapeHtml(parent.surname || '') + '</div>' +
-        '<div style="font-size: 0.65rem; color: var(--dim); margin-top: 4px;">Current: ' + (typeNames[record.type] || record.type) + ' since ' + (record.year || '?') + '</div>' +
-    '</div>' +
-    
-    '<div class="form-group" style="margin-bottom: 12px;">' +
-        '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Type of Arrangement</label>' +
-        '<select id="editAdoptionType" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
-            '<option value="legal" ' + (record.type === 'legal' ? 'selected' : '') + '>Legal Adoption (full parental rights)</option>' +
-            '<option value="guardianship" ' + (record.type === 'guardianship' ? 'selected' : '') + '>Guardianship (caregiver, not legal parent)</option>' +
-            '<option value="foster" ' + (record.type === 'foster' ? 'selected' : '') + '>Foster Care (temporary placement)</option>' +
-        '</select>' +
-    '</div>' +
-    
-    '<div class="form-group" style="margin-bottom: 12px;">' +
-        '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Year of ' + (typeNames[record.type] ? typeNames[record.type].split(' ')[0] : 'Arrangement') + '</label>' +
-        '<input type="number" id="editAdoptionYear" value="' + (record.year || currentYear) + '" min="1" max="' + (currentYear + 10) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-    '</div>' +
-    
-    '<div class="form-group" style="margin-bottom: 12px;">' +
-        '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Status</label>' +
-        '<select id="editAdoptionStatus" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">' +
-            '<option value="active" ' + (record.status !== 'ended' && record.status !== 'dissolved' ? 'selected' : '') + '>Active</option>' +
-            '<option value="ended" ' + (record.status === 'ended' ? 'selected' : '') + '>Ended</option>' +
-            '<option value="dissolved" ' + (record.status === 'dissolved' ? 'selected' : '') + '>Dissolved</option>' +
-        '</select>' +
-    '</div>' +
-    
-    '<div class="form-group" style="margin-bottom: 12px;">' +
-        '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes</label>' +
-        '<textarea id="editAdoptionNotes" rows="3" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' + _escapeHtml(record.notes || '') + '</textarea>' +
-    '</div>' +
-    
-    '<div class="action-buttons" style="margin-top: 12px; display: flex; gap: 8px;">' +
-        '<button id="terminateAdoptionBtn" class="btn danger" style="background: #8a3020; border: none; color: white; padding: 6px 12px; border-radius: 6px; cursor: pointer;">' + crossIcon + ' Terminate ' + (typeNames[record.type] ? typeNames[record.type].split(' ')[0] : 'Arrangement') + '</button>' +
-    '</div>';
-    
-    _openModal({
-        title: 'Edit ' + (typeNames[record.type] || 'Adoption') + ': ' + child.name,
-        content: modalContent,
-        confirmText: 'Save Changes',
-        cancelText: 'Cancel',
-        onConfirm: function() {
-            var newType = document.getElementById('editAdoptionType').value;
-            var newYear = parseInt(document.getElementById('editAdoptionYear').value);
-            var newStatus = document.getElementById('editAdoptionStatus').value;
-            var newNotes = document.getElementById('editAdoptionNotes').value;
-            
-            if (isNaN(newYear)) {
-                _showToast('Invalid year', 'error');
-                return;
-            }
-            
-            var updates = {
-                year: newYear,
-                type: newType,
-                notes: newNotes,
-                status: newStatus
-            };
-            
-            var success = true;
-            
-            // Update using the adoption service if available
-            if (typeof window.updateAdoption === 'function') {
-                success = window.updateAdoption(parent.id, child.id, updates);
-            } else {
-                // Fallback: update the adoption record directly
-                var record = _getAdoptionRecord(parent.id, child.id);
-                if (record) {
-                    if (updates.year !== undefined) record.year = updates.year;
-                    if (updates.type !== undefined) record.type = updates.type;
-                    if (updates.notes !== undefined) record.notes = updates.notes;
-                    if (updates.status !== undefined) record.status = updates.status;
-                    success = true;
-                } else {
-                    success = false;
-                }
-            }
-            
-            if (success) {
-                _saveMasterData();
-                _showToast('Updated ' + (typeNames[record.type] || 'adoption') + ' for ' + child.name, 'success');
-                _closeTopModal();
-                if (onSuccess) onSuccess();
-            } else {
-                _showToast('Failed to update adoption record', 'error');
-            }
-        }
-    });
-    
-    setTimeout(function() {
-        var terminateBtn = document.getElementById('terminateAdoptionBtn');
-        if (terminateBtn) {
-            terminateBtn.addEventListener('click', function() {
-                _closeTopModal();
-                openRemoveAdoptionModal(child, parent, null, onSuccess);
-            });
-        }
-    }, 100);
-}
 
-// =============================================================================
-// 9. REMOVE ADOPTION MODAL
-// =============================================================================
+    // -------------------------------------------------------------------------
+    // CREATE ADOPTION
+    // -------------------------------------------------------------------------
 
-function openRemoveAdoptionModal(child, guardian, partner, onSuccess) {
-    if (!child || !guardian) {
-        _showToast('Child and guardian are required', 'error');
-        return;
-    }
-    
-    var childName = child.name;
-    var guardianName = guardian.name;
-    var partnerName = partner ? ' and ' + partner.name : '';
-    var isCouple = !!partner;
-    var currentYear = _getCurrentYear();
-    var record = _getAdoptionRecord(guardian.id, child.id);
-    var typeName = record && record.type === 'legal' ? 'Adoption' : (record && record.type === 'guardianship' ? 'Guardianship' : 'Foster Care');
-    
-    var warningIcon = _getIcon('WARNING');
-    var infoIcon = _getIcon('CIRCLE_DOT');
-    var xIcon = _getIcon('X_HEAVY');
-    var checkIcon = _getIcon('CHECK_SIMPLE');
-    
-    var modalContent = '<div class="info-box" style="background: rgba(200, 68, 68, 0.15); border: 1px solid var(--warn); padding: 12px; border-radius: 8px; margin-bottom: 16px;">' +
-        '<strong>' + warningIcon + ' Warning: This will remove the ' + typeName + ' relationship</strong>' +
-        '<div style="margin-top: 8px;">' +
-            _escapeHtml(childName) + ' will no longer be ' + (record && record.type === 'legal' ? 'adopted by' : (record && record.type === 'guardianship' ? 'under guardianship of' : 'in foster care with')) + ' ' + _escapeHtml(guardianName) + partnerName + '.' +
-        '</div>' +
-        '<div style="margin-top: 8px; font-size: 0.65rem; color: var(--dim);">' +
-            'Historical records will still show that this relationship existed.' +
-        '</div>' +
-    '</div>' +
-    
-    '<div class="form-group" style="margin-bottom: 12px;">' +
-        '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Year of Termination</label>' +
-        '<input type="number" id="removalYear" value="' + currentYear + '" min="1" max="' + (currentYear + 10) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-    '</div>' +
-    
-    '<div class="form-group" style="margin-bottom: 12px;">' +
-        '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Reason for Removal (optional)</label>' +
-        '<textarea id="removalReason" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);" placeholder="e.g., Adoption dissolved, Guardian stepped down..."></textarea>' +
-    '</div>' +
-    
-    '<div class="form-group" style="margin-bottom: 12px;">' +
-        '<label style="display: flex; align-items: center; gap: 8px;">' +
-            '<input type="checkbox" id="keepHistory" checked>' +
-            '<span style="font-size: 0.7rem;">' + infoIcon + ' Keep historical record (recommended)</span>' +
-        '</label>' +
-        '<small style="font-size: 0.55rem;">If unchecked, the record will be permanently deleted.</small>' +
-    '</div>';
-    
-    _openModal({
-        title: xIcon + ' Remove ' + typeName + ': ' + child.name,
-        content: modalContent,
-        confirmText: 'Confirm Removal',
-        cancelText: 'Cancel',
-        onConfirm: function() {
-            var reason = document.getElementById('removalReason') ? document.getElementById('removalReason').value : 'Removed';
-            var endYear = parseInt(document.getElementById('removalYear') ? document.getElementById('removalYear').value : 0) || currentYear;
-            var keepHistory = document.getElementById('keepHistory') ? document.getElementById('keepHistory').checked !== false : true;
-            
-            var guardianHousehold = _getCharacterHousehold(guardian.id);
-            if (guardianHousehold) {
-                _recordHouseholdChange(child.id, null, endYear, 'left',
-                    typeName + ' relationship terminated: ' + reason,
-                    { previousHouseholdId: guardianHousehold.id, previousHouseholdName: guardianHousehold.name });
-            }
-            
-            var result1 = _removeAdoption(guardian.id, child.id, { 
-                reason: reason,
-                endYear: endYear,
-                keepHistory: keepHistory
-            });
-            
-            var result2 = true;
-            if (partner) {
-                var partnerHousehold = _getCharacterHousehold(partner.id);
-                if (partnerHousehold) {
-                    _recordHouseholdChange(child.id, null, endYear, 'left',
-                        typeName + ' relationship terminated: ' + reason,
-                        { previousHouseholdId: partnerHousehold.id, previousHouseholdName: partnerHousehold.name });
+    /**
+     * openCreateAdoptionModal(child, guardian, partner, onSuccess)
+     * partner may be null for single adoption.
+     */
+    function openCreateAdoptionModal(child, guardian, partner, onSuccess) {
+        if (!child || !guardian) {
+            _toast('Child and guardian are required', 'error');
+            return;
+        }
+
+        var currentYear = _getCurrentYear();
+        var childAge = _age(child);
+        var isCouple = !!partner;
+        var personIcon = _icon('PERSON');
+        var warningIcon = _icon('WARNING');
+        var checkIcon = _icon('CHECK_SIMPLE');
+
+        var html = '' +
+            '<div style="background:var(--bg3);padding:12px;border-radius:8px;margin-bottom:16px;">' +
+                '<div>' +
+                    '<strong>' + personIcon + ' ' + _escape(child.name) + ' ' + _escape(child.surname || '') + '</strong>' +
+                    ' <span style="color:var(--dim);font-size:0.65rem;">' + childAge + 'y</span>' +
+                '</div>' +
+                '<div>' +
+                    'Adopter' + (isCouple ? 's' : '') + ': ' +
+                    '<strong>' + _escape(guardian.name) + ' ' + _escape(guardian.surname || '') + '</strong>' +
+                    (isCouple ? ' & <strong>' + _escape(partner.name) + ' ' + _escape(partner.surname || '') + '</strong>' : '') +
+                '</div>' +
+            '</div>' +
+
+            '<div style="margin-bottom:12px;">' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Adoption Type</label>' +
+                '<select id="famAdoptType" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                    '<option value="legal">Legal Adoption</option>' +
+                    '<option value="guardianship">Guardianship</option>' +
+                    '<option value="social">Social / Foster</option>' +
+                '</select>' +
+            '</div>' +
+
+            '<div style="margin-bottom:12px;">' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Year</label>' +
+                '<input type="number" id="famAdoptYear" value="' + currentYear + '" ' +
+                    'min="1" max="' + (currentYear + 10) + '" ' +
+                    'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '</div>' +
+
+            '<div style="margin-bottom:12px;">' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes (optional)</label>' +
+                '<textarea id="famAdoptNotes" rows="2" ' +
+                    'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);"></textarea>' +
+            '</div>';
+
+        _openModal({
+            title: (isCouple ? 'Adoption' : 'Guardianship') + ': ' + child.name,
+            content: html,
+            confirmText: checkIcon + ' Confirm',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var type = document.getElementById('famAdoptType').value;
+                var year = parseInt(document.getElementById('famAdoptYear').value, 10);
+                var notes = document.getElementById('famAdoptNotes').value || '';
+                if (isNaN(year)) {
+                    _toast('Invalid year', 'error');
+                    return;
                 }
-                result2 = _removeAdoption(partner.id, child.id, { 
-                    reason: reason,
-                    endYear: endYear,
-                    keepHistory: keepHistory
+
+                var parentType = (type === 'legal') ? 'legal'
+                                : (type === 'guardianship') ? 'legal'
+                                : 'social';
+
+                var results = [];
+                var guardRole = guardian.gender === 'male' ? 'father'
+                              : guardian.gender === 'female' ? 'mother'
+                              : 'parent';
+                results.push(window.FamilyCommands.createAdoption(child.id, guardian.id, {
+                    parentRole: guardRole,
+                    parentType: parentType,
+                    startYear: year,
+                    notes: notes
+                }));
+
+                if (partner) {
+                    var partnerRole = partner.gender === 'male' ? 'father'
+                                    : partner.gender === 'female' ? 'mother'
+                                    : 'parent';
+                    results.push(window.FamilyCommands.createAdoption(child.id, partner.id, {
+                        parentRole: partnerRole,
+                        parentType: parentType,
+                        startYear: year,
+                        notes: notes
+                    }));
+                }
+
+                var anySuccess = false;
+                var lastErr = null;
+                for (var i = 0; i < results.length; i++) {
+                    if (results[i].success) anySuccess = true;
+                    else lastErr = results[i];
+                }
+
+                if (!anySuccess) {
+                    _toast((lastErr && lastErr.message) || 'Failed to create adoption', 'error');
+                    return;
+                }
+
+                _toast('Adoption recorded', 'success');
+                if (typeof onSuccess === 'function') onSuccess();
+                _closeModal();
+            }
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // REMOVE ADOPTION
+    // -------------------------------------------------------------------------
+
+    function openRemoveAdoptionModal(child, guardian, partner, onSuccess) {
+        if (!child || !guardian) {
+            _toast('Child and guardian are required', 'error');
+            return;
+        }
+
+        var currentYear = _getCurrentYear();
+        var warningIcon = _icon('WARNING');
+        var crossIcon = _icon('X_HEAVY');
+
+        var html = '' +
+            '<div style="background:rgba(200,68,68,0.15);border:1px solid var(--warn);padding:12px;border-radius:8px;margin-bottom:16px;">' +
+                '<strong>' + warningIcon + ' This will remove the adoption relationship</strong>' +
+                '<div style="margin-top:6px;font-size:0.7rem;">' +
+                    _escape(child.name) + ' will no longer be a legal child of ' +
+                    _escape(guardian.name) +
+                    (partner ? ' and ' + _escape(partner.name) : '') + '.' +
+                '</div>' +
+            '</div>' +
+
+            '<div style="margin-bottom:12px;">' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Year of Termination</label>' +
+                '<input type="number" id="famRemoveYear" value="' + currentYear + '" ' +
+                    'min="1" max="' + (currentYear + 10) + '" ' +
+                    'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '</div>' +
+
+            '<div style="margin-bottom:12px;">' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason (optional)</label>' +
+                '<textarea id="famRemoveReason" rows="2" ' +
+                    'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);"></textarea>' +
+            '</div>';
+
+        _openModal({
+            title: crossIcon + ' Remove Adoption: ' + child.name,
+            content: html,
+            confirmText: crossIcon + ' Remove',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var year = parseInt(document.getElementById('famRemoveYear').value, 10);
+                var reason = document.getElementById('famRemoveReason').value || 'adoption ended';
+                if (isNaN(year)) {
+                    _toast('Invalid year', 'error');
+                    return;
+                }
+
+                var results = [];
+                results.push(window.FamilyCommands.removeAdoption(child.id, guardian.id, {
+                    endYear: year,
+                    reason: reason
+                }));
+                if (partner) {
+                    results.push(window.FamilyCommands.removeAdoption(child.id, partner.id, {
+                        endYear: year,
+                        reason: reason
+                    }));
+                }
+
+                var anySuccess = false;
+                var lastErr = null;
+                for (var i = 0; i < results.length; i++) {
+                    if (results[i].success) anySuccess = true;
+                    else lastErr = results[i];
+                }
+
+                if (!anySuccess) {
+                    _toast((lastErr && lastErr.message) || 'Failed to remove adoption', 'error');
+                    return;
+                }
+
+                _toast('Adoption removed', 'info');
+                if (typeof onSuccess === 'function') onSuccess();
+                _closeModal();
+            }
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // LEGITIMIZE
+    // -------------------------------------------------------------------------
+
+    function openLegitimizationModal(child, father, mother, onSuccess) {
+        if (!child) {
+            _toast('Child not found', 'error');
+            return;
+        }
+        if (!father && !mother) {
+            _toast('At least one parent is required', 'error');
+            return;
+        }
+
+        var currentYear = _getCurrentYear();
+        var crownIcon = _icon('CROWN');
+        var infoIcon = _icon('CIRCLE_DOT');
+        var checkIcon = _icon('CHECK_SIMPLE');
+
+        var html = '' +
+            '<div style="background:var(--bg3);padding:12px;border-radius:8px;margin-bottom:16px;">' +
+                '<div><strong>' + crownIcon + ' ' + _escape(child.name) + ' ' + _escape(child.surname || '') + '</strong></div>' +
+                (father ? '<div>Father: ' + _escape(father.name) + ' ' + _escape(father.surname || '') + '</div>' : '') +
+                (mother ? '<div>Mother: ' + _escape(mother.name) + ' ' + _escape(mother.surname || '') + '</div>' : '') +
+            '</div>' +
+
+            '<div style="margin-bottom:12px;">' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Year of Legitimization</label>' +
+                '<input type="number" id="famLegitYear" value="' + currentYear + '" ' +
+                    'min="1" max="' + (currentYear + 10) + '" ' +
+                    'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '</div>' +
+
+            '<div style="margin-bottom:12px;">' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Inheritance Rights</label>' +
+                '<select id="famLegitInherit" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                    '<option value="full">Full inheritance rights</option>' +
+                    '<option value="limited">Limited inheritance</option>' +
+                    '<option value="none">No inheritance rights</option>' +
+                '</select>' +
+            '</div>' +
+
+            '<div style="margin-bottom:12px;">' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes (optional)</label>' +
+                '<textarea id="famLegitNotes" rows="2" ' +
+                    'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);"></textarea>' +
+            '</div>' +
+
+            '<div style="font-size:0.55rem;color:var(--dim);">' +
+                infoIcon + ' Legitimization declares a child as legitimate heir.' +
+            '</div>';
+
+        _openModal({
+            title: crownIcon + ' Legitimize: ' + child.name,
+            content: html,
+            confirmText: checkIcon + ' Legitimize',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var year = parseInt(document.getElementById('famLegitYear').value, 10);
+                var inheritance = document.getElementById('famLegitInherit').value;
+                var notes = document.getElementById('famLegitNotes').value || '';
+                if (isNaN(year)) {
+                    _toast('Invalid year', 'error');
+                    return;
+                }
+
+                var result = window.FamilyCommands.legitimize(child.id, {
+                    fatherId: father ? father.id : null,
+                    motherId: mother ? mother.id : null,
+                    year: year,
+                    inheritanceRights: inheritance,
+                    notes: notes
                 });
-            }
-            
-            if (result1 && result2) {
-                _saveMasterData();
-                _showToast(typeName + ' relationship removed between ' + childName + ' and ' + guardianName + partnerName, 'info');
-                _closeTopModal();
-                if (onSuccess) onSuccess();
-            } else {
-                _showToast('Failed to remove adoption relationship', 'error');
-            }
-        }
-    });
-}
 
-// =============================================================================
-// 10. ADOPTION SEARCH MODAL
-// =============================================================================
+                if (!result.success) {
+                    _toast(result.message || 'Failed to legitimize', 'error');
+                    return;
+                }
 
-function openAdoptionSearchModal(onSelect, options) {
-    options = options || {};
-    var allChars = _getCharacters();
-    var currentYear = _getCurrentYear();
-    
-    var searchTerm = '';
-    var minAge = options.minAge !== undefined ? options.minAge : 0;
-    var maxAge = options.maxAge !== undefined ? options.maxAge : 18;
-    var locationFilter = options.location || 'all';
-    var statusFilter = options.status || 'all';
-    var genderFilter = options.gender || 'all';
-    var selectedChildId = null;
-    
-    var allLocations = new Set();
-    for (var i = 0; i < allChars.length; i++) {
-        var char = allChars[i];
-        if (!char.isDeceased) {
-            var loc = _getCurrentLocation(char);
-            if (loc && loc !== 'Unknown') allLocations.add(loc);
-        }
+                _toast(child.name + ' has been legitimized', 'success');
+                if (typeof onSuccess === 'function') onSuccess();
+                _closeModal();
+            }
+        });
     }
-    var locationOptions = Array.from(allLocations).sort();
-    
-    var infoIcon = _getIcon('CIRCLE_DOT');
-    var checkIcon = _getIcon('CHECK_SIMPLE');
-    var warningIcon = _getIcon('WARNING');
-    var locationIcon = _getIcon('LOCATION');
-    var householdIcon = _getIcon('HOUSEHOLD');
-    var personIcon = _getIcon('PERSON');
-    var searchIcon = _getIcon('SEARCH');
-    
-    function isEligibleForAdoption(child) {
-        if (child.isDeceased) return false;
-        
-        var age = _getAge(child);
-        if (age < minAge || age > maxAge) return false;
-        
-        if (statusFilter === 'orphan') {
-            var parents = _getParents(child.id);
-            var hasLivingParent = (parents.father && !parents.father.isDeceased) || (parents.mother && !parents.mother.isDeceased);
-            if (hasLivingParent) return false;
-        } else if (statusFilter === 'abandoned') {
-            if (!child.abandoned) return false;
-        } else if (statusFilter === 'in_foster') {
-            var hasActiveFoster = false;
-            if (child.adoptedParents) {
-                for (var j = 0; j < child.adoptedParents.length; j++) {
-                    if (child.adoptedParents[j].type === 'foster' && child.adoptedParents[j].status !== 'ended') {
-                        hasActiveFoster = true;
-                        break;
-                    }
-                }
-            }
-            if (!hasActiveFoster) return false;
+
+    // -------------------------------------------------------------------------
+    // FIND ADOPTION CANDIDATES
+    //
+    // Simple picker: shows characters without an active legal parent.
+    // All filtering is done via CharacterQueries + FamilyQueries reads.
+    // -------------------------------------------------------------------------
+
+    function openAdoptionSearchModal(onSelect) {
+        if (typeof window.getCharacters !== 'function') {
+            throw new Error('modals-family.js: getCharacters required');
         }
-        
-        if (genderFilter !== 'all' && child.gender !== genderFilter) return false;
-        
-        if (locationFilter !== 'all') {
-            var childLocation = _getCurrentLocation(child);
-            if (childLocation !== locationFilter) return false;
+        var all = window.getCharacters();
+        var candidates = [];
+        for (var i = 0; i < all.length; i++) {
+            var c = all[i];
+            if (c.isDeceased) continue;
+            var legalIds = window.FamilyQueries.getLegalParentIds(c.id, { activeOnly: true });
+            if (legalIds.length > 0) continue;
+            candidates.push(c);
         }
-        
-        if (searchTerm) {
-            var searchLower = searchTerm.toLowerCase();
-            var nameMatch = child.name.toLowerCase().indexOf(searchLower) !== -1 || 
-                              (child.surname || '').toLowerCase().indexOf(searchLower) !== -1;
-            if (!nameMatch) return false;
+
+        if (candidates.length === 0) {
+            _toast('No adoption candidates found', 'info');
+            return;
         }
-        
-        return true;
-    }
-    
-    function getEligibleChildren() {
-        var result = [];
-        for (var i = 0; i < allChars.length; i++) {
-            if (isEligibleForAdoption(allChars[i])) {
-                result.push(allChars[i]);
-            }
-        }
-        return result;
-    }
-    
-    function renderChildList() {
-        var eligible = getEligibleChildren();
-        
-        if (eligible.length === 0) {
-            return '<div class="empty-state" style="text-align:center; padding:40px; color:var(--dim);">' + infoIcon + ' No adoptable children found matching your criteria</div>';
-        }
-        
-        var html = '';
-        for (var i = 0; i < eligible.length; i++) {
-            var child = eligible[i];
-            var age = _getAge(child);
-            var location = _getCurrentLocation(child);
-            var genderIcon = child.gender === 'male' ? '♂' : (child.gender === 'female' ? '♀' : '?');
-            var isSelected = selectedChildId === child.id;
-            
-            var statusLabel = '';
-            var statusColor = '';
-            var parents = _getParents(child.id);
-            var hasLivingParent = (parents.father && !parents.father.isDeceased) || (parents.mother && !parents.mother.isDeceased);
-            
-            if (!parents.father && !parents.mother) {
-                statusLabel = infoIcon + ' No known parents';
-                statusColor = '#c8a844';
-            } else if (!hasLivingParent) {
-                statusLabel = infoIcon + ' Orphan';
-                statusColor = '#c87040';
-            } else if (child.abandoned) {
-                statusLabel = householdIcon + ' Abandoned';
-                statusColor = '#c84444';
-            } else {
-                statusLabel = checkIcon + ' Available';
-                statusColor = '#4a9060';
-            }
-            
-            var inFoster = false;
-            if (child.adoptedParents) {
-                for (var j = 0; j < child.adoptedParents.length; j++) {
-                    if (child.adoptedParents[j].type === 'foster' && child.adoptedParents[j].status !== 'ended') {
-                        inFoster = true;
-                        break;
-                    }
-                }
-            }
-            var fosterBadge = inFoster ? '<span style="background: var(--accent-dim); padding: 2px 6px; border-radius: 10px; font-size: 0.5rem;">' + householdIcon + ' In Foster</span>' : '';
-            
-            html += '<div class="adoptable-child-card" data-child-id="' + child.id + '" style="' +
-                'background: ' + (isSelected ? 'rgba(var(--accent-rgb), 0.2)' : 'var(--bg3)') + ';' +
-                'border: 1px solid ' + (isSelected ? 'var(--accent)' : 'var(--border)') + ';' +
-                'border-radius: 8px;' +
-                'padding: 10px;' +
-                'margin-bottom: 8px;' +
-                'cursor: pointer;' +
-                'transition: all 0.1s;' +
-            '">' +
-                '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 6px;">' +
-                    '<div>' +
-                        '<strong>' + _escapeHtml(child.name) + ' ' + _escapeHtml(child.surname || '') + '</strong>' +
-                        '<span style="font-size: 0.55rem; color: var(--dim); margin-left: 6px;">' + genderIcon + ' ' + age + 'y</span>' +
-                        fosterBadge +
-                    '</div>' +
-                    '<div style="font-size: 0.55rem; color: ' + statusColor + ';">' + statusLabel + '</div>' +
-                '</div>' +
-                '<div style="display: flex; justify-content: space-between; font-size: 0.55rem; color: var(--dim);">' +
-                    '<span>' + locationIcon + ' ' + _escapeHtml(location) + '</span>' +
-                    (child.notes ? '<span>' + infoIcon + ' ' + _escapeHtml(child.notes.substring(0, 50)) + (child.notes.length > 50 ? '...' : '') + '</span>' : '') +
-                '</div>' +
-                (isSelected ? '<div style="margin-top: 8px; color: var(--success); font-size: 0.55rem;">' + checkIcon + ' Selected</div>' : '') +
+
+        var infoIcon = _icon('CIRCLE_DOT');
+        var html = '<div style="max-height:400px;overflow-y:auto;">';
+        for (var j = 0; j < candidates.length; j++) {
+            var ch = candidates[j];
+            html += '<div class="fam-candidate" data-id="' + _escape(ch.id) + '" ' +
+                'style="padding:8px;margin-bottom:6px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;cursor:pointer;">' +
+                '<strong>' + _escape(ch.name) + ' ' + _escape(ch.surname || '') + '</strong>' +
+                ' <span style="color:var(--dim);font-size:0.6rem;">' + _age(ch) + 'y</span>' +
             '</div>';
         }
-        return html;
-    }
-    
-    function refreshChildList() {
-        var container = document.getElementById('adoptableChildrenList');
-        if (container) {
-            container.innerHTML = renderChildList();
-            
-            var cards = document.querySelectorAll('.adoptable-child-card');
-            for (var i = 0; i < cards.length; i++) {
-                var card = cards[i];
-                card.addEventListener('click', function() {
-                    selectedChildId = this.dataset.childId;
-                    refreshChildList();
-                });
-            }
-        }
-        
-        var countSpan = document.getElementById('eligibleCount');
-        if (countSpan) {
-            countSpan.textContent = getEligibleChildren().length;
-        }
-    }
-    
-    var locationOptionsHtml = '<option value="all">All Locations</option>';
-    for (var i = 0; i < locationOptions.length; i++) {
-        var loc = locationOptions[i];
-        locationOptionsHtml += '<option value="' + loc + '" ' + (locationFilter === loc ? 'selected' : '') + '>' + _escapeHtml(loc) + '</option>';
-    }
-    
-    var modalContent = '<div class="info-box" style="margin-bottom: 16px; background: var(--bg2); padding: 12px; border-radius: 8px;">' +
-        '<div style="font-weight: bold; margin-bottom: 8px;">Find Adoptable Children</div>' +
-        '<div style="font-size: 0.65rem; color: var(--dim);">Search for children who need a loving home. <span id="eligibleCount">0</span> children match your criteria.</div>' +
-    '</div>' +
-    
-    '<div class="filter-section" style="background: var(--bg3); padding: 12px; border-radius: 8px; margin-bottom: 16px;">' +
-        '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 10px;">' +
-            '<div class="form-group" style="margin-bottom: 0;">' +
-                '<label style="display: block; font-size: 0.6rem; color: var(--accent); margin-bottom: 2px;">Min Age</label>' +
-                '<input type="number" id="searchMinAge" value="' + minAge + '" min="0" max="100" style="width: 100%; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text);">' +
-            '</div>' +
-            '<div class="form-group" style="margin-bottom: 0;">' +
-                '<label style="display: block; font-size: 0.6rem; color: var(--accent); margin-bottom: 2px;">Max Age</label>' +
-                '<input type="number" id="searchMaxAge" value="' + maxAge + '" min="0" max="200" style="width: 100%; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text);">' +
-            '</div>' +
-            '<div class="form-group" style="margin-bottom: 0;">' +
-                '<label style="display: block; font-size: 0.6rem; color: var(--accent); margin-bottom: 2px;">Gender</label>' +
-                '<select id="searchGender" style="width: 100%; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text);">' +
-                    '<option value="all" ' + (genderFilter === 'all' ? 'selected' : '') + '>All</option>' +
-                    '<option value="male" ' + (genderFilter === 'male' ? 'selected' : '') + '>Male</option>' +
-                    '<option value="female" ' + (genderFilter === 'female' ? 'selected' : '') + '>Female</option>' +
-                '</select>' +
-            '</div>' +
-            '<div class="form-group" style="margin-bottom: 0;">' +
-                '<label style="display: block; font-size: 0.6rem; color: var(--accent); margin-bottom: 2px;">Status</label>' +
-                '<select id="searchStatus" style="width: 100%; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text);">' +
-                    '<option value="all" ' + (statusFilter === 'all' ? 'selected' : '') + '>All</option>' +
-                    '<option value="orphan" ' + (statusFilter === 'orphan' ? 'selected' : '') + '>Orphan</option>' +
-                    '<option value="abandoned" ' + (statusFilter === 'abandoned' ? 'selected' : '') + '>Abandoned</option>' +
-                    '<option value="in_foster" ' + (statusFilter === 'in_foster' ? 'selected' : '') + '>In Foster Care</option>' +
-                '</select>' +
-            '</div>' +
-            '<div class="form-group" style="margin-bottom: 0;">' +
-                '<label style="display: block; font-size: 0.6rem; color: var(--accent); margin-bottom: 2px;">Location</label>' +
-                '<select id="searchLocation" style="width: 100%; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text);">' +
-                    locationOptionsHtml +
-                '</select>' +
-            '</div>' +
-        '</div>' +
-        '<div class="form-group" style="margin-bottom: 0;">' +
-            '<input type="text" id="searchName" placeholder="Search by name..." value="' + searchTerm + '" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text);">' +
-        '</div>' +
-        '<div class="action-buttons" style="margin-top: 10px; display: flex; gap: 8px;">' +
-            '<button id="applyFiltersBtn" class="btn small" style="background: var(--accent-dim);">Apply Filters</button>' +
-            '<button id="resetFiltersBtn" class="btn small">Clear</button>' +
-        '</div>' +
-    '</div>' +
-    
-    '<div id="adoptableChildrenList" style="max-height: 400px; overflow-y: auto;">' +
-        renderChildList() +
-    '</div>' +
-    
-    '<div class="info-note" style="margin-top: 12px; padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
-        infoIcon + ' Click on a child to select them, then choose an adoptive parent.' +
-    '</div>';
-    
-    _openModal({
-        title: 'Find Adoptable Children',
-        content: modalContent,
-        confirmText: selectedChildId ? 'Select Child' : 'Close',
-        cancelText: 'Cancel',
-        onConfirm: function() {
-            if (selectedChildId && onSelect) {
-                var child = _getCharacterById(selectedChildId);
-                if (child) {
-                    _closeTopModal();
-                    onSelect(child);
-                } else {
-                    _showToast('Child not found', 'error');
-                }
-            } else if (!selectedChildId) {
-                _showToast('Please select a child first', 'error');
-            } else {
-                _closeTopModal();
-            }
-        }
-    });
-    
-    setTimeout(function() {
-        var applyBtn = document.getElementById('applyFiltersBtn');
-        var resetBtn = document.getElementById('resetFiltersBtn');
-        var searchInput = document.getElementById('searchName');
-        var minAgeInput = document.getElementById('searchMinAge');
-        var maxAgeInput = document.getElementById('searchMaxAge');
-        var genderSelect = document.getElementById('searchGender');
-        var statusSelect = document.getElementById('searchStatus');
-        var locationSelect = document.getElementById('searchLocation');
-        
-        var updateFiltersAndRender = function() {
-            searchTerm = searchInput ? searchInput.value : '';
-            minAge = parseInt(minAgeInput ? minAgeInput.value : 0) || 0;
-            maxAge = parseInt(maxAgeInput ? maxAgeInput.value : 0) || 200;
-            genderFilter = genderSelect ? genderSelect.value : 'all';
-            statusFilter = statusSelect ? statusSelect.value : 'all';
-            locationFilter = locationSelect ? locationSelect.value : 'all';
-            refreshChildList();
-        };
-        
-        if (applyBtn) {
-            applyBtn.onclick = updateFiltersAndRender;
-        }
-        
-        if (resetBtn) {
-            resetBtn.onclick = function() {
-                if (searchInput) searchInput.value = '';
-                if (minAgeInput) minAgeInput.value = '0';
-                if (maxAgeInput) maxAgeInput.value = '18';
-                if (genderSelect) genderSelect.value = 'all';
-                if (statusSelect) statusSelect.value = 'all';
-                if (locationSelect) locationSelect.value = 'all';
-                searchTerm = '';
-                minAge = 0;
-                maxAge = 18;
-                genderFilter = 'all';
-                statusFilter = 'all';
-                locationFilter = 'all';
-                refreshChildList();
-            };
-        }
-        
-        refreshChildList();
-    }, 100);
-}
+        html += '</div>';
 
-// =============================================================================
-// 11. LEGITIMIZE CHILD MODAL (UPDATED - no marriage references)
-// =============================================================================
+        _openModal({
+            title: infoIcon + ' Select Adoption Candidate',
+            content: html,
+            confirmText: 'Close',
+            cancelText: '',
+            onConfirm: function() {}
+        });
 
-function openLegitimizationModal(child, father, mother, onSuccess) {
-    if (!child) {
-        _showToast('Child not found', 'error');
-        return;
-    }
-    
-    if (!father && !mother) {
-        _showToast('At least one parent is required for legitimization', 'error');
-        return;
-    }
-    
-    var currentYear = _getCurrentYear();
-    var childAge = _getAge(child);
-    var childName = (child.name + ' ' + (child.surname || '')).trim();
-    
-    // Check if parents are in a relationship (any romantic type)
-    var parentsAreTogether = false;
-    var relationshipStartYear = null;
-    
-    if (father && mother) {
-        var rel = _getRelationshipBetween(father.id, mother.id);
-        if (rel && (rel.type === 'committed' || rel.type === 'casual_dating') && rel.status === 'ongoing') {
-            parentsAreTogether = true;
-            if (rel.startYear) {
-                relationshipStartYear = rel.startYear;
-            }
-        }
-    }
-    
-    var birthYear = child.birthYear || (currentYear - childAge);
-    var isBornBeforeRelationship = relationshipStartYear && birthYear < relationshipStartYear;
-    
-    var personIcon = _getIcon('PERSON');
-    var infoIcon = _getIcon('CIRCLE_DOT');
-    var warningIcon = _getIcon('WARNING');
-    var locationIcon = _getIcon('LOCATION');
-    var householdIcon = _getIcon('HOUSEHOLD');
-    var checkIcon = _getIcon('CHECK_SIMPLE');
-    var xIcon = _getIcon('X_HEAVY');
-    var crownIcon = _getIcon('CROWN');
-    
-    var modalContent = '<div class="info-box" style="background: var(--bg3); padding: 12px; border-radius: 8px; margin-bottom: 16px;">' +
-        '<div style="margin-bottom: 8px;">' +
-            '<strong>' + personIcon + ' Child: ' + _escapeHtml(childName) + '</strong><br>' +
-            (child.birthYear ? infoIcon + ' Born: ' + child.birthYear + ' (' + childAge + ' years old)' : infoIcon + ' Age: ' + childAge + ' years') +
-        '</div>' +
-        (father ? '<div><strong>Father:</strong> ' + _escapeHtml(father.name) + ' ' + _escapeHtml(father.surname || '') + '</div>' : '') +
-        (mother ? '<div><strong>Mother:</strong> ' + _escapeHtml(mother.name) + ' ' + _escapeHtml(mother.surname || '') + '</div>' : '') +
-        (father && mother ? '<div style="margin-top: 8px; padding: 6px; background: var(--bg2); border-radius: 6px;">' + 
-            (parentsAreTogether ? 
-                '<span style="color: var(--success);">' + checkIcon + ' Parents are together' + (relationshipStartYear ? ' (since ' + relationshipStartYear + ')' : '') + '</span>' : 
-                '<span style="color: var(--warn);">' + warningIcon + ' Parents are not together</span>') + 
-        '</div>' : '') +
-        (isBornBeforeRelationship ? '<div style="margin-top: 8px; padding: 6px; background: rgba(200, 112, 64, 0.15); border-radius: 6px;">' + warningIcon + ' ' + childName + ' was born before parents were together (' + birthYear + ' vs ' + relationshipStartYear + ')</div>' : '') +
-    '</div>' +
-    
-    '<div class="form-group" style="margin-bottom: 12px;">' +
-        '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Year of Legitimization</label>' +
-        '<input type="number" id="legitimizationYear" value="' + currentYear + '" min="' + (child.birthYear || 1) + '" max="' + (currentYear + 5) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-        '<small style="font-size: 0.55rem;">When was the child declared legitimate?</small>' +
-    '</div>' +
-    
-    '<div class="form-group" style="margin-bottom: 12px;">' +
-        '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Change Surname?</label>' +
-        '<select id="changeSurname" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-            '<option value="none">Keep current surname (' + _escapeHtml(child.surname || 'Unknown') + ')</option>' +
-            (father ? '<option value="father">Change to father\'s surname (' + _escapeHtml(father.surname || 'Unknown') + ')</option>' : '') +
-            (mother ? '<option value="mother">Change to mother\'s surname (' + _escapeHtml(mother.surname || 'Unknown') + ')</option>' : '') +
-            (father && mother && father.surname !== mother.surname ? '<option value="hyphenated">Hyphenated (' + _escapeHtml(father.surname || '') + '-' + _escapeHtml(mother.surname || '') + ')</option>' : '') +
-        '</select>' +
-    '</div>' +
-    
-    '<div class="form-group" style="margin-bottom: 12px;">' +
-        '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Grant Inheritance Rights?</label>' +
-        '<select id="inheritanceRights" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-            '<option value="full">Full inheritance rights</option>' +
-            '<option value="limited">Limited inheritance (after legitimate children)</option>' +
-            '<option value="none">No inheritance rights</option>' +
-        '</select>' +
-    '</div>' +
-    
-    '<div class="form-group" style="margin-bottom: 12px;">' +
-        '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Household Assignment</label>' +
-        '<select id="legitimizationHouseholdChoice" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-            '<option value="parents">Add child to parent(s)\' household</option>' +
-            '<option value="separate">Child starts independent household</option>' +
-            '<option value="none">No household change</option>' +
-        '</select>' +
-        '<small style="font-size: 0.55rem;">Where will the child live after legitimization?</small>' +
-    '</div>' +
-    
-    '<div class="form-group" style="margin-bottom: 12px;">' +
-        '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes (optional)</label>' +
-        '<textarea id="legitimizationNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);" placeholder="e.g., Child born before parents were together, now legitimized"></textarea>' +
-    '</div>' +
-    
-    '<div class="info-note" style="margin-top: 12px; padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
-        'Legitimization declares a child as legitimate heir, often granting inheritance and succession rights.' +
-        (!parentsAreTogether ? ' Parents should be together for full legitimization.' : '') +
-    '</div>';
-    
-    _openModal({
-        title: crownIcon + ' Legitimize Child: ' + child.name,
-        content: modalContent,
-        confirmText: 'Legitimize Child',
-        cancelText: 'Cancel',
-        onConfirm: function() {
-            var legitimizationYear = parseInt(document.getElementById('legitimizationYear') ? document.getElementById('legitimizationYear').value : 0);
-            var changeSurname = document.getElementById('changeSurname') ? document.getElementById('changeSurname').value : 'none';
-            var inheritanceRights = document.getElementById('inheritanceRights') ? document.getElementById('inheritanceRights').value : 'full';
-            var householdChoice = document.getElementById('legitimizationHouseholdChoice') ? document.getElementById('legitimizationHouseholdChoice').value : 'parents';
-            var notes = document.getElementById('legitimizationNotes') ? document.getElementById('legitimizationNotes').value : '';
-            
-            if (isNaN(legitimizationYear)) {
-                _showToast('Invalid year', 'error');
-                return;
-            }
-            
-            var oldSurname = child.surname;
-            if (changeSurname === 'father' && father) {
-                child.surname = father.surname;
-            } else if (changeSurname === 'mother' && mother) {
-                child.surname = mother.surname;
-            } else if (changeSurname === 'hyphenated' && father && mother) {
-                child.surname = (father.surname || '') + '-' + (mother.surname || '');
-            }
-            
-            if (!child.legitimization) {
-                child.legitimization = [];
-            }
-            
-            var legitimizationRecord = {
-                year: legitimizationYear,
-                declaredBy: father ? father.name : (mother ? mother.name : 'Parents'),
-                inheritanceRights: inheritanceRights,
-                notes: notes || (changeSurname !== 'none' ? 'Surname changed from ' + oldSurname + ' to ' + child.surname : '')
-            };
-            
-            if (father && mother) {
-                legitimizationRecord.fatherId = father.id;
-                legitimizationRecord.motherId = mother.id;
-                legitimizationRecord.parentsTogether = parentsAreTogether;
-            } else if (father) {
-                legitimizationRecord.fatherId = father.id;
-            } else if (mother) {
-                legitimizationRecord.motherId = mother.id;
-            }
-            
-            child.legitimization.push(legitimizationRecord);
-            child.isLegitimate = true;
-            child.legitimizedYear = legitimizationYear;
-            child.inheritanceRights = inheritanceRights;
-            
-            if (father && !_getParents(child.id).father) {
-                _setParent(child.id, father.id, 'father', {
-                    biological: true,
-                    startYear: legitimizationYear,
-                    notes: 'Legitimized in ' + legitimizationYear
-                });
-            }
-            if (mother && !_getParents(child.id).mother) {
-                _setParent(child.id, mother.id, 'mother', {
-                    biological: true,
-                    startYear: legitimizationYear,
-                    notes: 'Legitimized in ' + legitimizationYear
-                });
-            }
-            
-            if (householdChoice === 'parents') {
-                var addedHouseholds = new Set();
-                
-                if (father) {
-                    var fatherHousehold = _getCharacterHousehold(father.id);
-                    if (fatherHousehold && !addedHouseholds.has(fatherHousehold.id)) {
-                        var previousHousehold = _getCharacterHousehold(child.id);
-                        if (previousHousehold && previousHousehold.id !== fatherHousehold.id) {
-                            _recordHouseholdChange(child.id, null, legitimizationYear, 'left',
-                                'Left previous household before legitimization',
-                                { previousHouseholdId: previousHousehold.id, previousHouseholdName: previousHousehold.name });
+        setTimeout(function() {
+            var items = document.querySelectorAll('.fam-candidate');
+            for (var k = 0; k < items.length; k++) {
+                (function(el) {
+                    el.addEventListener('click', function() {
+                        var id = el.getAttribute('data-id');
+                        var character = _getCharacter(id);
+                        if (character && typeof onSelect === 'function') {
+                            _closeModal();
+                            onSelect(character);
                         }
-                        
-                        _addHouseholdMember(fatherHousehold.id, child.id, 'family', {
-                            role: 'Child',
-                            joinedYear: legitimizationYear,
-                            notes: 'Legitimized child'
-                        });
-                        
-                        _recordHouseholdChange(child.id, fatherHousehold.id, legitimizationYear, 'joined',
-                            'Legitimized child moved to ' + father.name + '\'s household',
-                            { newRole: 'Child' });
-                        
-                        addedHouseholds.add(fatherHousehold.id);
-                    }
-                }
-                
-                if (mother && (!father || mother.id !== father.id)) {
-                    var motherHousehold = _getCharacterHousehold(mother.id);
-                    if (motherHousehold && !addedHouseholds.has(motherHousehold.id)) {
-                        var previousHousehold = _getCharacterHousehold(child.id);
-                        if (previousHousehold && previousHousehold.id !== motherHousehold.id && !addedHouseholds.has(previousHousehold.id)) {
-                            _recordHouseholdChange(child.id, null, legitimizationYear, 'left',
-                                'Left previous household before legitimization',
-                                { previousHouseholdId: previousHousehold.id, previousHouseholdName: previousHousehold.name });
-                        }
-                        
-                        _addHouseholdMember(motherHousehold.id, child.id, 'family', {
-                            role: 'Child',
-                            joinedYear: legitimizationYear,
-                            notes: 'Legitimized child'
-                        });
-                        
-                        _recordHouseholdChange(child.id, motherHousehold.id, legitimizationYear, 'joined',
-                            'Legitimized child moved to ' + mother.name + '\'s household',
-                            { newRole: 'Child' });
-                        
-                        addedHouseholds.add(motherHousehold.id);
-                    }
-                }
-            } else if (householdChoice === 'separate') {
-                var location = (father && _getCurrentLocation(father)) || (mother && _getCurrentLocation(mother)) || _getCurrentLocation(child);
-                var childHousehold = _createHousehold(child.name + '\'s Household', location, {
-                    foundedYear: legitimizationYear,
-                    notes: 'Created via legitimization'
-                });
-                if (childHousehold) {
-                    var previousHousehold = _getCharacterHousehold(child.id);
-                    if (previousHousehold) {
-                        _recordHouseholdChange(child.id, null, legitimizationYear, 'left',
-                            'Left previous household before legitimization',
-                            { previousHouseholdId: previousHousehold.id, previousHouseholdName: previousHousehold.name });
-                    }
-                    
-                    _addHouseholdMember(childHousehold.id, child.id, 'family', {
-                        role: 'Head of Household',
-                        joinedYear: legitimizationYear,
-                        isHead: true,
-                        notes: 'Created via legitimization'
                     });
-                    
-                    _recordHouseholdChange(child.id, childHousehold.id, legitimizationYear, 'created',
-                        'Created independent household due to legitimization',
-                        { newRole: 'Head of Household' });
-                }
+                })(items[k]);
             }
-            
-            _saveMasterData();
-            
-            var successMsg = child.name + ' has been legitimized';
-            if (changeSurname !== 'none') {
-                successMsg += ' and now bears the surname ' + child.surname;
-            }
-            _showToast(successMsg, 'success');
-            
-            if (inheritanceRights === 'full') {
-                _showToast(child.name + ' now has full inheritance rights', 'info');
-            } else if (inheritanceRights === 'limited') {
-                _showToast(child.name + ' has limited inheritance rights', 'info');
-            }
-            
-            if (onSuccess) onSuccess();
-            _closeTopModal();
-        }
-    });
-}
+        }, 50);
+    }
 
-// =============================================================================
-// 12. EXPORTS
-// =============================================================================
+    // -------------------------------------------------------------------------
 
-window.openSetBirthParentsModal = openSetBirthParentsModal;
-window.openCreateAdoptionModal = openCreateAdoptionModal;
-window.openEditAdoptionModal = openEditAdoptionModal;
-window.openRemoveAdoptionModal = openRemoveAdoptionModal;
-window.openAdoptionSearchModal = openAdoptionSearchModal;
-window.openLegitimizationModal = openLegitimizationModal;
+    window.openSetBirthParentsModal = openSetBirthParentsModal;
+    window.openCreateAdoptionModal = openCreateAdoptionModal;
+    window.openRemoveAdoptionModal = openRemoveAdoptionModal;
+    window.openLegitimizationModal = openLegitimizationModal;
+    window.openAdoptionSearchModal = openAdoptionSearchModal;
 
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = {
-        openSetBirthParentsModal: openSetBirthParentsModal,
-        openCreateAdoptionModal: openCreateAdoptionModal,
-        openEditAdoptionModal: openEditAdoptionModal,
-        openRemoveAdoptionModal: openRemoveAdoptionModal,
-        openAdoptionSearchModal: openAdoptionSearchModal,
-        openLegitimizationModal: openLegitimizationModal
-    };
-}
+})();
