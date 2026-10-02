@@ -1,366 +1,213 @@
 /**
- * =============================================================================
- * GOVERNMENT ECONOMY - Business logic for government finances js/government/government-economy.js
- * =============================================================================
- * 
- * This file contains business logic for:
- * - Salary management for government positions
- * - Position salary calculation
- * - Salary history tracking
- * - DEPARTMENT SALARY REQUIREMENTS (for settlement allocation)
- * 
- * REMOVED: Self-budget calculation (now owned by settlement)
- * REMOVED: Tax collection (now owned by settlement)
- * REMOVED: Financial reporting (now owned by settlement)
- * 
- * DEPENDENCIES:
- *   - government-state.js (GovernmentState)
- *   - government-queries.js (GovernmentQueries)
- *   - accessors.js (getCharacterById, getPlaceById, getCurrentYear)
- * 
- * =============================================================================
+ * government-economy.js
+ * Pure Government salary calculations. No mutations. No toasts. No State writes.
  */
-
 (function() {
     'use strict';
 
-    // =========================================================================
-    // 1. RECURSION GUARD
-    // =========================================================================
+    var Rules = window.GovernmentRules;
+    var Queries = window.GovernmentQueries;
+    var _LocationQueries = window.LocationQueries;
+    var _SettlementQueries = window.SettlementQueries;
 
-    var _processingEconomy = false;
+    if (!Rules) throw new Error('government-economy.js requires GovernmentRules');
+    if (!Queries) throw new Error('government-economy.js requires GovernmentQueries');
+    if (!_LocationQueries) throw new Error('government-economy.js requires LocationQueries');
 
-    // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
-    // =========================================================================
+    function _now() { return window.getCurrentYearSafe(); }
 
-    function _getCharacterById(id) {
-        return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
-    }
+    // ---- Salary calculation (pure) -------------------------------------------
+    // inputs:
+    //   positionFacts: { priority, salaryOverrides? }
+    //   context:       { prosperity, experienceYears, currentYear }
+    // Returns integer salary. Never returns 0 as a fabricated fallback; returns
+    // the tier base salary when prosperity is unknown (0 is a legitimate number
+    // and treated as-is; missing prosperity is surfaced via context.valid).
 
-    function _getPlaceById(id) {
-        return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
-    }
+    function calculateSalaryFromFacts(positionFacts, context) {
+        if (!positionFacts) return null;
+        if (!context) return null;
 
-    function _getPlaces() {
-        return typeof window.getPlaces === 'function' ? window.getPlaces() : [];
-    }
-
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
-    function _getSettlementData(locationId) {
-        if (typeof window.getOrCreateSettlementData === 'function') {
-            return window.getOrCreateSettlementData(locationId);
+        // Override wins
+        var overrides = positionFacts.salaryOverrides;
+        if (overrides && overrides.length > 0) {
+            var latest = _pickLatestOverride(overrides, context.currentYear);
+            if (latest) return latest.salary;
         }
-        if (typeof window.getSettlementData === 'function') {
-            return window.getSettlementData(locationId);
+
+        var tier = Rules.getSalaryTier(positionFacts.priority);
+
+        var prosperity = context.prosperity;
+        var locationModifier = 1.0;
+        if (prosperity != null) {
+            locationModifier = 0.8 + (prosperity / 250);
         }
-        return null;
+
+        var experienceModifier = 1.0;
+        var expYears = context.experienceYears;
+        if (expYears != null && expYears > 0) {
+            experienceModifier = 1 + (Math.min(expYears, 20) / 50);
+        }
+
+        var salary = tier.base * tier.multiplier * locationModifier * experienceModifier;
+        return Math.round(salary);
     }
 
-    function _getLocationPopulationCount(locationId) {
-        if (typeof window.getLocationPopulationCount === 'function') {
-            return window.getLocationPopulationCount(locationId);
-        }
-        return 0;
-    }
-
-    function _showToast(message, type) {
-        if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(message, type);
-        }
-    }
-
-    function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
-        return '';
-    }
-
-    // =========================================================================
-    // 3. CONSTANTS
-    // =========================================================================
-
-    var SALARY_TIERS = {
-        MINISTER: { base: 100, multiplier: 1.5, description: 'Minister/Department Head' },
-        DIRECTOR: { base: 60, multiplier: 1.2, description: 'Director/Senior Position' },
-        OFFICER: { base: 35, multiplier: 1.0, description: 'Officer/Mid-level' },
-        CLERK: { base: 20, multiplier: 0.8, description: 'Clerk/Entry-level' },
-        STAFF: { base: 12, multiplier: 0.6, description: 'Staff/Support' }
-    };
-
-    // =========================================================================
-    // 4. POSITION SALARY CALCULATION (KEPT - still needed)
-    // =========================================================================
-
-    function calculatePositionSalary(positionId, department) {
-        if (_processingEconomy) {
-            return 0;
-        }
-        _processingEconomy = true;
-
-        try {
-            var position = GovernmentState.getPositionById(department.id, positionId);
-            if (!position) return 0;
-
-            var priority = position.priority || 10;
-            var tier;
-
-            if (priority <= 3) {
-                tier = SALARY_TIERS.MINISTER;
-            } else if (priority <= 5) {
-                tier = SALARY_TIERS.DIRECTOR;
-            } else if (priority <= 8) {
-                tier = SALARY_TIERS.OFFICER;
-            } else if (priority <= 12) {
-                tier = SALARY_TIERS.CLERK;
-            } else {
-                tier = SALARY_TIERS.STAFF;
+    function _pickLatestOverride(overrides, currentYear) {
+        if (!overrides || overrides.length === 0) return null;
+        var best = null;
+        for (var i = 0; i < overrides.length; i++) {
+            var o = overrides[i];
+            if (!best || (o.year != null && (best.year == null || o.year >= best.year))) {
+                best = o;
             }
-
-            var locationModifier = 1.0;
-            if (department.locationId) {
-                var place = _getPlaceById(department.locationId);
-                if (place) {
-                    var settlement = _getSettlementData(department.locationId);
-                    if (settlement) {
-                        var prosperity = settlement.prosperity || 50;
-                        locationModifier = 0.8 + (prosperity / 250);
-                    }
-                }
-            }
-
-            var experienceModifier = 1.0;
-            var assignments = GovernmentState.getAssignmentsForPosition(department.id, positionId, false);
-            var totalExperience = 0;
-            for (var i = 0; i < assignments.length; i++) {
-                var a = assignments[i];
-                if (a.startYear) {
-                    var years = a.endYear ? a.endYear - a.startYear : _getCurrentYear() - a.startYear;
-                    totalExperience += Math.max(0, years);
-                }
-            }
-            if (totalExperience > 0) {
-                experienceModifier = 1 + (Math.min(totalExperience, 20) / 50);
-            }
-
-            if (position.salaryOverrides && position.salaryOverrides.length > 0) {
-                var latestOverride = position.salaryOverrides[position.salaryOverrides.length - 1];
-                return latestOverride.salary;
-            }
-
-            var baseSalary = tier.base;
-            var salary = baseSalary * tier.multiplier * locationModifier * experienceModifier;
-
-            return Math.round(salary);
-
-        } finally {
-            _processingEconomy = false;
         }
+        return best;
     }
 
-    // =========================================================================
-    // 5. DEPARTMENT SALARY REQUIREMENTS (NEW - for settlement allocation)
-    // =========================================================================
+    // Convenience: resolve facts from Queries, then calculate.
+    // The current holder's assignment experience is used for the experience
+    // modifier. This is deliberate: salary reflects the current occupant, not
+    // the accumulated tenure of the position.
+    function calculatePositionSalary(departmentId, positionId) {
+        var position = Queries.getPosition(departmentId, positionId);
+        if (!position) return null;
 
-    /**
-     * Calculates the salary requirements for all positions in a department
-     * Used by settlement to determine how much to allocate
-     * @param {string} departmentId - Department ID
-     * @returns {Object} Salary requirements
-     */
+        var dept = Queries.getDepartment(departmentId);
+        if (!dept) return null;
+
+        var prosperity = null;
+        if (dept.locationId && _SettlementQueries && _SettlementQueries.getProsperity) {
+            prosperity = _SettlementQueries.getProsperity(dept.locationId);
+        }
+
+        var currentAssignments = Queries.getAssignmentsForPosition(departmentId, positionId, { activeOnly: true });
+        var experienceYears = 0;
+        var currentYear = _now();
+        if (currentAssignments.length > 0 && currentAssignments[0].startYear != null) {
+            experienceYears = Math.max(0, currentYear - currentAssignments[0].startYear);
+        }
+
+        return calculateSalaryFromFacts(
+            { priority: position.priority, salaryOverrides: _getOverrides(departmentId, positionId) },
+            { prosperity: prosperity, experienceYears: experienceYears, currentYear: currentYear }
+        );
+    }
+
+    function _getOverrides(departmentId, positionId) {
+        // Read the raw override list from State (internal accessor).
+        var pos = window.GovernmentState._getPositionRecord(departmentId, positionId);
+        return pos && pos.salaryOverrides ? pos.salaryOverrides : [];
+    }
+
+    // ---- Department salary requirements --------------------------------------
+
     function calculateDepartmentSalaryRequirements(departmentId) {
-        if (_processingEconomy) {
-            return null;
-        }
-        _processingEconomy = true;
+        var dept = Queries.getDepartment(departmentId);
+        if (!dept) return null;
 
-        try {
-            var dept = GovernmentState.getDepartment(departmentId);
-            if (!dept) return null;
+        var assignments = Queries.getAssignmentsForDepartment(departmentId, { activeOnly: true });
+        var details = [];
+        var total = 0;
 
-            var assignments = GovernmentState.getAssignmentsForDepartment(departmentId, true);
-            var totalSalaries = 0;
-            var positions = dept.positions || [];
-            var filledPositions = 0;
-            var details = [];
-
-            for (var i = 0; i < assignments.length; i++) {
-                var a = assignments[i];
-                var salary = calculatePositionSalary(a.positionId, dept);
-                totalSalaries += salary;
-                filledPositions++;
-
-                var position = GovernmentState.getPositionById(dept.id, a.positionId);
-                details.push({
-                    assignmentId: a.id,
-                    characterId: a.characterId,
-                    characterName: a.characterName || 'Unknown',
-                    positionId: a.positionId,
-                    positionName: position ? position.name : 'Unknown',
-                    salary: salary
-                });
-            }
-
-            return {
-                departmentId: departmentId,
-                departmentName: dept.name,
-                locationId: dept.locationId,
-                totalPositions: positions.length,
-                filledPositions: filledPositions,
-                vacantPositions: positions.length - filledPositions,
-                totalSalaryRequirement: Math.round(totalSalaries),
-                averageSalary: filledPositions > 0 ? Math.round(totalSalaries / filledPositions) : 0,
-                details: details
-            };
-
-        } finally {
-            _processingEconomy = false;
-        }
-    }
-
-    /**
-     * Calculates the total salary requirements for all departments in a location
-     * Used by settlement to determine government salary allocation
-     * @param {string} locationId - Location ID
-     * @returns {Object} Total salary requirements
-     */
-    function calculateLocationSalaryRequirements(locationId) {
-        if (_processingEconomy) {
-            return { total: 0, details: [] };
-        }
-        _processingEconomy = true;
-
-        try {
-            var departments = GovernmentState.getDepartmentsByLocation(locationId);
-            var total = 0;
-            var details = [];
-
-            for (var i = 0; i < departments.length; i++) {
-                var dept = departments[i];
-                var deptReq = calculateDepartmentSalaryRequirements(dept.id);
-                if (deptReq) {
-                    total += deptReq.totalSalaryRequirement;
-                    details.push(deptReq);
-                }
-            }
-
-            return {
-                locationId: locationId,
-                totalSalaryRequirement: Math.round(total),
-                departments: details,
-                departmentCount: details.length
-            };
-
-        } finally {
-            _processingEconomy = false;
-        }
-    }
-
-    // =========================================================================
-    // 6. SALARY MANAGEMENT
-    // =========================================================================
-
-    function updatePositionSalary(departmentId, positionId, newSalary) {
-        if (_processingEconomy) {
-            return false;
-        }
-        _processingEconomy = true;
-
-        try {
-            var dept = GovernmentState.getDepartment(departmentId);
-            if (!dept) return false;
-
-            var position = GovernmentState.getPositionById(departmentId, positionId);
-            if (!position) return false;
-
-            if (newSalary < 0) {
-                return false;
-            }
-
-            if (!position.salaryOverrides) {
-                position.salaryOverrides = [];
-            }
-            position.salaryOverrides.push({
-                salary: newSalary,
-                year: _getCurrentYear(),
-                reason: 'Manual adjustment'
+        for (var i = 0; i < assignments.length; i++) {
+            var a = assignments[i];
+            var salary = calculatePositionSalary(departmentId, a.positionId);
+            if (salary == null) salary = 0;
+            total += salary;
+            details.push({
+                assignmentId: a.id,
+                characterId: a.characterId,
+                characterName: a.characterName,
+                positionId: a.positionId,
+                positionName: a.positionName,
+                salary: salary
             });
-
-            GovernmentState._updatePosition(departmentId, positionId, {});
-
-            _showToast('Salary updated for ' + position.name, 'success');
-            return true;
-
-        } finally {
-            _processingEconomy = false;
         }
+
+        var positions = Queries.getPositionsForDepartment(departmentId, {});
+        return {
+            departmentId: departmentId,
+            departmentName: dept.name,
+            locationId: dept.locationId,
+            totalPositions: positions.length,
+            filledPositions: assignments.length,
+            vacantPositions: positions.length - assignments.length,
+            totalSalaryRequirement: Math.round(total),
+            averageSalary: assignments.length > 0 ? Math.round(total / assignments.length) : 0,
+            details: details
+        };
     }
+
+    function calculateLocationSalaryRequirements(locationId) {
+        var departments = Queries.getDepartmentsByLocation(locationId, {});
+        var total = 0;
+        var details = [];
+        for (var i = 0; i < departments.length; i++) {
+            var req = calculateDepartmentSalaryRequirements(departments[i].id);
+            if (req) {
+                total += req.totalSalaryRequirement;
+                details.push(req);
+            }
+        }
+        return {
+            locationId: locationId,
+            totalSalaryRequirement: Math.round(total),
+            departments: details,
+            departmentCount: details.length
+        };
+    }
+
+    // ---- Salary history ------------------------------------------------------
+    // Historical projection: one entry per override year, plus the current
+    // calculated salary for the current year.
 
     function getPositionSalaryHistory(departmentId, positionId) {
-        if (_processingEconomy) {
-            return null;
-        }
-        _processingEconomy = true;
+        var dept = Queries.getDepartment(departmentId);
+        if (!dept) return null;
+        var position = Queries.getPosition(departmentId, positionId);
+        if (!position) return null;
 
-        try {
-            var position = GovernmentState.getPositionById(departmentId, positionId);
-            if (!position) return null;
-
-            var history = [];
-            var currentSalary = calculatePositionSalary(positionId, GovernmentState.getDepartment(departmentId));
-
+        var overrides = _getOverrides(departmentId, positionId);
+        var history = [];
+        for (var i = 0; i < overrides.length; i++) {
+            var o = overrides[i];
             history.push({
-                year: _getCurrentYear(),
-                salary: currentSalary,
-                source: 'calculated'
+                year: o.year != null ? o.year : null,
+                salary: o.salary,
+                source: 'override',
+                reason: o.reason || null
             });
-
-            if (position.salaryOverrides) {
-                for (var i = 0; i < position.salaryOverrides.length; i++) {
-                    history.push({
-                        year: position.salaryOverrides[i].year,
-                        salary: position.salaryOverrides[i].salary,
-                        source: 'override',
-                        reason: position.salaryOverrides[i].reason
-                    });
-                }
-            }
-
-            history.sort(function(a, b) { return a.year - b.year; });
-            return history;
-
-        } finally {
-            _processingEconomy = false;
         }
+
+        var currentYear = _now();
+        var currentSalary = calculatePositionSalary(departmentId, positionId);
+        history.push({
+            year: currentYear,
+            salary: currentSalary,
+            source: 'calculated',
+            reason: null
+        });
+
+        history.sort(function(a, b) {
+            var ay = a.year != null ? a.year : -Infinity;
+            var by = b.year != null ? b.year : -Infinity;
+            return ay - by;
+        });
+        return history;
     }
 
-    // =========================================================================
-    // 7. EXPORTS
-    // =========================================================================
+    // ---- Export --------------------------------------------------------------
 
     window.GovernmentEconomy = {
-        // Salary calculation (KEPT - still needed)
+        calculateSalaryFromFacts: calculateSalaryFromFacts,
         calculatePositionSalary: calculatePositionSalary,
-
-        // Department salary requirements (NEW - for settlement allocation)
         calculateDepartmentSalaryRequirements: calculateDepartmentSalaryRequirements,
         calculateLocationSalaryRequirements: calculateLocationSalaryRequirements,
-
-        // Salary management (KEPT)
-        updatePositionSalary: updatePositionSalary,
-        getPositionSalaryHistory: getPositionSalaryHistory,
-
-        // Constants
-        SALARY_TIERS: SALARY_TIERS
+        getPositionSalaryHistory: getPositionSalaryHistory
     };
 
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.GovernmentEconomy;
+    }
 })();
