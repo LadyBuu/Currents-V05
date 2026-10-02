@@ -9,26 +9,22 @@
     var Queries = window.GovernmentQueries;
     var _LocationQueries = window.LocationQueries;
     var _SettlementQueries = window.SettlementQueries;
+    var _ProsperityQueries = window.SettlementProsperityQueries;
 
-    if (!Rules) throw new Error('government-economy.js requires GovernmentRules');
-    if (!Queries) throw new Error('government-economy.js requires GovernmentQueries');
-    if (!_LocationQueries) throw new Error('government-economy.js requires LocationQueries');
+    if (!Rules)               throw new Error('government-economy.js requires GovernmentRules');
+    if (!Queries)             throw new Error('government-economy.js requires GovernmentQueries');
+    if (!_LocationQueries)    throw new Error('government-economy.js requires LocationQueries');
+    if (!_SettlementQueries)  throw new Error('government-economy.js requires SettlementQueries');
+    if (!_ProsperityQueries)  throw new Error('government-economy.js requires SettlementProsperityQueries');
 
     function _now() { return window.getCurrentYearSafe(); }
 
     // ---- Salary calculation (pure) -------------------------------------------
-    // inputs:
-    //   positionFacts: { priority, salaryOverrides? }
-    //   context:       { prosperity, experienceYears, currentYear }
-    // Returns integer salary. Never returns 0 as a fabricated fallback; returns
-    // the tier base salary when prosperity is unknown (0 is a legitimate number
-    // and treated as-is; missing prosperity is surfaced via context.valid).
 
     function calculateSalaryFromFacts(positionFacts, context) {
         if (!positionFacts) return null;
         if (!context) return null;
 
-        // Override wins
         var overrides = positionFacts.salaryOverrides;
         if (overrides && overrides.length > 0) {
             var latest = _pickLatestOverride(overrides, context.currentYear);
@@ -65,10 +61,6 @@
         return best;
     }
 
-    // Convenience: resolve facts from Queries, then calculate.
-    // The current holder's assignment experience is used for the experience
-    // modifier. This is deliberate: salary reflects the current occupant, not
-    // the accumulated tenure of the position.
     function calculatePositionSalary(departmentId, positionId) {
         var position = Queries.getPosition(departmentId, positionId);
         if (!position) return null;
@@ -77,11 +69,12 @@
         if (!dept) return null;
 
         var prosperity = null;
-        if (dept.locationId && _SettlementQueries && _SettlementQueries.getProsperity) {
-            prosperity = _SettlementQueries.getProsperity(dept.locationId);
+        if (dept.locationId && typeof _ProsperityQueries.getProsperityValue === 'function') {
+            prosperity = _ProsperityQueries.getProsperityValue(dept.locationId);
         }
 
-        var currentAssignments = Queries.getAssignmentsForPosition(departmentId, positionId, { activeOnly: true });
+        var currentAssignments = Queries.getAssignmentsForPosition(
+            departmentId, positionId, { activeOnly: true });
         var experienceYears = 0;
         var currentYear = _now();
         if (currentAssignments.length > 0 && currentAssignments[0].startYear != null) {
@@ -95,7 +88,6 @@
     }
 
     function _getOverrides(departmentId, positionId) {
-        // Read the raw override list from State (internal accessor).
         var pos = window.GovernmentState._getPositionRecord(departmentId, positionId);
         return pos && pos.salaryOverrides ? pos.salaryOverrides : [];
     }
@@ -159,8 +151,6 @@
     }
 
     // ---- Salary history ------------------------------------------------------
-    // Historical projection: one entry per override year, plus the current
-    // calculated salary for the current year.
 
     function getPositionSalaryHistory(departmentId, positionId) {
         var dept = Queries.getDepartment(departmentId);
