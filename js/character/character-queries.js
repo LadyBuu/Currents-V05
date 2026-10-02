@@ -9,6 +9,8 @@
  * SCOPE:
  *   - Name search
  *   - Character summaries (name, age, location, rank, family)
+ *   - Character facts (flat projection for cross-domain consumers)
+ *   - Location-scoped character lookups
  *   - Profession queries (by skill, masters)
  *   - Education status adapters (delegated to education-queries.js)
  *   - Character population statistics
@@ -29,33 +31,10 @@
  *   - Missing/invalid input returns null (singular) or [] (collection).
  *   - Invalid explicit query arguments throw, matching the project
  *     convention. Query results do not silently default.
- *   - Missing optional dependencies (EducationQueries, WorldQueries,
- *     RankQueries) do not silently fabricate results. When a dependency is
- *     required for a specific query and unavailable, that query returns a
- *     structured failure or null. It does not fall back to a
- *     second implementation.
  *   - Returned character objects are live canonical references. Callers
  *     must not mutate them. Only CharacterCommands mutates.
- *   - Missing character → null. Missing collection → [].
- *
- * FAMILY DELEGATION:
- *   Family-related queries are thin adapters over FamilyAccessors. This
- *   module does not implement family graph traversal, does not reimplement
- *   adoption logic, and does not maintain a parallel view of the family
- *   graph. When FamilyAccessors is unavailable, family queries return
- *   null and log a load-order error, rather than silently producing empty
- *   results.
- *
- * EDUCATION DELEGATION:
- *   Education status queries are delegated to EducationQueries. When that
- *   module is unavailable, education queries return null. This module
- *   does not walk institution graphs itself.
- *
- * RELATIONSHIP QUERIES:
- *   Spouse/partner queries are NOT here. RelationshipQueries owns
- *   partner semantics. This module does not expose "getCurrentSpouse"
- *   because the concept of "current" partner is relationship-domain
- *   knowledge.
+ *   - getCharacterFacts returns a defensive projection. It does not leak
+ *     the canonical character object.
  *
  * DEPENDENCIES (REQUIRED):
  *   - accessors.js:   getCharacters, getCharacterById
@@ -63,11 +42,11 @@
  *   - FamilyAccessors
  *
  * DEPENDENCIES (OPTIONAL):
- *   - CharacterState     — for fast indexed lookups; falls back to
- *                          accessors.js when absent
- *   - WorldQueries       — for location display; falls back to
- *                          place.displayName
- *   - RankQueries        — for active rank display; falls back to null
+ *   - CharacterState     — for fast indexed lookups
+ *   - LocationQueries    — required for getCurrentLocationId and
+ *                          location-scoped lookups
+ *   - WorldQueries       — for location display
+ *   - RankQueries        — for active rank display
  *   - EducationQueries   — required for education-status queries only
  *   - FamilyStatistics   — for family statistics aggregation
  *
@@ -129,10 +108,6 @@
         return proto === Object.prototype || proto === null;
     }
 
-    /**
-     * Resolves the character collection. Prefers CharacterState for
-     * cached/indexed reads; falls back to the accessor.
-     */
     function _getAll() {
         if (typeof window.CharacterState !== 'undefined'
             && typeof window.CharacterState.getAllCharacters === 'function') {
@@ -141,9 +116,6 @@
         return window.getCharacters();
     }
 
-    /**
-     * Resolves the character object by ID.
-     */
     function _getCharacter(id) {
         if (!_hasId(id)) return null;
         if (typeof window.CharacterState !== 'undefined'
@@ -154,9 +126,6 @@
         return window.getCharacterById(id);
     }
 
-    /**
-     * Age helper. Uses the canonical time API.
-     */
     function _age(character) {
         if (!character) return null;
         return window.calculateAge(
@@ -166,25 +135,15 @@
         );
     }
 
-    /**
-     * Resolves a display name for the character's current location.
-     * Uses WorldQueries if available; otherwise resolves the place from
-     * the accessor and returns its displayName. Returns null when the
-     * character has no current location or the reference is dangling.
-     */
     function _currentLocationDisplay(character) {
         if (!character) return null;
 
-        // Prefer a WorldQueries projection when available.
         if (typeof window.WorldQueries !== 'undefined'
             && typeof window.WorldQueries.getCurrentLocationDisplay === 'function') {
             return window.WorldQueries.getCurrentLocationDisplay(character);
         }
 
-        // Fallback: resolve the location ID directly.
-        var locationId = _hasId(character.currentLocationId)
-            ? character.currentLocationId
-            : (_hasId(character.birthplaceId) ? character.birthplaceId : null);
+        var locationId = _currentLocationId(character);
         if (!locationId) return null;
 
         if (typeof window.getPlaceById !== 'function') return null;
@@ -195,8 +154,24 @@
     }
 
     /**
-     * Resolves a rank display for a character.
+     * Resolves the current location id for a character.
+     * Delegates to LocationQueries.getCurrentLocationId when available,
+     * which is the canonical owner of movement records.
      */
+    function _currentLocationId(character) {
+        if (!character) return null;
+
+        if (typeof window.LocationQueries !== 'undefined'
+            && typeof window.LocationQueries.getCurrentLocationId === 'function') {
+            return window.LocationQueries.getCurrentLocationId(character.id);
+        }
+
+        // Fallback: character record's currentLocationId field. This is a
+        // snapshot; the canonical movement history lives in CharacterState.
+        if (_hasId(character.currentLocationId)) return character.currentLocationId;
+        return null;
+    }
+
     function _activeRankDisplay(character) {
         if (!character) return null;
         if (!_hasId(character.activeRankId)) return null;
@@ -206,7 +181,6 @@
             return window.RankQueries.getActiveRankDisplay(character);
         }
 
-        // Minimal fallback: resolve the rank and return its name.
         if (typeof window.getRankById !== 'function') return null;
         var rank = window.getRankById(character.activeRankId);
         if (!rank) return null;
@@ -217,10 +191,6 @@
         };
     }
 
-    /**
-     * Wraps FamilyAccessors' return shape ({ character, ... }) into bare
-     * character objects.
-     */
     function _unwrapCharacters(list) {
         if (!Array.isArray(list)) return [];
         var out = [];
@@ -264,13 +234,6 @@
     // 3. SEARCH
     // =========================================================================
 
-    /**
-     * Searches characters by name. Case-insensitive substring match
-     * against the full name (name + surname).
-     *
-     * @param {string} [query]
-     * @returns {Array}
-     */
     function searchCharacters(query) {
         var validation = _validateString(query, 'query', true);
         if (!validation.ok) throw new Error('searchCharacters: ' + validation.reason);
@@ -294,24 +257,141 @@
         return result;
     }
 
-    /**
-     * @deprecated Alias for searchCharacters. Kept for backward
-     * compatibility with callers that used the older name.
-     */
     function readCharactersByName(name) {
         return searchCharacters(name);
     }
 
     // =========================================================================
-    // 4. CHARACTER SUMMARY
+    // 4. CHARACTER FACTS (flat projections for cross-domain consumers)
+    // =========================================================================
+    //
+    // getCharacterFacts returns a flat projection that other domains can
+    // consume without knowing the character record shape. It is the API
+    // Government and other domains use for eligibility checks.
+    //
+    // Fields:
+    //   id, fullName, name, surname, age, birthYear, gender, isDeceased,
+    //   activeRankId, experienceYears, roleIds, skillLevels
+    //
+    // experienceYears is derived from the character's primary profession
+    // startYear. It is null when the character has no primary profession.
+    //
+    // skillLevels is a map of roleId -> skillLevel for the character's
+    // current professions.
+    // =========================================================================
+
+    function getCharacterFacts(id) {
+        if (!_hasId(id)) return null;
+        var character = _getCharacter(id);
+        if (!character) return null;
+
+        var age = _age(character);
+
+        var roleIds = [];
+        var skillLevels = {};
+        if (Array.isArray(character.professions)) {
+            for (var i = 0; i < character.professions.length; i++) {
+                var p = character.professions[i];
+                if (!p || typeof p.id !== 'string' || p.id.length === 0) continue;
+                roleIds.push(p.id);
+                skillLevels[p.id] = typeof p.skillLevel === 'number'
+                    ? p.skillLevel
+                    : 0;
+            }
+        }
+
+        var experienceYears = null;
+        var primary = getPrimaryProfession(id);
+        if (primary && primary.startYear !== undefined && primary.startYear !== null) {
+            var currentYear = window.getCurrentYear();
+            var yrs = currentYear - primary.startYear;
+            if (typeof yrs === 'number' && isFinite(yrs) && yrs >= 0) {
+                experienceYears = yrs;
+            }
+        }
+
+        return {
+            id: character.id,
+            fullName: ((character.name || '') + ' ' + (character.surname || '')).trim(),
+            name: character.name || '',
+            surname: character.surname || '',
+            age: age,
+            birthYear: character.birthYear !== undefined ? character.birthYear : null,
+            gender: character.gender || null,
+            isDeceased: character.isDeceased === true,
+            activeRankId: character.activeRankId || null,
+            experienceYears: experienceYears,
+            roleIds: roleIds,
+            skillLevels: skillLevels
+        };
+    }
+
+    function getAllCharacterFacts() {
+        var all = _getAll();
+        var out = [];
+        for (var i = 0; i < all.length; i++) {
+            var f = getCharacterFacts(all[i].id);
+            if (f) out.push(f);
+        }
+        return out;
+    }
+
+    // =========================================================================
+    // 5. LOCATION-SCOPED CHARACTER LOOKUPS
     // =========================================================================
 
     /**
-     * Returns a structured summary of a character.
+     * Returns all characters whose current location is in the given id set.
+     * Delegates to LocationQueries for current location resolution.
      *
-     * @param {string} id
-     * @returns {Object|null}
+     * @param {string[]} locationIds
+     * @returns {Array}
      */
+    function getCharactersInLocations(locationIds) {
+        if (!Array.isArray(locationIds) || locationIds.length === 0) return [];
+
+        var idSet = {};
+        for (var i = 0; i < locationIds.length; i++) {
+            if (_hasId(locationIds[i])) idSet[locationIds[i]] = true;
+        }
+
+        var all = _getAll();
+        var out = [];
+        for (var j = 0; j < all.length; j++) {
+            var c = all[j];
+            var locId = _currentLocationId(c);
+            if (locId && idSet[locId]) out.push(c);
+        }
+        return out;
+    }
+
+    /**
+     * Returns the current location id for a character.
+     * Uses LocationQueries when available; falls back to the character's
+     * own currentLocationId field.
+     *
+     * @param {string} characterId
+     * @returns {string|null}
+     */
+    function getCurrentLocationId(characterId) {
+        if (!_hasId(characterId)) return null;
+        var character = _getCharacter(characterId);
+        if (!character) return null;
+        return _currentLocationId(character);
+    }
+
+    /**
+     * Returns all characters, defensive. Alias for getCharacters accessor
+     * exposed on the query surface for cross-domain consumers.
+     */
+    function getAllCharacters() {
+        return _getAll();
+    }
+
+    // =========================================================================
+    // 6. CHARACTER SUMMARY
+    // =========================================================================
+
     function getCharacterSummary(id) {
         if (!_hasId(id)) return null;
         var character = _getCharacter(id);
@@ -321,15 +401,12 @@
         var location = _currentLocationDisplay(character);
         var rank = _activeRankDisplay(character);
 
-        // Family info: prefer FamilyStatistics, fall back to FamilyAccessors
-        // direct queries. No third-tier fallback.
         var family = null;
         if (typeof window.FamilyStatistics !== 'undefined'
             && typeof window.FamilyStatistics.getFamilyStatistics === 'function') {
             family = window.FamilyStatistics.getFamilyStatistics(id);
         }
         if (!family) {
-            // Minimal shape from direct accessors.
             var parents = window.FamilyAccessors.getParents(id);
             var children = window.FamilyAccessors.getAllChildren(id, false);
             family = {
@@ -385,9 +462,6 @@
         };
     }
 
-    /**
-     * Returns a character's professions array, or [].
-     */
     function getCharacterProfessions(id) {
         if (!_hasId(id)) return [];
         var character = _getCharacter(id);
@@ -395,9 +469,6 @@
         return Array.isArray(character.professions) ? character.professions : [];
     }
 
-    /**
-     * Returns the primary profession of a character, or null.
-     */
     function getPrimaryProfession(id) {
         var professions = getCharacterProfessions(id);
         if (professions.length === 0) return null;
@@ -409,14 +480,6 @@
         return professions[0] || null;
     }
 
-    /**
-     * Returns a character's surname history, or a synthesized default.
-     *
-     * Does NOT mutate the character. If the character has no stored
-     * history, a synthesized default is returned. Callers who want the
-     * canonical creation path use
-     * CharacterCommands.ensureCharacterSurnameHistory.
-     */
     function getCharacterSurnameHistory(id) {
         if (!_hasId(id)) return null;
         var character = _getCharacter(id);
@@ -437,17 +500,9 @@
     }
 
     // =========================================================================
-    // 5. PROFESSION QUERIES
+    // 7. PROFESSION QUERIES
     // =========================================================================
 
-    /**
-     * Returns living characters with the given profession at or above a
-     * minimum skill level.
-     *
-     * @param {string} roleId
-     * @param {number} minSkill - integer in [0, 100]
-     * @returns {Array}
-     */
     function getCharactersByProfessionSkill(roleId, minSkill) {
         var roleValidation = _validateString(roleId, 'roleId', false);
         if (!roleValidation.ok) {
@@ -483,13 +538,6 @@
         return result;
     }
 
-    /**
-     * Returns all characters at or above the master threshold (76) in the
-     * given profession, or all professions when roleId is missing.
-     *
-     * @param {string} [roleId]
-     * @returns {Array}
-     */
     function getMasterCharacters(roleId) {
         if (!_isMissing(roleId)) {
             var v = _validateString(roleId, 'roleId', false);
@@ -522,17 +570,9 @@
     }
 
     // =========================================================================
-    // 6. EDUCATION STATUS (DELEGATED)
+    // 8. EDUCATION STATUS (DELEGATED)
     // =========================================================================
 
-    /**
-     * Returns characters by education status. Delegates to
-     * EducationQueries. Returns null when that module is not loaded.
-     *
-     * @param {string} status - 'enrolled' | 'graduated' | 'withdrawn' | 'never_attended'
-     * @param {string} [institutionId]
-     * @returns {Array|null}
-     */
     function getCharactersByEducationStatus(status, institutionId) {
         var statusValidation = _validateString(status, 'status', false);
         if (!statusValidation.ok) {
@@ -559,14 +599,6 @@
         );
     }
 
-    /**
-     * Returns school-age characters not currently enrolled.
-     * Delegates to EducationQueries. Returns null when unavailable.
-     *
-     * @param {number} [minAge] - default 7
-     * @param {number} [maxAge] - default 16
-     * @returns {Array|null}
-     */
     function getCharactersNotInEducation(minAge, maxAge) {
         var minV = _validateInteger(minAge, 'minAge', true);
         if (!minV.ok) throw new Error('getCharactersNotInEducation: ' + minV.reason);
@@ -587,20 +619,9 @@
     }
 
     // =========================================================================
-    // 7. FAMILY QUERIES (THIN ADAPTERS)
+    // 9. FAMILY QUERIES (THIN ADAPTERS)
     // =========================================================================
-    //
-    // These delegate to FamilyAccessors. They do not implement family
-    // graph traversal.
 
-    /**
-     * Returns all children of a character.
-     *
-     * @param {string} characterId
-     * @param {boolean} [includeDeceased] - default false
-     * @param {boolean} [includeAdopted]  - default true
-     * @returns {Array}
-     */
     function getCharacterChildren(characterId, includeDeceased, includeAdopted) {
         if (!_hasId(characterId)) return [];
         includeDeceased = includeDeceased === true;
@@ -613,13 +634,6 @@
         return _unwrapCharacters(all);
     }
 
-    /**
-     * Returns a character's parents.
-     *
-     * @param {string} characterId
-     * @param {boolean} [includeAdoptive] - default false
-     * @returns {{ father: Object|null, mother: Object|null, adoptiveParents: Array }}
-     */
     function getCharacterParents(characterId, includeAdoptive) {
         var empty = { father: null, mother: null, adoptiveParents: [] };
         if (!_hasId(characterId)) return empty;
@@ -644,15 +658,6 @@
         return result;
     }
 
-    /**
-     * Returns a character's siblings.
-     *
-     * @param {string} characterId
-     * @param {boolean} [includeHalfSiblings] - default true
-     * @param {boolean} [includeDeceased]     - default false
-     * @param {boolean} [includeAdopted]      - default true
-     * @returns {Array}
-     */
     function getCharacterSiblings(characterId, includeHalfSiblings, includeDeceased, includeAdopted) {
         if (!_hasId(characterId)) return [];
         includeHalfSiblings = includeHalfSiblings !== false;
@@ -668,13 +673,6 @@
         return _unwrapCharacters(all);
     }
 
-    /**
-     * Returns a character's grandparents.
-     *
-     * @param {string} characterId
-     * @param {boolean} [includeAdoptive] - default false
-     * @returns {Array}
-     */
     function getCharacterGrandparents(characterId, includeAdoptive) {
         if (!_hasId(characterId)) return [];
         return window.FamilyAccessors.getGrandparents(
@@ -683,14 +681,6 @@
         );
     }
 
-    /**
-     * Returns a character's grandchildren.
-     *
-     * @param {string} characterId
-     * @param {boolean} [includeDeceased] - default false
-     * @param {boolean} [includeAdopted]  - default true
-     * @returns {Array}
-     */
     function getCharacterGrandchildren(characterId, includeDeceased, includeAdopted) {
         if (!_hasId(characterId)) return [];
         return window.FamilyAccessors.getGrandchildren(
@@ -700,9 +690,6 @@
         );
     }
 
-    /**
-     * Returns a character's first cousins.
-     */
     function getCharacterFirstCousins(characterId, includeDeceased) {
         if (!_hasId(characterId)) return [];
         return window.FamilyAccessors.getFirstCousins(
@@ -711,9 +698,6 @@
         );
     }
 
-    /**
-     * Returns a character's aunts and uncles.
-     */
     function getCharacterAuntsAndUncles(characterId, includeDeceased) {
         if (!_hasId(characterId)) return [];
         return window.FamilyAccessors.getAuntsAndUncles(
@@ -722,9 +706,6 @@
         );
     }
 
-    /**
-     * Returns a character's nieces and nephews.
-     */
     function getCharacterNiecesAndNephews(characterId, includeDeceased) {
         if (!_hasId(characterId)) return [];
         return window.FamilyAccessors.getNiecesAndNephews(
@@ -733,37 +714,16 @@
         );
     }
 
-    /**
-     * Returns the kinship record between two characters. Delegates to
-     * FamilyAccessors.
-     *
-     * The result is structured, not a presentation string. Rendering
-     * "Father" or "Cousin" is the caller's responsibility.
-     */
     function getCharacterKinship(charId1, charId2) {
         if (!_hasId(charId1) || !_hasId(charId2)) return null;
         return window.FamilyAccessors.getKinship(charId1, charId2);
     }
 
-    /**
-     * Returns the kinship closeness score between two characters.
-     *
-     * The score is a UI sort key that measures graph proximity. It is NOT
-     * a blood-relationship coefficient. Affinity (spouse) is NOT included;
-     * use relationship-queries.js for affinity.
-     *
-     * @returns {number} 0 for self, higher for more distant. 99 for
-     *   unrelated.
-     */
     function getCharacterKinshipCloseness(charId1, charId2) {
         if (!_hasId(charId1) || !_hasId(charId2)) return 99;
         return window.FamilyAccessors.getKinshipCloseness(charId1, charId2);
     }
 
-    /**
-     * Returns comprehensive family statistics for a character.
-     * Delegates to FamilyStatistics. Returns null when unavailable.
-     */
     function getCharacterFamilyStatistics(characterId) {
         if (!_hasId(characterId)) return null;
         if (typeof window.FamilyStatistics === 'undefined') return null;
@@ -771,9 +731,6 @@
         return window.FamilyStatistics.getFamilyStatistics(characterId);
     }
 
-    /**
-     * Returns a lightweight family summary for a character.
-     */
     function getCharacterFamilySummary(characterId) {
         if (!_hasId(characterId)) return null;
         if (typeof window.FamilyStatistics === 'undefined') return null;
@@ -782,14 +739,9 @@
     }
 
     // =========================================================================
-    // 8. CHARACTER STATISTICS
+    // 10. STATISTICS
     // =========================================================================
 
-    /**
-     * Returns aggregate statistics for the character population.
-     *
-     * @returns {Object}
-     */
     function getCharacterStatistics() {
         var all = _getAll();
         var currentYear = window.getCurrentYear();
@@ -842,7 +794,6 @@
             else if (c.gender === 'female') stats.female++;
             else stats.unknownGender++;
 
-            // Age grouping
             var ageForGrouping = c.isDeceased === true
                 ? (window.isValidYear(c.birthYear) && window.isValidYear(c.deathYear)
                     ? c.deathYear - c.birthYear : null)
@@ -899,13 +850,22 @@
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 11. EXPORTS
     // =========================================================================
 
     window.CharacterQueries = {
         // Search
         searchCharacters: searchCharacters,
         readCharactersByName: readCharactersByName,
+
+        // Facts (flat projections)
+        getCharacterFacts: getCharacterFacts,
+        getAllCharacterFacts: getAllCharacterFacts,
+
+        // Location-scoped
+        getCharactersInLocations: getCharactersInLocations,
+        getCurrentLocationId: getCurrentLocationId,
+        getAllCharacters: getAllCharacters,
 
         // Summary and projections
         getCharacterSummary: getCharacterSummary,
@@ -940,11 +900,8 @@
     };
 
     // =========================================================================
-    // 10. LEGACY GLOBAL ALIASES
+    // 12. LEGACY GLOBAL ALIASES
     // =========================================================================
-    //
-    // Thin aliases for callers that use bare globals. Not second
-    // implementations.
 
     window.getCharacterChildren = getCharacterChildren;
     window.getCharacterParents = getCharacterParents;
