@@ -10,6 +10,7 @@
  *   - Search / filtering
  *   - Population analytics
  *   - Movement interpretation
+ *   - Place projections (summary, government, leadership)
  *   - Cross-domain read composition (via explicit deps)
  *
  * Does NOT own:
@@ -20,8 +21,8 @@
  *
  * Explicit dependencies (must exist at call time):
  *   - LocationState
- *   - CharacterQueries  (window.CharacterQueries)
- *   - TimeQueries       (window.TimeQueries)
+ *   - CharacterQueries
+ *   - TimeQueries
  *
  * Cross-domain policy:
  *   LocationQueries may compose other domains' Queries.
@@ -34,7 +35,7 @@
     'use strict';
 
     // -------------------------------------------------------------------------
-    // EXPLICIT DEPENDENCIES (no fallback wrappers)
+    // EXPLICIT DEPENDENCIES
     // -------------------------------------------------------------------------
 
     function _state() {
@@ -122,32 +123,234 @@
         return _state().getLocationTypeById(typeId);
     }
 
-    /**
-     * Returns the type's priority, or null if the type does not exist.
-     * Missing type is not priority 5.
-     */
     function getLocationTypePriority(typeId) {
         var type = _state().getLocationTypeById(typeId);
         return type ? type.priority : null;
     }
 
-    /**
-     * Returns the type's display name, or null if the type does not exist.
-     * Presentation decides how to render null.
-     */
     function getLocationTypeName(typeId) {
         var type = _state().getLocationTypeById(typeId);
         return type ? type.displayName : null;
     }
 
     // -------------------------------------------------------------------------
-    // HIERARCHY QUERIES
+    // PLACE PROJECTIONS (defensive snapshots for UI / cross-domain reads)
     // -------------------------------------------------------------------------
 
     /**
-     * Root-to-place chain. Empty array if the place does not exist.
-     * Cycle-safe: returns whatever prefix is acyclic if corruption detected.
+     * Returns a defensive summary of a place. Uses only fields that are
+     * canonical on the place record. Missing fields are reported as null;
+     * they are not fabricated.
+     *
+     * @param {string} placeId
+     * @returns {Object|null}
      */
+    function getPlaceSummary(placeId) {
+        var place = _state().getPlaceById(placeId);
+        if (!place) return null;
+
+        return {
+            id: place.id,
+            displayName: place.displayName || null,
+            typeId: place.typeId || null,
+            typeName: getLocationTypeName(place.typeId),
+            parentId: place.parentId !== undefined ? place.parentId : null,
+            status: place.status !== undefined ? place.status : null,
+            isCapital: place.isCapital === true,
+            governmentTypeId: place.governmentTypeId || null,
+            governmentStyle: place.governmentStyle || null,
+            cultureId: place.cultureId || null,
+            variableKey: place.variableKey !== undefined ? place.variableKey : null,
+            notes: place.notes !== undefined ? place.notes : null
+        };
+    }
+
+    /**
+     * Returns summaries for all places, optionally filtered.
+     * @param {Object} [options]
+     * @returns {Array}
+     */
+    function getPlaceSummaries(options) {
+        options = options || {};
+        var places = getAllPlaces(options);
+        var out = [];
+        for (var i = 0; i < places.length; i++) {
+            var s = getPlaceSummary(places[i].id);
+            if (s) out.push(s);
+        }
+        return out;
+    }
+
+    /**
+     * Returns places whose governmentTypeId equals the given id.
+     * Used by cross-domain validation (e.g. cannot delete a government
+     * type while a place still uses it).
+     *
+     * @param {string} governmentTypeId
+     * @returns {Array<Object>}
+     */
+    function getPlacesUsingGovernmentType(governmentTypeId) {
+        if (!governmentTypeId) return [];
+        var ids = _state().getAllPlaceIds();
+        var out = [];
+        for (var i = 0; i < ids.length; i++) {
+            var p = _state().getPlaceById(ids[i]);
+            if (p && p.governmentTypeId === governmentTypeId) {
+                var s = getPlaceSummary(p.id);
+                if (s) out.push(s);
+            }
+        }
+        return out;
+    }
+
+    // -------------------------------------------------------------------------
+    // LEADERSHIP PROJECTIONS
+    // -------------------------------------------------------------------------
+    //
+    // Leader assignments are stored on the place record as
+    // place.leaderAssignments (canonical Location data). These queries
+    // return defensive projections; they never expose the live array.
+    // -------------------------------------------------------------------------
+
+    function _projectLeaderAssignment(a) {
+        if (!a) return null;
+        return {
+            id: a.id,
+            characterId: a.characterId,
+            characterName: a.characterName || null,
+            startYear: a.startYear !== undefined ? a.startYear : null,
+            endYear: a.endYear !== undefined ? a.endYear : null,
+            title: a.title || 'Leader',
+            notes: a.notes || '',
+            isActive: a.isActive === true ||
+                (a.isActive !== false &&
+                 (a.endYear === null || a.endYear === undefined)),
+            endReason: a.endReason || null
+        };
+    }
+
+    /**
+     * Returns the current (active) leader for a place, or null.
+     *
+     * @param {string} placeId
+     * @returns {Object|null}
+     */
+    function getCurrentLeader(placeId) {
+        var place = _state().getPlaceById(placeId);
+        if (!place || !Array.isArray(place.leaderAssignments)) return null;
+
+        for (var i = 0; i < place.leaderAssignments.length; i++) {
+            var a = place.leaderAssignments[i];
+            if (!a) continue;
+            var active = a.isActive === true ||
+                (a.isActive !== false &&
+                 (a.endYear === null || a.endYear === undefined));
+            if (active) return _projectLeaderAssignment(a);
+        }
+        return null;
+    }
+
+    /**
+     * Returns a place's full leadership history, most recent first.
+     *
+     * @param {string} placeId
+     * @returns {Array}
+     */
+    function getLeaderHistory(placeId) {
+        var place = _state().getPlaceById(placeId);
+        if (!place || !Array.isArray(place.leaderAssignments)) return [];
+
+        var out = [];
+        for (var i = 0; i < place.leaderAssignments.length; i++) {
+            var p = _projectLeaderAssignment(place.leaderAssignments[i]);
+            if (p) out.push(p);
+        }
+        out.sort(function (x, y) {
+            var xStart = x.startYear !== null ? x.startYear : -Infinity;
+            var yStart = y.startYear !== null ? y.startYear : -Infinity;
+            return yStart - xStart;
+        });
+        return out;
+    }
+
+    /**
+     * Returns the number of places that currently have an active leader.
+     *
+     * @returns {number}
+     */
+    function getActiveLeaderCount() {
+        var ids = _state().getAllPlaceIds();
+        var count = 0;
+        for (var i = 0; i < ids.length; i++) {
+            if (getCurrentLeader(ids[i])) count++;
+        }
+        return count;
+    }
+
+    /**
+     * Returns leaders for a location and its direct children.
+     *
+     * @param {string} locationId
+     * @returns {Array<{ placeId, placeName, leader }>}
+     */
+    function getLeadersByLocation(locationId) {
+        var place = _state().getPlaceById(locationId);
+        if (!place) return [];
+
+        var out = [];
+
+        var own = getCurrentLeader(locationId);
+        if (own) {
+            out.push({
+                placeId: locationId,
+                placeName: place.displayName || null,
+                leader: own
+            });
+        }
+
+        var children = _state().getPlacesByParentId(locationId);
+        for (var i = 0; i < children.length; i++) {
+            var childLeader = getCurrentLeader(children[i].id);
+            if (childLeader) {
+                out.push({
+                    placeId: children[i].id,
+                    placeName: children[i].displayName || null,
+                    leader: childLeader
+                });
+            }
+        }
+
+        return out;
+    }
+
+    /**
+     * Composite government projection for a place.
+     *
+     * Returns the fields a Government UI or Government query needs to
+     * describe a location's government without reaching into the raw
+     * place record.
+     *
+     * @param {string} placeId
+     * @returns {Object|null}
+     */
+    function getPlaceGovernmentSummary(placeId) {
+        var place = _state().getPlaceById(placeId);
+        if (!place) return null;
+
+        return {
+            placeId: place.id,
+            displayName: place.displayName || null,
+            governmentTypeId: place.governmentTypeId || null,
+            governmentStyle: place.governmentStyle || null,
+            currentLeader: getCurrentLeader(placeId),
+            leaderCount: getLeaderHistory(placeId).length
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // HIERARCHY QUERIES
+    // -------------------------------------------------------------------------
+
     function getPlaceHierarchy(placeId) {
         if (!placeId) return [];
         var chain = [];
@@ -185,10 +388,6 @@
         return chain.slice(0, -1);
     }
 
-    /**
-     * Nearest ancestor (or self) whose type priority equals targetPriority.
-     * Returns null if none exists.
-     */
     function getLocationAtPriority(placeId, targetPriority) {
         var chain = getPlaceHierarchy(placeId);
         for (var i = chain.length - 1; i >= 0; i--) {
@@ -252,7 +451,7 @@
     }
 
     // -------------------------------------------------------------------------
-    // POPULATION (explicit cross-domain reads)
+    // POPULATION
     // -------------------------------------------------------------------------
 
     function getPopulationCount(locationId, includeDeceased) {
@@ -287,7 +486,7 @@
     }
 
     // -------------------------------------------------------------------------
-    // MOVEMENT QUERIES (CharacterQueries owns movement records)
+    // MOVEMENT
     // -------------------------------------------------------------------------
 
     function getMoveHistory(characterId) {
@@ -450,7 +649,7 @@
     }
 
     // -------------------------------------------------------------------------
-    // COMPARISON (uses explicit tie semantics)
+    // COMPARISON
     // -------------------------------------------------------------------------
 
     function _cmp(a, b) {
@@ -496,10 +695,6 @@
         return limit === undefined || limit === null ? rows : rows.slice(0, limit);
     }
 
-    /**
-     * Population per hierarchy node — NOT geographic density.
-     * Named to match its actual metric.
-     */
     function getPopulationPerNodeRanking(limit) {
         var places = getAllPlaces({});
         var rows = places.map(function (p) {
@@ -574,6 +769,12 @@
         getPlacesByType: getPlacesByType,
         getRootPlaces: getRootPlaces,
 
+        // Place projections
+        getPlaceSummary: getPlaceSummary,
+        getPlaceSummaries: getPlaceSummaries,
+        getPlacesUsingGovernmentType: getPlacesUsingGovernmentType,
+        getPlaceGovernmentSummary: getPlaceGovernmentSummary,
+
         // Types
         getLocationTypes: getLocationTypes,
         getLocationType: getLocationType,
@@ -597,13 +798,19 @@
         getPopulationCount: getPopulationCount,
         getOwnPopulation: getOwnPopulation,
 
-        // Movement interpretation
+        // Movement
         getMoveHistory: getMoveHistory,
         getLastMove: getLastMove,
         getCurrentLocation: getCurrentLocation,
         getCurrentLocationId: getCurrentLocationId,
         getCurrentLocationName: getCurrentLocationName,
         getLocationAtYear: getLocationAtYear,
+
+        // Leadership
+        getCurrentLeader: getCurrentLeader,
+        getLeaderHistory: getLeaderHistory,
+        getActiveLeaderCount: getActiveLeaderCount,
+        getLeadersByLocation: getLeadersByLocation,
 
         // Search / analytics
         searchLocations: searchLocations,
