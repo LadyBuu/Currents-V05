@@ -6,19 +6,23 @@
 (function() {
     'use strict';
 
-    var _CharacterCommands = window.CharacterCommands;
-    var _CharacterQueries  = window.CharacterQueries;
-    var _LocationQueries   = window.LocationQueries;
-    var _HouseholdCommands = window.HouseholdCommands;
-    var _HouseholdQueries  = window.HouseholdQueries;
-    var _SettlementQueries = window.SettlementQueries;
-    var _Rules             = window.GovernmentRules;
+    var _CharacterCommands   = window.CharacterCommands;
+    var _CharacterQueries    = window.CharacterQueries;
+    var _LocationQueries     = window.LocationQueries;
+    var _LocationCommands    = window.LocationCommands;
+    var _HouseholdCommands   = window.HouseholdCommands;
+    var _SettlementQueries   = window.SettlementQueries;
+    var _SettlementGovCmds   = window.SettlementGovernmentCommands;
+    var _Rules               = window.GovernmentRules;
 
-    if (!_CharacterQueries) throw new Error('government-commands.js requires CharacterQueries');
-    if (!_LocationQueries)  throw new Error('government-commands.js requires LocationQueries');
+    if (!_CharacterQueries)  throw new Error('government-commands.js requires CharacterQueries');
+    if (!_LocationQueries)   throw new Error('government-commands.js requires LocationQueries');
+    if (!_LocationCommands)  throw new Error('government-commands.js requires LocationCommands');
     if (!_SettlementQueries) throw new Error('government-commands.js requires SettlementQueries');
+    if (!_SettlementGovCmds) throw new Error('government-commands.js requires SettlementGovernmentCommands');
     if (!window.GovernmentQueries) throw new Error('government-commands.js requires GovernmentQueries');
     if (!window.GovernmentState)   throw new Error('government-commands.js requires GovernmentState');
+    if (!_Rules)                   throw new Error('government-commands.js requires GovernmentRules');
 
     var State = window.GovernmentState;
     var Queries = window.GovernmentQueries;
@@ -62,9 +66,12 @@
         State._addDepartmentRecord(dept);
         _commit();
 
-        var loc = _LocationQueries.getPlaceSummary(dept.locationId);
+        var loc = _LocationQueries.getPlaceSummary
+            ? _LocationQueries.getPlaceSummary(dept.locationId)
+            : null;
         _log('government', 'department_created',
-            'Department "' + dept.name + '" created at ' + (loc ? loc.displayName : dept.locationId), []);
+            'Department "' + dept.name + '" created at ' +
+            (loc ? loc.displayName : dept.locationId), []);
 
         return _ok({ id: dept.id, departmentId: dept.id });
     }
@@ -163,7 +170,12 @@
         if (!v.valid) return _fail(v.reason, 'VALIDATION');
 
         if (updates.parentPositionId !== undefined && updates.parentPositionId) {
-            var hier = _Rules.validatePositionHierarchy(departmentId, positionId, updates.parentPositionId);
+            var hier = _Rules.validatePositionHierarchy(
+                departmentId,
+                positionId,
+                updates.parentPositionId,
+                State._getPositionRecord
+            );
             if (!hier.valid) return _fail(hier.reason, 'CYCLE');
         }
 
@@ -205,7 +217,6 @@
 
         _commit();
         _emitAssignmentEvent(result.data);
-        _maybeScheduleSalaryPayment(result.data);
 
         return result;
     }
@@ -239,15 +250,15 @@
             character: charFacts,
             options: {
                 startYear: options.startYear != null ? options.startYear : _now(),
-                defaultSkillLevel: options.defaultSkillLevel != null ? options.defaultSkillLevel : _Rules.DEFAULT_SKILL_LEVEL,
+                defaultSkillLevel: options.defaultSkillLevel != null
+                    ? options.defaultSkillLevel
+                    : _Rules.DEFAULT_SKILL_LEVEL,
                 addRoleIfMissing: options.addRoleIfMissing !== false
             }
         });
 
         if (!plan.valid) return _fail(plan.reason, plan.code || 'INELIGIBLE');
 
-        // Cross-domain: add profession if the plan requires it. This is part of the
-        // assignment operation and must succeed for the assignment to be valid.
         if (plan.roleToAdd && _CharacterCommands) {
             var addResult = _CharacterCommands.addProfession(characterId, plan.roleToAdd.roleId, {
                 skillLevel: plan.roleToAdd.skillLevel,
@@ -273,21 +284,21 @@
         };
 
         State._addAssignmentRecord(departmentId, assignment);
-        return _ok({ assignmentId: assignment.id, departmentId: departmentId, characterId: characterId });
+        return _ok({
+            assignmentId: assignment.id,
+            departmentId: departmentId,
+            characterId: characterId
+        });
     }
 
     function _emitAssignmentEvent(data) {
         var dept = State._getDepartmentRecord(data.departmentId);
-        var pos = State._getPositionRecord(data.departmentId, State._getAssignmentRecord(data.departmentId, data.assignmentId).positionId);
+        var asg = State._getAssignmentRecord(data.departmentId, data.assignmentId);
+        var pos = asg ? State._getPositionRecord(data.departmentId, asg.positionId) : null;
         var charFacts = _CharacterQueries.getCharacterFacts(data.characterId);
         _log('government', 'character_assigned',
             (charFacts ? charFacts.fullName : data.characterId) +
             ' assigned to "' + (pos ? pos.name : '?') + '" in "' + (dept ? dept.name : '?') + '"', []);
-    }
-
-    function _maybeScheduleSalaryPayment(data) {
-        // Salary is a separate cross-domain operation owned by the salary scheduler,
-        // not a side effect of assignment. Do not pay here.
     }
 
     function endAssignment(departmentId, assignmentId, endYear, reason) {
@@ -340,7 +351,6 @@
         var applied = [];
         var failures = [];
 
-        // Phase 1: plan all
         var plans = [];
         for (var i = 0; i < assignments.length; i++) {
             var input = assignments[i];
@@ -353,7 +363,6 @@
             return _fail('Bulk assignment aborted: ' + failures.length + ' invalid input(s)', 'ATOMIC_ABORT');
         }
 
-        // Phase 2: apply
         for (var j = 0; j < plans.length; j++) {
             var res = _applyAssignmentPlan(departmentId, positionId, plans[j].data);
             if (res.success) applied.push(res.data);
@@ -395,7 +404,9 @@
             character: charFacts,
             options: {
                 startYear: options.startYear != null ? options.startYear : _now(),
-                defaultSkillLevel: options.defaultSkillLevel != null ? options.defaultSkillLevel : _Rules.DEFAULT_SKILL_LEVEL,
+                defaultSkillLevel: options.defaultSkillLevel != null
+                    ? options.defaultSkillLevel
+                    : _Rules.DEFAULT_SKILL_LEVEL,
                 addRoleIfMissing: options.addRoleIfMissing !== false
             }
         });
@@ -530,72 +541,72 @@
         return _ok({ id: typeId });
     }
 
-    // ---- Leader / government placement (delegated to Location) ---------------
+    // ---- Leader / place government (delegated to Location) -------------------
 
     function assignLeader(placeId, characterId, startYear, title) {
-        if (typeof window.LocationCommands === 'undefined' ||
-            typeof window.LocationCommands.assignLeader !== 'function') {
-            return _fail('LocationCommands.assignLeader unavailable', 'DEPENDENCY');
-        }
-        var result = window.LocationCommands.assignLeader(placeId, characterId, startYear, title);
-        if (result && result.success) {
+        var result = _LocationCommands.assignLeader(placeId, characterId, startYear, title);
+        if (result && result.success !== false) {
+            var c = _CharacterQueries.getCharacterFacts(characterId);
             _log('leadership', 'assigned',
-                (window.CharacterQueries.getCharacterFacts(characterId) || {}).fullName +
-                ' assigned as leader of ' + placeId, []);
+                (c ? c.fullName : characterId) + ' assigned as leader of ' + placeId, []);
         }
-        return result;
+        return _wrapLocationResult(result);
     }
 
     function endLeaderTerm(placeId, characterId, endYear) {
-        if (typeof window.LocationCommands === 'undefined' ||
-            typeof window.LocationCommands.endLeaderTerm !== 'function') {
-            return _fail('LocationCommands.endLeaderTerm unavailable', 'DEPENDENCY');
+        var result = _LocationCommands.endLeaderTerm(placeId, characterId, endYear);
+        if (result && result.success !== false) {
+            _log('leadership', 'term_ended', 'Leader term ended at ' + placeId, []);
         }
-        var result = window.LocationCommands.endLeaderTerm(placeId, characterId, endYear);
-        if (result && result.success) {
-            _log('leadership', 'term_ended',
-                'Leader term ended at ' + placeId, []);
-        }
-        return result;
+        return _wrapLocationResult(result);
     }
 
     function assignGovernmentToPlace(placeId, govTypeId, govStyle) {
-        if (typeof window.LocationCommands === 'undefined' ||
-            typeof window.LocationCommands.setGovernment !== 'function') {
-            return _fail('LocationCommands.setGovernment unavailable', 'DEPENDENCY');
+        // LocationCommands exposes the canonical command as assignGovernment.
+        var result = _LocationCommands.assignGovernment(placeId, govTypeId, govStyle);
+        if (result && result.success !== false) {
+            _log('government', 'assigned_to_place', 'Government assigned to ' + placeId, []);
         }
-        var result = window.LocationCommands.setGovernment(placeId, govTypeId, govStyle);
-        if (result && result.success) {
-            _log('government', 'assigned_to_place',
-                'Government assigned to ' + placeId, []);
+        return _wrapLocationResult(result);
+    }
+
+    /**
+     * LocationCommands currently return `true` or throw. Wrap into the
+     * Government result contract.
+     */
+    function _wrapLocationResult(result) {
+        if (result === true || (result && result.success !== false)) {
+            return _ok(result === true ? null : result.data || null);
         }
-        return result;
+        return _fail((result && result.reason) || 'Location command failed', 'LOCATION_FAILED');
     }
 
     // ---- Justice / watch (delegated to Settlement) ---------------------------
 
     function updateJusticeSeverity(locationId, severity) {
-        if (typeof window.SettlementCommands === 'undefined' ||
-            typeof window.SettlementCommands.updateJusticeSeverity !== 'function') {
-            return _fail('SettlementCommands.updateJusticeSeverity unavailable', 'DEPENDENCY');
-        }
-        var result = window.SettlementCommands.updateJusticeSeverity(locationId, severity);
+        var result = _SettlementGovCmds.setJusticeSeverity(locationId, severity);
         if (result && result.success) {
-            _log('justice', 'severity_updated', 'Justice severity at ' + locationId + ' set to ' + severity, []);
+            _log('justice', 'severity_updated',
+                'Justice severity at ' + locationId + ' set to ' + severity, []);
         }
-        return result;
+        return _wrapSettlementResult(result);
     }
 
     function updateWatch(locationId, hasWatch, size) {
-        if (typeof window.SettlementCommands === 'undefined' ||
-            typeof window.SettlementCommands.updateWatch !== 'function') {
-            return _fail('SettlementCommands.updateWatch unavailable', 'DEPENDENCY');
-        }
-        var result = window.SettlementCommands.updateWatch(locationId, hasWatch, size);
+        var result = _SettlementGovCmds.setWatch(locationId, {
+            hasWatch: !!hasWatch,
+            watchSize: hasWatch ? (size != null ? size : 0) : 0
+        });
         if (result && result.success) {
             _log('justice', 'watch_updated', 'Watch at ' + locationId + ' updated', []);
         }
-        return result;
+        return _wrapSettlementResult(result);
+    }
+
+    function _wrapSettlementResult(result) {
+        if (result && result.success) return _ok(result);
+        if (result && result.code) return _fail(result.reason || result.code, result.code);
+        return _fail('Settlement command failed', 'SETTLEMENT_FAILED');
     }
 
     // ---- Export --------------------------------------------------------------
@@ -623,16 +634,16 @@
         updateGovernmentType: updateGovernmentType,
         deleteGovernmentType: deleteGovernmentType,
 
-        // Leader / place assignment (delegated)
+        // Leader / place government (delegated to LocationCommands)
         assignLeader: assignLeader,
         endLeaderTerm: endLeaderTerm,
         assignGovernmentToPlace: assignGovernmentToPlace,
 
-        // Justice (delegated)
+        // Justice (delegated to SettlementGovernmentCommands)
         updateJusticeSeverity: updateJusticeSeverity,
         updateWatch: updateWatch,
 
-        // Transaction helper for compound commands (internal use)
+        // Transaction helper
         _commit: _commit
     };
 
