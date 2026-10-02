@@ -1,27 +1,39 @@
 /**
  * =============================================================================
- * RESIDENCE OWNER MODALS (modals-residence-owner.js)
+ * STILL WATERS - RESIDENCE OWNER MODALS (modals-residence-owner.js)
  * =============================================================================
  * 
- * PURPOSE: UI modals for residence owner management.
+ * LOCATION: js/systems/household/modals-residence-owner.js
  * 
- * DEPENDS ON:
- *   - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
- *   - modals-household-selector.js (openHouseholdSelector)
- *   - modals-char-select.js (openCharacterSelector)
- *   - residence-system.js (ResidenceSystem)
- *   - household-state.js (HouseholdState)
+ * PURPOSE
+ * -------
+ * Modal entry points for residence owner/portfolio management:
  * 
- * EXPORTS:
- *   - openResidenceOwnerDetailsModal() - View owner details and owned properties
- *   - openManageOwnedPropertiesModal() - Manage all properties owned by an owner
- *   - openTransferOwnershipModal() - Transfer ownership to another entity
- *   - openOwnerStatsModal() - View owner statistics
+ *   - openResidenceOwnerDetailsModal(residenceId, onRefresh)
+ *   - openManageOwnedPropertiesModal(ownerId, ownerType, onSuccess)
+ *   - openTransferOwnershipModal(residenceId, onSuccess)
+ *   - openOwnerStatsModal(ownerId, ownerType)
  * 
- * ICON POLICY:
- *   - All icons from icons.js via _getIcon()
- *   - NO emojis
- *   - NO icons in confirm/cancel buttons
+ * OWNERSHIP
+ * ---------
+ *   Reads:  ResidenceSystem (getResidence, getResidenceOwner,
+ *           getResidencesByOwner, getTotalRentIncome)
+ *           HouseholdQueries.getHousehold
+ *           CharacterQueries (getCharacterById)
+ *   Writes: ResidenceSystem.setResidenceOwner (canonical ownership mutation)
+ *   UI:     modals-core, selectors, icons
+ * 
+ * WHAT THIS FILE DOES NOT DO
+ * --------------------------
+ *   - No direct residence record mutation
+ *   - No ownershipHistory.push() from the UI (the command owns that)
+ *   - No addResidenceTimelineEvent() from the UI (the command owns that)
+ *   - No household record mutation
+ *   - No emoji icons
+ *   - No setTimeout(100)
+ *   - No fabricated 1250
+ *   - No `_processingOwnerModal` guard
+ *   - No stale selection between owner types
  * 
  * =============================================================================
  */
@@ -30,92 +42,66 @@
     'use strict';
 
     // =========================================================================
-    // 0. RECURSION GUARD
-    // =========================================================================
-
-    var _processingOwnerModal = false;
-
-    // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
+    // 1. DEPENDENCY ACCESS
     // =========================================================================
 
     function _openModal(options) {
-        if (typeof window.openModal === 'function') {
-            return window.openModal(options);
-        }
-        if (typeof window._openModal === 'function') {
-            return window._openModal(options);
-        }
-        return null;
+        if (typeof window.openModal === 'function') return window.openModal(options);
+        if (typeof window._openModal === 'function') return window._openModal(options);
+        throw new Error('modals-residence-owner: openModal is required');
     }
 
     function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') {
-            window.closeTopModal();
-        }
-        if (typeof window._closeTopModal === 'function') {
-            window._closeTopModal();
-        }
-    }
-
-    function _confirmDialog(message, title, onConfirm, onCancel) {
-        if (typeof window.confirmDialog === 'function') {
-            return window.confirmDialog(message, title, onConfirm, onCancel);
-        }
-        if (typeof window._confirmDialog === 'function') {
-            return window._confirmDialog(message, title, onConfirm, onCancel);
-        }
-        if (confirm(message)) {
-            if (onConfirm) onConfirm();
-        } else {
-            if (onCancel) onCancel();
-        }
+        if (typeof window.closeTopModal === 'function') return window.closeTopModal();
+        if (typeof window._closeTopModal === 'function') return window._closeTopModal();
+        throw new Error('modals-residence-owner: closeTopModal is required');
     }
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
-        }
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
+        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
+        if (str === undefined || str === null) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     function _showToast(message, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(message, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(message, type);
-        }
+        if (typeof window._showToast === 'function') return window._showToast(message, type);
+        if (typeof window.showToast === 'function') return window.showToast(message, type);
     }
 
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
+    function _residence() {
+        if (typeof window.ResidenceSystem === 'undefined') {
+            throw new Error('modals-residence-owner: ResidenceSystem is required');
+        }
+        return window.ResidenceSystem;
+    }
 
-    function _getIcon(name) {
-        if (typeof window._getIcon === 'function') {
-            return window._getIcon(name);
+    function _householdQueries() {
+        return typeof window.HouseholdQueries !== 'undefined'
+            ? window.HouseholdQueries
+            : null;
+    }
+
+    function _getCharacterById(id) {
+        if (typeof window.getCharacterById !== 'function') return null;
+        return window.getCharacterById(id);
+    }
+
+    function _currentYear() {
+        if (typeof window.getCurrentYearSafe === 'function') {
+            return window.getCurrentYearSafe();
         }
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
-        return '';
+        return null;
     }
 
     function _openHouseholdSelector(options) {
         if (typeof window.openHouseholdSelector === 'function') {
             return window.openHouseholdSelector(options);
-        }
-        if (typeof window._openHouseholdSelector === 'function') {
-            return window._openHouseholdSelector(options);
         }
         _showToast('Household selector not available', 'error');
         return null;
@@ -125,71 +111,55 @@
         if (typeof window.openCharacterSelector === 'function') {
             return window.openCharacterSelector(options);
         }
-        if (typeof window.openUnifiedCharacterSelector === 'function') {
-            return window.openUnifiedCharacterSelector(options);
-        }
-        if (typeof window._openCharacterSelector === 'function') {
-            return window._openCharacterSelector(options);
-        }
         _showToast('Character selector not available', 'error');
         return null;
     }
 
-    function _getResidenceById(residenceId) {
-        if (typeof window.ResidenceSystem !== 'undefined' && 
-            typeof window.ResidenceSystem.getResidenceById === 'function') {
-            return window.ResidenceSystem.getResidenceById(residenceId);
-        }
-        return null;
+    function _resolveModalRoot() {
+        if (typeof document === 'undefined') return null;
+        return document.querySelector('[data-modal-root="top"]') ||
+               document.querySelector('.modal-root:last-of-type') ||
+               document.body;
     }
 
-    function _getHousehold(householdId) {
-        if (typeof window.HouseholdState !== 'undefined' && 
-            typeof window.HouseholdState.getHousehold === 'function') {
-            return window.HouseholdState.getHousehold(householdId);
-        }
-        return null;
+    function _attachOnOpen(handler) {
+        return function() {
+            var root = _resolveModalRoot();
+            if (root) handler(root);
+        };
     }
 
-    function _getCharacterById(characterId) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(characterId);
-        }
-        return null;
-    }
-
-    function _getAllHouseholds() {
-        if (typeof window.HouseholdState !== 'undefined' && 
-            typeof window.HouseholdState.getAllHouseholds === 'function') {
-            return window.HouseholdState.getAllHouseholds();
-        }
-        return [];
-    }
-
-    function _getResidenceSystem() {
-        return window.ResidenceSystem;
-    }
-
-    function _getPlaceById(placeId) {
-        if (typeof window.getPlaceById === 'function') {
-            return window.getPlaceById(placeId);
-        }
-        return null;
+    function _parseIntOrNull(value) {
+        if (value === undefined || value === null) return null;
+        var s = String(value).trim();
+        if (s === '') return null;
+        var n = Number(s);
+        if (!isFinite(n)) return null;
+        return Math.floor(n);
     }
 
     // =========================================================================
-    // 2. ICON HELPERS
+    // 2. OWNER NAME RESOLUTION (for display)
     // =========================================================================
 
-    function _getIconSafe(name) {
-        var icon = _getIcon(name);
-        return icon || '';
-    }
+    function _resolveOwnerDisplay(ownerType, ownerId, fallbackName) {
+        if (!ownerId) return 'None';
+        if (fallbackName) return fallbackName;
 
-    function _iconSpan(icon, title) {
-        if (!icon) return '';
-        var titleAttr = title ? ' title="' + _escapeHtml(title) + '"' : '';
-        return '<span style="display:inline-flex;align-items:center;vertical-align:middle;' + (title ? 'cursor:help;' : '') + '"' + titleAttr + '>' + icon + '</span>';
+        if (ownerType === 'household') {
+            var hq = _householdQueries();
+            if (hq) {
+                var h = hq.getHousehold(ownerId);
+                if (h) return h.name;
+            }
+            return 'Unknown Household';
+        }
+        if (ownerType === 'character') {
+            var c = _getCharacterById(ownerId);
+            if (c) return (c.name || '') + (c.surname ? ' ' + c.surname : '');
+            return 'Unknown Character';
+        }
+        return 'Unknown';
     }
 
     // =========================================================================
@@ -197,185 +167,234 @@
     // =========================================================================
 
     function openResidenceOwnerDetailsModal(residenceId, onRefresh) {
-        if (_processingOwnerModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var res = _residence();
+
+        var residence = res.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
         }
-        _processingOwnerModal = true;
 
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingOwnerModal = false;
-                return;
+        var owner = res.getResidenceOwner(residenceId);
+        var renter = res.getResidenceRenter(residenceId);
+
+        var ownerId = owner ? owner.ownerId : null;
+        var ownerType = owner ? owner.ownerType : null;
+
+        var ownedProperties = ownerId
+            ? res.getResidencesByOwner(ownerId, ownerType)
+            : [];
+        var totalRentIncome = ownerId
+            ? res.getTotalRentIncome(ownerId, ownerType)
+            : 0;
+
+        var content = _buildOwnerDetailsContent(
+            residence, owner, renter, ownedProperties, totalRentIncome
+        );
+
+        var handle = _openModal({
+            title: 'Owner Details: ' + residence.name,
+            content: content,
+            confirmText: 'Close',
+            cancelText: '',
+            onConfirm: function() {
+                if (typeof onRefresh === 'function') onRefresh();
             }
+        });
 
-            var residenceSystem = _getResidenceSystem();
-            if (!residenceSystem) {
-                _showToast('Residence system not available', 'error');
-                _processingOwnerModal = false;
-                return;
-            }
+        setTimeout(_attachOnOpen(function(root) {
+            _wireOwnerDetailsActions(root, residenceId, residence, onRefresh);
+        }), 0);
 
-            var ownerInfo = residenceSystem.getResidenceOwner(residenceId);
-            var renterInfo = residenceSystem.getResidenceRenter(residenceId);
-            var ownedProperties = residenceSystem.getResidencesByOwner(residence.ownerId, residence.ownerType);
-            var totalRentIncome = residenceSystem.getTotalRentIncome(residence.ownerId, residence.ownerType);
+        return handle;
+    }
 
-            var ownerDisplay = ownerInfo ? ownerInfo.ownerName : 'None';
-            var ownerType = ownerInfo ? ownerInfo.ownerType : 'none';
-            var ownerSince = ownerInfo ? ownerInfo.ownerSince : 'Unknown';
-            var renterDisplay = renterInfo ? renterInfo.renterName : 'None';
-            var rentAmount = renterInfo ? renterInfo.rentAmount : 0;
+    function _buildOwnerDetailsContent(residence, owner, renter,
+                                        ownedProperties, totalRentIncome) {
+        var ownerDisplay = _resolveOwnerDisplay(
+            owner ? owner.ownerType : null,
+            owner ? owner.ownerId : null,
+            owner ? owner.ownerName : null
+        );
+        var ownerType = owner ? owner.ownerType : 'none';
+        var ownerSince = owner && owner.ownerSince !== null
+            ? owner.ownerSince : '—';
+        var renterDisplay = renter && renter.renterId
+            ? renter.renterName : 'None';
+        var rentAmount = renter ? renter.rentAmount : 0;
 
-            // Build owned properties HTML
-            var propertiesHtml = '';
-            if (ownedProperties.length === 0) {
-                propertiesHtml = '<div style="color: var(--dim); text-align: center; padding: 12px; font-size: 0.6rem;">No other properties owned by this owner</div>';
-            } else {
-                propertiesHtml = '<div style="max-height: 200px; overflow-y: auto;">';
-                for (var i = 0; i < ownedProperties.length; i++) {
-                    var p = ownedProperties[i];
-                    var isCurrent = p.id === residenceId;
-                    var renterName = p.renterName || 'Vacant';
-                    var rent = p.rentAmount || 0;
-                    var statusColor = p.renterId ? 'var(--success)' : 'var(--warn)';
-                    var statusText = p.renterId ? 'Rented' : 'Vacant';
+        var html = '<div style="margin-bottom:16px;">';
 
-                    propertiesHtml += 
-                        '<div class="owned-property-item" data-id="' + p.id + '" style="' +
-                        'display: flex; justify-content: space-between; padding: 4px 8px; border-bottom: 1px solid var(--border-light); ' +
-                        'border-left: 3px solid ' + (isCurrent ? 'var(--accent)' : statusColor) + '; ' +
-                        'cursor: pointer; ' +
-                        (isCurrent ? 'background: rgba(106,158,207,0.08);' : '') +
-                        '">' +
-                        '<div style="font-size: 0.65rem;">' + _escapeHtml(p.name) + (isCurrent ? ' <span style="color:var(--accent);font-size:0.5rem;">(Current)</span>' : '') + '</div>' +
-                        '<div style="font-size: 0.55rem; color: var(--dim);">' +
-                        statusText + ' · ' + rent + 'g/year' +
-                        (p.renterId ? ' · ' + _escapeHtml(renterName) : '') +
-                        '</div>' +
-                        '</div>';
-                }
-                propertiesHtml += '</div>';
-            }
+        // Header
+        html += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">';
+        html += '<div style="font-size:0.8rem;font-weight:bold;">' +
+            _escapeHtml(residence.name) + '</div>';
+        html += '<span style="font-size:0.55rem;padding:2px 10px;border-radius:12px;background:var(--accent);color:white;">Owner: ' +
+            _escapeHtml(ownerDisplay) + '</span>';
+        html += '</div>';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px;font-size:0.65rem;">';
+        html += '<div><span style="color:var(--dim);">Owner Type:</span> ' +
+            _escapeHtml(ownerType) + '</div>';
+        html += '<div><span style="color:var(--dim);">Owner Since:</span> ' +
+            _escapeHtml(String(ownerSince)) + '</div>';
+        html += '<div><span style="color:var(--dim);">Total Properties:</span> ' +
+            ownedProperties.length + '</div>';
+        html += '<div><span style="color:var(--dim);">Total Rent Income:</span> ' +
+            '<span style="color:var(--success);">+' + totalRentIncome + 'g/year</span></div>';
+        html += '<div><span style="color:var(--dim);">Current Renter:</span> ' +
+            _escapeHtml(renterDisplay) + '</div>';
+        html += '<div><span style="color:var(--dim);">Current Rent:</span> ' +
+            rentAmount + 'g/year</div>';
+        html += '</div>';
+        html += '</div>';
 
-            var modalContent = 
-                '<div style="margin-bottom: 16px; padding: 12px; background: var(--bg2); border-radius: 8px;">' +
-                '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">' +
-                '<div style="font-size: 0.8rem; font-weight: bold;">' + _escapeHtml(residence.name) + '</div>' +
-                '<span style="font-size: 0.55rem; padding: 2px 10px; border-radius: 12px; background: var(--accent); color: white;">Owner: ' + _escapeHtml(ownerDisplay) + '</span>' +
-                '</div>' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 8px; font-size: 0.65rem;">' +
-                '<div><span style="color: var(--dim);">Owner Type:</span> ' + _escapeHtml(ownerType) + '</div>' +
-                '<div><span style="color: var(--dim);">Owner Since:</span> ' + ownerSince + '</div>' +
-                '<div><span style="color: var(--dim);">Total Properties:</span> ' + ownedProperties.length + '</div>' +
-                '<div><span style="color: var(--dim);">Total Rent Income:</span> <span style="color:var(--success);">+' + totalRentIncome + 'g/year</span></div>' +
-                '<div><span style="color: var(--dim);">Current Renter:</span> ' + _escapeHtml(renterDisplay) + '</div>' +
-                '<div><span style="color: var(--dim);">Current Rent:</span> ' + rentAmount + 'g/year</div>' +
-                '</div>' +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<div style="font-size: 0.7rem; color: var(--accent); margin-bottom: 6px;">Properties Owned by ' + _escapeHtml(ownerDisplay) + ' (' + ownedProperties.length + ')</div>' +
-                propertiesHtml +
-                '</div>' +
-                '<div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; border-top: 1px solid var(--border); padding-top: 12px;">' +
-                '<button id="ownerSetOwnerBtn" class="btn" style="font-size: 0.6rem; padding: 4px 12px; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer;">Change Owner</button>' +
-                '<button id="ownerTransferBtn" class="btn" style="font-size: 0.6rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Transfer Ownership</button>' +
-                '<button id="ownerManageBtn" class="btn" style="font-size: 0.6rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Manage All Properties</button>' +
-                '<button id="ownerCloseBtn" class="btn" style="font-size: 0.6rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Close</button>' +
-                '</div>' +
+        // Owned properties list
+        html += '<div style="margin-bottom:12px;">';
+        html += '<div style="font-size:0.7rem;color:var(--accent);margin-bottom:6px;">' +
+            'Properties Owned by ' + _escapeHtml(ownerDisplay) +
+            ' (' + ownedProperties.length + ')' +
+        '</div>';
+
+        if (ownedProperties.length === 0) {
+            html += '<div style="color:var(--dim);text-align:center;padding:12px;font-size:0.6rem;">No properties owned</div>';
+        } else {
+            html += '<div style="max-height:200px;overflow-y:auto;">';
+            for (var i = 0; i < ownedProperties.length; i++) {
+                var p = ownedProperties[i];
+                var isCurrent = p.id === residence.id;
+                var propRenter = p.renterName || 'Vacant';
+                var propRent = p.rentAmount || 0;
+                var statusColor = p.renterId ? 'var(--success)' : 'var(--warn)';
+                var statusText = p.renterId ? 'Rented' : 'Vacant';
+
+                html += '<div class="owned-property-item" data-residence-id="' +
+                    _escapeHtml(p.id) +
+                    '" style="display:flex;justify-content:space-between;padding:6px 8px;' +
+                    'border-bottom:1px solid var(--border-light);' +
+                    'border-left:3px solid ' +
+                        (isCurrent ? 'var(--accent)' : statusColor) + ';' +
+                    'cursor:pointer;' +
+                    (isCurrent ? 'background:rgba(106,158,207,0.08);' : '') + '">';
+                html += '<div style="font-size:0.65rem;">' + _escapeHtml(p.name) +
+                    (isCurrent
+                        ? ' <span style="color:var(--accent);font-size:0.5rem;">(Current)</span>'
+                        : '') +
+                    '</div>';
+                html += '<div style="font-size:0.55rem;color:var(--dim);">' +
+                    statusText + ' · ' + propRent + 'g/year' +
+                    (p.renterId ? ' · ' + _escapeHtml(propRenter) : '') +
                 '</div>';
+                html += '</div>';
+            }
+            html += '</div>';
+        }
+        html += '</div>';
 
-            _openModal({
-                title: 'Owner Details: ' + residence.name,
-                content: modalContent,
-                confirmText: '',
-                cancelText: '',
-                onConfirm: function() {
-                    _closeTopModal();
-                    _processingOwnerModal = false;
-                    if (onRefresh) onRefresh();
-                }
-            });
+        // Actions
+        html += '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;border-top:1px solid var(--border);padding-top:12px;">';
+        html += '<button data-action="change-owner" style="font-size:0.6rem;padding:4px 12px;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">Change Owner</button>';
+        html += '<button data-action="transfer-ownership" style="font-size:0.6rem;padding:4px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Transfer Ownership</button>';
+        html += '<button data-action="manage-properties" style="font-size:0.6rem;padding:4px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Manage All Properties</button>';
+        html += '<button data-action="view-stats" style="font-size:0.6rem;padding:4px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Owner Stats</button>';
+        html += '<button data-action="close" style="font-size:0.6rem;padding:4px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Close</button>';
+        html += '</div>';
 
-            // Set up event handlers
+        html += '</div>';
+        return html;
+    }
+
+    function _wireOwnerDetailsActions(root, residenceId, residence, onRefresh) {
+        function _reopen() {
+            if (typeof onRefresh === 'function') onRefresh();
             setTimeout(function() {
-                // Click on owned property to view it
-                var propertyItems = document.querySelectorAll('.owned-property-item');
-                for (var i = 0; i < propertyItems.length; i++) {
-                    (function(item) {
-                        item.onclick = function() {
-                            var id = this.dataset.id;
-                            if (id && id !== residenceId) {
-                                _closeTopModal();
-                                if (typeof window.openResidenceDetailsModal === 'function') {
-                                    window.openResidenceDetailsModal(id, function() {
-                                        setTimeout(function() {
-                                            openResidenceOwnerDetailsModal(residenceId, onRefresh);
-                                        }, 100);
-                                    });
-                                } else {
-                                    _showToast('Residence details not available', 'info');
-                                }
-                            }
-                        };
-                    })(propertyItems[i]);
-                }
+                openResidenceOwnerDetailsModal(residenceId, onRefresh);
+            }, 0);
+        }
 
-                var setOwnerBtn = document.getElementById('ownerSetOwnerBtn');
-                if (setOwnerBtn) {
-                    setOwnerBtn.onclick = function() {
-                        _closeTopModal();
-                        if (typeof window.openSetResidenceOwnerModal === 'function') {
-                            window.openSetResidenceOwnerModal(residenceId, function() {
+        function _closeThen(fn) {
+            _closeTopModal();
+            setTimeout(fn, 0);
+        }
+
+        // Click on property → open that residence's owner details
+        var propertyItems = root.querySelectorAll('.owned-property-item');
+        for (var i = 0; i < propertyItems.length; i++) {
+            (function(el) {
+                el.onclick = function() {
+                    var id = el.dataset.residenceId;
+                    if (!id || id === residenceId) return;
+                    _closeThen(function() {
+                        if (typeof window.openResidenceDetailsModal === 'function') {
+                            window.openResidenceDetailsModal(id, function() {
                                 setTimeout(function() {
                                     openResidenceOwnerDetailsModal(residenceId, onRefresh);
-                                }, 100);
+                                }, 0);
                             });
                         } else {
-                            _showToast('Set owner modal not available', 'error');
+                            _showToast('Residence details not available', 'info');
                         }
-                    };
-                }
+                    });
+                };
+            })(propertyItems[i]);
+        }
 
-                var transferBtn = document.getElementById('ownerTransferBtn');
-                if (transferBtn) {
-                    transferBtn.onclick = function() {
-                        _closeTopModal();
-                        openTransferOwnershipModal(residenceId, function() {
-                            setTimeout(function() {
-                                openResidenceOwnerDetailsModal(residenceId, onRefresh);
-                            }, 100);
-                        });
-                    };
-                }
+        var changeBtn = root.querySelector('[data-action="change-owner"]');
+        if (changeBtn) {
+            changeBtn.onclick = function() {
+                _closeThen(function() {
+                    if (typeof window.openSetResidenceOwnerModal === 'function') {
+                        window.openSetResidenceOwnerModal(residenceId, _reopen);
+                    } else {
+                        _showToast('Set owner modal not available', 'error');
+                    }
+                });
+            };
+        }
 
-                var manageBtn = document.getElementById('ownerManageBtn');
-                if (manageBtn) {
-                    manageBtn.onclick = function() {
-                        _closeTopModal();
-                        if (residence.ownerId) {
-                            openManageOwnedPropertiesModal(residence.ownerId, residence.ownerType);
-                        } else {
-                            _showToast('Residence has no owner', 'warning');
-                        }
-                    };
-                }
+        var transferBtn = root.querySelector('[data-action="transfer-ownership"]');
+        if (transferBtn) {
+            transferBtn.onclick = function() {
+                _closeThen(function() {
+                    openTransferOwnershipModal(residenceId, _reopen);
+                });
+            };
+        }
 
-                var closeBtn = document.getElementById('ownerCloseBtn');
-                if (closeBtn) {
-                    closeBtn.onclick = function() {
-                        _closeTopModal();
-                        _processingOwnerModal = false;
-                        if (onRefresh) onRefresh();
-                    };
+        var manageBtn = root.querySelector('[data-action="manage-properties"]');
+        if (manageBtn) {
+            manageBtn.onclick = function() {
+                var owner = _residence().getResidenceOwner(residenceId);
+                if (!owner || !owner.ownerId) {
+                    _showToast('Residence has no owner', 'warning');
+                    return;
                 }
-            }, 100);
+                _closeThen(function() {
+                    openManageOwnedPropertiesModal(owner.ownerId, owner.ownerType);
+                });
+            };
+        }
 
-        } catch (e) {
-            _processingOwnerModal = false;
-            _showToast('Error opening owner details', 'error');
+        var statsBtn = root.querySelector('[data-action="view-stats"]');
+        if (statsBtn) {
+            statsBtn.onclick = function() {
+                var owner = _residence().getResidenceOwner(residenceId);
+                if (!owner || !owner.ownerId) {
+                    _showToast('Residence has no owner', 'warning');
+                    return;
+                }
+                _closeThen(function() {
+                    openOwnerStatsModal(owner.ownerId, owner.ownerType);
+                });
+            };
+        }
+
+        var closeBtn = root.querySelector('[data-action="close"]');
+        if (closeBtn) {
+            closeBtn.onclick = function() {
+                _closeTopModal();
+                if (typeof onRefresh === 'function') onRefresh();
+            };
         }
     }
 
@@ -384,338 +403,336 @@
     // =========================================================================
 
     function openManageOwnedPropertiesModal(ownerId, ownerType, onSuccess) {
-        if (_processingOwnerModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var res = _residence();
+
+        var ownerDisplay = _resolveOwnerDisplay(ownerType, ownerId, null);
+        var ownedProperties = res.getResidencesByOwner(ownerId, ownerType);
+        var totalRentIncome = res.getTotalRentIncome(ownerId, ownerType);
+
+        if (ownedProperties.length === 0) {
+            _showToast(ownerDisplay + ' owns no properties', 'info');
+            if (typeof onSuccess === 'function') onSuccess();
+            return null;
         }
-        _processingOwnerModal = true;
 
-        try {
-            var residenceSystem = _getResidenceSystem();
-            if (!residenceSystem) {
-                _showToast('Residence system not available', 'error');
-                _processingOwnerModal = false;
-                return;
+        var content = _buildManageOwnedPropertiesContent(
+            ownerDisplay, ownerId, ownerType, ownedProperties, totalRentIncome
+        );
+
+        var handle = _openModal({
+            title: 'Properties Owned by ' + ownerDisplay,
+            content: content,
+            confirmText: 'Close',
+            cancelText: '',
+            onConfirm: function() {
+                if (typeof onSuccess === 'function') onSuccess();
             }
+        });
 
-            var ownedProperties = residenceSystem.getResidencesByOwner(ownerId, ownerType);
-            var totalRentIncome = residenceSystem.getTotalRentIncome(ownerId, ownerType);
+        setTimeout(_attachOnOpen(function(root) {
+            _wireManagePropertiesActions(root, ownerId, ownerType, onSuccess);
+        }), 0);
 
-            // Get owner name
-            var ownerName = 'Unknown';
-            if (ownerType === 'household') {
-                var household = _getHousehold(ownerId);
-                if (household) ownerName = household.name;
-            } else if (ownerType === 'character') {
-                var character = _getCharacterById(ownerId);
-                if (character) ownerName = character.name + (character.surname ? ' ' + character.surname : '');
-            }
+        return handle;
+    }
 
-            if (ownedProperties.length === 0) {
-                _showToast('No properties owned by ' + ownerName, 'info');
-                _processingOwnerModal = false;
-                if (onSuccess) onSuccess();
-                return;
-            }
+    function _buildManageOwnedPropertiesContent(ownerDisplay, ownerId, ownerType,
+                                                 properties, totalRentIncome) {
+        var html = '<div style="margin-bottom:16px;">';
 
-            var propertiesHtml = '';
-            for (var i = 0; i < ownedProperties.length; i++) {
-                var p = ownedProperties[i];
-                var renterName = p.renterName || 'Vacant';
-                var rentAmount = p.rentAmount || 0;
-                var statusColor = p.renterId ? 'var(--success)' : 'var(--warn)';
-                var statusText = p.renterId ? 'Rented' : 'Vacant';
-                var locationName = p.locationName || 'Unknown';
+        html += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px;">';
+        html += '<div style="font-size:0.8rem;font-weight:bold;">' +
+            _escapeHtml(ownerDisplay) + '</div>';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;font-size:0.65rem;">';
+        html += '<div><span style="color:var(--dim);">Total Properties:</span> ' +
+            properties.length + '</div>';
+        html += '<div><span style="color:var(--dim);">Total Rent Income:</span> ' +
+            '<span style="color:var(--success);">+' + totalRentIncome + 'g/year</span></div>';
+        html += '</div>';
+        html += '</div>';
 
-                propertiesHtml += 
-                    '<div class="owned-property-item" data-id="' + p.id + '" style="' +
-                    'display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--border-light); ' +
-                    'border-left: 3px solid ' + statusColor + '; ' +
-                    'cursor: pointer; ' +
-                    'transition: background 0.1s;' +
-                    '">' +
-                    '<div>' +
-                    '<div style="font-size: 0.7rem; font-weight: bold;">' + _escapeHtml(p.name) + '</div>' +
-                    '<div style="font-size: 0.55rem; color: var(--dim);">' + _escapeHtml(locationName) + ' · ' + _escapeHtml(p.typeName || 'Unknown') + '</div>' +
-                    '</div>' +
-                    '<div style="text-align: right;">' +
-                    '<div style="font-size: 0.6rem; color: ' + statusColor + ';">' + statusText + '</div>' +
-                    '<div style="font-size: 0.55rem; color: var(--dim);">' + rentAmount + 'g/year' + (p.renterId ? ' · ' + _escapeHtml(renterName) : '') + '</div>' +
-                    '</div>' +
-                    '</div>';
-            }
+        html += '<div style="max-height:350px;overflow-y:auto;">';
+        for (var i = 0; i < properties.length; i++) {
+            var p = properties[i];
+            var renterName = p.renterName || 'Vacant';
+            var rentAmount = p.rentAmount || 0;
+            var statusColor = p.renterId ? 'var(--success)' : 'var(--warn)';
+            var statusText = p.renterId ? 'Rented' : 'Vacant';
+            var locationName = p.locationName || 'Unknown';
 
-            var modalContent = 
-                '<div style="margin-bottom: 16px; padding: 12px; background: var(--bg2); border-radius: 8px;">' +
-                '<div style="font-size: 0.8rem; font-weight: bold;">Properties Owned by ' + _escapeHtml(ownerName) + '</div>' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; font-size: 0.65rem;">' +
-                '<div><span style="color: var(--dim);">Total Properties:</span> ' + ownedProperties.length + '</div>' +
-                '<div><span style="color: var(--dim);">Total Rent Income:</span> <span style="color:var(--success);">+' + totalRentIncome + 'g/year</span></div>' +
-                '</div>' +
-                '</div>' +
-                '<div style="margin-bottom: 12px; max-height: 350px; overflow-y: auto;">' +
-                propertiesHtml +
-                '</div>' +
-                '<div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; border-top: 1px solid var(--border); padding-top: 12px;">' +
-                '<button id="ownerStatsBtn" class="btn" style="font-size: 0.6rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">View Statistics</button>' +
-                '<button id="ownerCloseBtn" class="btn" style="font-size: 0.6rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Close</button>' +
-                '</div>' +
-                '</div>';
+            html += '<div class="owned-property-item" data-residence-id="' +
+                _escapeHtml(p.id) +
+                '" style="display:flex;justify-content:space-between;align-items:center;' +
+                'padding:8px 10px;border-bottom:1px solid var(--border-light);' +
+                'border-left:3px solid ' + statusColor + ';cursor:pointer;">';
+            html += '<div>';
+            html += '<div style="font-size:0.7rem;font-weight:bold;">' +
+                _escapeHtml(p.name) + '</div>';
+            html += '<div style="font-size:0.55rem;color:var(--dim);">' +
+                _escapeHtml(locationName) + ' · ' +
+                _escapeHtml(p.typeName || 'Unknown') + '</div>';
+            html += '</div>';
+            html += '<div style="text-align:right;">';
+            html += '<div style="font-size:0.6rem;color:' + statusColor + ';">' +
+                statusText + '</div>';
+            html += '<div style="font-size:0.55rem;color:var(--dim);">' +
+                rentAmount + 'g/year' +
+                (p.renterId ? ' · ' + _escapeHtml(renterName) : '') +
+            '</div>';
+            html += '</div>';
+            html += '</div>';
+        }
+        html += '</div>';
 
-            _openModal({
-                title: 'Properties Owned by ' + ownerName,
-                content: modalContent,
-                confirmText: '',
-                cancelText: '',
-                onConfirm: function() {
-                    _closeTopModal();
-                    _processingOwnerModal = false;
-                    if (onSuccess) onSuccess();
-                }
-            });
+        html += '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;border-top:1px solid var(--border);padding-top:12px;margin-top:12px;">';
+        html += '<button data-action="view-stats" style="font-size:0.6rem;padding:4px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">View Statistics</button>';
+        html += '<button data-action="close" style="font-size:0.6rem;padding:4px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Close</button>';
+        html += '</div>';
 
-            // Set up event handlers
+        html += '</div>';
+        return html;
+    }
+
+    function _wireManagePropertiesActions(root, ownerId, ownerType, onSuccess) {
+        function _reopen() {
             setTimeout(function() {
-                // Click on property to view details
-                var propertyItems = document.querySelectorAll('.owned-property-item');
-                for (var i = 0; i < propertyItems.length; i++) {
-                    (function(item) {
-                        item.onclick = function() {
-                            var id = this.dataset.id;
-                            if (id) {
-                                _closeTopModal();
-                                if (typeof window.openResidenceDetailsModal === 'function') {
-                                    window.openResidenceDetailsModal(id, function() {
-                                        setTimeout(function() {
-                                            openManageOwnedPropertiesModal(ownerId, ownerType, onSuccess);
-                                        }, 100);
-                                    });
-                                } else {
-                                    _showToast('Residence details not available', 'info');
-                                }
-                            }
-                        };
-                        item.onmouseenter = function() {
-                            this.style.background = 'var(--bg2)';
-                        };
-                        item.onmouseleave = function() {
-                            this.style.background = 'transparent';
-                        };
-                    })(propertyItems[i]);
-                }
+                openManageOwnedPropertiesModal(ownerId, ownerType, onSuccess);
+            }, 0);
+        }
 
-                var statsBtn = document.getElementById('ownerStatsBtn');
-                if (statsBtn) {
-                    statsBtn.onclick = function() {
-                        _closeTopModal();
-                        if (typeof window.openOwnerStatsModal === 'function') {
-                            window.openOwnerStatsModal(ownerId, ownerType);
+        var items = root.querySelectorAll('.owned-property-item');
+        for (var i = 0; i < items.length; i++) {
+            (function(el) {
+                el.onclick = function() {
+                    var id = el.dataset.residenceId;
+                    if (!id) return;
+                    _closeTopModal();
+                    setTimeout(function() {
+                        if (typeof window.openResidenceDetailsModal === 'function') {
+                            window.openResidenceDetailsModal(id, _reopen);
                         } else {
-                            openOwnerStatsModal(ownerId, ownerType);
+                            _showToast('Residence details not available', 'info');
                         }
-                    };
-                }
+                    }, 0);
+                };
+            })(items[i]);
+        }
 
-                var closeBtn = document.getElementById('ownerCloseBtn');
-                if (closeBtn) {
-                    closeBtn.onclick = function() {
-                        _closeTopModal();
-                        _processingOwnerModal = false;
-                        if (onSuccess) onSuccess();
-                    };
-                }
-            }, 100);
+        var statsBtn = root.querySelector('[data-action="view-stats"]');
+        if (statsBtn) {
+            statsBtn.onclick = function() {
+                _closeTopModal();
+                setTimeout(function() {
+                    openOwnerStatsModal(ownerId, ownerType);
+                }, 0);
+            };
+        }
 
-        } catch (e) {
-            _processingOwnerModal = false;
-            _showToast('Error opening managed properties', 'error');
+        var closeBtn = root.querySelector('[data-action="close"]');
+        if (closeBtn) {
+            closeBtn.onclick = function() {
+                _closeTopModal();
+                if (typeof onSuccess === 'function') onSuccess();
+            };
         }
     }
 
     // =========================================================================
     // 5. TRANSFER OWNERSHIP MODAL
     // =========================================================================
+    //
+    // Ownership transfer is a single logical operation. The ResidenceSystem
+    // command `setResidenceOwner` owns:
+    //   - validation
+    //   - owner field mutation
+    //   - ownership history append
+    //   - timeline event
+    //   - persistence
+    //
+    // This modal does NOT touch the residence record. It just collects input
+    // and calls the command.
+    // =========================================================================
 
     function openTransferOwnershipModal(residenceId, onSuccess) {
-        if (_processingOwnerModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var res = _residence();
+
+        var residence = res.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
         }
-        _processingOwnerModal = true;
 
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingOwnerModal = false;
-                return;
-            }
+        var currentOwner = res.getResidenceOwner(residenceId);
+        var currentOwnerDisplay = currentOwner && currentOwner.ownerId
+            ? currentOwner.ownerName : 'None';
+        var currentOwnerType = currentOwner && currentOwner.ownerType
+            ? currentOwner.ownerType : 'household';
 
-            var residenceSystem = _getResidenceSystem();
-            if (!residenceSystem) {
-                _showToast('Residence system not available', 'error');
-                _processingOwnerModal = false;
-                return;
-            }
+        var year = _currentYear();
 
-            var currentOwner = residence.ownerName || 'None';
-
-            var modalContent = 
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: rgba(200, 168, 68, 0.1); border: 1px solid var(--accent); border-radius: 8px; padding: 12px; margin-bottom: 16px;">' +
-                '<div style="font-size: 0.7rem;"><strong>Transfer Ownership: ' + _escapeHtml(residence.name) + '</strong></div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">Current Owner: ' + _escapeHtml(currentOwner) + '</div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Current Renter: ' + _escapeHtml(residence.renterName || 'None') + '</div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Current Rent: ' + (residence.rentAmount || 0) + 'g/year</div>' +
+        var content =
+            '<div style="margin-bottom:16px;">' +
+                '<div style="background:rgba(200,168,68,0.1);border:1px solid var(--accent);border-radius:8px;padding:12px;margin-bottom:16px;">' +
+                    '<div style="font-size:0.7rem;"><strong>Transfer Ownership: ' +
+                        _escapeHtml(residence.name) + '</strong></div>' +
+                    '<div style="font-size:0.55rem;color:var(--dim);margin-top:4px;">Current Owner: ' +
+                        _escapeHtml(currentOwnerDisplay) + '</div>' +
+                    '<div style="font-size:0.55rem;color:var(--dim);">Current Renter: ' +
+                        _escapeHtml(residence.renterName || 'None') + '</div>' +
+                    '<div style="font-size:0.55rem;color:var(--dim);">Current Rent: ' +
+                        (residence.rentAmount || 0) + 'g/year</div>' +
                 '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">New Owner Type</label>' +
-                '<select id="transferOwnerType" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                '<option value="household">Household</option>' +
-                '<option value="character">Character</option>' +
-                '</select>' +
+
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">New Owner Type</label>' +
+                    '<select data-field="ownerType" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                        '<option value="household"' +
+                            (currentOwnerType === 'household' ? ' selected' : '') +
+                            '>Household</option>' +
+                        '<option value="character"' +
+                            (currentOwnerType === 'character' ? ' selected' : '') +
+                            '>Character</option>' +
+                    '</select>' +
                 '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">New Owner</label>' +
-                '<div style="display: flex; gap: 6px;">' +
-                '<input type="text" id="transferOwnerDisplay" placeholder="Select new owner..." readonly style="flex: 1; padding: 8px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem; cursor: pointer;">' +
-                '<input type="hidden" id="transferOwnerId">' +
-                '<button id="transferSelectOwnerBtn" class="btn" style="font-size: 0.6rem; padding: 4px 10px;">Select</button>' +
-                '<button id="transferClearOwnerBtn" class="btn" style="font-size: 0.6rem; padding: 4px 8px;">Clear</button>' +
+
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">New Owner</label>' +
+                    '<div style="display:flex;gap:6px;">' +
+                        '<input type="text" data-field="ownerDisplay" placeholder="Select new owner..." readonly ' +
+                            'style="flex:1;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;cursor:pointer;">' +
+                        '<input type="hidden" data-field="ownerId">' +
+                        '<button data-action="select-owner" class="btn" style="font-size:0.6rem;padding:4px 10px;">Select</button>' +
+                        '<button data-action="clear-owner" class="btn" style="font-size:0.6rem;padding:4px 8px;">Clear</button>' +
+                    '</div>' +
                 '</div>' +
+
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Transfer Year</label>' +
+                    '<input type="number" data-field="year" value="' +
+                        (year !== null ? year : '') +
+                        '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
                 '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Transfer Year</label>' +
-                '<input type="number" id="transferYear" value="' + _getCurrentYear() + '" min="1" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
+
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason (optional)</label>' +
+                    '<input type="text" data-field="reason" placeholder="e.g., Purchase, Inheritance, Gift..." ' +
+                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
                 '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Reason (optional)</label>' +
-                '<input type="text" id="transferReason" placeholder="e.g., Purchase, Inheritance, Gift..." style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
+
+                '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;">' +
+                    'Transferring ownership keeps the current renter and rent agreement in place. ' +
+                    'To end the rental, use the End Rental action after the transfer.' +
                 '</div>' +
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--warn);">' +
-                'Transferring ownership will keep the current renter and rent agreement in place unless the new owner chooses to end it.' +
-                '</div>' +
-                '</div>';
+            '</div>';
 
-            _openModal({
-                title: 'Transfer Ownership: ' + residence.name,
-                content: modalContent,
-                confirmText: 'Transfer Ownership',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var newOwnerType = document.getElementById('transferOwnerType').value;
-                    var newOwnerId = document.getElementById('transferOwnerId').value;
-                    var year = parseInt(document.getElementById('transferYear').value) || _getCurrentYear();
-                    var reason = document.getElementById('transferReason').value;
+        var handle = _openModal({
+            title: 'Transfer Ownership: ' + residence.name,
+            content: content,
+            confirmText: 'Transfer Ownership',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var root = _resolveModalRoot();
+                if (!root) return false;
 
-                    if (!newOwnerId) {
-                        _showToast('Please select a new owner', 'error');
-                        return false;
-                    }
-
-                    // Check if same as current owner
-                    if (newOwnerId === residence.ownerId && newOwnerType === residence.ownerType) {
-                        _showToast('New owner is the same as current owner', 'info');
-                        _closeTopModal();
-                        _processingOwnerModal = false;
-                        if (onSuccess) onSuccess();
-                        return true;
-                    }
-
-                    // Set new owner
-                    var result = residenceSystem.setResidenceOwner(residenceId, newOwnerType, newOwnerId, {
-                        ownerSince: year,
-                        ownerName: null // Will be auto-filled
-                    });
-
-                    if (result) {
-                        // Record transfer in history
-                        if (!residence.ownershipHistory) residence.ownershipHistory = [];
-                        residence.ownershipHistory.push({
-                            ownerType: newOwnerType,
-                            ownerId: newOwnerId,
-                            ownerName: residence.ownerName,
-                            year: year,
-                            action: 'transferred',
-                            reason: reason || 'Transfer',
-                            previousOwnerId: residence.ownerId,
-                            previousOwnerType: residence.ownerType,
-                            previousOwnerName: residence.ownerName,
-                            timestamp: Date.now()
-                        });
-
-                        // Add timeline event
-                        residenceSystem.addResidenceTimelineEvent(residenceId, {
-                            year: year,
-                            type: 'ownership_transferred',
-                            details: 'Ownership transferred to ' + residence.ownerName + (reason ? ' (' + reason + ')' : ''),
-                            householdName: residence.ownerName
-                        });
-
-                        _showToast('Ownership transferred to ' + residence.ownerName, 'success');
-                        _closeTopModal();
-                        _processingOwnerModal = false;
-                        if (onSuccess) onSuccess(result);
-                        return true;
-                    }
+                var newOwnerId = (root.querySelector('[data-field="ownerId"]') || {}).value;
+                if (!newOwnerId) {
+                    _showToast('Please select a new owner', 'error');
                     return false;
-                },
-                onCancel: function() {
-                    _processingOwnerModal = false;
                 }
-            });
+                var newOwnerType = (root.querySelector('[data-field="ownerType"]') || {}).value;
 
-            // Set up event handlers
-            setTimeout(function() {
-                var selectBtn = document.getElementById('transferSelectOwnerBtn');
-                if (selectBtn) {
-                    selectBtn.onclick = function() {
-                        var ownerType = document.getElementById('transferOwnerType').value;
-                        if (ownerType === 'household') {
-                            _openHouseholdSelector({
-                                title: 'Select New Owner Household',
-                                onSelect: function(household) {
-                                    if (household) {
-                                        document.getElementById('transferOwnerDisplay').value = household.name;
-                                        document.getElementById('transferOwnerId').value = household.id;
-                                        _showToast('Selected: ' + household.name, 'success');
-                                    }
-                                },
-                                onCancel: function() {
-                                    _showToast('Selection cancelled', 'info');
-                                }
-                            });
-                        } else {
-                            _openCharacterSelector({
-                                title: 'Select New Owner Character',
-                                onSelect: function(character) {
-                                    if (character) {
-                                        document.getElementById('transferOwnerDisplay').value = character.name + (character.surname ? ' ' + character.surname : '');
-                                        document.getElementById('transferOwnerId').value = character.id;
-                                        _showToast('Selected: ' + character.name, 'success');
-                                    }
-                                },
-                                onCancel: function() {
-                                    _showToast('Selection cancelled', 'info');
-                                }
-                            });
+                if (newOwnerType === currentOwnerType && newOwnerId === currentOwner.ownerId) {
+                    _showToast('New owner is the same as current owner', 'info');
+                    if (typeof onSuccess === 'function') onSuccess();
+                    return true;
+                }
+
+                var transferYear = _parseIntOrNull((root.querySelector('[data-field="year"]') || {}).value);
+                if (transferYear === null || transferYear < 1) {
+                    _showToast('Please enter a valid year', 'error');
+                    return false;
+                }
+
+                var reason = ((root.querySelector('[data-field="reason"]') || {}).value || '').trim();
+
+                // Single command. It owns history, timeline, persistence.
+                // We do NOT call updateResidenceNameWithHistory or
+                // addResidenceTimelineEvent from here.
+                var result = res.setResidenceOwner(
+                    residenceId,
+                    newOwnerType,
+                    newOwnerId,
+                    {
+                        ownerSince: transferYear,
+                        reason: reason || 'Transfer'
+                    }
+                );
+
+                if (!result.success) {
+                    _showToast(result.reason || 'Failed to transfer ownership', 'error');
+                    return false;
+                }
+
+                _showToast('Ownership transferred', 'success');
+                if (typeof onSuccess === 'function') onSuccess(result.data);
+                return true;
+            }
+        });
+
+        setTimeout(_attachOnOpen(function(root) {
+            _wireTransferOwnerActions(root);
+        }), 0);
+
+        return handle;
+    }
+
+    function _wireTransferOwnerActions(root) {
+        var typeSelect = root.querySelector('[data-field="ownerType"]');
+        var display = root.querySelector('[data-field="ownerDisplay"]');
+        var hidden = root.querySelector('[data-field="ownerId"]');
+        var selectBtn = root.querySelector('[data-action="select-owner"]');
+        var clearBtn = root.querySelector('[data-action="clear-owner"]');
+
+        // Clear selection when type changes to prevent stale id/type mismatch
+        if (typeSelect) {
+            typeSelect.onchange = function() {
+                if (display) display.value = '';
+                if (hidden) hidden.value = '';
+            };
+        }
+
+        if (selectBtn) {
+            selectBtn.onclick = function() {
+                var type = typeSelect ? typeSelect.value : 'household';
+                if (type === 'household') {
+                    _openHouseholdSelector({
+                        title: 'Select New Owner Household',
+                        onSelect: function(household) {
+                            if (!household) return;
+                            if (display) display.value = household.name;
+                            if (hidden) hidden.value = household.id;
                         }
-                    };
+                    });
+                } else {
+                    _openCharacterSelector({
+                        title: 'Select New Owner Character',
+                        onSelect: function(character) {
+                            if (!character) return;
+                            var name = (character.name || '') +
+                                (character.surname ? ' ' + character.surname : '');
+                            if (display) display.value = name;
+                            if (hidden) hidden.value = character.id;
+                        }
+                    });
                 }
+            };
+        }
 
-                var clearBtn = document.getElementById('transferClearOwnerBtn');
-                if (clearBtn) {
-                    clearBtn.onclick = function() {
-                        document.getElementById('transferOwnerDisplay').value = '';
-                        document.getElementById('transferOwnerId').value = '';
-                        _showToast('Owner cleared', 'info');
-                    };
-                }
-            }, 100);
-
-        } catch (e) {
-            _processingOwnerModal = false;
-            _showToast('Error opening transfer ownership modal', 'error');
+        if (clearBtn) {
+            clearBtn.onclick = function() {
+                if (display) display.value = '';
+                if (hidden) hidden.value = '';
+            };
         }
     }
 
@@ -724,144 +741,148 @@
     // =========================================================================
 
     function openOwnerStatsModal(ownerId, ownerType) {
-        if (_processingOwnerModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var res = _residence();
+
+        var ownerDisplay = _resolveOwnerDisplay(ownerType, ownerId, null);
+        var properties = res.getResidencesByOwner(ownerId, ownerType);
+
+        if (properties.length === 0) {
+            _showToast(ownerDisplay + ' owns no properties', 'info');
+            return null;
         }
-        _processingOwnerModal = true;
 
-        try {
-            var residenceSystem = _getResidenceSystem();
-            if (!residenceSystem) {
-                _showToast('Residence system not available', 'error');
-                _processingOwnerModal = false;
-                return;
-            }
+        var stats = _computeOwnerStats(properties);
+        var content = _buildOwnerStatsContent(ownerDisplay, ownerType, stats);
 
-            var ownedProperties = residenceSystem.getResidencesByOwner(ownerId, ownerType);
-            var totalRentIncome = residenceSystem.getTotalRentIncome(ownerId, ownerType);
+        return _openModal({
+            title: 'Owner Statistics: ' + ownerDisplay,
+            content: content,
+            confirmText: 'Close',
+            cancelText: '',
+            onConfirm: function() { /* close only */ }
+        });
+    }
 
-            // Get owner name
-            var ownerName = 'Unknown';
-            var ownerTypeLabel = ownerType || 'unknown';
-            if (ownerType === 'household') {
-                var household = _getHousehold(ownerId);
-                if (household) ownerName = household.name;
-            } else if (ownerType === 'character') {
-                var character = _getCharacterById(ownerId);
-                if (character) ownerName = character.name + (character.surname ? ' ' + character.surname : '');
-            }
+    function _computeOwnerStats(properties) {
+        var stats = {
+            totalProperties: properties.length,
+            rentedCount: 0,
+            vacantCount: 0,
+            totalRent: 0,
+            totalValue: 0,
+            byLocation: {},
+            byType: {}
+        };
 
-            // Calculate statistics
-            var totalProperties = ownedProperties.length;
-            var rentedCount = 0;
-            var vacantCount = 0;
-            var totalRent = 0;
-            var totalValue = 0;
-            var byLocation = {};
-            var byType = {};
+        for (var i = 0; i < properties.length; i++) {
+            var p = properties[i];
+            if (p.renterId) stats.rentedCount++;
+            else stats.vacantCount++;
 
-            for (var i = 0; i < ownedProperties.length; i++) {
-                var p = ownedProperties[i];
-                if (p.renterId) rentedCount++;
-                else vacantCount++;
+            var rent = p.rentAmount || 0;
+            stats.totalRent += rent;
 
-                if (p.rentAmount) totalRent += p.rentAmount;
-                if (p.estimatedValue) totalValue += p.estimatedValue;
+            var value = p.estimatedValue || 0;
+            stats.totalValue += value;
 
-                var locKey = p.locationName || 'Unknown';
-                if (!byLocation[locKey]) byLocation[locKey] = 0;
-                byLocation[locKey]++;
+            var locKey = p.locationName || 'Unknown';
+            stats.byLocation[locKey] = (stats.byLocation[locKey] || 0) + 1;
 
-                var typeKey = p.typeName || 'Unknown';
-                if (!byType[typeKey]) byType[typeKey] = 0;
-                byType[typeKey]++;
-            }
-
-            // Build location breakdown
-            var locationHtml = '';
-            var locKeys = Object.keys(byLocation).sort();
-            for (var i = 0; i < locKeys.length; i++) {
-                var key = locKeys[i];
-                locationHtml += '<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.6rem;border-bottom:1px solid var(--border-light);">' +
-                    '<span>' + _escapeHtml(key) + '</span>' +
-                    '<span>' + byLocation[key] + '</span>' +
-                    '</div>';
-            }
-
-            // Build type breakdown
-            var typeHtml = '';
-            var typeKeys = Object.keys(byType).sort();
-            for (var i = 0; i < typeKeys.length; i++) {
-                var key = typeKeys[i];
-                typeHtml += '<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.6rem;border-bottom:1px solid var(--border-light);">' +
-                    '<span>' + _escapeHtml(key) + '</span>' +
-                    '<span>' + byType[key] + '</span>' +
-                    '</div>';
-            }
-
-            var occupancyRate = totalProperties > 0 ? Math.round((rentedCount / totalProperties) * 100) : 0;
-
-            var modalContent = 
-                '<div style="margin-bottom: 16px; padding: 12px; background: var(--bg2); border-radius: 8px;">' +
-                '<div style="font-size: 0.8rem; font-weight: bold;">Owner Statistics: ' + _escapeHtml(ownerName) + '</div>' +
-                '<div style="font-size: 0.6rem; color: var(--dim);">' + _escapeHtml(ownerTypeLabel) + '</div>' +
-                '</div>' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px;">' +
-                '<div style="background: var(--bg3); padding: 8px; border-radius: 6px; text-align: center;">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Properties</div>' +
-                '<div style="font-size: 1rem; font-weight: bold;">' + totalProperties + '</div>' +
-                '</div>' +
-                '<div style="background: var(--bg3); padding: 8px; border-radius: 6px; text-align: center;">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Occupancy</div>' +
-                '<div style="font-size: 1rem; font-weight: bold;">' + occupancyRate + '%</div>' +
-                '</div>' +
-                '<div style="background: var(--bg3); padding: 8px; border-radius: 6px; text-align: center;">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Annual Rent</div>' +
-                '<div style="font-size: 1rem; font-weight: bold; color: var(--success);">+' + totalRent + 'g</div>' +
-                '</div>' +
-                '</div>' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">' +
-                '<div style="background: var(--bg3); padding: 8px; border-radius: 6px;">' +
-                '<div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 4px;">Status</div>' +
-                '<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.6rem;"><span style="color:var(--dim);">Rented</span><span style="color:var(--success);">' + rentedCount + '</span></div>' +
-                '<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.6rem;"><span style="color:var(--dim);">Vacant</span><span style="color:var(--warn);">' + vacantCount + '</span></div>' +
-                '</div>' +
-                '<div style="background: var(--bg3); padding: 8px; border-radius: 6px;">' +
-                '<div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 4px;">Value</div>' +
-                '<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.6rem;"><span style="color:var(--dim);">Total Value</span><span>' + totalValue + 'g</span></div>' +
-                '<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.6rem;"><span style="color:var(--dim);">Average Value</span><span>' + (totalProperties > 0 ? Math.round(totalValue / totalProperties) : 0) + 'g</span></div>' +
-                '</div>' +
-                '</div>' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">' +
-                '<div style="background: var(--bg3); padding: 8px; border-radius: 6px;">' +
-                '<div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 4px;">By Location</div>' +
-                locationHtml +
-                '</div>' +
-                '<div style="background: var(--bg3); padding: 8px; border-radius: 6px;">' +
-                '<div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 4px;">By Type</div>' +
-                typeHtml +
-                '</div>' +
-                '</div>' +
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
-                'Statistics show the property portfolio performance and composition.' +
-                '</div>';
-
-            _openModal({
-                title: 'Owner Statistics: ' + ownerName,
-                content: modalContent,
-                confirmText: 'Close',
-                cancelText: '',
-                onConfirm: function() {
-                    _closeTopModal();
-                    _processingOwnerModal = false;
-                }
-            });
-
-        } catch (e) {
-            _processingOwnerModal = false;
-            _showToast('Error opening owner stats', 'error');
+            var typeKey = p.typeName || 'Unknown';
+            stats.byType[typeKey] = (stats.byType[typeKey] || 0) + 1;
         }
+
+        stats.occupancyRate = stats.totalProperties > 0
+            ? Math.round((stats.rentedCount / stats.totalProperties) * 100)
+            : 0;
+        stats.averageValue = stats.totalProperties > 0
+            ? Math.round(stats.totalValue / stats.totalProperties)
+            : 0;
+
+        return stats;
+    }
+
+    function _buildOwnerStatsContent(ownerDisplay, ownerType, stats) {
+        var html = '<div style="margin-bottom:16px;">';
+
+        // Header
+        html += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px;">';
+        html += '<div style="font-size:0.8rem;font-weight:bold;">' +
+            _escapeHtml(ownerDisplay) + '</div>';
+        html += '<div style="font-size:0.6rem;color:var(--dim);">' +
+            _escapeHtml(ownerType) + '</div>';
+        html += '</div>';
+
+        // Primary metrics
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;">';
+        html += _statCell('Properties', stats.totalProperties);
+        html += _statCell('Occupancy', stats.occupancyRate + '%');
+        html += _statCell('Annual Rent', '+' + stats.totalRent + 'g', 'var(--success)');
+        html += '</div>';
+
+        // Secondary metrics
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">';
+        html += '<div style="background:var(--bg3);padding:8px;border-radius:6px;">';
+        html += '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">Status</div>';
+        html += _kvRow('Rented', stats.rentedCount, 'var(--success)');
+        html += _kvRow('Vacant', stats.vacantCount, 'var(--warn)');
+        html += '</div>';
+        html += '<div style="background:var(--bg3);padding:8px;border-radius:6px;">';
+        html += '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">Value</div>';
+        html += _kvRow('Total', stats.totalValue + 'g');
+        html += _kvRow('Average', stats.averageValue + 'g');
+        html += '</div>';
+        html += '</div>';
+
+        // Breakdowns
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">';
+        html += _breakdownCell('By Location', stats.byLocation);
+        html += _breakdownCell('By Type', stats.byType);
+        html += '</div>';
+
+        // Note
+        html += '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
+            'Statistics show the property portfolio composition and performance.' +
+        '</div>';
+
+        html += '</div>';
+        return html;
+    }
+
+    function _statCell(label, value, color) {
+        return '<div style="background:var(--bg3);padding:8px;border-radius:6px;text-align:center;">' +
+            '<div style="font-size:0.55rem;color:var(--dim);">' + _escapeHtml(label) + '</div>' +
+            '<div style="font-size:1rem;font-weight:bold;' +
+                (color ? 'color:' + color + ';' : '') + '">' +
+                _escapeHtml(String(value)) +
+            '</div>' +
+        '</div>';
+    }
+
+    function _kvRow(key, value, color) {
+        return '<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.6rem;' +
+            'border-bottom:1px solid var(--border-light);">' +
+            '<span style="color:var(--dim);">' + _escapeHtml(key) + '</span>' +
+            '<span' + (color ? ' style="color:' + color + ';"' : '') + '>' +
+                _escapeHtml(String(value)) +
+            '</span>' +
+        '</div>';
+    }
+
+    function _breakdownCell(title, breakdown) {
+        var html = '<div style="background:var(--bg3);padding:8px;border-radius:6px;">';
+        html += '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">' +
+            _escapeHtml(title) + '</div>';
+        var keys = Object.keys(breakdown).sort();
+        if (keys.length === 0) {
+            html += '<div style="font-size:0.55rem;color:var(--dim);">No data</div>';
+        } else {
+            for (var i = 0; i < keys.length; i++) {
+                html += _kvRow(keys[i], breakdown[keys[i]]);
+            }
+        }
+        html += '</div>';
+        return html;
     }
 
     // =========================================================================
@@ -873,13 +894,6 @@
     window.openTransferOwnershipModal = openTransferOwnershipModal;
     window.openOwnerStatsModal = openOwnerStatsModal;
 
-    // Legacy aliases
-    window._openResidenceOwnerDetailsModal = openResidenceOwnerDetailsModal;
-    window._openManageOwnedPropertiesModal = openManageOwnedPropertiesModal;
-    window._openTransferOwnershipModal = openTransferOwnershipModal;
-    window._openOwnerStatsModal = openOwnerStatsModal;
-
-    // ES Module exports
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
             openResidenceOwnerDetailsModal: openResidenceOwnerDetailsModal,
