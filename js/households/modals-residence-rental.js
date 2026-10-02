@@ -1,31 +1,46 @@
 /**
  * =============================================================================
- * RESIDENCE RENTAL MODALS (modals-residence-rental.js)
+ * STILL WATERS - RESIDENCE RENTAL MODALS (modals-residence-rental.js)
  * =============================================================================
  * 
- * PURPOSE: UI modals for residence rental management.
+ * LOCATION: js/systems/household/modals-residence-rental.js
  * 
- * DEPENDS ON:
- *   - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
- *   - modals-household-selector.js (openHouseholdSelector)
- *   - modals-char-select.js (openCharacterSelector)
- *   - residence-system.js (ResidenceSystem)
- *   - household-state.js (HouseholdState)
+ * PURPOSE
+ * -------
+ * Modal entry points for residence rental operations:
  * 
- * EXPORTS:
- *   - openSetResidenceOwnerModal() - Set owner of a residence
- *   - openSetResidenceRenterModal() - Set renter with rent amount
- *   - openUpdateRentModal() - Update rent amount
- *   - openEndRentalModal() - End rental agreement
- *   - openResidenceRentalHistoryModal() - View rental history
- *   - openHouseholdRentalSummaryModal() - View household rental summary
- *   - openRentPaymentModal() - Record rent payment
- *   - openResidenceRentalDetailsModal() - View detailed rental info
+ *   - openSetResidenceOwnerModal(residenceId, onSuccess)
+ *   - openSetResidenceRenterModal(residenceId, onSuccess)
+ *   - openUpdateRentModal(residenceId, onSuccess)
+ *   - openEndRentalModal(residenceId, onSuccess)
+ *   - openResidenceRentalHistoryModal(residenceId)
+ *   - openHouseholdRentalSummaryModal(householdId)
+ *   - openRentPaymentModal(residenceId, onSuccess)
+ *   - openResidenceRentalDetailsModal(residenceId)
  * 
- * ICON POLICY:
- *   - All icons from icons.js via _getIcon()
- *   - NO emojis
- *   - NO icons in confirm/cancel buttons
+ * OWNERSHIP
+ * ---------
+ *   Reads:  ResidenceSystem (getResidence, getResidenceOwner,
+ *           getResidenceRenter, getResidencesByOwner,
+ *           getResidencesByRenter, getTotalRentIncome,
+ *           getTotalRentExpenses, getResidenceRentalHistory,
+ *           getRentPayments)
+ *           HouseholdQueries.getHousehold (for household name lookup)
+ *   Writes: ResidenceSystem (setResidenceOwner, setResidenceRenter,
+ *           updateResidenceRent, endResidenceRental, recordRentPayment)
+ *   UI:     modals-core, selectors, icons
+ * 
+ * WHAT THIS FILE DOES NOT DO
+ * --------------------------
+ *   - No direct residence record mutation
+ *   - No direct household record mutation
+ *   - No emoji icons
+ *   - No setTimeout(100)
+ *   - No fabricated 1250
+ *   - No silent failure swallowing
+ *   - No _processingRentalModal guard
+ *   - No financial calculations in the UI (income/expense comes from ResidenceSystem)
+ *   - No stale-selection bugs (owner/renter type changes clear the selection)
  * 
  * =============================================================================
  */
@@ -34,92 +49,61 @@
     'use strict';
 
     // =========================================================================
-    // 0. RECURSION GUARD
-    // =========================================================================
-
-    var _processingRentalModal = false;
-
-    // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
+    // 1. DEPENDENCY ACCESS
     // =========================================================================
 
     function _openModal(options) {
-        if (typeof window.openModal === 'function') {
-            return window.openModal(options);
-        }
-        if (typeof window._openModal === 'function') {
-            return window._openModal(options);
-        }
-        return null;
+        if (typeof window.openModal === 'function') return window.openModal(options);
+        if (typeof window._openModal === 'function') return window._openModal(options);
+        throw new Error('modals-residence-rental: openModal is required');
     }
 
     function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') {
-            window.closeTopModal();
-        }
-        if (typeof window._closeTopModal === 'function') {
-            window._closeTopModal();
-        }
-    }
-
-    function _confirmDialog(message, title, onConfirm, onCancel) {
-        if (typeof window.confirmDialog === 'function') {
-            return window.confirmDialog(message, title, onConfirm, onCancel);
-        }
-        if (typeof window._confirmDialog === 'function') {
-            return window._confirmDialog(message, title, onConfirm, onCancel);
-        }
-        if (confirm(message)) {
-            if (onConfirm) onConfirm();
-        } else {
-            if (onCancel) onCancel();
-        }
+        if (typeof window.closeTopModal === 'function') return window.closeTopModal();
+        if (typeof window._closeTopModal === 'function') return window._closeTopModal();
+        throw new Error('modals-residence-rental: closeTopModal is required');
     }
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
-        }
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
+        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
+        if (str === undefined || str === null) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     function _showToast(message, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(message, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(message, type);
-        }
+        if (typeof window._showToast === 'function') return window._showToast(message, type);
+        if (typeof window.showToast === 'function') return window.showToast(message, type);
     }
 
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
+    function _residence() {
+        if (typeof window.ResidenceSystem === 'undefined') {
+            throw new Error('modals-residence-rental: ResidenceSystem is required');
+        }
+        return window.ResidenceSystem;
+    }
 
-    function _getIcon(name) {
-        if (typeof window._getIcon === 'function') {
-            return window._getIcon(name);
+    function _householdQueries() {
+        return typeof window.HouseholdQueries !== 'undefined'
+            ? window.HouseholdQueries
+            : null;
+    }
+
+    function _currentYear() {
+        if (typeof window.getCurrentYearSafe === 'function') {
+            return window.getCurrentYearSafe();
         }
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
-        return '';
+        return null;
     }
 
     function _openHouseholdSelector(options) {
         if (typeof window.openHouseholdSelector === 'function') {
             return window.openHouseholdSelector(options);
-        }
-        if (typeof window._openHouseholdSelector === 'function') {
-            return window._openHouseholdSelector(options);
         }
         _showToast('Household selector not available', 'error');
         return null;
@@ -129,64 +113,63 @@
         if (typeof window.openCharacterSelector === 'function') {
             return window.openCharacterSelector(options);
         }
-        if (typeof window.openUnifiedCharacterSelector === 'function') {
-            return window.openUnifiedCharacterSelector(options);
-        }
-        if (typeof window._openCharacterSelector === 'function') {
-            return window._openCharacterSelector(options);
-        }
         _showToast('Character selector not available', 'error');
         return null;
     }
 
-    function _getResidenceById(residenceId) {
-        if (typeof window.ResidenceSystem !== 'undefined' && 
-            typeof window.ResidenceSystem.getResidenceById === 'function') {
-            return window.ResidenceSystem.getResidenceById(residenceId);
-        }
-        return null;
+    function _resolveModalRoot() {
+        if (typeof document === 'undefined') return null;
+        return document.querySelector('[data-modal-root="top"]') ||
+               document.querySelector('.modal-root:last-of-type') ||
+               document.body;
     }
 
-    function _getHousehold(householdId) {
-        if (typeof window.HouseholdState !== 'undefined' && 
-            typeof window.HouseholdState.getHousehold === 'function') {
-            return window.HouseholdState.getHousehold(householdId);
-        }
-        return null;
+    function _attachOnOpen(handler) {
+        return function() {
+            var root = _resolveModalRoot();
+            if (root) handler(root);
+        };
     }
 
-    function _getCharacterById(characterId) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(characterId);
-        }
-        return null;
+    function _parseIntOrNull(value) {
+        if (value === undefined || value === null) return null;
+        var s = String(value).trim();
+        if (s === '') return null;
+        var n = Number(s);
+        if (!isFinite(n)) return null;
+        return Math.floor(n);
     }
 
-    function _getAllHouseholds() {
-        if (typeof window.HouseholdState !== 'undefined' && 
-            typeof window.HouseholdState.getAllHouseholds === 'function') {
-            return window.HouseholdState.getAllHouseholds();
-        }
-        return [];
-    }
-
-    function _getResidenceSystem() {
-        return window.ResidenceSystem;
+    function _parseFloatOrNull(value) {
+        if (value === undefined || value === null) return null;
+        var s = String(value).trim();
+        if (s === '') return null;
+        var n = Number(s);
+        if (!isFinite(n)) return null;
+        return n;
     }
 
     // =========================================================================
-    // 2. ICON HELPERS
+    // 2. HELPERS
     // =========================================================================
 
-    function _getIconSafe(name) {
-        var icon = _getIcon(name);
-        return icon || '';
-    }
-
-    function _iconSpan(icon, title) {
-        if (!icon) return '';
-        var titleAttr = title ? ' title="' + _escapeHtml(title) + '"' : '';
-        return '<span style="display:inline-flex;align-items:center;vertical-align:middle;' + (title ? 'cursor:help;' : '') + '"' + titleAttr + '>' + icon + '</span>';
+    function _lookupOwnerName(type, id) {
+        if (type === 'household') {
+            var hq = _householdQueries();
+            if (hq) {
+                var h = hq.getHousehold(id);
+                if (h) return h.name;
+            }
+            return 'Unknown Household';
+        }
+        if (type === 'character') {
+            if (typeof window.getCharacterById === 'function') {
+                var c = window.getCharacterById(id);
+                if (c) return (c.name || '') + (c.surname ? ' ' + c.surname : '');
+            }
+            return 'Unknown Character';
+        }
+        return 'Unknown';
     }
 
     // =========================================================================
@@ -194,143 +177,160 @@
     // =========================================================================
 
     function openSetResidenceOwnerModal(residenceId, onSuccess) {
-        if (_processingRentalModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var res = _residence();
+
+        var residence = res.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
         }
-        _processingRentalModal = true;
 
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingRentalModal = false;
-                return;
-            }
+        var currentOwner = res.getResidenceOwner(residenceId);
+        var currentOwnerName = currentOwner && currentOwner.ownerId
+            ? currentOwner.ownerName : 'None';
+        var currentOwnerType = currentOwner && currentOwner.ownerType
+            ? currentOwner.ownerType : 'household';
 
-            var currentOwner = residence.ownerName || 'None';
-            var currentOwnerType = residence.ownerType || 'none';
+        var year = _currentYear();
 
-            var modalContent = 
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 6px; margin-bottom: 12px;">' +
-                '<div style="font-size: 0.7rem;"><strong>' + _escapeHtml(residence.name) + '</strong></div>' +
-                '<div style="font-size: 0.6rem; color: var(--dim);">Current Owner: ' + _escapeHtml(currentOwner) + 
-                (currentOwnerType !== 'none' ? ' (' + _escapeHtml(currentOwnerType) + ')' : '') +
+        var content =
+            '<div style="margin-bottom:16px;">' +
+                '<div style="background:var(--bg2);padding:12px;border-radius:6px;margin-bottom:12px;">' +
+                    '<div style="font-size:0.7rem;"><strong>' +
+                        _escapeHtml(residence.name) + '</strong></div>' +
+                    '<div style="font-size:0.6rem;color:var(--dim);">Current Owner: ' +
+                        _escapeHtml(currentOwnerName) +
+                        (currentOwnerType ? ' (' + _escapeHtml(currentOwnerType) + ')' : '') +
+                    '</div>' +
                 '</div>' +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Owner Type</label>' +
-                '<select id="ownerTypeSelect" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                '<option value="household">Household</option>' +
-                '<option value="character">Character</option>' +
-                '</select>' +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Owner</label>' +
-                '<div style="display: flex; gap: 6px;">' +
-                '<input type="text" id="ownerDisplay" placeholder="Select owner..." readonly style="flex: 1; padding: 8px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem; cursor: pointer;">' +
-                '<input type="hidden" id="ownerId">' +
-                '<button id="selectOwnerBtn" class="btn" style="font-size: 0.6rem; padding: 4px 10px;">Select</button>' +
-                '<button id="clearOwnerBtn" class="btn" style="font-size: 0.6rem; padding: 4px 8px;">Clear</button>' +
-                '</div>' +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Owner Since</label>' +
-                '<input type="number" id="ownerSince" value="' + _getCurrentYear() + '" min="1" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '</div>';
 
-            _openModal({
-                title: 'Set Owner: ' + residence.name,
-                content: modalContent,
-                confirmText: 'Set Owner',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var ownerType = document.getElementById('ownerTypeSelect').value;
-                    var ownerId = document.getElementById('ownerId').value;
-                    var ownerSince = parseInt(document.getElementById('ownerSince').value) || _getCurrentYear();
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Owner Type</label>' +
+                    '<select data-field="ownerType" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                        '<option value="household"' +
+                            (currentOwnerType === 'household' ? ' selected' : '') +
+                            '>Household</option>' +
+                        '<option value="character"' +
+                            (currentOwnerType === 'character' ? ' selected' : '') +
+                            '>Character</option>' +
+                    '</select>' +
+                '</div>' +
 
-                    if (!ownerId) {
-                        _showToast('Please select an owner', 'error');
-                        return false;
-                    }
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Owner</label>' +
+                    '<div style="display:flex;gap:6px;">' +
+                        '<input type="text" data-field="ownerDisplay" placeholder="Select owner..." readonly ' +
+                            'style="flex:1;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;cursor:pointer;">' +
+                        '<input type="hidden" data-field="ownerId">' +
+                        '<button data-action="select-owner" class="btn" style="font-size:0.6rem;padding:4px 10px;">Select</button>' +
+                        '<button data-action="clear-owner" class="btn" style="font-size:0.6rem;padding:4px 8px;">Clear</button>' +
+                    '</div>' +
+                '</div>' +
 
-                    var residenceSystem = _getResidenceSystem();
-                    if (!residenceSystem) {
-                        _showToast('Residence system not available', 'error');
-                        return false;
-                    }
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Owner Since</label>' +
+                    '<input type="number" data-field="ownerSince" value="' +
+                        (year !== null ? year : '') +
+                        '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                '</div>' +
 
-                    var result = residenceSystem.setResidenceOwner(residenceId, ownerType, ownerId, {
-                        ownerSince: ownerSince
-                    });
+                '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
+                    'Setting an owner does not affect an existing rental agreement. ' +
+                    'To end a rental, use the End Rental action.' +
+                '</div>' +
+            '</div>';
 
-                    if (result) {
-                        _showToast('Owner set successfully', 'success');
-                        _closeTopModal();
-                        _processingRentalModal = false;
-                        if (onSuccess) onSuccess(result);
-                        return true;
-                    }
+        var handle = _openModal({
+            title: 'Set Owner: ' + residence.name,
+            content: content,
+            confirmText: 'Set Owner',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var root = _resolveModalRoot();
+                if (!root) return false;
+
+                var ownerId = (root.querySelector('[data-field="ownerId"]') || {}).value;
+                if (!ownerId) {
+                    _showToast('Please select an owner', 'error');
                     return false;
-                },
-                onCancel: function() {
-                    _processingRentalModal = false;
                 }
-            });
+                var ownerType = (root.querySelector('[data-field="ownerType"]') || {}).value;
+                var ownerSince = _parseIntOrNull((root.querySelector('[data-field="ownerSince"]') || {}).value);
+                if (ownerSince === null || ownerSince < 1) {
+                    _showToast('Please enter a valid year', 'error');
+                    return false;
+                }
 
-            // Set up event handlers
-            setTimeout(function() {
-                var selectBtn = document.getElementById('selectOwnerBtn');
-                if (selectBtn) {
-                    selectBtn.onclick = function() {
-                        var ownerType = document.getElementById('ownerTypeSelect').value;
-                        if (ownerType === 'household') {
-                            _openHouseholdSelector({
-                                title: 'Select Owner Household',
-                                onSelect: function(household) {
-                                    if (household) {
-                                        document.getElementById('ownerDisplay').value = household.name;
-                                        document.getElementById('ownerId').value = household.id;
-                                        _showToast('Selected: ' + household.name, 'success');
-                                    }
-                                },
-                                onCancel: function() {
-                                    _showToast('Selection cancelled', 'info');
-                                }
-                            });
-                        } else {
-                            _openCharacterSelector({
-                                title: 'Select Owner Character',
-                                onSelect: function(character) {
-                                    if (character) {
-                                        document.getElementById('ownerDisplay').value = character.name + (character.surname ? ' ' + character.surname : '');
-                                        document.getElementById('ownerId').value = character.id;
-                                        _showToast('Selected: ' + character.name, 'success');
-                                    }
-                                },
-                                onCancel: function() {
-                                    _showToast('Selection cancelled', 'info');
-                                }
-                            });
+                var result = res.setResidenceOwner(residenceId, ownerType, ownerId, {
+                    ownerSince: ownerSince
+                });
+
+                if (!result.success) {
+                    _showToast(result.reason || 'Failed to set owner', 'error');
+                    return false;
+                }
+
+                _showToast('Owner set successfully', 'success');
+                if (typeof onSuccess === 'function') onSuccess(result.data);
+                return true;
+            }
+        });
+
+        setTimeout(_attachOnOpen(function(root) {
+            _wireOwnerTypeChange(root);
+        }), 0);
+
+        return handle;
+    }
+
+    function _wireOwnerTypeChange(root) {
+        var typeSelect = root.querySelector('[data-field="ownerType"]');
+        var display = root.querySelector('[data-field="ownerDisplay"]');
+        var hidden = root.querySelector('[data-field="ownerId"]');
+        var selectBtn = root.querySelector('[data-action="select-owner"]');
+        var clearBtn = root.querySelector('[data-action="clear-owner"]');
+
+        // When the owner type changes, clear the selection.
+        // This prevents the "household id + character type" mixed state bug.
+        if (typeSelect) {
+            typeSelect.onchange = function() {
+                if (display) display.value = '';
+                if (hidden) hidden.value = '';
+            };
+        }
+
+        if (selectBtn) {
+            selectBtn.onclick = function() {
+                var ownerType = typeSelect ? typeSelect.value : 'household';
+                if (ownerType === 'household') {
+                    _openHouseholdSelector({
+                        title: 'Select Owner Household',
+                        onSelect: function(household) {
+                            if (!household) return;
+                            if (display) display.value = household.name;
+                            if (hidden) hidden.value = household.id;
                         }
-                    };
+                    });
+                } else {
+                    _openCharacterSelector({
+                        title: 'Select Owner Character',
+                        onSelect: function(character) {
+                            if (!character) return;
+                            var name = (character.name || '') +
+                                (character.surname ? ' ' + character.surname : '');
+                            if (display) display.value = name;
+                            if (hidden) hidden.value = character.id;
+                        }
+                    });
                 }
+            };
+        }
 
-                var clearBtn = document.getElementById('clearOwnerBtn');
-                if (clearBtn) {
-                    clearBtn.onclick = function() {
-                        document.getElementById('ownerDisplay').value = '';
-                        document.getElementById('ownerId').value = '';
-                        _showToast('Owner cleared', 'info');
-                    };
-                }
-            }, 100);
-
-        } catch (e) {
-            _processingRentalModal = false;
-            _showToast('Error opening set owner modal', 'error');
+        if (clearBtn) {
+            clearBtn.onclick = function() {
+                if (display) display.value = '';
+                if (hidden) hidden.value = '';
+            };
         }
     }
 
@@ -339,166 +339,186 @@
     // =========================================================================
 
     function openSetResidenceRenterModal(residenceId, onSuccess) {
-        if (_processingRentalModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var res = _residence();
+
+        var residence = res.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
         }
-        _processingRentalModal = true;
 
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingRentalModal = false;
-                return;
-            }
+        if (!residence.ownerId) {
+            _showToast('Residence must have an owner before it can be rented', 'error');
+            return null;
+        }
 
-            if (!residence.ownerId) {
-                _showToast('Residence must have an owner before it can be rented', 'error');
-                _processingRentalModal = false;
-                return;
-            }
+        var currentRenter = res.getResidenceRenter(residenceId);
+        var currentRent = currentRenter ? currentRenter.rentAmount : 0;
+        var currentRenterType = currentRenter && currentRenter.renterType
+            ? currentRenter.renterType : 'household';
 
-            var currentRenter = residence.renterName || 'None';
-            var currentRent = residence.rentAmount || 0;
+        var year = _currentYear();
 
-            var modalContent = 
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 6px; margin-bottom: 12px;">' +
-                '<div style="font-size: 0.7rem;"><strong>' + _escapeHtml(residence.name) + '</strong></div>' +
-                '<div style="font-size: 0.6rem; color: var(--dim);">Owner: ' + _escapeHtml(residence.ownerName || 'Unknown') + '</div>' +
-                '<div style="font-size: 0.6rem; color: var(--dim);">Current Renter: ' + _escapeHtml(currentRenter) + '</div>' +
-                '<div style="font-size: 0.6rem; color: var(--dim);">Current Rent: ' + currentRent + 'g/year</div>' +
+        var content =
+            '<div style="margin-bottom:16px;">' +
+                '<div style="background:var(--bg2);padding:12px;border-radius:6px;margin-bottom:12px;">' +
+                    '<div style="font-size:0.7rem;"><strong>' +
+                        _escapeHtml(residence.name) + '</strong></div>' +
+                    '<div style="font-size:0.6rem;color:var(--dim);">Owner: ' +
+                        _escapeHtml(residence.ownerName || 'Unknown') + '</div>' +
+                    '<div style="font-size:0.6rem;color:var(--dim);">Current Renter: ' +
+                        _escapeHtml(currentRenter && currentRenter.renterId
+                            ? currentRenter.renterName : 'None') + '</div>' +
+                    '<div style="font-size:0.6rem;color:var(--dim);">Current Rent: ' +
+                        currentRent + 'g/year</div>' +
                 '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Renter Type</label>' +
-                '<select id="renterTypeSelect" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                '<option value="household">Household</option>' +
-                '<option value="character">Character</option>' +
-                '</select>' +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Renter</label>' +
-                '<div style="display: flex; gap: 6px;">' +
-                '<input type="text" id="renterDisplay" placeholder="Select renter..." readonly style="flex: 1; padding: 8px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem; cursor: pointer;">' +
-                '<input type="hidden" id="renterId">' +
-                '<button id="selectRenterBtn" class="btn" style="font-size: 0.6rem; padding: 4px 10px;">Select</button>' +
-                '<button id="clearRenterBtn" class="btn" style="font-size: 0.6rem; padding: 4px 8px;">Clear</button>' +
-                '</div>' +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Annual Rent Amount (gold)</label>' +
-                '<input type="number" id="rentAmountInput" value="' + (currentRent || 50) + '" min="0" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '<small style="font-size: 0.55rem; color: var(--dim);">Rent is collected annually</small>' +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Rent Start Year</label>' +
-                '<input type="number" id="rentStartYear" value="' + _getCurrentYear() + '" min="1" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes (optional)</label>' +
-                '<textarea id="rentNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;" placeholder="e.g., Lease terms, conditions..."></textarea>' +
-                '</div>' +
-                '</div>';
 
-            _openModal({
-                title: 'Set Renter: ' + residence.name,
-                content: modalContent,
-                confirmText: 'Set Renter',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var renterType = document.getElementById('renterTypeSelect').value;
-                    var renterId = document.getElementById('renterId').value;
-                    var rentAmount = parseInt(document.getElementById('rentAmountInput').value) || 0;
-                    var rentStartYear = parseInt(document.getElementById('rentStartYear').value) || _getCurrentYear();
-                    var notes = document.getElementById('rentNotes').value;
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Renter Type</label>' +
+                    '<select data-field="renterType" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                        '<option value="household"' +
+                            (currentRenterType === 'household' ? ' selected' : '') +
+                            '>Household</option>' +
+                        '<option value="character"' +
+                            (currentRenterType === 'character' ? ' selected' : '') +
+                            '>Character</option>' +
+                    '</select>' +
+                '</div>' +
 
-                    if (!renterId) {
-                        _showToast('Please select a renter', 'error');
-                        return false;
-                    }
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Renter</label>' +
+                    '<div style="display:flex;gap:6px;">' +
+                        '<input type="text" data-field="renterDisplay" placeholder="Select renter..." readonly ' +
+                            'style="flex:1;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;cursor:pointer;">' +
+                        '<input type="hidden" data-field="renterId">' +
+                        '<button data-action="select-renter" class="btn" style="font-size:0.6rem;padding:4px 10px;">Select</button>' +
+                        '<button data-action="clear-renter" class="btn" style="font-size:0.6rem;padding:4px 8px;">Clear</button>' +
+                    '</div>' +
+                '</div>' +
 
-                    if (rentAmount < 0) {
-                        _showToast('Rent amount cannot be negative', 'error');
-                        return false;
-                    }
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Annual Rent (gold)</label>' +
+                    '<input type="number" data-field="rentAmount" value="' +
+                        (currentRent > 0 ? currentRent : 50) +
+                        '" min="0" step="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                    '<small style="font-size:0.55rem;color:var(--dim);">Rent is collected annually by the owner.</small>' +
+                '</div>' +
 
-                    var residenceSystem = _getResidenceSystem();
-                    if (!residenceSystem) {
-                        _showToast('Residence system not available', 'error');
-                        return false;
-                    }
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Rent Start Year</label>' +
+                    '<input type="number" data-field="rentStartYear" value="' +
+                        (year !== null ? year : '') +
+                        '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                '</div>' +
 
-                    var result = residenceSystem.setResidenceRenter(residenceId, renterType, renterId, rentAmount, {
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes (optional)</label>' +
+                    '<textarea data-field="notes" rows="2" placeholder="e.g., Lease terms, conditions..." ' +
+                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;"></textarea>' +
+                '</div>' +
+            '</div>';
+
+        var handle = _openModal({
+            title: 'Set Renter: ' + residence.name,
+            content: content,
+            confirmText: 'Set Renter',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var root = _resolveModalRoot();
+                if (!root) return false;
+
+                var renterId = (root.querySelector('[data-field="renterId"]') || {}).value;
+                if (!renterId) {
+                    _showToast('Please select a renter', 'error');
+                    return false;
+                }
+
+                var renterType = (root.querySelector('[data-field="renterType"]') || {}).value;
+                var rentAmount = _parseIntOrNull((root.querySelector('[data-field="rentAmount"]') || {}).value);
+                if (rentAmount === null || rentAmount < 0) {
+                    _showToast('Rent must be a non-negative integer', 'error');
+                    return false;
+                }
+
+                var rentStartYear = _parseIntOrNull((root.querySelector('[data-field="rentStartYear"]') || {}).value);
+                if (rentStartYear === null || rentStartYear < 1) {
+                    _showToast('Please enter a valid year', 'error');
+                    return false;
+                }
+
+                var notes = ((root.querySelector('[data-field="notes"]') || {}).value || '').trim();
+
+                var result = res.setResidenceRenter(residenceId, renterType, renterId,
+                    rentAmount, {
                         rentStartYear: rentStartYear,
                         notes: notes
                     });
 
-                    if (result) {
-                        _showToast('Renter set successfully (Rent: ' + rentAmount + 'g/year)', 'success');
-                        _closeTopModal();
-                        _processingRentalModal = false;
-                        if (onSuccess) onSuccess(result);
-                        return true;
-                    }
+                if (!result.success) {
+                    _showToast(result.reason || 'Failed to set renter', 'error');
                     return false;
-                },
-                onCancel: function() {
-                    _processingRentalModal = false;
                 }
-            });
 
-            // Set up event handlers
-            setTimeout(function() {
-                var selectBtn = document.getElementById('selectRenterBtn');
-                if (selectBtn) {
-                    selectBtn.onclick = function() {
-                        var renterType = document.getElementById('renterTypeSelect').value;
-                        if (renterType === 'household') {
-                            _openHouseholdSelector({
-                                title: 'Select Renter Household',
-                                onSelect: function(household) {
-                                    if (household) {
-                                        document.getElementById('renterDisplay').value = household.name;
-                                        document.getElementById('renterId').value = household.id;
-                                        _showToast('Selected: ' + household.name, 'success');
-                                    }
-                                },
-                                onCancel: function() {
-                                    _showToast('Selection cancelled', 'info');
-                                }
-                            });
-                        } else {
-                            _openCharacterSelector({
-                                title: 'Select Renter Character',
-                                onSelect: function(character) {
-                                    if (character) {
-                                        document.getElementById('renterDisplay').value = character.name + (character.surname ? ' ' + character.surname : '');
-                                        document.getElementById('renterId').value = character.id;
-                                        _showToast('Selected: ' + character.name, 'success');
-                                    }
-                                },
-                                onCancel: function() {
-                                    _showToast('Selection cancelled', 'info');
-                                }
-                            });
+                _showToast('Renter set (' + rentAmount + 'g/year)', 'success');
+                if (typeof onSuccess === 'function') onSuccess(result.data);
+                return true;
+            }
+        });
+
+        setTimeout(_attachOnOpen(function(root) {
+            _wireRenterTypeChange(root);
+        }), 0);
+
+        return handle;
+    }
+
+    function _wireRenterTypeChange(root) {
+        var typeSelect = root.querySelector('[data-field="renterType"]');
+        var display = root.querySelector('[data-field="renterDisplay"]');
+        var hidden = root.querySelector('[data-field="renterId"]');
+        var selectBtn = root.querySelector('[data-action="select-renter"]');
+        var clearBtn = root.querySelector('[data-action="clear-renter"]');
+
+        // Same stale-selection prevention as owner
+        if (typeSelect) {
+            typeSelect.onchange = function() {
+                if (display) display.value = '';
+                if (hidden) hidden.value = '';
+            };
+        }
+
+        if (selectBtn) {
+            selectBtn.onclick = function() {
+                var renterType = typeSelect ? typeSelect.value : 'household';
+                if (renterType === 'household') {
+                    _openHouseholdSelector({
+                        title: 'Select Renter Household',
+                        onSelect: function(household) {
+                            if (!household) return;
+                            if (display) display.value = household.name;
+                            if (hidden) hidden.value = household.id;
                         }
-                    };
+                    });
+                } else {
+                    _openCharacterSelector({
+                        title: 'Select Renter Character',
+                        onSelect: function(character) {
+                            if (!character) return;
+                            var name = (character.name || '') +
+                                (character.surname ? ' ' + character.surname : '');
+                            if (display) display.value = name;
+                            if (hidden) hidden.value = character.id;
+                        }
+                    });
                 }
+            };
+        }
 
-                var clearBtn = document.getElementById('clearRenterBtn');
-                if (clearBtn) {
-                    clearBtn.onclick = function() {
-                        document.getElementById('renterDisplay').value = '';
-                        document.getElementById('renterId').value = '';
-                        _showToast('Renter cleared', 'info');
-                    };
-                }
-            }, 100);
-
-        } catch (e) {
-            _processingRentalModal = false;
-            _showToast('Error opening set renter modal', 'error');
+        if (clearBtn) {
+            clearBtn.onclick = function() {
+                if (display) display.value = '';
+                if (hidden) hidden.value = '';
+            };
         }
     }
 
@@ -507,101 +527,101 @@
     // =========================================================================
 
     function openUpdateRentModal(residenceId, onSuccess) {
-        if (_processingRentalModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var res = _residence();
+
+        var residence = res.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
         }
-        _processingRentalModal = true;
 
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingRentalModal = false;
-                return;
-            }
+        var renter = res.getResidenceRenter(residenceId);
+        if (!renter || !renter.renterId) {
+            _showToast('Residence has no renter', 'error');
+            return null;
+        }
 
-            if (!residence.renterId) {
-                _showToast('Residence has no renter', 'error');
-                _processingRentalModal = false;
-                return;
-            }
+        var currentRent = renter.rentAmount;
+        var year = _currentYear();
 
-            var currentRent = residence.rentAmount || 0;
-
-            var modalContent = 
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 6px; margin-bottom: 12px;">' +
-                '<div style="font-size: 0.7rem;"><strong>' + _escapeHtml(residence.name) + '</strong></div>' +
-                '<div style="font-size: 0.6rem; color: var(--dim);">Current Renter: ' + _escapeHtml(residence.renterName || 'Unknown') + '</div>' +
-                '<div style="font-size: 0.6rem; color: var(--dim);">Current Rent: ' + currentRent + 'g/year</div>' +
+        var content =
+            '<div style="margin-bottom:16px;">' +
+                '<div style="background:var(--bg2);padding:12px;border-radius:6px;margin-bottom:12px;">' +
+                    '<div style="font-size:0.7rem;"><strong>' +
+                        _escapeHtml(residence.name) + '</strong></div>' +
+                    '<div style="font-size:0.6rem;color:var(--dim);">Renter: ' +
+                        _escapeHtml(renter.renterName) + '</div>' +
+                    '<div style="font-size:0.6rem;color:var(--dim);">Current Rent: ' +
+                        currentRent + 'g/year</div>' +
                 '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">New Annual Rent (gold)</label>' +
-                '<input type="number" id="newRentAmount" value="' + currentRent + '" min="0" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
+
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">New Annual Rent (gold)</label>' +
+                    '<input type="number" data-field="newRent" value="' + currentRent +
+                        '" min="0" step="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
                 '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Effective Year</label>' +
-                '<input type="number" id="rentEffectiveYear" value="' + _getCurrentYear() + '" min="1" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
+
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Effective Year</label>' +
+                    '<input type="number" data-field="effectiveYear" value="' +
+                        (year !== null ? year : '') +
+                        '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
                 '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Reason (optional)</label>' +
-                '<input type="text" id="rentUpdateReason" placeholder="e.g., Market adjustment, Renegotiation..." style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
+
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason (optional)</label>' +
+                    '<input type="text" data-field="reason" placeholder="e.g., Market adjustment..." ' +
+                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
                 '</div>' +
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--warn);">' +
-                'Rent change will be recorded in the rental history and will affect annual income/expenses starting from the effective year.' +
+
+                '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--warn);">' +
+                    'Rent change will be recorded in the rental history and will affect annual income/expenses starting from the effective year.' +
                 '</div>' +
-                '</div>';
+            '</div>';
 
-            _openModal({
-                title: 'Update Rent: ' + residence.name,
-                content: modalContent,
-                confirmText: 'Update Rent',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var newRent = parseInt(document.getElementById('newRentAmount').value) || 0;
-                    var effectiveYear = parseInt(document.getElementById('rentEffectiveYear').value) || _getCurrentYear();
-                    var reason = document.getElementById('rentUpdateReason').value;
+        return _openModal({
+            title: 'Update Rent: ' + residence.name,
+            content: content,
+            confirmText: 'Update Rent',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var root = _resolveModalRoot();
+                if (!root) return false;
 
-                    if (newRent < 0) {
-                        _showToast('Rent amount cannot be negative', 'error');
-                        return false;
-                    }
-
-                    if (newRent === currentRent) {
-                        _showToast('Rent amount is the same', 'info');
-                        _closeTopModal();
-                        _processingRentalModal = false;
-                        if (onSuccess) onSuccess();
-                        return true;
-                    }
-
-                    var residenceSystem = _getResidenceSystem();
-                    if (!residenceSystem) {
-                        _showToast('Residence system not available', 'error');
-                        return false;
-                    }
-
-                    var result = residenceSystem.updateResidenceRent(residenceId, newRent, effectiveYear, reason || 'Rent adjustment');
-
-                    if (result) {
-                        _showToast('Rent updated from ' + currentRent + ' to ' + newRent + 'g/year', 'success');
-                        _closeTopModal();
-                        _processingRentalModal = false;
-                        if (onSuccess) onSuccess(result);
-                        return true;
-                    }
+                var newRent = _parseIntOrNull((root.querySelector('[data-field="newRent"]') || {}).value);
+                if (newRent === null || newRent < 0) {
+                    _showToast('Rent must be a non-negative integer', 'error');
                     return false;
-                },
-                onCancel: function() {
-                    _processingRentalModal = false;
                 }
-            });
 
-        } catch (e) {
-            _processingRentalModal = false;
-            _showToast('Error opening update rent modal', 'error');
-        }
+                if (newRent === currentRent) {
+                    _showToast('Rent amount is unchanged', 'info');
+                    if (typeof onSuccess === 'function') onSuccess();
+                    return true;
+                }
+
+                var effectiveYear = _parseIntOrNull((root.querySelector('[data-field="effectiveYear"]') || {}).value);
+                if (effectiveYear === null || effectiveYear < 1) {
+                    _showToast('Please enter a valid year', 'error');
+                    return false;
+                }
+
+                var reason = ((root.querySelector('[data-field="reason"]') || {}).value || '').trim();
+
+                var result = res.updateResidenceRent(residenceId, newRent,
+                    effectiveYear, reason || 'Rent adjustment');
+
+                if (!result.success) {
+                    _showToast(result.reason || 'Failed to update rent', 'error');
+                    return false;
+                }
+
+                _showToast('Rent updated from ' + currentRent + ' to ' + newRent +
+                    'g/year', 'success');
+                if (typeof onSuccess === 'function') onSuccess(result.data);
+                return true;
+            }
+        });
     }
 
     // =========================================================================
@@ -609,111 +629,123 @@
     // =========================================================================
 
     function openEndRentalModal(residenceId, onSuccess) {
-        if (_processingRentalModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var res = _residence();
+
+        var residence = res.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
         }
-        _processingRentalModal = true;
 
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingRentalModal = false;
-                return;
-            }
+        var renter = res.getResidenceRenter(residenceId);
+        if (!renter || !renter.renterId) {
+            _showToast('Residence has no active rental', 'warning');
+            if (typeof onSuccess === 'function') onSuccess();
+            return null;
+        }
 
-            if (!residence.renterId) {
-                _showToast('Residence has no renter', 'warning');
-                _processingRentalModal = false;
-                if (onSuccess) onSuccess();
-                return;
-            }
+        var year = _currentYear();
 
-            var modalContent = 
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: rgba(200, 68, 68, 0.1); border: 1px solid var(--warn); border-radius: 8px; padding: 12px; margin-bottom: 16px;">' +
-                '<div style="font-size: 0.7rem;"><strong>End Rental: ' + _escapeHtml(residence.name) + '</strong></div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">Current Renter: ' + _escapeHtml(residence.renterName || 'Unknown') + '</div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Current Rent: ' + (residence.rentAmount || 0) + 'g/year</div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Rented since: ' + (residence.rentStartYear || 'Unknown') + '</div>' +
+        var content =
+            '<div style="margin-bottom:16px;">' +
+                '<div style="background:rgba(200,68,68,0.1);border:1px solid var(--warn);border-radius:8px;padding:12px;margin-bottom:16px;">' +
+                    '<div style="font-size:0.7rem;"><strong>End Rental: ' +
+                        _escapeHtml(residence.name) + '</strong></div>' +
+                    '<div style="font-size:0.55rem;color:var(--dim);margin-top:4px;">' +
+                        'Current Renter: ' + _escapeHtml(renter.renterName) + '</div>' +
+                    '<div style="font-size:0.55rem;color:var(--dim);">' +
+                        'Annual Rent: ' + renter.rentAmount + 'g</div>' +
+                    '<div style="font-size:0.55rem;color:var(--dim);">' +
+                        'Rented since: ' +
+                        (renter.rentStartYear !== null ? renter.rentStartYear : 'Unknown') +
+                    '</div>' +
                 '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">End Year</label>' +
-                '<input type="number" id="rentEndYear" value="' + _getCurrentYear() + '" min="1" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Reason</label>' +
-                '<select id="rentEndReason" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                '<option value="tenant_moved_out">Tenant moved out</option>' +
-                '<option value="tenant_evicted">Tenant evicted</option>' +
-                '<option value="lease_expired">Lease expired</option>' +
-                '<option value="owner_occupying">Owner taking possession</option>' +
-                '<option value="property_sold">Property sold</option>' +
-                '<option value="mutual_agreement">Mutual agreement</option>' +
-                '<option value="custom">Custom reason</option>' +
-                '</select>' +
-                '</div>' +
-                '<div id="customEndReasonGroup" style="display: none; margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Custom Reason</label>' +
-                '<input type="text" id="customEndReason" placeholder="Enter custom reason..." style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--warn);">' +
-                'Ending this rental will mark the residence as vacant and remove the household association.' +
-                '</div>' +
-                '</div>';
 
-            _openModal({
-                title: 'End Rental: ' + residence.name,
-                content: modalContent,
-                confirmText: 'End Rental',
-                cancelText: 'Cancel',
-                confirmStyle: 'danger',
-                onConfirm: function() {
-                    var endYear = parseInt(document.getElementById('rentEndYear').value) || _getCurrentYear();
-                    var reasonSelect = document.getElementById('rentEndReason').value;
-                    var customReason = document.getElementById('customEndReason') ? document.getElementById('customEndReason').value : '';
-                    var reason = reasonSelect === 'custom' ? (customReason || 'Rental ended') : reasonSelect;
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">End Year</label>' +
+                    '<input type="number" data-field="endYear" value="' +
+                        (year !== null ? year : '') +
+                        '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                '</div>' +
 
-                    var residenceSystem = _getResidenceSystem();
-                    if (!residenceSystem) {
-                        _showToast('Residence system not available', 'error');
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason</label>' +
+                    '<select data-field="reason" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                        '<option value="tenant_moved_out">Tenant moved out</option>' +
+                        '<option value="tenant_evicted">Tenant evicted</option>' +
+                        '<option value="lease_expired">Lease expired</option>' +
+                        '<option value="owner_occupying">Owner taking possession</option>' +
+                        '<option value="property_sold">Property sold</option>' +
+                        '<option value="mutual_agreement">Mutual agreement</option>' +
+                        '<option value="custom">Custom reason</option>' +
+                    '</select>' +
+                '</div>' +
+
+                '<div data-role="custom-reason-group" style="display:none;margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Custom Reason</label>' +
+                    '<input type="text" data-field="customReason" placeholder="Enter custom reason..." ' +
+                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                '</div>' +
+
+                '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--warn);">' +
+                    'Ending the rental will mark the residence as vacant and remove the renter association.' +
+                '</div>' +
+            '</div>';
+
+        var handle = _openModal({
+            title: 'End Rental: ' + residence.name,
+            content: content,
+            confirmText: 'End Rental',
+            cancelText: 'Cancel',
+            confirmStyle: 'danger',
+            onConfirm: function() {
+                var root = _resolveModalRoot();
+                if (!root) return false;
+
+                var endYear = _parseIntOrNull((root.querySelector('[data-field="endYear"]') || {}).value);
+                if (endYear === null || endYear < 1) {
+                    _showToast('Please enter a valid year', 'error');
+                    return false;
+                }
+
+                var reasonValue = (root.querySelector('[data-field="reason"]') || {}).value;
+                var customReason = ((root.querySelector('[data-field="customReason"]') || {}).value || '').trim();
+
+                var reason;
+                if (reasonValue === 'custom') {
+                    if (!customReason) {
+                        _showToast('Please enter a custom reason', 'error');
                         return false;
                     }
+                    reason = customReason;
+                } else {
+                    reason = reasonValue;
+                }
 
-                    var result = residenceSystem.endResidenceRental(residenceId, endYear, reason);
-
-                    if (result) {
-                        _showToast('Rental ended for ' + (residence.renterName || 'Unknown'), 'success');
-                        _closeTopModal();
-                        _processingRentalModal = false;
-                        if (onSuccess) onSuccess(result);
-                        return true;
-                    }
+                var result = res.endResidenceRental(residenceId, endYear, reason);
+                if (!result.success) {
+                    _showToast(result.reason || 'Failed to end rental', 'error');
                     return false;
-                },
-                onCancel: function() {
-                    _processingRentalModal = false;
                 }
-            });
 
-            // Show/hide custom reason
-            setTimeout(function() {
-                var reasonSelect = document.getElementById('rentEndReason');
-                if (reasonSelect) {
-                    reasonSelect.onchange = function() {
-                        var customGroup = document.getElementById('customEndReasonGroup');
-                        if (customGroup) {
-                            customGroup.style.display = this.value === 'custom' ? 'block' : 'none';
-                        }
-                    };
-                }
-            }, 100);
+                _showToast('Rental ended for ' + renter.renterName, 'success');
+                if (typeof onSuccess === 'function') onSuccess(result.data);
+                return true;
+            }
+        });
 
-        } catch (e) {
-            _processingRentalModal = false;
-            _showToast('Error opening end rental modal', 'error');
-        }
+        setTimeout(_attachOnOpen(function(root) {
+            var reasonSelect = root.querySelector('[data-field="reason"]');
+            var customGroup = root.querySelector('[data-role="custom-reason-group"]');
+            if (reasonSelect && customGroup) {
+                reasonSelect.onchange = function() {
+                    customGroup.style.display =
+                        reasonSelect.value === 'custom' ? 'block' : 'none';
+                };
+            }
+        }), 0);
+
+        return handle;
     }
 
     // =========================================================================
@@ -721,121 +753,111 @@
     // =========================================================================
 
     function openResidenceRentalHistoryModal(residenceId) {
-        if (_processingRentalModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var res = _residence();
+
+        var residence = res.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
         }
-        _processingRentalModal = true;
 
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingRentalModal = false;
-                return;
-            }
+        var rentalHistory = res.getResidenceRentalHistory(residenceId, 50);
+        var payments = res.getRentPayments(residenceId, 50);
+        var renter = res.getResidenceRenter(residenceId);
 
-            var residenceSystem = _getResidenceSystem();
-            if (!residenceSystem) {
-                _showToast('Residence system not available', 'error');
-                _processingRentalModal = false;
-                return;
-            }
+        var content = _buildRentalHistoryContent(residence, rentalHistory, payments, renter);
 
-            var rentalHistory = residenceSystem.getResidenceRentalHistory(residenceId, 50);
-            var rentPayments = residenceSystem.getRentPayments(residenceId, 50);
-            var currentRenter = residence.renterName || 'None';
-            var currentRent = residence.rentAmount || 0;
+        return _openModal({
+            title: 'Rental History: ' + residence.name,
+            content: content,
+            confirmText: 'Close',
+            cancelText: '',
+            onConfirm: function() { /* close only */ }
+        });
+    }
 
-            var historyHtml = '';
-            if (rentalHistory.length === 0) {
-                historyHtml = '<div style="color: var(--dim); text-align: center; padding: 20px; font-size: 0.6rem;">No rental history found</div>';
-            } else {
-                historyHtml = '<div style="max-height: 200px; overflow-y: auto;">';
-                for (var i = 0; i < rentalHistory.length; i++) {
-                    var h = rentalHistory[i];
-                    var isCurrent = !h.endYear;
-                    var actionLabel = h.action || 'rent_event';
-                    var actionMap = {
-                        'rent_started': 'Started',
-                        'rent_adjusted': 'Adjusted',
-                        'rent_ended': 'Ended'
-                    };
-                    var label = actionMap[actionLabel] || actionLabel;
+    function _buildRentalHistoryContent(residence, rentalHistory, payments, renter) {
+        var html = '<div style="margin-bottom:16px;">';
 
-                    historyHtml += 
-                        '<div style="display: flex; justify-content: space-between; padding: 6px 8px; border-bottom: 1px solid var(--border-light); ' + 
-                        (isCurrent ? 'background: rgba(74,158,106,0.08);' : '') + '">' +
-                        '<div style="font-size: 0.65rem;">' +
+        html += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px;">';
+        html += '<div style="font-size:0.8rem;font-weight:bold;">' +
+            _escapeHtml(residence.name) + '</div>';
+        html += '<div style="font-size:0.65rem;color:var(--dim);">Current Renter: ' +
+            _escapeHtml(renter && renter.renterId ? renter.renterName : 'None') + '</div>';
+        html += '<div style="font-size:0.65rem;color:var(--dim);">Current Rent: ' +
+            (renter ? renter.rentAmount : 0) + 'g/year</div>';
+        html += '<div style="font-size:0.65rem;color:var(--dim);">Total Rental Events: ' +
+            rentalHistory.length + ' · Payments: ' + payments.length + '</div>';
+        html += '</div>';
+
+        // Rental history
+        html += '<div style="margin-bottom:16px;">';
+        html += '<div style="font-size:0.7rem;color:var(--accent);margin-bottom:8px;">Rental History</div>';
+
+        if (rentalHistory.length === 0) {
+            html += '<div style="color:var(--dim);text-align:center;padding:20px;font-size:0.6rem;">No rental history</div>';
+        } else {
+            var actionMap = {
+                'rent_started': 'Started',
+                'rent_adjusted': 'Adjusted',
+                'rent_ended': 'Ended'
+            };
+            html += '<div style="max-height:200px;overflow-y:auto;">';
+            for (var i = 0; i < rentalHistory.length; i++) {
+                var h = rentalHistory[i];
+                var isCurrent = !h.endYear;
+                var label = actionMap[h.action] || h.action || 'Event';
+                var amountText = '';
+                if (h.oldRentAmount !== undefined && h.newRentAmount !== undefined) {
+                    amountText = ' ' + h.oldRentAmount + ' → ' + h.newRentAmount + 'g';
+                } else if (h.rentAmount !== undefined) {
+                    amountText = ' ' + h.rentAmount + 'g';
+                }
+
+                html += '<div style="display:flex;justify-content:space-between;padding:6px 8px;border-bottom:1px solid var(--border-light);' +
+                    (isCurrent ? 'background:rgba(74,158,106,0.08);' : '') + '">' +
+                    '<div style="font-size:0.65rem;">' +
                         (h.renterName ? '<strong>' + _escapeHtml(h.renterName) + '</strong>' : '') +
-                        (h.oldRentAmount !== undefined && h.newRentAmount !== undefined ? 
-                            ' <span style="color:var(--dim);">' + h.oldRentAmount + ' → ' + h.newRentAmount + 'g</span>' : '') +
-                        (h.rentAmount !== undefined && actionLabel === 'rent_started' ? 
-                            ' <span style="color:var(--success);">' + h.rentAmount + 'g/year</span>' : '') +
-                        (h.reason ? ' <span style="font-size:0.5rem;color:var(--dim);">(' + _escapeHtml(h.reason) + ')</span>' : '') +
-                        '</div>' +
-                        '<div style="font-size: 0.55rem; color: var(--dim);">' +
+                        '<span style="color:var(--dim);">' + _escapeHtml(amountText) + '</span>' +
+                        (h.reason ? ' <span style="font-size:0.5rem;color:var(--dim);">(' +
+                            _escapeHtml(h.reason) + ')</span>' : '') +
+                    '</div>' +
+                    '<div style="font-size:0.55rem;color:var(--dim);">' +
                         label + ' ' + h.year +
                         (h.endYear ? ' - ' + h.endYear : '') +
                         (isCurrent ? ' <span style="color:var(--success);">Current</span>' : '') +
-                        '</div>' +
-                        '</div>';
-                }
-                historyHtml += '</div>';
-            }
-
-            var paymentsHtml = '';
-            if (rentPayments.length === 0) {
-                paymentsHtml = '<div style="color: var(--dim); text-align: center; padding: 20px; font-size: 0.6rem;">No rent payments recorded</div>';
-            } else {
-                paymentsHtml = '<div style="max-height: 150px; overflow-y: auto;">';
-                for (var i = 0; i < rentPayments.length; i++) {
-                    var p = rentPayments[i];
-                    paymentsHtml += 
-                        '<div style="display: flex; justify-content: space-between; padding: 4px 8px; border-bottom: 1px solid var(--border-light);">' +
-                        '<span style="font-size: 0.65rem;">' + _escapeHtml(p.renterName || 'Unknown') + '</span>' +
-                        '<span style="font-size: 0.6rem; color: var(--success);">+' + p.amount + 'g</span>' +
-                        '<span style="font-size: 0.55rem; color: var(--dim);">' + p.year + '</span>' +
-                        '</div>';
-                }
-                paymentsHtml += '</div>';
-            }
-
-            var modalContent = 
-                '<div style="margin-bottom: 16px; padding: 12px; background: var(--bg2); border-radius: 8px;">' +
-                '<div style="font-size: 0.8rem; font-weight: bold;">' + _escapeHtml(residence.name) + '</div>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">Current Renter: ' + _escapeHtml(currentRenter) + '</div>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">Current Rent: ' + currentRent + 'g/year</div>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">Total Rental Events: ' + rentalHistory.length + '</div>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">Total Payments: ' + rentPayments.length + '</div>' +
-                '</div>' +
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="font-size: 0.7rem; color: var(--accent); margin-bottom: 8px;">Rental History</div>' +
-                historyHtml +
-                '</div>' +
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="font-size: 0.7rem; color: var(--accent); margin-bottom: 8px;">Payment History</div>' +
-                paymentsHtml +
-                '</div>' +
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
-                'Rental history tracks all tenancy events and rent payments for this residence.' +
+                    '</div>' +
                 '</div>';
-
-            _openModal({
-                title: 'Rental History: ' + residence.name,
-                content: modalContent,
-                confirmText: 'Close',
-                cancelText: '',
-                onConfirm: function() {
-                    _closeTopModal();
-                    _processingRentalModal = false;
-                }
-            });
-
-        } catch (e) {
-            _processingRentalModal = false;
-            _showToast('Error opening rental history', 'error');
+            }
+            html += '</div>';
         }
+        html += '</div>';
+
+        // Payments
+        html += '<div style="margin-bottom:16px;">';
+        html += '<div style="font-size:0.7rem;color:var(--accent);margin-bottom:8px;">Payment History</div>';
+
+        if (payments.length === 0) {
+            html += '<div style="color:var(--dim);text-align:center;padding:20px;font-size:0.6rem;">No payments recorded</div>';
+        } else {
+            html += '<div style="max-height:150px;overflow-y:auto;">';
+            for (var j = 0; j < payments.length; j++) {
+                var p = payments[j];
+                html += '<div style="display:flex;justify-content:space-between;padding:4px 8px;border-bottom:1px solid var(--border-light);">' +
+                    '<span style="font-size:0.65rem;">' +
+                        _escapeHtml(p.renterName || 'Unknown') + '</span>' +
+                    '<span style="font-size:0.6rem;color:var(--success);">+' +
+                        p.amount + 'g</span>' +
+                    '<span style="font-size:0.55rem;color:var(--dim);">' +
+                        p.year + '</span>' +
+                '</div>';
+            }
+            html += '</div>';
+        }
+        html += '</div>';
+
+        html += '</div>';
+        return html;
     }
 
     // =========================================================================
@@ -843,124 +865,117 @@
     // =========================================================================
 
     function openHouseholdRentalSummaryModal(householdId) {
-        if (_processingRentalModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var res = _residence();
+        var hq = _householdQueries();
+
+        var household = hq ? hq.getHousehold(householdId) : null;
+        if (!household) {
+            _showToast('Household not found', 'error');
+            return null;
         }
-        _processingRentalModal = true;
 
-        try {
-            var household = _getHousehold(householdId);
-            if (!household) {
-                _showToast('Household not found', 'error');
-                _processingRentalModal = false;
-                return;
-            }
+        var ownedProperties = res.getResidencesByOwner(householdId, 'household');
+        var rentedProperties = res.getResidencesByRenter(householdId, 'household');
+        var totalRentIncome = res.getTotalRentIncome(householdId, 'household');
+        var totalRentExpenses = res.getTotalRentExpenses(householdId, 'household');
+        var netRent = totalRentIncome - totalRentExpenses;
 
-            var residenceSystem = _getResidenceSystem();
-            if (!residenceSystem) {
-                _showToast('Residence system not available', 'error');
-                _processingRentalModal = false;
-                return;
-            }
+        var content = _buildHouseholdRentalSummaryContent(
+            household,
+            ownedProperties,
+            rentedProperties,
+            totalRentIncome,
+            totalRentExpenses,
+            netRent
+        );
 
-            // Get properties owned and rented
-            var ownedProperties = residenceSystem.getResidencesByOwner(householdId, 'household');
-            var rentedProperties = residenceSystem.getResidencesByRenter(householdId, 'household');
-            var totalRentIncome = residenceSystem.getTotalRentIncome(householdId, 'household');
-            var totalRentExpenses = residenceSystem.getTotalRentExpenses(householdId, 'household');
+        return _openModal({
+            title: 'Rental Summary: ' + household.name,
+            content: content,
+            confirmText: 'Close',
+            cancelText: '',
+            onConfirm: function() { /* close only */ }
+        });
+    }
 
-            // Build owned properties HTML
-            var ownedHtml = '';
-            if (ownedProperties.length === 0) {
-                ownedHtml = '<div style="color: var(--dim); text-align: center; padding: 12px; font-size: 0.6rem;">No properties owned</div>';
-            } else {
-                ownedHtml = '<div style="max-height: 150px; overflow-y: auto;">';
-                for (var i = 0; i < ownedProperties.length; i++) {
-                    var p = ownedProperties[i];
-                    var renterName = p.renterName || 'Vacant';
-                    var rentAmount = p.rentAmount || 0;
-                    var statusColor = p.renterId ? 'var(--success)' : 'var(--warn)';
-                    var statusText = p.renterId ? 'Rented' : 'Vacant';
+    function _buildHouseholdRentalSummaryContent(household, owned, rented,
+                                                  income, expenses, net) {
+        var netColor = net >= 0 ? 'var(--success)' : 'var(--danger)';
 
-                    ownedHtml += 
-                        '<div style="display: flex; justify-content: space-between; padding: 4px 8px; border-bottom: 1px solid var(--border-light); border-left: 3px solid ' + statusColor + ';">' +
-                        '<div style="font-size: 0.65rem;">' + _escapeHtml(p.name) + '</div>' +
-                        '<div style="font-size: 0.55rem; color: var(--dim);">' +
-                        statusText + ' · ' + rentAmount + 'g/year' +
-                        (p.renterId ? ' · ' + _escapeHtml(renterName) : '') +
-                        '</div>' +
-                        '</div>';
-                }
-                ownedHtml += '</div>';
-            }
+        var html = '<div style="margin-bottom:16px;">';
 
-            // Build rented properties HTML
-            var rentedHtml = '';
-            if (rentedProperties.length === 0) {
-                rentedHtml = '<div style="color: var(--dim); text-align: center; padding: 12px; font-size: 0.6rem;">No properties rented</div>';
-            } else {
-                rentedHtml = '<div style="max-height: 150px; overflow-y: auto;">';
-                for (var i = 0; i < rentedProperties.length; i++) {
-                    var r = rentedProperties[i];
-                    var ownerName = r.ownerName || 'Unknown';
-                    var rentAmount = r.rentAmount || 0;
+        html += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px;">';
+        html += '<div style="font-size:0.8rem;font-weight:bold;">' +
+            _escapeHtml(household.name) + '</div>';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px;">';
+        html += '<div><span style="color:var(--dim);font-size:0.6rem;">Properties Owned</span><br>' +
+            '<span style="font-size:1rem;font-weight:bold;">' + owned.length + '</span></div>';
+        html += '<div><span style="color:var(--dim);font-size:0.6rem;">Properties Rented</span><br>' +
+            '<span style="font-size:1rem;font-weight:bold;">' + rented.length + '</span></div>';
+        html += '<div><span style="color:var(--dim);font-size:0.6rem;">Net Rent</span><br>' +
+            '<span style="font-size:1rem;font-weight:bold;color:' + netColor + ';">' +
+            (net >= 0 ? '+' : '') + net + 'g</span></div>';
+        html += '</div>';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px;">';
+        html += '<div><span style="color:var(--dim);font-size:0.55rem;">Rent Income</span><br>' +
+            '<span style="color:var(--success);">+' + income + 'g</span></div>';
+        html += '<div><span style="color:var(--dim);font-size:0.55rem;">Rent Expenses</span><br>' +
+            '<span style="color:var(--danger);">-' + expenses + 'g</span></div>';
+        html += '</div>';
+        html += '</div>';
 
-                    rentedHtml += 
-                        '<div style="display: flex; justify-content: space-between; padding: 4px 8px; border-bottom: 1px solid var(--border-light); border-left: 3px solid var(--warn);">' +
-                        '<div style="font-size: 0.65rem;">' + _escapeHtml(r.name) + '</div>' +
-                        '<div style="font-size: 0.55rem; color: var(--dim);">' +
-                        rentAmount + 'g/year · Owner: ' + _escapeHtml(ownerName) +
-                        '</div>' +
-                        '</div>';
-                }
-                rentedHtml += '</div>';
-            }
+        // Owned properties
+        html += '<div style="margin-bottom:12px;">';
+        html += '<div style="font-size:0.7rem;color:var(--accent);margin-bottom:6px;">Properties Owned (' +
+            owned.length + ')</div>';
+        if (owned.length === 0) {
+            html += '<div style="color:var(--dim);text-align:center;padding:12px;font-size:0.6rem;">No properties owned</div>';
+        } else {
+            html += '<div style="max-height:150px;overflow-y:auto;">';
+            for (var i = 0; i < owned.length; i++) {
+                var o = owned[i];
+                var renterName = o.renterName || 'Vacant';
+                var rent = o.rentAmount || 0;
+                var statusColor = o.renterId ? 'var(--success)' : 'var(--warn)';
+                var statusText = o.renterId ? 'Rented' : 'Vacant';
 
-            var netRent = totalRentIncome - totalRentExpenses;
-            var netColor = netRent >= 0 ? 'var(--success)' : 'var(--danger)';
-
-            var modalContent = 
-                '<div style="margin-bottom: 16px; padding: 12px; background: var(--bg2); border-radius: 8px;">' +
-                '<div style="font-size: 0.8rem; font-weight: bold;">' + _escapeHtml(household.name) + '</div>' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 8px;">' +
-                '<div><span style="color: var(--dim); font-size: 0.6rem;">Properties Owned</span><br><span style="font-size: 1rem; font-weight: bold;">' + ownedProperties.length + '</span></div>' +
-                '<div><span style="color: var(--dim); font-size: 0.6rem;">Properties Rented</span><br><span style="font-size: 1rem; font-weight: bold;">' + rentedProperties.length + '</span></div>' +
-                '<div><span style="color: var(--dim); font-size: 0.6rem;">Net Rent</span><br><span style="font-size: 1rem; font-weight: bold; color: ' + netColor + ';">' + (netRent >= 0 ? '+' : '') + netRent + 'g</span></div>' +
-                '</div>' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px;">' +
-                '<div><span style="color: var(--dim); font-size: 0.55rem;">Rent Income</span><br><span style="color: var(--success);">+' + totalRentIncome + 'g</span></div>' +
-                '<div><span style="color: var(--dim); font-size: 0.55rem;">Rent Expenses</span><br><span style="color: var(--danger);">-' + totalRentExpenses + 'g</span></div>' +
-                '</div>' +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<div style="font-size: 0.7rem; color: var(--accent); margin-bottom: 6px;">Properties Owned (' + ownedProperties.length + ')</div>' +
-                ownedHtml +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<div style="font-size: 0.7rem; color: var(--accent); margin-bottom: 6px;">Properties Rented (' + rentedProperties.length + ')</div>' +
-                rentedHtml +
-                '</div>' +
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
-                'Rental summary shows all properties owned and rented by this household.' +
-                ' Rent income is added to household wealth annually, and rent expenses are deducted.' +
+                html += '<div style="display:flex;justify-content:space-between;padding:4px 8px;border-bottom:1px solid var(--border-light);border-left:3px solid ' +
+                    statusColor + ';">' +
+                    '<div style="font-size:0.65rem;">' + _escapeHtml(o.name) + '</div>' +
+                    '<div style="font-size:0.55rem;color:var(--dim);">' +
+                        statusText + ' · ' + rent + 'g/year' +
+                        (o.renterId ? ' · ' + _escapeHtml(renterName) : '') +
+                    '</div>' +
                 '</div>';
-
-            _openModal({
-                title: 'Rental Summary: ' + household.name,
-                content: modalContent,
-                confirmText: 'Close',
-                cancelText: '',
-                onConfirm: function() {
-                    _closeTopModal();
-                    _processingRentalModal = false;
-                }
-            });
-
-        } catch (e) {
-            _processingRentalModal = false;
-            _showToast('Error opening rental summary', 'error');
+            }
+            html += '</div>';
         }
+        html += '</div>';
+
+        // Rented properties
+        html += '<div style="margin-bottom:12px;">';
+        html += '<div style="font-size:0.7rem;color:var(--accent);margin-bottom:6px;">Properties Rented (' +
+            rented.length + ')</div>';
+        if (rented.length === 0) {
+            html += '<div style="color:var(--dim);text-align:center;padding:12px;font-size:0.6rem;">No properties rented</div>';
+        } else {
+            html += '<div style="max-height:150px;overflow-y:auto;">';
+            for (var j = 0; j < rented.length; j++) {
+                var r = rented[j];
+                html += '<div style="display:flex;justify-content:space-between;padding:4px 8px;border-bottom:1px solid var(--border-light);border-left:3px solid var(--warn);">' +
+                    '<div style="font-size:0.65rem;">' + _escapeHtml(r.name) + '</div>' +
+                    '<div style="font-size:0.55rem;color:var(--dim);">' +
+                        r.rentAmount + 'g/year · Owner: ' +
+                        _escapeHtml(r.ownerName || 'Unknown') +
+                    '</div>' +
+                '</div>';
+            }
+            html += '</div>';
+        }
+        html += '</div>';
+
+        html += '</div>';
+        return html;
     }
 
     // =========================================================================
@@ -968,86 +983,90 @@
     // =========================================================================
 
     function openRentPaymentModal(residenceId, onSuccess) {
-        if (_processingRentalModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var res = _residence();
+
+        var residence = res.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
         }
-        _processingRentalModal = true;
 
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingRentalModal = false;
-                return;
-            }
+        var renter = res.getResidenceRenter(residenceId);
+        if (!renter || !renter.renterId) {
+            _showToast('Residence has no renter', 'error');
+            return null;
+        }
 
-            if (!residence.renterId) {
-                _showToast('Residence has no renter', 'error');
-                _processingRentalModal = false;
-                return;
-            }
+        var year = _currentYear();
 
-            var residenceSystem = _getResidenceSystem();
-            if (!residenceSystem) {
-                _showToast('Residence system not available', 'error');
-                _processingRentalModal = false;
-                return;
-            }
-
-            var modalContent = 
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 6px; margin-bottom: 12px;">' +
-                '<div style="font-size: 0.7rem;"><strong>' + _escapeHtml(residence.name) + '</strong></div>' +
-                '<div style="font-size: 0.6rem; color: var(--dim);">Renter: ' + _escapeHtml(residence.renterName || 'Unknown') + '</div>' +
-                '<div style="font-size: 0.6rem; color: var(--dim);">Annual Rent: ' + (residence.rentAmount || 0) + 'g</div>' +
+        var content =
+            '<div style="margin-bottom:16px;">' +
+                '<div style="background:var(--bg2);padding:12px;border-radius:6px;margin-bottom:12px;">' +
+                    '<div style="font-size:0.7rem;"><strong>' +
+                        _escapeHtml(residence.name) + '</strong></div>' +
+                    '<div style="font-size:0.6rem;color:var(--dim);">Renter: ' +
+                        _escapeHtml(renter.renterName) + '</div>' +
+                    '<div style="font-size:0.6rem;color:var(--dim);">Annual Rent: ' +
+                        renter.rentAmount + 'g</div>' +
                 '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Payment Year</label>' +
-                '<input type="number" id="paymentYear" value="' + _getCurrentYear() + '" min="1" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
+
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Payment Year</label>' +
+                    '<input type="number" data-field="year" value="' +
+                        (year !== null ? year : '') +
+                        '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
                 '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Amount (leave empty for full rent)</label>' +
-                '<input type="number" id="paymentAmount" placeholder="' + (residence.rentAmount || 0) + '" min="0" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '<small style="font-size: 0.55rem; color: var(--dim);">Leave empty to record the full annual rent amount</small>' +
+
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Amount (blank = full rent)</label>' +
+                    '<input type="number" data-field="amount" placeholder="' +
+                        renter.rentAmount + '" min="0" step="1" ' +
+                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                    '<small style="font-size:0.55rem;color:var(--dim);">Leave blank to record the full annual rent.</small>' +
                 '</div>' +
-                '</div>';
+            '</div>';
 
-            _openModal({
-                title: 'Record Rent Payment: ' + residence.name,
-                content: modalContent,
-                confirmText: 'Record Payment',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var year = parseInt(document.getElementById('paymentYear').value) || _getCurrentYear();
-                    var amountInput = document.getElementById('paymentAmount').value;
-                    var amount = amountInput ? parseInt(amountInput) : (residence.rentAmount || 0);
+        return _openModal({
+            title: 'Record Rent Payment: ' + residence.name,
+            content: content,
+            confirmText: 'Record Payment',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var root = _resolveModalRoot();
+                if (!root) return false;
 
-                    if (amount <= 0) {
-                        _showToast('Payment amount must be greater than 0', 'error');
-                        return false;
-                    }
-
-                    var result = residenceSystem.recordRentPayment(residenceId, residence.renterId, amount, year);
-
-                    if (result) {
-                        _showToast('Rent payment of ' + amount + 'g recorded for ' + year, 'success');
-                        _closeTopModal();
-                        _processingRentalModal = false;
-                        if (onSuccess) onSuccess();
-                        return true;
-                    }
+                var pYear = _parseIntOrNull((root.querySelector('[data-field="year"]') || {}).value);
+                if (pYear === null || pYear < 1) {
+                    _showToast('Please enter a valid year', 'error');
                     return false;
-                },
-                onCancel: function() {
-                    _processingRentalModal = false;
                 }
-            });
 
-        } catch (e) {
-            _processingRentalModal = false;
-            _showToast('Error opening rent payment modal', 'error');
-        }
+                var amountRaw = (root.querySelector('[data-field="amount"]') || {}).value;
+                var amount;
+                if (amountRaw === '' || amountRaw === undefined) {
+                    amount = renter.rentAmount;
+                } else {
+                    amount = _parseIntOrNull(amountRaw);
+                }
+                if (amount === null || amount <= 0) {
+                    _showToast('Payment amount must be a positive integer', 'error');
+                    return false;
+                }
+
+                var result = res.recordRentPayment(residenceId, renter.renterId,
+                    amount, pYear);
+
+                if (!result.success) {
+                    _showToast(result.reason || 'Failed to record payment', 'error');
+                    return false;
+                }
+
+                _showToast('Rent payment of ' + amount + 'g recorded for ' + pYear,
+                    'success');
+                if (typeof onSuccess === 'function') onSuccess(result.data);
+                return true;
+            }
+        });
     }
 
     // =========================================================================
@@ -1055,162 +1074,174 @@
     // =========================================================================
 
     function openResidenceRentalDetailsModal(residenceId) {
-        if (_processingRentalModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var res = _residence();
+
+        var residence = res.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
         }
-        _processingRentalModal = true;
 
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingRentalModal = false;
-                return;
-            }
+        var owner = res.getResidenceOwner(residenceId);
+        var renter = res.getResidenceRenter(residenceId);
+        var rentalHistory = res.getResidenceRentalHistory(residenceId, 10);
+        var payments = res.getRentPayments(residenceId, 10);
 
-            var residenceSystem = _getResidenceSystem();
-            if (!residenceSystem) {
-                _showToast('Residence system not available', 'error');
-                _processingRentalModal = false;
-                return;
-            }
+        var content = _buildRentalDetailsContent(residence, owner, renter,
+            rentalHistory, payments);
 
-            var ownerInfo = residenceSystem.getResidenceOwner(residenceId);
-            var renterInfo = residenceSystem.getResidenceRenter(residenceId);
-            var rentalHistory = residenceSystem.getResidenceRentalHistory(residenceId, 10);
-            var payments = residenceSystem.getRentPayments(residenceId, 10);
+        var handle = _openModal({
+            title: 'Rental Details: ' + residence.name,
+            content: content,
+            confirmText: '',
+            cancelText: '',
+            onConfirm: function() { /* close only */ }
+        });
 
-            var isRented = renterInfo && renterInfo.renterId;
-            var ownerDisplay = ownerInfo ? ownerInfo.ownerName : 'None';
-            var renterDisplay = renterInfo ? renterInfo.renterName : 'None';
-            var rentAmount = renterInfo ? renterInfo.rentAmount : 0;
-            var rentStart = renterInfo ? renterInfo.rentStartYear : 'N/A';
-            var rentalStatus = renterInfo ? renterInfo.rentalStatus : 'Vacant';
+        setTimeout(_attachOnOpen(function(root) {
+            _wireRentalDetailsActions(root, residenceId);
+        }), 0);
 
-            var statusColor = rentalStatus === 'rented' ? 'var(--success)' : 
-                             rentalStatus === 'owner_occupied' ? 'var(--accent)' : 'var(--warn)';
+        return handle;
+    }
 
-            var modalContent = 
-                '<div style="margin-bottom: 16px; padding: 12px; background: var(--bg2); border-radius: 8px;">' +
-                '<div style="display: flex; justify-content: space-between; align-items: center;">' +
-                '<div style="font-size: 0.9rem; font-weight: bold;">' + _escapeHtml(residence.name) + '</div>' +
-                '<span style="font-size: 0.6rem; padding: 2px 10px; border-radius: 12px; background: ' + statusColor + '; color: white;">' + _escapeHtml(rentalStatus) + '</span>' +
-                '</div>' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; font-size: 0.65rem;">' +
-                '<div><span style="color: var(--dim);">Owner:</span> ' + _escapeHtml(ownerDisplay) + '</div>' +
-                '<div><span style="color: var(--dim);">Renter:</span> ' + _escapeHtml(renterDisplay) + '</div>' +
-                '<div><span style="color: var(--dim);">Rent:</span> ' + rentAmount + 'g/year</div>' +
-                '<div><span style="color: var(--dim);">Since:</span> ' + rentStart + '</div>' +
-                '</div>' +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<div style="font-size: 0.7rem; color: var(--accent); margin-bottom: 6px;">Recent Rental History</div>' +
-                (rentalHistory.length === 0 ? 
-                    '<div style="color: var(--dim); text-align: center; padding: 12px; font-size: 0.6rem;">No rental history</div>' :
-                    rentalHistory.slice(0, 5).map(function(h) {
-                        var label = h.action || 'event';
-                        return '<div style="display: flex; justify-content: space-between; padding: 4px 8px; border-bottom: 1px solid var(--border-light); font-size: 0.6rem;">' +
-                            '<span>' + _escapeHtml(label) + (h.renterName ? ' - ' + _escapeHtml(h.renterName) : '') + '</span>' +
-                            '<span style="color: var(--dim);">' + h.year + (h.endYear ? ' - ' + h.endYear : '') + '</span>' +
-                            '</div>';
-                    }).join('')
-                ) +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<div style="font-size: 0.7rem; color: var(--accent); margin-bottom: 6px;">Recent Payments</div>' +
-                (payments.length === 0 ? 
-                    '<div style="color: var(--dim); text-align: center; padding: 12px; font-size: 0.6rem;">No payments recorded</div>' :
-                    payments.slice(0, 5).map(function(p) {
-                        return '<div style="display: flex; justify-content: space-between; padding: 4px 8px; border-bottom: 1px solid var(--border-light); font-size: 0.6rem;">' +
-                            '<span>' + _escapeHtml(p.renterName || 'Unknown') + '</span>' +
-                            '<span style="color: var(--success);">+' + p.amount + 'g</span>' +
-                            '<span style="color: var(--dim);">' + p.year + '</span>' +
-                            '</div>';
-                    }).join('')
-                ) +
-                '</div>' +
-                '<div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; border-top: 1px solid var(--border); padding-top: 12px;">' +
-                (isRented ? 
-                    '<button id="rentalUpdateRentBtn" class="btn" style="font-size: 0.6rem; padding: 4px 12px; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer;">Update Rent</button>' +
-                    '<button id="rentalEndRentalBtn" class="btn danger" style="font-size: 0.6rem; padding: 4px 12px; background: #8a3020; border: none; color: white; border-radius: 4px; cursor: pointer;">End Rental</button>' +
-                    '<button id="rentalRecordPaymentBtn" class="btn" style="font-size: 0.6rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Record Payment</button>' : 
-                    ''
-                ) +
-                '<button id="rentalHistoryBtn" class="btn" style="font-size: 0.6rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Full History</button>' +
-                '<button id="rentalCloseBtn" class="btn" style="font-size: 0.6rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Close</button>' +
-                '</div>' +
+    function _buildRentalDetailsContent(residence, owner, renter,
+                                        rentalHistory, payments) {
+        var hasOwner = owner && owner.ownerId;
+        var hasRenter = renter && renter.renterId;
+        var rentAmount = renter ? renter.rentAmount : 0;
+        var rentalStatus = renter ? renter.rentalStatus : 'vacant';
+
+        var statusColor = rentalStatus === 'rented'
+            ? 'var(--success)'
+            : (rentalStatus === 'owner_occupied' ? 'var(--accent)' : 'var(--warn)');
+
+        var html = '<div style="margin-bottom:16px;">';
+
+        // Header
+        html += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;">';
+        html += '<div style="font-size:0.9rem;font-weight:bold;">' +
+            _escapeHtml(residence.name) + '</div>';
+        html += '<span style="font-size:0.6rem;padding:2px 10px;border-radius:12px;background:' +
+            statusColor + ';color:white;">' + _escapeHtml(rentalStatus) + '</span>';
+        html += '</div>';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;font-size:0.65rem;">';
+        html += '<div><span style="color:var(--dim);">Owner:</span> ' +
+            _escapeHtml(owner && owner.ownerId ? owner.ownerName : 'None') + '</div>';
+        html += '<div><span style="color:var(--dim);">Renter:</span> ' +
+            _escapeHtml(renter && renter.renterId ? renter.renterName : 'None') + '</div>';
+        html += '<div><span style="color:var(--dim);">Rent:</span> ' +
+            rentAmount + 'g/year</div>';
+        html += '<div><span style="color:var(--dim);">Since:</span> ' +
+            (renter && renter.rentStartYear ? renter.rentStartYear : 'N/A') + '</div>';
+        html += '</div>';
+        html += '</div>';
+
+        // Recent history
+        html += '<div style="margin-bottom:12px;">';
+        html += '<div style="font-size:0.7rem;color:var(--accent);margin-bottom:6px;">Recent Rental History</div>';
+        if (rentalHistory.length === 0) {
+            html += '<div style="color:var(--dim);text-align:center;padding:12px;font-size:0.6rem;">No rental history</div>';
+        } else {
+            var limit = Math.min(rentalHistory.length, 5);
+            for (var i = 0; i < limit; i++) {
+                var h = rentalHistory[i];
+                html += '<div style="display:flex;justify-content:space-between;padding:4px 8px;border-bottom:1px solid var(--border-light);font-size:0.6rem;">' +
+                    '<span>' + _escapeHtml(h.action || 'event') +
+                        (h.renterName ? ' - ' + _escapeHtml(h.renterName) : '') + '</span>' +
+                    '<span style="color:var(--dim);">' +
+                        h.year + (h.endYear ? ' - ' + h.endYear : '') +
+                    '</span>' +
                 '</div>';
+            }
+        }
+        html += '</div>';
 
-            _openModal({
-                title: 'Rental Details: ' + residence.name,
-                content: modalContent,
-                confirmText: '',
-                cancelText: '',
-                onConfirm: function() {
-                    _closeTopModal();
-                    _processingRentalModal = false;
-                }
-            });
+        // Recent payments
+        html += '<div style="margin-bottom:12px;">';
+        html += '<div style="font-size:0.7rem;color:var(--accent);margin-bottom:6px;">Recent Payments</div>';
+        if (payments.length === 0) {
+            html += '<div style="color:var(--dim);text-align:center;padding:12px;font-size:0.6rem;">No payments recorded</div>';
+        } else {
+            var plimit = Math.min(payments.length, 5);
+            for (var j = 0; j < plimit; j++) {
+                var p = payments[j];
+                html += '<div style="display:flex;justify-content:space-between;padding:4px 8px;border-bottom:1px solid var(--border-light);font-size:0.6rem;">' +
+                    '<span>' + _escapeHtml(p.renterName || 'Unknown') + '</span>' +
+                    '<span style="color:var(--success);">+' + p.amount + 'g</span>' +
+                    '<span style="color:var(--dim);">' + p.year + '</span>' +
+                '</div>';
+            }
+        }
+        html += '</div>';
 
-            // Set up event handlers
+        // Actions
+        html += '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;border-top:1px solid var(--border);padding-top:12px;">';
+        if (hasRenter) {
+            html += '<button data-action="update-rent" style="font-size:0.6rem;padding:4px 12px;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">Update Rent</button>';
+            html += '<button data-action="record-payment" style="font-size:0.6rem;padding:4px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Record Payment</button>';
+            html += '<button data-action="end-rental" style="font-size:0.6rem;padding:4px 12px;background:#8a3020;border:none;color:white;border-radius:4px;cursor:pointer;">End Rental</button>';
+        }
+        html += '<button data-action="full-history" style="font-size:0.6rem;padding:4px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Full History</button>';
+        html += '<button data-action="close" style="font-size:0.6rem;padding:4px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Close</button>';
+        html += '</div>';
+
+        html += '</div>';
+        return html;
+    }
+
+    function _wireRentalDetailsActions(root, residenceId) {
+        function _closeThen(fn) {
+            _closeTopModal();
+            setTimeout(fn, 0);
+        }
+
+        function _reopen() {
             setTimeout(function() {
-                var updateRentBtn = document.getElementById('rentalUpdateRentBtn');
-                if (updateRentBtn) {
-                    updateRentBtn.onclick = function() {
-                        _closeTopModal();
-                        openUpdateRentModal(residenceId, function() {
-                            setTimeout(function() {
-                                openResidenceRentalDetailsModal(residenceId);
-                            }, 100);
-                        });
-                    };
-                }
+                openResidenceRentalDetailsModal(residenceId);
+            }, 0);
+        }
 
-                var endRentalBtn = document.getElementById('rentalEndRentalBtn');
-                if (endRentalBtn) {
-                    endRentalBtn.onclick = function() {
-                        _closeTopModal();
-                        openEndRentalModal(residenceId, function() {
-                            setTimeout(function() {
-                                openResidenceRentalDetailsModal(residenceId);
-                            }, 100);
-                        });
-                    };
-                }
+        var updateBtn = root.querySelector('[data-action="update-rent"]');
+        if (updateBtn) {
+            updateBtn.onclick = function() {
+                _closeThen(function() {
+                    openUpdateRentModal(residenceId, _reopen);
+                });
+            };
+        }
 
-                var recordPaymentBtn = document.getElementById('rentalRecordPaymentBtn');
-                if (recordPaymentBtn) {
-                    recordPaymentBtn.onclick = function() {
-                        _closeTopModal();
-                        openRentPaymentModal(residenceId, function() {
-                            setTimeout(function() {
-                                openResidenceRentalDetailsModal(residenceId);
-                            }, 100);
-                        });
-                    };
-                }
+        var paymentBtn = root.querySelector('[data-action="record-payment"]');
+        if (paymentBtn) {
+            paymentBtn.onclick = function() {
+                _closeThen(function() {
+                    openRentPaymentModal(residenceId, _reopen);
+                });
+            };
+        }
 
-                var historyBtn = document.getElementById('rentalHistoryBtn');
-                if (historyBtn) {
-                    historyBtn.onclick = function() {
-                        _closeTopModal();
-                        openResidenceRentalHistoryModal(residenceId);
-                    };
-                }
+        var endBtn = root.querySelector('[data-action="end-rental"]');
+        if (endBtn) {
+            endBtn.onclick = function() {
+                _closeThen(function() {
+                    openEndRentalModal(residenceId, _reopen);
+                });
+            };
+        }
 
-                var closeBtn = document.getElementById('rentalCloseBtn');
-                if (closeBtn) {
-                    closeBtn.onclick = function() {
-                        _closeTopModal();
-                        _processingRentalModal = false;
-                    };
-                }
-            }, 100);
+        var historyBtn = root.querySelector('[data-action="full-history"]');
+        if (historyBtn) {
+            historyBtn.onclick = function() {
+                _closeThen(function() {
+                    openResidenceRentalHistoryModal(residenceId);
+                });
+            };
+        }
 
-        } catch (e) {
-            _processingRentalModal = false;
-            _showToast('Error opening rental details', 'error');
+        var closeBtn = root.querySelector('[data-action="close"]');
+        if (closeBtn) {
+            closeBtn.onclick = function() { _closeTopModal(); };
         }
     }
 
@@ -1227,17 +1258,6 @@
     window.openRentPaymentModal = openRentPaymentModal;
     window.openResidenceRentalDetailsModal = openResidenceRentalDetailsModal;
 
-    // Legacy aliases
-    window._openSetResidenceOwnerModal = openSetResidenceOwnerModal;
-    window._openSetResidenceRenterModal = openSetResidenceRenterModal;
-    window._openUpdateRentModal = openUpdateRentModal;
-    window._openEndRentalModal = openEndRentalModal;
-    window._openResidenceRentalHistoryModal = openResidenceRentalHistoryModal;
-    window._openHouseholdRentalSummaryModal = openHouseholdRentalSummaryModal;
-    window._openRentPaymentModal = openRentPaymentModal;
-    window._openResidenceRentalDetailsModal = openResidenceRentalDetailsModal;
-
-    // ES Module exports
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
             openSetResidenceOwnerModal: openSetResidenceOwnerModal,
