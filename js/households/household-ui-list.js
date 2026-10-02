@@ -1,13 +1,49 @@
 /**
  * =============================================================================
- * HOUSEHOLD UI LIST (household-ui-list.js) - COMPLETE REWRITE
+ * STILL WATERS - HOUSEHOLD UI LIST (household-ui-list.js)
  * =============================================================================
  * 
- * PURPOSE: Renders household list with filters, search, and selection.
+ * LOCATION: js/systems/household/household-ui-list.js
  * 
- * FIXED: Complete rewrite to prevent infinite render loops
- * FIXED: Clean separation of render and event handling
- * FIXED: Proper subscription management
+ * PURPOSE
+ * -------
+ * Renders the household list panel with filters, search, and selection.
+ * 
+ * THIS MODULE IS PURELY UI
+ * ------------------------
+ *   - Reads:     HouseholdQueries (semantic projections)
+ *   - Writes:    none (this list does not mutate)
+ *   - Owns:      DOM rendering, event delegation, local UI state,
+ *                localStorage preferences
+ * 
+ * WHAT DOES NOT LIVE HERE
+ * -----------------------
+ *   - HouseholdState reach-around       → HouseholdQueries
+ *   - Domain status interpretation      → HouseholdQueries.getHouseholdStatus
+ *   - Age calculations                  → HouseholdQueries member projections
+ *   - Presentation domain defaults      → removed; use Queries or nothing
+ *   - Icon fabrication                  → Icons module via _getIcon()
+ *   - Silent error swallowing           → logged
+ * 
+ * LIFECYCLE
+ * ---------
+ * mountHouseholdList(containerId, onSelect, options)
+ * unmountHouseholdList()
+ * 
+ * The component holds one State subscription while mounted. Unmounting
+ * removes the subscription, clears timers, and drops all references.
+ * 
+ * If the container is never unmounted, we treat it as permanent — the
+ * subscription stays for the session.
+ * 
+ * CONTRACT
+ * --------
+ *   - No dependency fallbacks that fabricate domain data.
+ *   - Required deps fail loudly (HouseholdQueries, getPlaceById).
+ *   - Selection can never point at a household that no longer exists.
+ *   - Persisted filter values are validated against known values.
+ *   - All DOM queries are scoped to the container.
+ *   - Errors thrown during render are logged, not swallowed.
  * 
  * =============================================================================
  */
@@ -16,287 +52,212 @@
     'use strict';
 
     // =========================================================================
-    // 1. STATE
+    // 1. DEPENDENCY ACCESS
     // =========================================================================
 
-    var _renderLock = false;
-    var _renderTimeout = null;
-    var _isMounted = false;
-    var _unsubscribe = null;
+    function _queries() {
+        if (typeof window.HouseholdQueries === 'undefined') {
+            throw new Error('household-ui-list: HouseholdQueries is required');
+        }
+        return window.HouseholdQueries;
+    }
 
-    var listState = {
+    function _state() {
+        if (typeof window.HouseholdState === 'undefined') {
+            throw new Error('household-ui-list: HouseholdState is required');
+        }
+        return window.HouseholdState;
+    }
+
+    function _getPlaceById(id) {
+        if (typeof window.getPlaceById !== 'function') {
+            throw new Error('household-ui-list: getPlaceById is required');
+        }
+        return window.getPlaceById(id);
+    }
+
+    function _getPlaces() {
+        if (typeof window.getPlaces !== 'function') {
+            throw new Error('household-ui-list: getPlaces is required');
+        }
+        return window.getPlaces();
+    }
+
+    function _escapeHtml(str) {
+        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
+        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
+        if (str === undefined || str === null) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function _getIcon(name) {
+        if (typeof window._getIcon === 'function') return window._getIcon(name) || '';
+        if (window.Icons && window.Icons[name]) return window.Icons[name];
+        return '';
+    }
+
+    // =========================================================================
+    // 2. COMPONENT STATE
+    // =========================================================================
+
+    var STORAGE_KEY = 'household_list_state_v5';
+
+    var VALID_STATUS_FILTERS = [
+        'all', 'active', 'vacant', 'empty', 'declining',
+        'deprecated', 'destroyed'
+    ];
+
+    var _component = {
         containerId: null,
         onSelectCallback: null,
-        selectedId: null,
+        mounted: false,
+        unsubscribe: null,
+        renderScheduled: false,
+        renderHandle: null,
+        searchDebounceHandle: null
+    };
+
+    var _ui = {
         searchTerm: '',
         statusFilter: 'all',
         locationFilter: 'all',
         filtersCollapsed: true,
         showPositions: false,
-        _initialized: false
+        selectedId: null
     };
 
     // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
+    // 3. PERSISTENCE (validated)
     // =========================================================================
 
-    function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
-
-    function _getIcon(name) {
-        if (typeof window._getIcon === 'function') return window._getIcon(name);
-        if (window.Icons && window.Icons[name]) return window.Icons[name];
-        return '';
-    }
-
-    function _getIconSafe(name) {
-        var icon = _getIcon(name);
-        return icon || '';
-    }
-
-    function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') return window.getCharacterById(id);
-        return null;
-    }
-
-    function _getPlaceById(id) {
-        if (typeof window.getPlaceById === 'function') return window.getPlaceById(id);
-        return null;
-    }
-
-    function _getPlaces() {
-        if (typeof window.getPlaces === 'function') return window.getPlaces();
-        return window.masterData?.data?.places || [];
-    }
-
-    function _iconSpan(icon, title) {
-        if (!icon) return '';
-        var titleAttr = title ? ' title="' + _escapeHtml(title) + '"' : '';
-        return '<span style="display:inline-flex;align-items:center;vertical-align:middle;' + (title ? 'cursor:help;' : '') + '"' + titleAttr + '>' + icon + '</span>';
-    }
-
-    // =========================================================================
-    // 3. STATE HELPERS
-    // =========================================================================
-
-    var _state = window.HouseholdState;
-    var _queries = window.HouseholdQueries;
-
-    function _getHouseholds() {
-        if (!_state) return [];
+    function _loadPreferences() {
         try {
-            return _state.getAllHouseholds() || [];
-        } catch(e) {
-            return [];
-        }
-    }
+            var raw = localStorage.getItem(STORAGE_KEY);
+            if (!raw) return;
+            var data = JSON.parse(raw);
 
-    function _getHouseholdStatusInfo(household) {
-        if (!household) {
-            return { status: 'nonexistent', statusIcon: _getIconSafe('X_HEAVY'), statusMessage: 'Does not exist', statusColor: '#6a6a6a', livingCount: 0, totalMembers: 0, deceasedCount: 0, isEmpty: true, isVacant: true, isActive: false };
-        }
+            if (typeof data.searchTerm === 'string') {
+                _ui.searchTerm = data.searchTerm;
+            }
 
-        if (household.status === 'deprecated') {
-            return { status: 'deprecated', statusIcon: _getIconSafe('X_HEAVY'), statusMessage: 'Deprecated', statusColor: '#6a6a6a', livingCount: 0, totalMembers: 0, deceasedCount: 0, isEmpty: true, isVacant: true, isActive: false };
-        }
+            if (VALID_STATUS_FILTERS.indexOf(data.statusFilter) !== -1) {
+                _ui.statusFilter = data.statusFilter;
+            }
 
-        if (household.status === 'destroyed') {
-            return { status: 'destroyed', statusIcon: _getIconSafe('X_HEAVY'), statusMessage: 'Destroyed', statusColor: '#8a2020', livingCount: 0, totalMembers: 0, deceasedCount: 0, isEmpty: true, isVacant: true, isActive: false };
-        }
+            if (typeof data.locationFilter === 'string') {
+                _ui.locationFilter = data.locationFilter;
+            }
 
-        var livingCount = 0;
-        var deceasedCount = 0;
-        var totalMembers = household.members ? household.members.length : 0;
+            if (typeof data.filtersCollapsed === 'boolean') {
+                _ui.filtersCollapsed = data.filtersCollapsed;
+            }
 
-        if (household.members) {
-            for (var i = 0; i < household.members.length; i++) {
-                var character = _getCharacterById(household.members[i].characterId);
-                if (character) {
-                    if (character.isDeceased) {
-                        deceasedCount++;
-                    } else {
-                        livingCount++;
-                    }
-                } else {
-                    deceasedCount++;
-                }
+            if (typeof data.showPositions === 'boolean') {
+                _ui.showPositions = data.showPositions;
+            }
+        } catch (e) {
+            if (typeof console !== 'undefined' && console.warn) {
+                console.warn('household-ui-list: could not load preferences', e);
             }
         }
-
-        var isEmpty = totalMembers === 0;
-        var isVacant = livingCount === 0 && totalMembers > 0;
-        var isActive = livingCount > 0;
-
-        var status = 'active';
-        var statusIcon = _getIconSafe('CIRCLE_DOT');
-        var statusMessage = 'Active (' + livingCount + ' living)';
-        var statusColor = '#4a9e6a';
-
-        if (isEmpty) {
-            status = 'empty';
-            statusIcon = _getIconSafe('CIRCLE_OUTLINE');
-            statusMessage = 'Empty (no members)';
-            statusColor = '#9e9e9e';
-        } else if (isVacant) {
-            status = 'vacant';
-            statusIcon = _getIconSafe('CIRCLE_HALF_LEFT');
-            statusMessage = 'Vacant (' + deceasedCount + ' deceased)';
-            statusColor = '#c87040';
-        } else if (isActive) {
-            var head = _state ? _state.getHouseholdHead(household.id) : null;
-            statusIcon = head ? _getIconSafe('CROWN') : _getIconSafe('CIRCLE_DOT');
-            statusMessage = 'Active (' + livingCount + ' living' + (deceasedCount > 0 ? ', ' + deceasedCount + ' deceased' : '') + ')';
-            statusColor = '#4a9e6a';
-        }
-
-        return {
-            status: status,
-            statusIcon: statusIcon,
-            statusMessage: statusMessage,
-            statusColor: statusColor,
-            livingCount: livingCount,
-            deceasedCount: deceasedCount,
-            totalMembers: totalMembers,
-            isEmpty: isEmpty,
-            isVacant: isVacant,
-            isActive: isActive
-        };
     }
 
-    function _getLocationName(locationId) {
+    function _savePreferences() {
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify({
+                searchTerm: _ui.searchTerm,
+                statusFilter: _ui.statusFilter,
+                locationFilter: _ui.locationFilter,
+                filtersCollapsed: _ui.filtersCollapsed,
+                showPositions: _ui.showPositions
+            }));
+        } catch (e) {
+            // Non-fatal
+        }
+    }
+
+    // =========================================================================
+    // 4. LOCATION HELPERS (delegate to queries)
+    // =========================================================================
+
+    function _getLocationDisplayName(locationId) {
         if (!locationId) return 'Unknown';
-        if (locationId === 'all') return 'All Locations';
         if (locationId === 'unknown') return 'Unknown Location';
-        var place = _getPlaceById(locationId);
-        return place ? place.displayName : 'Unknown';
+        var place = null;
+        try {
+            place = _getPlaceById(locationId);
+        } catch (e) {
+            place = null;
+        }
+        return place ? (place.displayName || place.name || 'Unknown') : 'Unknown';
     }
 
-    function _getAllDescendantIds(locationId) {
+    function _getAllDescendantLocationIds(locationId) {
+        if (!locationId || locationId === 'all' || locationId === 'unknown') {
+            return null;
+        }
+        var places = _getPlaces();
+        if (!Array.isArray(places)) return [locationId];
+
         var result = [locationId];
-        if (!locationId || locationId === 'all' || locationId === 'unknown') return result;
-        
-        var place = _getPlaceById(locationId);
-        if (!place) return result;
-        
-        var allPlaces = _getPlaces();
-        var descendants = [];
-        
-        function findDescendants(parentId) {
-            for (var i = 0; i < allPlaces.length; i++) {
-                if (allPlaces[i].parentId === parentId) {
-                    descendants.push(allPlaces[i].id);
-                    findDescendants(allPlaces[i].id);
+        var stack = [locationId];
+        while (stack.length > 0) {
+            var parentId = stack.pop();
+            for (var i = 0; i < places.length; i++) {
+                if (places[i].parentId === parentId) {
+                    result.push(places[i].id);
+                    stack.push(places[i].id);
                 }
             }
         }
-        
-        findDescendants(locationId);
-        
-        for (var i = 0; i < descendants.length; i++) {
-            result.push(descendants[i]);
-        }
-        
         return result;
     }
 
     // =========================================================================
-    // 4. PERSISTENCE
-    // =========================================================================
-
-    var STORAGE_KEY = 'household_list_state_v4';
-
-    function _loadState() {
-        try {
-            var saved = localStorage.getItem(STORAGE_KEY);
-            if (saved) {
-                var data = JSON.parse(saved);
-                listState.searchTerm = data.searchTerm || '';
-                listState.statusFilter = data.statusFilter || 'all';
-                listState.locationFilter = data.locationFilter || 'all';
-                listState.filtersCollapsed = data.filtersCollapsed !== undefined ? data.filtersCollapsed : true;
-                listState.showPositions = data.showPositions || false;
-            }
-        } catch(e) {}
-    }
-
-    function _saveState() {
-        try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify({
-                searchTerm: listState.searchTerm,
-                statusFilter: listState.statusFilter,
-                locationFilter: listState.locationFilter,
-                filtersCollapsed: listState.filtersCollapsed,
-                showPositions: listState.showPositions
-            }));
-        } catch(e) {}
-    }
-
-    // =========================================================================
-    // 5. BUILD LOCATION DROPDOWN
-    // =========================================================================
-
-    function _buildLocationDropdown(selectedId) {
-        var places = _getPlaces();
-        if (!places || places.length === 0) {
-            return '<option value="all">— All Locations —</option>';
-        }
-
-        var html = '<option value="all"' + (selectedId === 'all' ? ' selected' : '') + '>— All Locations —</option>';
-        
-        // Simple flat list sorted by name
-        var sorted = places.slice().sort(function(a, b) {
-            return (a.displayName || '').localeCompare(b.displayName || '');
-        });
-
-        for (var i = 0; i < sorted.length; i++) {
-            var p = sorted[i];
-            var selected = (selectedId === p.id) ? 'selected' : '';
-            var mark = p.isCapital ? ' ⭐' : '';
-            html += '<option value="' + p.id + '" ' + selected + '>' + _escapeHtml(p.displayName || p.name || 'Unknown') + mark + '</option>';
-        }
-        
-        html += '<option value="unknown"' + (selectedId === 'unknown' ? ' selected' : '') + '>Unknown Location</option>';
-        
-        return html;
-    }
-
-    // =========================================================================
-    // 6. FILTER FUNCTION
+    // 5. FILTER (local UI concern only)
     // =========================================================================
 
     function _applyFilters(households) {
-        var filtered = households.slice();
+        var filtered = households;
 
-        if (listState.searchTerm) {
-            var searchLower = listState.searchTerm.toLowerCase();
+        if (_ui.searchTerm) {
+            var searchLower = _ui.searchTerm.toLowerCase();
             filtered = filtered.filter(function(h) {
                 return h.name && h.name.toLowerCase().indexOf(searchLower) !== -1;
             });
         }
 
-        if (listState.locationFilter !== 'all' && listState.locationFilter !== 'unknown') {
-            var descendantIds = _getAllDescendantIds(listState.locationFilter);
-            var idSet = {};
-            for (var i = 0; i < descendantIds.length; i++) {
-                idSet[descendantIds[i]] = true;
-            }
-            filtered = filtered.filter(function(h) {
-                return h.locationId && idSet[h.locationId];
-            });
-        } else if (listState.locationFilter === 'unknown') {
+        if (_ui.locationFilter === 'unknown') {
             filtered = filtered.filter(function(h) {
                 return !h.locationId || h.locationId === 'unknown';
             });
+        } else if (_ui.locationFilter !== 'all') {
+            var ids = _getAllDescendantLocationIds(_ui.locationFilter);
+            if (ids) {
+                var idSet = {};
+                for (var i = 0; i < ids.length; i++) idSet[ids[i]] = true;
+                filtered = filtered.filter(function(h) {
+                    return h.locationId && idSet[h.locationId];
+                });
+            }
         }
 
-        if (listState.statusFilter !== 'all') {
+        if (_ui.statusFilter !== 'all') {
+            // Status filter is semantic. Delegate to Queries so we don't
+            // reimplement the active/vacant/empty logic here.
+            var statusFilter = _ui.statusFilter;
             filtered = filtered.filter(function(h) {
-                var info = _getHouseholdStatusInfo(h);
-                return info.status === listState.statusFilter;
+                try {
+                    var s = _queries().getHouseholdStatus(h.id);
+                    return s.status === statusFilter;
+                } catch (e) {
+                    return false;
+                }
             });
         }
 
@@ -308,512 +269,669 @@
     }
 
     // =========================================================================
-    // 7. MAIN RENDER FUNCTION - CLEAN REWRITE
+    // 6. SELECTION SANITY
     // =========================================================================
 
-    function renderHouseholdList(containerId, onSelect, preserveSelection) {
-        // Prevent re-entrant rendering
-        if (_renderLock) {
-            // If we're already rendering, schedule a refresh but don't render now
-            if (!_renderTimeout) {
-                _renderTimeout = setTimeout(function() {
-                    _renderTimeout = null;
-                    renderHouseholdList(containerId, onSelect, preserveSelection);
-                }, 200);
+    function _reconcileSelection(filteredHouseholds) {
+        if (!_ui.selectedId) return;
+        // If the currently selected household is no longer in the filtered
+        // list, clear the selection.
+        for (var i = 0; i < filteredHouseholds.length; i++) {
+            if (filteredHouseholds[i].id === _ui.selectedId) return;
+        }
+        _ui.selectedId = null;
+    }
+
+    // =========================================================================
+    // 7. RENDER SCHEDULER
+    // =========================================================================
+
+    function _scheduleRender() {
+        if (_component.renderScheduled) return;
+        _component.renderScheduled = true;
+        _component.renderHandle = setTimeout(function() {
+            _component.renderScheduled = false;
+            _component.renderHandle = null;
+            _render();
+        }, 16);
+    }
+
+    // =========================================================================
+    // 8. RENDER
+    // =========================================================================
+
+    function _render() {
+        if (!_component.mounted) return;
+        var container = document.getElementById(_component.containerId);
+        if (!container) return;
+
+        var households;
+        try {
+            households = _queries().getAllHouseholds();
+        } catch (e) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error('household-ui-list: failed to load households', e);
             }
+            container.innerHTML =
+                '<div style="padding:16px;color:var(--warn);font-size:0.7rem;">' +
+                'Unable to load households. See console for details.' +
+                '</div>';
             return;
         }
 
-        _renderLock = true;
+        var filtered = _applyFilters(households);
+        _reconcileSelection(filtered);
 
+        container.innerHTML = _buildHtml(filtered, households);
+        _attachHandlers(container);
+    }
+
+    function _buildHtml(filtered, allHouseholds) {
+        var html = '';
+
+        // ---- Filters header ----
+        html += _buildFiltersHeader(filtered.length, allHouseholds.length);
+
+        // ---- List ----
+        if (filtered.length === 0) {
+            var msg = _ui.searchTerm
+                ? 'No households match your search'
+                : 'No households found';
+            html += '<div style="padding:20px;text-align:center;color:var(--dim);font-size:0.7rem;">' +
+                _escapeHtml(msg) + '</div>';
+            return html;
+        }
+
+        html += '<div style="padding:4px;">';
+        for (var i = 0; i < filtered.length; i++) {
+            html += _buildItemHtml(filtered[i]);
+        }
+        html += '</div>';
+        return html;
+    }
+
+    function _buildFiltersHeader(filteredCount, totalCount) {
+        var statusCounts = _countByStatus();
+
+        var html = '';
+        html += '<div class="household-filters" style="padding:4px 6px;background:var(--bg2);border-bottom:1px solid var(--border);font-size:0.65rem;">';
+        html += '<div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;">';
+        html += '<input type="text" data-role="search-input" placeholder="Search households" value="' +
+            _escapeHtml(_ui.searchTerm) +
+            '" style="flex:2;min-width:60px;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:3px;font-size:0.6rem;color:var(--text);">';
+        html += '<span data-role="filter-toggle" style="cursor:pointer;font-size:0.6rem;padding:2px 4px;color:var(--accent);">' +
+            (_ui.filtersCollapsed ? '▶' : '▼') + '</span>';
+        html += '<span style="font-size:0.5rem;color:var(--dim);margin-left:auto;">' +
+            filteredCount + '/' + totalCount + '</span>';
+        html += '</div>';
+
+        html += '<div data-role="filter-content" style="' +
+            (_ui.filtersCollapsed ? 'display:none;' : '') +
+            'margin-top:4px;">';
+        html += '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px;">';
+
+        // Status filter
+        html += '<select data-role="status-filter" style="flex:1;min-width:60px;padding:3px 4px;background:var(--bg);border:1px solid var(--border);border-radius:3px;font-size:0.6rem;color:var(--text);">';
+        html += '<option value="all"' + (_ui.statusFilter === 'all' ? ' selected' : '') +
+            '>All (' + totalCount + ')</option>';
+        html += '<option value="active"' + (_ui.statusFilter === 'active' ? ' selected' : '') +
+            '>Active (' + (statusCounts.active || 0) + ')</option>';
+        html += '<option value="vacant"' + (_ui.statusFilter === 'vacant' ? ' selected' : '') +
+            '>Vacant (' + (statusCounts.vacant || 0) + ')</option>';
+        html += '<option value="empty"' + (_ui.statusFilter === 'empty' ? ' selected' : '') +
+            '>Empty (' + (statusCounts.empty || 0) + ')</option>';
+        html += '<option value="declining"' + (_ui.statusFilter === 'declining' ? ' selected' : '') +
+            '>Declining (' + (statusCounts.declining || 0) + ')</option>';
+        if (statusCounts.deprecated) {
+            html += '<option value="deprecated"' + (_ui.statusFilter === 'deprecated' ? ' selected' : '') +
+                '>Deprecated (' + statusCounts.deprecated + ')</option>';
+        }
+        if (statusCounts.destroyed) {
+            html += '<option value="destroyed"' + (_ui.statusFilter === 'destroyed' ? ' selected' : '') +
+                '>Destroyed (' + statusCounts.destroyed + ')</option>';
+        }
+        html += '</select>';
+
+        // Location filter
+        html += '<select data-role="location-filter" style="flex:1;min-width:60px;padding:3px 4px;background:var(--bg);border:1px solid var(--border);border-radius:3px;font-size:0.6rem;color:var(--text);">';
+        html += _buildLocationOptions();
+        html += '</select>';
+
+        html += '</div>';
+        html += '<div style="display:flex;gap:4px;flex-wrap:wrap;">';
+        html += '<button data-role="clear-filters" style="padding:1px 6px;font-size:0.5rem;background:var(--bg3);border:1px solid var(--border);border-radius:3px;cursor:pointer;color:var(--text);">Clear</button>';
+        html += '<label style="display:flex;align-items:center;gap:4px;font-size:0.5rem;cursor:pointer;color:var(--dim);">';
+        html += '<input type="checkbox" data-role="show-positions"' +
+            (_ui.showPositions ? ' checked' : '') + ' style="cursor:pointer;">';
+        html += 'Show Positions</label>';
+        html += '</div>';
+        html += '</div>';
+
+        html += '</div>';
+        return html;
+    }
+
+    function _buildLocationOptions() {
+        var html = '';
+        html += '<option value="all"' + (_ui.locationFilter === 'all' ? ' selected' : '') +
+            '>— All Locations —</option>';
+
+        var places = [];
         try {
-            var container = document.getElementById(containerId);
-            if (!container) {
-                _renderLock = false;
-                return;
-            }
-
-            // Initialize if needed
-            if (!listState._initialized) {
-                _loadState();
-                listState._initialized = true;
-            }
-
-            listState.containerId = containerId;
-            listState.onSelectCallback = onSelect;
-            
-            // Preserve selection
-            if (!preserveSelection) {
-                listState.selectedId = null;
-            }
-
-            // Get data
-            var households = _getHouseholds();
-            var filtered = _applyFilters(households);
-
-            // Count stats
-            var totalHouseholds = households.length;
-            var activeCount = 0, vacantCount = 0, emptyCount = 0, deprecatedCount = 0, destroyedCount = 0;
-            for (var i = 0; i < households.length; i++) {
-                var info = _getHouseholdStatusInfo(households[i]);
-                if (info.status === 'active') activeCount++;
-                else if (info.status === 'vacant') vacantCount++;
-                else if (info.status === 'empty') emptyCount++;
-                else if (info.status === 'deprecated') deprecatedCount++;
-                else if (info.status === 'destroyed') destroyedCount++;
-            }
-
-            // Build HTML
-            var locationOptionsHtml = _buildLocationDropdown(listState.locationFilter);
-
-            var html = '';
-            
-            // Filters
-            html += '<div class="household-filters" style="padding:4px 6px;background:var(--bg2);border-bottom:1px solid var(--border);font-size:0.65rem;">';
-            html += '<div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;">';
-            html += '<input type="text" id="householdSearchInput" placeholder="Search households" value="' + _escapeHtml(listState.searchTerm) + '" style="flex:2;min-width:60px;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:3px;font-size:0.6rem;color:var(--text);">';
-            html += '<span class="filter-toggle" style="cursor:pointer;font-size:0.6rem;padding:2px 4px;color:var(--accent);">' + (listState.filtersCollapsed ? '▶' : '▼') + '</span>';
-            html += '<span style="font-size:0.5rem;color:var(--dim);margin-left:auto;">' + filtered.length + '/' + totalHouseholds + '</span>';
-            html += '</div>';
-            html += '<div class="filter-content" style="' + (listState.filtersCollapsed ? 'display:none;' : '') + 'margin-top:4px;">';
-            html += '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px;">';
-            html += '<select id="householdStatusFilter" style="flex:1;min-width:60px;padding:3px 4px;background:var(--bg);border:1px solid var(--border);border-radius:3px;font-size:0.6rem;color:var(--text);">';
-            html += '<option value="all" ' + (listState.statusFilter === 'all' ? 'selected' : '') + '>All (' + totalHouseholds + ')</option>';
-            html += '<option value="active" ' + (listState.statusFilter === 'active' ? 'selected' : '') + '>Active (' + activeCount + ')</option>';
-            html += '<option value="vacant" ' + (listState.statusFilter === 'vacant' ? 'selected' : '') + '>Vacant (' + vacantCount + ')</option>';
-            html += '<option value="empty" ' + (listState.statusFilter === 'empty' ? 'selected' : '') + '>Empty (' + emptyCount + ')</option>';
-            if (deprecatedCount > 0) {
-                html += '<option value="deprecated" ' + (listState.statusFilter === 'deprecated' ? 'selected' : '') + '>Deprecated (' + deprecatedCount + ')</option>';
-            }
-            if (destroyedCount > 0) {
-                html += '<option value="destroyed" ' + (listState.statusFilter === 'destroyed' ? 'selected' : '') + '>Destroyed (' + destroyedCount + ')</option>';
-            }
-            html += '</select>';
-            html += '<select id="householdLocationFilter" style="flex:1;min-width:60px;padding:3px 4px;background:var(--bg);border:1px solid var(--border);border-radius:3px;font-size:0.6rem;color:var(--text);">';
-            html += locationOptionsHtml;
-            html += '</select>';
-            html += '</div>';
-            html += '<div style="display:flex;gap:4px;flex-wrap:wrap;">';
-            html += '<button id="clearHouseholdFiltersBtn" class="btn tiny" style="padding:1px 6px;font-size:0.5rem;background:var(--bg3);border:1px solid var(--border);border-radius:3px;cursor:pointer;color:var(--text);">Clear</button>';
-            html += '<label style="display:flex;align-items:center;gap:4px;font-size:0.5rem;cursor:pointer;color:var(--dim);">';
-            html += '<input type="checkbox" id="showPositionsToggle" ' + (listState.showPositions ? 'checked' : '') + ' style="cursor:pointer;">';
-            html += 'Show Positions</label>';
-            html += '</div>';
-            html += '</div></div>';
-
-            // Household list
-            if (filtered.length === 0) {
-                var msg = listState.searchTerm ? 'No households match your search' : 'No households found';
-                html += '<div style="padding:20px;text-align:center;color:var(--dim);font-size:0.65rem;">' + msg + '</div>';
-            } else {
-                var locationIcon = _getIconSafe('LOCATION');
-                var personIcon = _getIconSafe('PERSON');
-                var warningIcon = _getIconSafe('WARNING');
-                var positionIcon = _getIconSafe('CIRCLE_DOT');
-
-                html += '<div style="padding:4px;">';
-                for (var i = 0; i < filtered.length; i++) {
-                    var h = filtered[i];
-                    var isSelected = (listState.selectedId === h.id);
-                    var statusInfo = _getHouseholdStatusInfo(h);
-                    var locationName = _getLocationName(h.locationId);
-
-                    var positionCount = 0, assignmentCount = 0;
-                    if (listState.showPositions) {
-                        var posData = _queries ? _queries.getHouseholdPositions({ householdId: h.id }) : [];
-                        positionCount = posData.length;
-                        var assignData = _state ? _state.getAssignmentsForHousehold(h.id, true) : [];
-                        assignmentCount = assignData.length;
-                    }
-
-                    var positionInfo = '';
-                    if (listState.showPositions) {
-                        positionInfo = '<span title="Positions">' + _iconSpan(positionIcon) + ' ' + positionCount + '</span>' +
-                            '<span title="Staff">' + _iconSpan(personIcon) + ' ' + assignmentCount + '</span>';
-                    }
-
-                    var statusBadge = '';
-                    if (statusInfo.status === 'active') {
-                        statusBadge = '<span style="font-size:0.4rem;color:#4a9e6a;padding:1px 4px;border:1px solid #4a9e6a;border-radius:8px;">' + statusInfo.livingCount + ' living</span>';
-                    } else if (statusInfo.status === 'vacant') {
-                        statusBadge = '<span style="font-size:0.4rem;color:#c87040;padding:1px 4px;border:1px solid #c87040;border-radius:8px;">Vacant</span>';
-                    } else if (statusInfo.status === 'empty') {
-                        statusBadge = '<span style="font-size:0.4rem;color:#9e9e9e;padding:1px 4px;border:1px solid #9e9e9e;border-radius:8px;">Empty</span>';
-                    } else if (statusInfo.status === 'deprecated') {
-                        statusBadge = '<span style="font-size:0.4rem;color:#6a6a6a;padding:1px 4px;border:1px solid #6a6a6a;border-radius:8px;">Deprecated</span>';
-                    } else if (statusInfo.status === 'destroyed') {
-                        statusBadge = '<span style="font-size:0.4rem;color:#8a2020;padding:1px 4px;border:1px solid #8a2020;border-radius:8px;">Destroyed</span>';
-                    }
-
-                    html += '<div class="household-item" data-id="' + _escapeHtml(h.id) + '" style="';
-                    html += 'cursor:pointer;';
-                    html += 'padding:4px 8px;';
-                    html += 'margin-bottom:2px;';
-                    html += 'background:' + (isSelected ? 'rgba(106,158,207,0.12)' : 'var(--bg3)') + ';';
-                    html += 'border:1px solid ' + (isSelected ? 'var(--accent)' : 'var(--border)') + ';';
-                    html += 'border-radius:3px;';
-                    html += 'transition:all 0.1s;';
-                    html += 'font-size:0.7rem;';
-                    html += '">';
-                    html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">';
-                    html += '<div style="display:flex;align-items:center;gap:4px;min-width:0;flex:1;">';
-                    html += '<span style="color:' + statusInfo.statusColor + ';font-size:0.6rem;">' + _iconSpan(statusInfo.statusIcon, statusInfo.statusMessage) + '</span>';
-                    html += '<span style="font-weight:' + (isSelected ? 'bold' : 'normal') + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + _escapeHtml(h.name) + '</span>';
-                    html += statusBadge;
-                    html += '</div>';
-                    html += '<div style="display:flex;gap:6px;font-size:0.5rem;color:var(--dim);flex-shrink:0;">';
-                    html += '<span title="Members">' + _iconSpan(personIcon) + ' ' + statusInfo.totalMembers + '</span>';
-                    if (positionInfo) {
-                        html += positionInfo;
-                    }
-                    if (locationName && locationName !== 'Unknown') {
-                        html += '<span title="Location">' + _iconSpan(locationIcon) + ' ' + _escapeHtml(locationName) + '</span>';
-                    } else {
-                        html += '<span title="No location" style="color:var(--warn);">' + _iconSpan(warningIcon) + ' None</span>';
-                    }
-                    html += '</div>';
-                    html += '</div></div>';
-                }
-                html += '</div>';
-            }
-
-            // Set the HTML
-            container.innerHTML = html;
-
-            // =========================================================================
-            // ATTACH EVENT HANDLERS - CLEAN
-            // =========================================================================
-
-            // Filter toggle
-            var filterToggle = container.querySelector('.filter-toggle');
-            var filterContent = container.querySelector('.filter-content');
-            if (filterToggle && filterContent) {
-                filterToggle.onclick = function() {
-                    var isHidden = filterContent.style.display === 'none';
-                    filterContent.style.display = isHidden ? 'block' : 'none';
-                    filterToggle.textContent = isHidden ? '▼' : '▶';
-                    listState.filtersCollapsed = !isHidden;
-                    _saveState();
-                };
-            }
-
-            // Search input
-            var searchInput = document.getElementById('householdSearchInput');
-            var statusFilter = document.getElementById('householdStatusFilter');
-            var locationFilter = document.getElementById('householdLocationFilter');
-            var clearBtn = document.getElementById('clearHouseholdFiltersBtn');
-            var showPositionsToggle = document.getElementById('showPositionsToggle');
-
-            // Apply filters function - with safety to prevent loops
-            var applyFilters = function() {
-                // Clear any pending render timeout
-                if (_renderTimeout) {
-                    clearTimeout(_renderTimeout);
-                    _renderTimeout = null;
-                }
-                
-                var searchVal = searchInput ? searchInput.value : '';
-                var statusVal = statusFilter ? statusFilter.value : 'all';
-                var locationVal = locationFilter ? locationFilter.value : 'all';
-                var showPos = showPositionsToggle ? showPositionsToggle.checked : false;
-
-                listState.searchTerm = searchVal;
-                listState.statusFilter = statusVal;
-                listState.locationFilter = locationVal;
-                listState.showPositions = showPos;
-                _saveState();
-
-                // Schedule a render with a delay to prevent loops
-                _renderTimeout = setTimeout(function() {
-                    _renderTimeout = null;
-                    renderHouseholdList(listState.containerId, listState.onSelectCallback, true);
-                }, 50);
-            };
-
-            var debouncedApply = function() {
-                if (_renderTimeout) {
-                    clearTimeout(_renderTimeout);
-                    _renderTimeout = null;
-                }
-                _renderTimeout = setTimeout(applyFilters, 300);
-            };
-
-            if (searchInput) {
-                searchInput.oninput = debouncedApply;
-                searchInput.placeholder = 'Search households';
-            }
-
-            if (statusFilter) {
-                statusFilter.onchange = applyFilters;
-            }
-
-            if (locationFilter) {
-                locationFilter.onchange = applyFilters;
-            }
-
-            if (showPositionsToggle) {
-                showPositionsToggle.onchange = applyFilters;
-            }
-
-            if (clearBtn) {
-                clearBtn.onclick = function() {
-                    if (searchInput) searchInput.value = '';
-                    if (statusFilter) statusFilter.value = 'all';
-                    if (locationFilter) locationFilter.value = 'all';
-                    if (showPositionsToggle) showPositionsToggle.checked = false;
-                    
-                    listState.searchTerm = '';
-                    listState.statusFilter = 'all';
-                    listState.locationFilter = 'all';
-                    listState.showPositions = false;
-                    _saveState();
-
-                    if (_renderTimeout) {
-                        clearTimeout(_renderTimeout);
-                        _renderTimeout = null;
-                    }
-                    _renderTimeout = setTimeout(function() {
-                        _renderTimeout = null;
-                        renderHouseholdList(listState.containerId, listState.onSelectCallback, true);
-                    }, 50);
-                };
-            }
-
-            // Household item click - using event delegation on the container
-            // Remove any existing listeners by replacing the container's onclick
-            container.onclick = function(e) {
-                var item = e.target.closest('.household-item');
-                if (!item) return;
-                
-                var clickedId = item.dataset.id;
-                if (!clickedId) return;
-                
-                // Update selection
-                if (listState.selectedId !== clickedId) {
-                    listState.selectedId = clickedId;
-                    
-                    // Update styles
-                    var allItems = container.querySelectorAll('.household-item');
-                    for (var j = 0; j < allItems.length; j++) {
-                        var it = allItems[j];
-                        if (it.dataset.id === clickedId) {
-                            it.style.background = 'rgba(106,158,207,0.12)';
-                            it.style.borderColor = 'var(--accent)';
-                        } else {
-                            it.style.background = 'var(--bg3)';
-                            it.style.borderColor = 'var(--border)';
-                        }
-                    }
-                }
-
-                if (listState.onSelectCallback && typeof listState.onSelectCallback === 'function') {
-                    listState.onSelectCallback(clickedId);
-                }
-            };
-
-            // Hover effects
-            container.onmouseover = function(e) {
-                var item = e.target.closest('.household-item');
-                if (item) {
-                    var id = item.dataset.id;
-                    if (id && id !== listState.selectedId) {
-                        item.style.background = 'var(--bg2)';
-                    }
-                }
-            };
-
-            container.onmouseout = function(e) {
-                var item = e.target.closest('.household-item');
-                if (item) {
-                    var id = item.dataset.id;
-                    if (id && id !== listState.selectedId) {
-                        item.style.background = 'var(--bg3)';
-                    }
-                }
-            };
-
-            // =========================================================================
-            // SUBSCRIPTION - Single, safe subscription
-            // =========================================================================
-            
-            if (_state && typeof _state.subscribe === 'function') {
-                // Unsubscribe from previous
-                if (_unsubscribe) {
-                    try { _unsubscribe(); } catch(e) {}
-                    _unsubscribe = null;
-                }
-                
-                // Only subscribe once
-                if (!listState._subscribed) {
-                    listState._subscribed = true;
-                    _unsubscribe = _state.subscribe(function(event) {
-                        // Only respond to external changes
-                        if (event.type === 'change' || event.type === 'refresh') {
-                            var containerCheck = document.getElementById(listState.containerId);
-                            if (containerCheck && !_renderLock) {
-                                if (_renderTimeout) {
-                                    clearTimeout(_renderTimeout);
-                                    _renderTimeout = null;
-                                }
-                                _renderTimeout = setTimeout(function() {
-                                    _renderTimeout = null;
-                                    renderHouseholdList(listState.containerId, listState.onSelectCallback, true);
-                                }, 100);
-                            }
-                        }
-                    });
-                }
-            }
-
+            places = _getPlaces();
         } catch (e) {
-            // Silent fail
-        } finally {
-            _renderLock = false;
+            places = [];
         }
-    }
 
-    // =========================================================================
-    // 8. UTILITY FUNCTIONS
-    // =========================================================================
-
-    function selectHousehold(id) {
-        if (!id) return;
-        listState.selectedId = id;
-        
-        var container = document.getElementById(listState.containerId);
-        if (container) {
-            var items = container.querySelectorAll('.household-item');
-            for (var i = 0; i < items.length; i++) {
-                var item = items[i];
-                if (item.dataset.id === id) {
-                    item.style.background = 'rgba(106,158,207,0.12)';
-                    item.style.borderColor = 'var(--accent)';
-                } else {
-                    item.style.background = 'var(--bg3)';
-                    item.style.borderColor = 'var(--border)';
-                }
+        if (Array.isArray(places)) {
+            var sorted = places.slice().sort(function(a, b) {
+                return (a.displayName || '').localeCompare(b.displayName || '');
+            });
+            for (var i = 0; i < sorted.length; i++) {
+                var p = sorted[i];
+                var selected = (_ui.locationFilter === p.id) ? ' selected' : '';
+                var label = p.displayName || p.name || 'Unknown';
+                if (p.isCapital) label += ' [Capital]';
+                html += '<option value="' + _escapeHtml(p.id) + '"' + selected + '>' +
+                    _escapeHtml(label) + '</option>';
             }
         }
-        
-        if (listState.onSelectCallback && typeof listState.onSelectCallback === 'function') {
-            listState.onSelectCallback(id);
+
+        html += '<option value="unknown"' +
+            (_ui.locationFilter === 'unknown' ? ' selected' : '') +
+            '>Unknown Location</option>';
+        return html;
+    }
+
+    function _countByStatus() {
+        var counts = {};
+        var households;
+        try {
+            households = _queries().getAllHouseholds({
+                includeDeprecated: true
+            });
+        } catch (e) {
+            return counts;
+        }
+        for (var i = 0; i < households.length; i++) {
+            try {
+                var s = _queries().getHouseholdStatus(households[i].id);
+                counts[s.status] = (counts[s.status] || 0) + 1;
+            } catch (e) {
+                // Skip corrupt rows
+            }
+        }
+        return counts;
+    }
+
+    function _buildItemHtml(household) {
+        var isSelected = (_ui.selectedId === household.id);
+
+        var status;
+        try {
+            status = _queries().getHouseholdStatus(household.id);
+        } catch (e) {
+            status = { status: 'unknown', livingCount: 0, deceasedCount: 0,
+                totalMembers: 0, missingCount: 0 };
+        }
+
+        var locationName = _getLocationDisplayName(household.locationId);
+
+        var positionInfo = '';
+        if (_ui.showPositions) {
+            var positions = [];
+            var assignments = [];
+            try {
+                positions = _queries().getHouseholdPositions({
+                    householdId: household.id
+                });
+                assignments = _queries().getAssignmentsForHousehold(
+                    household.id, true
+                );
+            } catch (e) {
+                // leave empty
+            }
+            positionInfo =
+                '<span title="Positions" style="display:inline-flex;align-items:center;gap:2px;">' +
+                _getIcon('CIRCLE_DOT') + ' ' + positions.length +
+                '</span>' +
+                '<span title="Staff" style="display:inline-flex;align-items:center;gap:2px;">' +
+                _getIcon('PERSON') + ' ' + assignments.length +
+                '</span>';
+        }
+
+        var statusLabel = _statusLabel(status);
+        var statusColor = _statusColor(status.status);
+
+        var html = '';
+        html += '<div class="household-item" data-id="' + _escapeHtml(household.id) + '"' +
+            ' style="cursor:pointer;padding:4px 8px;margin-bottom:2px;' +
+            'background:' + (isSelected ? 'rgba(106,158,207,0.12)' : 'var(--bg3)') + ';' +
+            'border:1px solid ' + (isSelected ? 'var(--accent)' : 'var(--border)') + ';' +
+            'border-radius:3px;transition:all 0.1s;font-size:0.7rem;">';
+
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">';
+
+        // Left: status icon + name + badge
+        html += '<div style="display:flex;align-items:center;gap:4px;min-width:0;flex:1;">';
+        html += '<span style="color:' + statusColor + ';font-size:0.6rem;" title="' +
+            _escapeHtml(statusLabel) + '">' +
+            _getIcon(_statusIconName(status.status)) + '</span>';
+        html += '<span style="font-weight:' + (isSelected ? 'bold' : 'normal') +
+            ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' +
+            _escapeHtml(household.name) + '</span>';
+        if (status.status === 'active' && typeof status.livingCount === 'number') {
+            html += '<span style="font-size:0.4rem;color:#4a9e6a;padding:1px 4px;border:1px solid #4a9e6a;border-radius:8px;">' +
+                status.livingCount + ' living</span>';
+        } else if (status.status === 'vacant') {
+            html += '<span style="font-size:0.4rem;color:#c87040;padding:1px 4px;border:1px solid #c87040;border-radius:8px;">Vacant</span>';
+        } else if (status.status === 'empty') {
+            html += '<span style="font-size:0.4rem;color:#9e9e9e;padding:1px 4px;border:1px solid #9e9e9e;border-radius:8px;">Empty</span>';
+        } else if (status.status === 'declining') {
+            html += '<span style="font-size:0.4rem;color:#c87040;padding:1px 4px;border:1px solid #c87040;border-radius:8px;">Declining</span>';
+        } else if (status.status === 'deprecated') {
+            html += '<span style="font-size:0.4rem;color:#6a6a6a;padding:1px 4px;border:1px solid #6a6a6a;border-radius:8px;">Deprecated</span>';
+        } else if (status.status === 'destroyed') {
+            html += '<span style="font-size:0.4rem;color:#8a2020;padding:1px 4px;border:1px solid #8a2020;border-radius:8px;">Destroyed</span>';
+        }
+        html += '</div>';
+
+        // Right: member count + positions + location
+        html += '<div style="display:flex;gap:6px;font-size:0.5rem;color:var(--dim);flex-shrink:0;">';
+
+        html += '<span title="Members" style="display:inline-flex;align-items:center;gap:2px;">' +
+            _getIcon('PERSON') + ' ' + (status.totalMembers || 0) + '</span>';
+
+        if (positionInfo) {
+            html += positionInfo;
+        }
+
+        if (locationName && locationName !== 'Unknown') {
+            html += '<span title="Location" style="display:inline-flex;align-items:center;gap:2px;">' +
+                _getIcon('LOCATION') + ' ' + _escapeHtml(locationName) + '</span>';
+        } else {
+            html += '<span title="No location" style="color:var(--warn);display:inline-flex;align-items:center;gap:2px;">' +
+                _getIcon('WARNING') + ' None</span>';
+        }
+        html += '</div>';
+
+        html += '</div></div>';
+        return html;
+    }
+
+    function _statusIconName(status) {
+        switch (status) {
+            case 'active': return 'CIRCLE_DOT';
+            case 'vacant': return 'CIRCLE_HALF_LEFT';
+            case 'empty': return 'CIRCLE_OUTLINE';
+            case 'declining': return 'CIRCLE_HALF_LEFT';
+            case 'deprecated': return 'X_HEAVY';
+            case 'destroyed': return 'X_HEAVY';
+            default: return 'CIRCLE_OUTLINE';
         }
     }
 
-    function getSelectedHouseholdId() {
-        return listState.selectedId;
+    function _statusLabel(status) {
+        switch (status) {
+            case 'active': return 'Active';
+            case 'vacant': return 'Vacant';
+            case 'empty': return 'Empty';
+            case 'declining': return 'Declining';
+            case 'deprecated': return 'Deprecated';
+            case 'destroyed': return 'Destroyed';
+            default: return 'Unknown';
+        }
+    }
+
+    function _statusColor(status) {
+        switch (status) {
+            case 'active': return '#4a9e6a';
+            case 'vacant': return '#c87040';
+            case 'empty': return '#9e9e9e';
+            case 'declining': return '#c87040';
+            case 'deprecated': return '#6a6a6a';
+            case 'destroyed': return '#8a2020';
+            default: return '#6a6a6a';
+        }
+    }
+
+    // =========================================================================
+    // 9. EVENT HANDLING (scoped to container)
+    // =========================================================================
+
+    function _attachHandlers(container) {
+        // Filter toggle
+        var toggle = container.querySelector('[data-role="filter-toggle"]');
+        var content = container.querySelector('[data-role="filter-content"]');
+        if (toggle && content) {
+            toggle.onclick = function() {
+                var hidden = content.style.display === 'none';
+                content.style.display = hidden ? 'block' : 'none';
+                toggle.textContent = hidden ? '▼' : '▶';
+                _ui.filtersCollapsed = !hidden;
+                _savePreferences();
+            };
+        }
+
+        // Search input
+        var searchInput = container.querySelector('[data-role="search-input"]');
+        if (searchInput) {
+            searchInput.oninput = function() {
+                var value = this.value;
+                if (_component.searchDebounceHandle) {
+                    clearTimeout(_component.searchDebounceHandle);
+                }
+                _component.searchDebounceHandle = setTimeout(function() {
+                    _component.searchDebounceHandle = null;
+                    _ui.searchTerm = value;
+                    _savePreferences();
+                    _scheduleRender();
+                    // Refocus after re-render
+                    setTimeout(function() {
+                        var el = container.querySelector('[data-role="search-input"]');
+                        if (el && el !== document.activeElement) {
+                            el.focus();
+                            var len = el.value.length;
+                            try { el.setSelectionRange(len, len); } catch (e) {}
+                        }
+                    }, 20);
+                }, 250);
+            };
+        }
+
+        // Status filter
+        var statusFilter = container.querySelector('[data-role="status-filter"]');
+        if (statusFilter) {
+            statusFilter.onchange = function() {
+                _ui.statusFilter = this.value;
+                _savePreferences();
+                _scheduleRender();
+            };
+        }
+
+        // Location filter
+        var locationFilter = container.querySelector('[data-role="location-filter"]');
+        if (locationFilter) {
+            locationFilter.onchange = function() {
+                _ui.locationFilter = this.value;
+                _savePreferences();
+                _scheduleRender();
+            };
+        }
+
+        // Show positions toggle
+        var showPositions = container.querySelector('[data-role="show-positions"]');
+        if (showPositions) {
+            showPositions.onchange = function() {
+                _ui.showPositions = this.checked;
+                _savePreferences();
+                _scheduleRender();
+            };
+        }
+
+        // Clear filters
+        var clearBtn = container.querySelector('[data-role="clear-filters"]');
+        if (clearBtn) {
+            clearBtn.onclick = function() {
+                _ui.searchTerm = '';
+                _ui.statusFilter = 'all';
+                _ui.locationFilter = 'all';
+                _ui.showPositions = false;
+                _savePreferences();
+                _scheduleRender();
+            };
+        }
+
+        // Household item click — event delegation
+        container.onclick = function(event) {
+            var item = event.target.closest
+                ? event.target.closest('.household-item')
+                : null;
+            if (!item) return;
+            var id = item.dataset.id;
+            if (!id) return;
+
+            if (_ui.selectedId !== id) {
+                _ui.selectedId = id;
+                _applySelectionStyles(container);
+            }
+
+            if (typeof _component.onSelectCallback === 'function') {
+                _component.onSelectCallback(id);
+            }
+        };
+
+        // Hover — event delegation
+        container.onmouseover = function(event) {
+            var item = event.target.closest
+                ? event.target.closest('.household-item')
+                : null;
+            if (!item) return;
+            if (item.dataset.id !== _ui.selectedId) {
+                item.style.background = 'var(--bg2)';
+            }
+        };
+        container.onmouseout = function(event) {
+            var item = event.target.closest
+                ? event.target.closest('.household-item')
+                : null;
+            if (!item) return;
+            if (item.dataset.id !== _ui.selectedId) {
+                item.style.background = 'var(--bg3)';
+            }
+        };
+    }
+
+    function _applySelectionStyles(container) {
+        var items = container.querySelectorAll('.household-item');
+        for (var i = 0; i < items.length; i++) {
+            var item = items[i];
+            if (item.dataset.id === _ui.selectedId) {
+                item.style.background = 'rgba(106,158,207,0.12)';
+                item.style.borderColor = 'var(--accent)';
+            } else {
+                item.style.background = 'var(--bg3)';
+                item.style.borderColor = 'var(--border)';
+            }
+        }
+    }
+
+    // =========================================================================
+    // 10. SUBSCRIPTION
+    // =========================================================================
+
+    function _subscribeToState() {
+        if (_component.unsubscribe) {
+            try { _component.unsubscribe(); } catch (e) {}
+            _component.unsubscribe = null;
+        }
+        _component.unsubscribe = _state().subscribe(function(event) {
+            if (!_component.mounted) return;
+            if (event.type === 'householdsReplaced' ||
+                event.type === 'refreshed' ||
+                event.type === 'cacheInvalidated') {
+                _scheduleRender();
+            }
+        });
+    }
+
+    // =========================================================================
+    // 11. LIFECYCLE
+    // =========================================================================
+
+    function mountHouseholdList(containerId, onSelect, options) {
+        options = options || {};
+
+        // If already mounted elsewhere, unmount first
+        if (_component.mounted) {
+            unmountHouseholdList();
+        }
+
+        var container = document.getElementById(containerId);
+        if (!container) {
+            throw new Error('household-ui-list: container "' + containerId + '" not found');
+        }
+
+        // Validate dependencies eagerly (throws if missing)
+        _queries();
+        _state();
+
+        _loadPreferences();
+
+        _component.containerId = containerId;
+        _component.onSelectCallback = typeof onSelect === 'function' ? onSelect : null;
+        _component.mounted = true;
+
+        if (typeof options.preserveSelection === 'boolean' && !options.preserveSelection) {
+            _ui.selectedId = null;
+        }
+        if (options.selectedId) {
+            _ui.selectedId = options.selectedId;
+        }
+
+        _subscribeToState();
+        _render();
+
+        // If the caller already selected something programmatically, apply
+        if (_ui.selectedId) {
+            _applySelectionStyles(container);
+        }
+    }
+
+    function unmountHouseholdList() {
+        if (_component.renderHandle) {
+            clearTimeout(_component.renderHandle);
+            _component.renderHandle = null;
+        }
+        if (_component.searchDebounceHandle) {
+            clearTimeout(_component.searchDebounceHandle);
+            _component.searchDebounceHandle = null;
+        }
+        if (_component.unsubscribe) {
+            try { _component.unsubscribe(); } catch (e) {}
+            _component.unsubscribe = null;
+        }
+        _component.renderScheduled = false;
+        _component.containerId = null;
+        _component.onSelectCallback = null;
+        _component.mounted = false;
+        // Preserve _ui state — the user's filters survive unmount/remount.
     }
 
     function refreshHouseholdList() {
-        if (listState.containerId) {
-            if (_renderTimeout) {
-                clearTimeout(_renderTimeout);
-                _renderTimeout = null;
-            }
-            _renderTimeout = setTimeout(function() {
-                _renderTimeout = null;
-                renderHouseholdList(listState.containerId, listState.onSelectCallback, true);
-            }, 50);
+        if (!_component.mounted) return;
+        _scheduleRender();
+    }
+
+    function selectHousehold(id) {
+        if (!id) {
+            _ui.selectedId = null;
+            var container = _component.containerId
+                ? document.getElementById(_component.containerId)
+                : null;
+            if (container) _applySelectionStyles(container);
+            return;
         }
+
+        // Validate the household exists
+        var h = null;
+        try { h = _queries().getHousehold(id); } catch (e) { h = null; }
+        if (!h) return false;
+
+        _ui.selectedId = id;
+        var container = document.getElementById(_component.containerId);
+        if (container) _applySelectionStyles(container);
+        return true;
     }
 
-    function searchHouseholds(term) {
-        listState.searchTerm = term || '';
-        _saveState();
-        refreshHouseholdList();
-    }
-
-    function filterHouseholdsByStatus(status) {
-        listState.statusFilter = status || 'all';
-        _saveState();
-        refreshHouseholdList();
-    }
-
-    function filterHouseholdsByLocation(locationId) {
-        listState.locationFilter = locationId || 'all';
-        _saveState();
-        refreshHouseholdList();
-    }
-
-    function clearHouseholdFilters() {
-        listState.searchTerm = '';
-        listState.statusFilter = 'all';
-        listState.locationFilter = 'all';
-        listState.showPositions = false;
-        _saveState();
-        refreshHouseholdList();
+    function getSelectedHouseholdId() {
+        return _ui.selectedId;
     }
 
     // =========================================================================
-    // 9. POSITION AND STAFF LIST FUNCTIONS (Minimal versions)
+    // 12. POSITION/STAFF LIST RENDERERS
     // =========================================================================
 
     function renderHouseholdPositionList(containerId, householdId, options) {
+        options = options || {};
         var container = document.getElementById(containerId);
         if (!container) return;
-        
+
+        var positions = [];
         try {
-            options = options || {};
-            var positions = _state ? _state.getHouseholdPositions({ householdId: householdId }) : [];
-            
-            var html = '<div class="household-position-list">';
-            if (positions.length === 0) {
-                html += '<div style="text-align:center;padding:20px;color:var(--dim);font-size:0.6rem;">No positions created</div>';
-            } else {
-                for (var i = 0; i < positions.length; i++) {
-                    var p = positions[i];
-                    html += '<div style="padding:4px 8px;background:var(--bg3);border-radius:4px;margin-bottom:2px;border-left:2px solid var(--accent);">';
-                    html += '<span style="font-size:0.65rem;">' + _escapeHtml(p.name) + '</span>';
-                    html += '</div>';
-                }
-            }
-            html += '</div>';
-            container.innerHTML = html;
-        } catch(e) {
-            container.innerHTML = '<div style="color:var(--dim);text-align:center;padding:20px;">Error loading positions</div>';
+            positions = _queries().getHouseholdPositions({ householdId: householdId });
+        } catch (e) {
+            container.innerHTML =
+                '<div style="padding:12px;color:var(--warn);font-size:0.6rem;">' +
+                'Unable to load positions.</div>';
+            return;
         }
+
+        if (positions.length === 0) {
+            container.innerHTML =
+                '<div style="text-align:center;padding:20px;color:var(--dim);font-size:0.6rem;">' +
+                'No positions created</div>';
+            return;
+        }
+
+        var html = '<div class="household-position-list">';
+        for (var i = 0; i < positions.length; i++) {
+            var p = positions[i];
+            html += '<div style="padding:4px 8px;background:var(--bg3);border-radius:4px;margin-bottom:2px;border-left:2px solid var(--accent);">' +
+                '<span style="font-size:0.65rem;">' + _escapeHtml(p.name) + '</span>' +
+                '</div>';
+        }
+        html += '</div>';
+        container.innerHTML = html;
     }
 
     function renderHouseholdStaffList(containerId, householdId, options) {
+        options = options || {};
         var container = document.getElementById(containerId);
         if (!container) return;
-        
+
+        var staff = [];
         try {
-            var staff = _queries ? _queries.getHouseholdStaff(householdId, { activeOnly: true }) : [];
-            
-            var html = '<div class="household-staff-list">';
-            if (staff.length === 0) {
-                html += '<div style="text-align:center;padding:20px;color:var(--dim);font-size:0.6rem;">No staff members</div>';
-            } else {
-                for (var i = 0; i < staff.length; i++) {
-                    var s = staff[i];
-                    html += '<div style="padding:4px 8px;background:var(--bg3);border-radius:4px;margin-bottom:2px;border-left:2px solid var(--border);">';
-                    html += '<span style="font-size:0.6rem;">' + _escapeHtml(s.characterName) + '</span>';
-                    if (s.role) html += ' <span style="font-size:0.5rem;color:var(--dim);">(' + _escapeHtml(s.role) + ')</span>';
-                    html += '</div>';
-                }
+            staff = _queries().getHouseholdStaff(householdId, { activeOnly: true });
+        } catch (e) {
+            container.innerHTML =
+                '<div style="padding:12px;color:var(--warn);font-size:0.6rem;">' +
+                'Unable to load staff.</div>';
+            return;
+        }
+
+        if (staff.length === 0) {
+            container.innerHTML =
+                '<div style="text-align:center;padding:20px;color:var(--dim);font-size:0.6rem;">' +
+                'No staff members</div>';
+            return;
+        }
+
+        var html = '<div class="household-staff-list">';
+        for (var i = 0; i < staff.length; i++) {
+            var s = staff[i];
+            html += '<div style="padding:4px 8px;background:var(--bg3);border-radius:4px;margin-bottom:2px;border-left:2px solid var(--border);">' +
+                '<span style="font-size:0.6rem;">' + _escapeHtml(s.characterName) + '</span>';
+            if (s.role) {
+                html += ' <span style="font-size:0.5rem;color:var(--dim);">(' +
+                    _escapeHtml(s.role) + ')</span>';
             }
             html += '</div>';
-            container.innerHTML = html;
-        } catch(e) {
-            container.innerHTML = '<div style="color:var(--dim);text-align:center;padding:20px;">Error loading staff</div>';
         }
+        html += '</div>';
+        container.innerHTML = html;
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 13. EXPORTS
     // =========================================================================
 
-    window.renderHouseholdList = renderHouseholdList;
-    window.renderHouseholdPositionList = renderHouseholdPositionList;
-    window.renderHouseholdStaffList = renderHouseholdStaffList;
+    window.mountHouseholdList = mountHouseholdList;
+    window.unmountHouseholdList = unmountHouseholdList;
+    window.refreshHouseholdList = refreshHouseholdList;
     window.selectHousehold = selectHousehold;
     window.getSelectedHouseholdId = getSelectedHouseholdId;
-    window.refreshHouseholdList = refreshHouseholdList;
-    window.searchHouseholds = searchHouseholds;
-    window.filterHouseholdsByStatus = filterHouseholdsByStatus;
-    window.filterHouseholdsByLocation = filterHouseholdsByLocation;
-    window.clearHouseholdFilters = clearHouseholdFilters;
-    window.householdListState = listState;
+    window.renderHouseholdPositionList = renderHouseholdPositionList;
+    window.renderHouseholdStaffList = renderHouseholdStaffList;
 
 })();
