@@ -1,4 +1,128 @@
 /**
+ * relationship-queries.js
+ *
+ * Semantic reads over RelationshipState.
+ * Returns defensive projections. Never live entities.
+ * No mutation. No persistence. No business logic beyond filtering.
+ */
+
+(function() {
+    'use strict';
+
+    var State = window.RelationshipState;
+    var STATUS = window.RELATIONSHIP_STATUS;
+
+    if (!State || !STATUS) {
+        throw new Error('relationship-queries.js: relationship-state.js and relationship-types.js must load first');
+    }
+
+    function _project(entity) {
+        if (!entity) return null;
+        return {
+            id: entity.id,
+            type: entity.type,
+            status: entity.status,
+            startYear: entity.startYear,
+            endYear: entity.endYear,
+            participantA: entity.participantA,
+            participantB: entity.participantB,
+            attributes: entity.attributes ? entity.attributes.slice() : [],
+            metadata: entity.metadata ? Object.assign({}, entity.metadata) : {}
+        };
+    }
+
+    function _filter(ids, options) {
+        options = options || {};
+        var result = [];
+        for (var i = 0; i < ids.length; i++) {
+            var e = State.get(ids[i]);
+            if (!e) continue;
+            if (options.type && e.type !== options.type) continue;
+            if (options.status && e.status !== options.status) continue;
+            if (options.activeOnly && e.status !== STATUS.ONGOING) continue;
+            if (options.startYearMin !== undefined && e.startYear < options.startYearMin) continue;
+            if (options.startYearMax !== undefined && e.startYear > options.startYearMax) continue;
+            result.push(_project(e));
+        }
+        return result;
+    }
+
+    function getById(id) {
+        return _project(State.get(id));
+    }
+
+    function getBetween(a, b, options) {
+        return _filter(State.idsForPair(a, b), options);
+    }
+
+    function getBetweenOfType(a, b, type, options) {
+        var opts = Object.assign({}, options || {}, { type: type });
+        return _filter(State.idsForPair(a, b), opts);
+    }
+
+    function getActiveBetweenOfType(a, b, type) {
+        return getBetweenOfType(a, b, type, { status: STATUS.ONGOING });
+    }
+
+    function getForCharacter(characterId, options) {
+        return _filter(State.idsForCharacter(characterId), options);
+    }
+
+    function getActiveForCharacter(characterId) {
+        return _filter(State.idsForCharacter(characterId), { activeOnly: true });
+    }
+
+    function getByType(type, options) {
+        var opts = Object.assign({}, options || {}, { type: type });
+        return _filter(State.idsForType(type), opts);
+    }
+
+    function hasAnyBetween(a, b) {
+        return State.idsForPair(a, b).length > 0;
+    }
+
+    function hasActiveBetween(a, b) {
+        var ids = State.idsForPair(a, b);
+        for (var i = 0; i < ids.length; i++) {
+            var e = State.get(ids[i]);
+            if (e && e.status === STATUS.ONGOING) return true;
+        }
+        return false;
+    }
+
+    function hasActiveBetweenOfType(a, b, type) {
+        var ids = State.idsForPair(a, b);
+        for (var i = 0; i < ids.length; i++) {
+            var e = State.get(ids[i]);
+            if (e && e.type === type && e.status === STATUS.ONGOING) return true;
+        }
+        return false;
+    }
+
+    function countActiveForCharacter(characterId) {
+        return getActiveForCharacter(characterId).length;
+    }
+
+    function countByTypeForCharacter(characterId, type) {
+        return getForCharacter(characterId, { type: type }).length;
+    }
+
+    window.RelationshipQueries = {
+        getById: getById,
+        getBetween: getBetween,
+        getBetweenOfType: getBetweenOfType,
+        getActiveBetweenOfType: getActiveBetweenOfType,
+        getForCharacter: getForCharacter,
+        getActiveForCharacter: getActiveForCharacter,
+        getByType: getByType,
+        hasAnyBetween: hasAnyBetween,
+        hasActiveBetween: hasActiveBetween,
+        hasActiveBetweenOfType: hasActiveBetweenOfType,
+        countActiveForCharacter: countActiveForCharacter,
+        countByTypeForCharacter: countByTypeForCharacter
+    };
+
+})();/**
  * =============================================================================
  * STILL WATERS - RELATIONSHIP QUERIES
  * =============================================================================
