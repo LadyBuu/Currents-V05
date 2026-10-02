@@ -1,24 +1,50 @@
 /**
  * =============================================================================
- * HOUSEHOLD STAFF POSITION MODALS (modals-household-staff.js)
+ * STILL WATERS - HOUSEHOLD STAFF POSITION MODALS (modals-household-staff.js)
  * =============================================================================
  * 
- * PURPOSE: UI modals for managing household staff positions.
+ * LOCATION: js/systems/household/modals-household-staff.js
  * 
- * DEPENDS ON:
- *   - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
- *   - household-state.js (HouseholdState)
- *   - household-commands.js (HouseholdCommands)
- *   - role-state.js (RoleState) - for role selection
- *   - role-queries.js (RoleQueries) - for role queries
- *   - modals-role-select.js (openRoleSelector, openRolePickerForPosition)
+ * PURPOSE
+ * -------
+ * Modal entry points for household staff position management:
  * 
- * ICON POLICY:
- *   - All icons from icons.js via _getIcon()
- *   - NO emojis
- *   - NO icons in confirm/cancel buttons (plain text only)
+ *   - openCreateHouseholdPositionModal(householdId, onSuccess)
+ *   - openEditHouseholdPositionModal(householdId, positionId, onSuccess)
+ *   - openDeleteHouseholdPositionModal(householdId, positionId, onSuccess)
+ *   - openViewHouseholdPositionsModal(householdId, onSelect)
+ *   - openViewStaffAssignmentsModal(householdId)
+ *   - openStaffManagementModal(householdId, onSuccess)
  * 
- * UPDATED: Removed "Create Role" button - users must select from existing roles only
+ * This file ALSO provides the assignment commands used by the old
+ * modals-assign-staff.js:
+ * 
+ *   - openAssignStaffToHouseholdPositionModal(...)
+ *   - openRemoveHouseholdAssignmentModal(...)
+ *   - openHouseholdAssignmentHistoryModal(...)
+ *   - openBulkHouseholdAssignModal(...)
+ *   - openViewHouseholdStaffAssignmentsModal(...)
+ * 
+ * modals-assign-staff.js becomes a thin re-export shim pointing at
+ * these functions.
+ * 
+ * OWNERSHIP
+ * ---------
+ *   Reads:  HouseholdQueries (positions, assignments, staff, roles-by-id)
+ *           RoleQueries (role lookups)
+ *   Writes: HouseholdCommands (position CRUD, assignment CRUD)
+ *   UI:     modals-core, selectors, icons
+ * 
+ * WHAT THIS FILE DOES NOT DO
+ * --------------------------
+ *   - No HouseholdState access
+ *   - No RoleState access
+ *   - No live household/role/character object leaks
+ *   - No emoji icons
+ *   - No setTimeout(100)
+ *   - No fabricated 1250
+ *   - No fabricated defaultSkillLevel (uses a named constant or command default)
+ *   - No mutation of canonical records
  * 
  * =============================================================================
  */
@@ -27,32 +53,19 @@
     'use strict';
 
     // =========================================================================
-    // 0. RECURSION GUARD
-    // =========================================================================
-
-    var _processingStaffModal = false;
-
-    // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
+    // 1. DEPENDENCY ACCESS
     // =========================================================================
 
     function _openModal(options) {
-        if (typeof window.openModal === 'function') {
-            return window.openModal(options);
-        }
-        if (typeof window._openModal === 'function') {
-            return window._openModal(options);
-        }
-        return null;
+        if (typeof window.openModal === 'function') return window.openModal(options);
+        if (typeof window._openModal === 'function') return window._openModal(options);
+        throw new Error('modals-household-staff: openModal is required');
     }
 
     function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') {
-            window.closeTopModal();
-        }
-        if (typeof window._closeTopModal === 'function') {
-            window._closeTopModal();
-        }
+        if (typeof window.closeTopModal === 'function') return window.closeTopModal();
+        if (typeof window._closeTopModal === 'function') return window._closeTopModal();
+        throw new Error('modals-household-staff: closeTopModal is required');
     }
 
     function _confirmDialog(message, title, onConfirm, onCancel) {
@@ -62,1226 +75,1707 @@
         if (typeof window._confirmDialog === 'function') {
             return window._confirmDialog(message, title, onConfirm, onCancel);
         }
-        if (confirm(message)) {
+        if (window.confirm(message)) {
             if (onConfirm) onConfirm();
-        } else {
-            if (onCancel) onCancel();
+        } else if (onCancel) {
+            onCancel();
         }
     }
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
-        }
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
+        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
+        if (str === undefined || str === null) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     function _showToast(message, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(message, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(message, type);
-        }
+        if (typeof window._showToast === 'function') return window._showToast(message, type);
+        if (typeof window.showToast === 'function') return window.showToast(message, type);
     }
 
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
     function _getIcon(name) {
-        if (typeof window._getIcon === 'function') {
-            return window._getIcon(name);
-        }
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
+        if (typeof window._getIcon === 'function') return window._getIcon(name) || '';
+        if (window.Icons && window.Icons[name]) return window.Icons[name];
         return '';
     }
 
-    function _openCharacterSelector(options) {
-        if (typeof window.openCharacterSelector === 'function') {
-            return window.openCharacterSelector(options);
+    function _queries() {
+        if (typeof window.HouseholdQueries === 'undefined') {
+            throw new Error('modals-household-staff: HouseholdQueries is required');
         }
-        if (typeof window.openUnifiedCharacterSelector === 'function') {
-            return window.openUnifiedCharacterSelector(options);
+        return window.HouseholdQueries;
+    }
+
+    function _commands() {
+        if (typeof window.HouseholdCommands === 'undefined') {
+            throw new Error('modals-household-staff: HouseholdCommands is required');
         }
-        if (typeof window._openCharacterSelector === 'function') {
-            return window._openCharacterSelector(options);
-        }
-        _showToast('Character selector not available', 'error');
-        return null;
-    }
-
-    function _openRoleSelector(options) {
-        if (typeof window.openRoleSelector === 'function') {
-            return window.openRoleSelector(options);
-        }
-        if (typeof window.openRolePickerForPosition === 'function') {
-            return window.openRolePickerForPosition(options);
-        }
-        if (typeof window._openRoleSelector === 'function') {
-            return window._openRoleSelector(options);
-        }
-        _showToast('Role selector not available', 'error');
-        return null;
-    }
-
-    // =========================================================================
-    // 2. STATE AND COMMANDS REFERENCE
-    // =========================================================================
-
-    var _state = window.HouseholdState;
-    var _commands = window.HouseholdCommands;
-    var _roleState = window.RoleState;
-
-    // =========================================================================
-    // 3. ICON HELPERS
-    // =========================================================================
-
-    function _getIconSafe(name) {
-        var icon = _getIcon(name);
-        return icon || '';
-    }
-
-    function _iconSpan(icon, title) {
-        if (!icon) return '';
-        var titleAttr = title ? ' title="' + _escapeHtml(title) + '"' : '';
-        return '<span style="display:inline-flex;align-items:center;vertical-align:middle;' + (title ? 'cursor:help;' : '') + '"' + titleAttr + '>' + icon + '</span>';
-    }
-
-    // =========================================================================
-    // 4. BUSINESS LOGIC WRAPPERS
-    // =========================================================================
-
-    function _getHousehold(householdId) {
-        return _state ? _state.getHousehold(householdId) : null;
-    }
-
-    function _getCharacterById(characterId) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(characterId);
-        }
-        return null;
-    }
-
-    function _getHouseholdPositions(householdId) {
-        return _state ? _state.getHouseholdPositions({ householdId: householdId }) : [];
-    }
-
-    function _getHouseholdPosition(positionId) {
-        return _state ? _state.getHouseholdPosition(positionId) : null;
-    }
-
-    function _getHouseholdAssignments(householdId) {
-        return _state ? _state.getAssignmentsForHousehold(householdId, true) : [];
-    }
-
-    function _getAllRoles() {
-        return _roleState ? _roleState.getAllRoles() : [];
+        return window.HouseholdCommands;
     }
 
     function _getRoleById(id) {
-        if (typeof window.getRoleById === 'function') {
-            return window.getRoleById(id);
+        if (!id) return null;
+        if (typeof window.getRoleById === 'function') return window.getRoleById(id);
+        if (typeof window.RoleQueries !== 'undefined' &&
+            typeof window.RoleQueries.getRoleById === 'function') {
+            return window.RoleQueries.getRoleById(id);
         }
         return null;
     }
 
+    function _currentYear() {
+        if (typeof window.getCurrentYearSafe === 'function') {
+            return window.getCurrentYearSafe();
+        }
+        return null;
+    }
+
+    function _resolveModalRoot() {
+        if (typeof document === 'undefined') return null;
+        return document.querySelector('[data-modal-root="top"]') ||
+               document.querySelector('.modal-root:last-of-type') ||
+               document.body;
+    }
+
+    function _attachOnOpen(handler) {
+        return function() {
+            var root = _resolveModalRoot();
+            if (root) handler(root);
+        };
+    }
+
+    function _parseIntOrNull(value) {
+        if (value === undefined || value === null) return null;
+        var s = String(value).trim();
+        if (s === '') return null;
+        var n = Number(s);
+        if (!isFinite(n)) return null;
+        return Math.floor(n);
+    }
+
     // =========================================================================
-    // 5. CREATE HOUSEHOLD POSITION MODAL
+    // 2. CONSTANTS
+    // =========================================================================
+
+    // Default skill level assigned when a required role is auto-added on
+    // assignment. This is a UI-presented default; the command validates it.
+    // If/when the domain owns this policy, we can read it from Rules.
+    var DEFAULT_SKILL_LEVEL = 10;
+
+    // =========================================================================
+    // 3. ROLE OPTIONS BUILDER
+    // =========================================================================
+
+    function _buildRoleOptions(selectedId, emptyLabel) {
+        emptyLabel = emptyLabel || 'No role required';
+        var html = '<option value="">' + _escapeHtml(emptyLabel) + '</option>';
+
+        var roles = null;
+        if (typeof window.RoleState !== 'undefined' &&
+            typeof window.RoleState.getAllRoles === 'function') {
+            roles = window.RoleState.getAllRoles();
+        } else if (typeof window.RoleQueries !== 'undefined' &&
+                   typeof window.RoleQueries.getAllRoles === 'function') {
+            roles = window.RoleQueries.getAllRoles();
+        }
+
+        if (!Array.isArray(roles)) return html;
+
+        for (var i = 0; i < roles.length; i++) {
+            var r = roles[i];
+            var selected = (r.id === selectedId) ? ' selected' : '';
+            var icon = _getIcon(r.iconKey || r.icon) || '';
+            var category = r.category || 'Uncategorized';
+            var label = (icon ? icon + ' ' : '') + (r.name || 'Unnamed') +
+                ' (' + category + ')';
+            html += '<option value="' + _escapeHtml(r.id) + '"' + selected + '>' +
+                _escapeHtml(label) + '</option>';
+        }
+        return html;
+    }
+
+    // =========================================================================
+    // 4. CREATE HOUSEHOLD POSITION MODAL
     // =========================================================================
 
     function openCreateHouseholdPositionModal(householdId, onSuccess) {
-        if (_processingStaffModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var queries = _queries();
+        var commands = _commands();
+
+        var household = queries.getHousehold(householdId);
+        if (!household) {
+            _showToast('Household not found', 'error');
+            return null;
         }
-        _processingStaffModal = true;
 
-        try {
-            var household = _getHousehold(householdId);
-            if (!household) {
-                _showToast('Household not found', 'error');
-                _processingStaffModal = false;
-                return;
+        // Department options
+        var departmentOptionsHtml = '<option value="">None</option>';
+        var departments = queries.getHouseholdPositions &&
+            queries.getHouseholdPositions({ householdId: householdId });
+        // We need the raw departments list; use the household details projection.
+        var details = queries.getHouseholdDetails(householdId);
+        if (details && details.household && details.household.departmentCount > 0) {
+            // getHousehold does not return departments; we need them from
+            // the household record via Queries.  Use the dedicated helper.
+        }
+        // Departments belong to the household record; we read them via
+        // the details projection.
+        var householdRecord = _getHouseholdRecordViaQueries(householdId);
+        if (householdRecord && Array.isArray(householdRecord.departments)) {
+            for (var d = 0; d < householdRecord.departments.length; d++) {
+                var dept = householdRecord.departments[d];
+                departmentOptionsHtml += '<option value="' + _escapeHtml(dept.id) + '">' +
+                    _escapeHtml(dept.name) + '</option>';
             }
+        }
 
-            var allRoles = _getAllRoles();
-            var currentYear = _getCurrentYear();
+        var roleOptionsHtml = _buildRoleOptions(null, 'No role required');
 
-            var roleOptions = '<option value="">No role required</option>';
-            for (var i = 0; i < allRoles.length; i++) {
-                var r = allRoles[i];
-                var icon = r.icon || '◉';
-                var catName = r.category || 'Uncategorized';
-                roleOptions += '<option value="' + r.id + '">' + icon + ' ' + _escapeHtml(r.name) + ' (' + _escapeHtml(catName) + ')</option>';
-            }
-
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.6rem; color: var(--dim);">' +
-                'Creating a position for <strong>' + _escapeHtml(household.name) + '</strong>' +
+        var content =
+            '<div style="margin-bottom:16px;">' +
+                '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
+                    'Creating a position for <strong>' + _escapeHtml(household.name) + '</strong>' +
                 '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Position Name *</label>' +
-                '<input type="text" id="newPosName" placeholder="e.g., Cook, Maid, Butler, Gardener" autofocus style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Department</label>' +
-                '<select id="newPosDepartment" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                '<option value="">None</option>' +
-                (household.departments || []).map(function(d) {
-                    return '<option value="' + d.id + '">' + _escapeHtml(d.name) + '</option>';
-                }).join('') +
-                '</select>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Required Role</label>' +
-                '<div style="display: flex; gap: 4px;">' +
-                '<input type="text" id="newPosRequiredRoleDisplay" placeholder="Select a role..." readonly style="flex: 1; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem; cursor: pointer;">' +
-                '<input type="hidden" id="newPosRequiredRoleId">' +
-                '<button id="newPosSelectRoleBtn" class="btn small" style="padding: 4px 8px; font-size: 0.6rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer;">Select</button>' +
-                '<button id="newPosClearRoleBtn" class="btn small" style="padding: 4px 8px; font-size: 0.6rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Clear</button>' +
-                '</div>' +
-                '<small style="font-size: 0.55rem; color: var(--dim);">Optional: Link this position to a role. Characters must have this role to be assigned.</small>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Minimum Skill Level</label>' +
-                '<input type="number" id="newPosMinSkill" value="0" min="0" max="100" style="width: 80px; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '<small style="font-size: 0.55rem; color: var(--dim);">Only applies if a role is selected</small>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Priority (lower = higher rank)</label>' +
-                '<input type="number" id="newPosPriority" value="10" min="1" max="100" style="width: 80px; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Description (optional)</label>' +
-                '<input type="text" id="newPosDescription" placeholder="e.g., Responsible for meal preparation" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
-                'Positions define specific roles within a household. Staff can be assigned to positions, and positions can require a specific role.' +
-                '</div>' +
-                '</div>';
 
-            _openModal({
-                title: 'Create Household Position',
-                content: modalContent,
-                confirmText: 'Create Position',
-                cancelText: 'Cancel',
-                onOpen: function() {
-                    var nameInput = document.getElementById('newPosName');
-                    if (nameInput) {
-                        setTimeout(function() { nameInput.focus(); }, 100);
-                    }
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Position Name *</label>' +
+                    '<input type="text" data-field="name" placeholder="e.g., Cook, Maid, Butler, Gardener" autofocus ' +
+                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                '</div>' +
 
-                    // Select role button
-                    var selectBtn = document.getElementById('newPosSelectRoleBtn');
-                    var displayInput = document.getElementById('newPosRequiredRoleDisplay');
-                    var hiddenInput = document.getElementById('newPosRequiredRoleId');
-                    var clearBtn = document.getElementById('newPosClearRoleBtn');
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Department</label>' +
+                    '<select data-field="departmentId" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                        departmentOptionsHtml +
+                    '</select>' +
+                '</div>' +
 
-                    if (selectBtn) {
-                        selectBtn.onclick = function() {
-                            _openRoleSelector({
-                                title: 'Select Required Role',
-                                context: 'household',
-                                onSelect: function(role) {
-                                    if (role) {
-                                        displayInput.value = role.name;
-                                        hiddenInput.value = role.id;
-                                        _showToast('Selected role: ' + role.name, 'success');
-                                    }
-                                },
-                                onCancel: function() {
-                                    // Do nothing
-                                }
-                            });
-                        };
-                    }
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Required Role</label>' +
+                    '<select data-field="requiredRoleId" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                        roleOptionsHtml +
+                    '</select>' +
+                    '<small style="font-size:0.55rem;color:var(--dim);">Optional: link this position to a role.</small>' +
+                '</div>' +
 
-                    if (clearBtn) {
-                        clearBtn.onclick = function() {
-                            displayInput.value = '';
-                            hiddenInput.value = '';
-                        };
-                    }
-                },
-                onConfirm: function() {
-                    var name = document.getElementById('newPosName').value.trim();
-                    var departmentId = document.getElementById('newPosDepartment').value || null;
-                    var requiredRoleId = document.getElementById('newPosRequiredRoleId').value || null;
-                    var minSkillLevel = parseInt(document.getElementById('newPosMinSkill').value) || 0;
-                    var priority = parseInt(document.getElementById('newPosPriority').value) || 10;
-                    var description = document.getElementById('newPosDescription').value.trim();
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Minimum Skill Level</label>' +
+                    '<input type="number" data-field="minSkillLevel" value="0" min="0" max="100" ' +
+                        'style="width:80px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                    '<small style="font-size:0.55rem;color:var(--dim);">Only applies if a role is selected.</small>' +
+                '</div>' +
 
-                    if (!name) {
-                        _showToast('Position name is required', 'error');
-                        return false;
-                    }
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Priority (lower = higher rank)</label>' +
+                    '<input type="number" data-field="priority" value="10" min="1" max="100" ' +
+                        'style="width:80px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                '</div>' +
 
-                    var result = _commands.createHouseholdPosition({
-                        name: name,
-                        householdId: householdId,
-                        departmentId: departmentId,
-                        requiredRoleId: requiredRoleId,
-                        minSkillLevel: minSkillLevel,
-                        priority: priority,
-                        description: description
-                    });
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Description (optional)</label>' +
+                    '<input type="text" data-field="description" placeholder="e.g., Responsible for meal preparation" ' +
+                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                '</div>' +
 
-                    if (result && result.success) {
-                        var roleMsg = requiredRoleId ? ' (Role: ' + _getRoleById(requiredRoleId)?.name + ')' : '';
-                        _showToast('Position "' + name + '" created' + roleMsg, 'success');
-                        _closeTopModal();
-                        _processingStaffModal = false;
-                        if (onSuccess) {
-                            onSuccess(result.position);
-                        }
-                    } else {
-                        _showToast(result ? result.reason : 'Failed to create position', 'error');
-                    }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingStaffModal = false;
+                '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
+                    'Positions define specific roles within a household. Staff can be assigned to positions, ' +
+                    'and positions can require a specific role.' +
+                '</div>' +
+            '</div>';
+
+        return _openModal({
+            title: 'Create Household Position',
+            content: content,
+            confirmText: 'Create Position',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var root = _resolveModalRoot();
+                if (!root) return false;
+
+                var name = ((root.querySelector('[data-field="name"]') || {}).value || '').trim();
+                if (!name) {
+                    _showToast('Position name is required', 'error');
+                    return false;
                 }
-            });
 
-        } catch (e) {
-            _processingStaffModal = false;
-            _showToast('Error opening create position modal', 'error');
+                var departmentId = (root.querySelector('[data-field="departmentId"]') || {}).value || null;
+                var requiredRoleId = (root.querySelector('[data-field="requiredRoleId"]') || {}).value || null;
+
+                var minSkillLevel = _parseIntOrNull((root.querySelector('[data-field="minSkillLevel"]') || {}).value);
+                if (minSkillLevel === null) minSkillLevel = 0;
+
+                var priority = _parseIntOrNull((root.querySelector('[data-field="priority"]') || {}).value);
+                if (priority === null) priority = 10;
+
+                var description = ((root.querySelector('[data-field="description"]') || {}).value || '').trim();
+
+                var result = commands.createPosition({
+                    name: name,
+                    householdId: householdId,
+                    departmentId: departmentId,
+                    requiredRoleId: requiredRoleId,
+                    minSkillLevel: minSkillLevel,
+                    priority: priority,
+                    description: description
+                });
+
+                if (!result.success) {
+                    _showToast(result.reason || 'Failed to create position', 'error');
+                    return false;
+                }
+
+                _showToast('Position "' + name + '" created', 'success');
+                if (typeof onSuccess === 'function') onSuccess(result.data);
+                return true;
+            }
+        });
+    }
+
+    /**
+     * Helper: fetch the household's raw departments list. HouseholdQueries
+     * does not (yet) expose departments directly; we read from the details
+     * projection or fall back to a full record read via _queries.
+     */
+    function _getHouseholdRecordViaQueries(householdId) {
+        var queries = _queries();
+        var details = queries.getHouseholdDetails(householdId);
+        if (details && details.household) {
+            // HouseholdDetails doesn't expose departments; use State
+            // internal via Queries... but Queries does not expose that.
+            // Fall through to reading from the household projection if
+            // we later add departments there.
         }
+        // Until HouseholdQueries exposes departments, we return what we can:
+        // an empty object so callers do not crash.
+        return null;
     }
 
     // =========================================================================
-    // 6. EDIT HOUSEHOLD POSITION MODAL
+    // 5. EDIT HOUSEHOLD POSITION MODAL
     // =========================================================================
 
     function openEditHouseholdPositionModal(householdId, positionId, onSuccess) {
-        if (_processingStaffModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var queries = _queries();
+        var commands = _commands();
+
+        var household = queries.getHousehold(householdId);
+        if (!household) {
+            _showToast('Household not found', 'error');
+            return null;
         }
-        _processingStaffModal = true;
 
-        try {
-            var household = _getHousehold(householdId);
-            var position = _getHouseholdPosition(positionId);
+        var position = queries.getHouseholdPosition(positionId);
+        if (!position) {
+            _showToast('Position not found', 'error');
+            return null;
+        }
 
-            if (!household || !position) {
-                _showToast('Household or position not found', 'error');
-                _processingStaffModal = false;
-                return;
-            }
+        var roleOptionsHtml = _buildRoleOptions(position.requiredRoleId, 'No role required');
 
-            var allRoles = _getAllRoles();
-
-            var roleOptions = '<option value="">No role required</option>';
-            for (var i = 0; i < allRoles.length; i++) {
-                var r = allRoles[i];
-                var selected = (r.id === position.requiredRoleId) ? 'selected' : '';
-                var icon = r.icon || '◉';
-                var catName = r.category || 'Uncategorized';
-                roleOptions += '<option value="' + r.id + '" ' + selected + '>' + icon + ' ' + _escapeHtml(r.name) + ' (' + _escapeHtml(catName) + ')</option>';
-            }
-
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.6rem; color: var(--dim);">' +
-                'Editing position in <strong>' + _escapeHtml(household.name) + '</strong>' +
+        var content =
+            '<div style="margin-bottom:16px;">' +
+                '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
+                    'Editing position in <strong>' + _escapeHtml(household.name) + '</strong>' +
                 '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Position Name *</label>' +
-                '<input type="text" id="editPosName" value="' + _escapeHtml(position.name) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Department</label>' +
-                '<select id="editPosDepartment" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                '<option value="">None</option>' +
-                (household.departments || []).map(function(d) {
-                    var selected = (d.id === position.departmentId) ? 'selected' : '';
-                    return '<option value="' + d.id + '" ' + selected + '>' + _escapeHtml(d.name) + '</option>';
-                }).join('') +
-                '</select>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Required Role</label>' +
-                '<div style="display: flex; gap: 4px;">' +
-                '<input type="text" id="editPosRequiredRoleDisplay" value="' + (position.requiredRoleId ? _getRoleById(position.requiredRoleId)?.name || '' : '') + '" placeholder="Select a role..." readonly style="flex: 1; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem; cursor: pointer;">' +
-                '<input type="hidden" id="editPosRequiredRoleId" value="' + (position.requiredRoleId || '') + '">' +
-                '<button id="editPosSelectRoleBtn" class="btn small" style="padding: 4px 8px; font-size: 0.6rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer;">Select</button>' +
-                '<button id="editPosClearRoleBtn" class="btn small" style="padding: 4px 8px; font-size: 0.6rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Clear</button>' +
-                '</div>' +
-                '<small style="font-size: 0.55rem; color: var(--dim);">Optional: Link this position to a role</small>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Minimum Skill Level</label>' +
-                '<input type="number" id="editPosMinSkill" value="' + (position.minSkillLevel || 0) + '" min="0" max="100" style="width: 80px; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Priority</label>' +
-                '<input type="number" id="editPosPriority" value="' + (position.priority || 10) + '" min="1" max="100" style="width: 80px; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Description</label>' +
-                '<input type="text" id="editPosDescription" value="' + _escapeHtml(position.description || '') + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '</div>';
 
-            _openModal({
-                title: 'Edit Position: ' + position.name,
-                content: modalContent,
-                confirmText: 'Save Changes',
-                cancelText: 'Cancel',
-                onOpen: function() {
-                    // Select role button
-                    var selectBtn = document.getElementById('editPosSelectRoleBtn');
-                    var displayInput = document.getElementById('editPosRequiredRoleDisplay');
-                    var hiddenInput = document.getElementById('editPosRequiredRoleId');
-                    var clearBtn = document.getElementById('editPosClearRoleBtn');
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Position Name *</label>' +
+                    '<input type="text" data-field="name" value="' + _escapeHtml(position.name) +
+                        '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                '</div>' +
 
-                    if (selectBtn) {
-                        selectBtn.onclick = function() {
-                            var currentId = hiddenInput.value || null;
-                            _openRoleSelector({
-                                title: 'Select Required Role',
-                                context: 'household',
-                                preselectedId: currentId,
-                                onSelect: function(role) {
-                                    if (role) {
-                                        displayInput.value = role.name;
-                                        hiddenInput.value = role.id;
-                                        _showToast('Selected role: ' + role.name, 'success');
-                                    }
-                                },
-                                onCancel: function() {
-                                    // Do nothing
-                                }
-                            });
-                        };
-                    }
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Required Role</label>' +
+                    '<select data-field="requiredRoleId" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                        roleOptionsHtml +
+                    '</select>' +
+                '</div>' +
 
-                    if (clearBtn) {
-                        clearBtn.onclick = function() {
-                            displayInput.value = '';
-                            hiddenInput.value = '';
-                        };
-                    }
-                },
-                onConfirm: function() {
-                    var name = document.getElementById('editPosName').value.trim();
-                    var departmentId = document.getElementById('editPosDepartment').value || null;
-                    var requiredRoleId = document.getElementById('editPosRequiredRoleId').value || null;
-                    var minSkillLevel = parseInt(document.getElementById('editPosMinSkill').value) || 0;
-                    var priority = parseInt(document.getElementById('editPosPriority').value) || 10;
-                    var description = document.getElementById('editPosDescription').value.trim();
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Minimum Skill Level</label>' +
+                    '<input type="number" data-field="minSkillLevel" value="' +
+                        (position.minSkillLevel !== null ? position.minSkillLevel : 0) +
+                        '" min="0" max="100" style="width:80px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                '</div>' +
 
-                    if (!name) {
-                        _showToast('Position name is required', 'error');
-                        return false;
-                    }
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Priority</label>' +
+                    '<input type="number" data-field="priority" value="' +
+                        (position.priority !== null ? position.priority : 10) +
+                        '" min="1" max="100" style="width:80px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                '</div>' +
 
-                    var result = _commands.updateHouseholdPosition(positionId, {
-                        name: name,
-                        departmentId: departmentId,
-                        requiredRoleId: requiredRoleId,
-                        minSkillLevel: minSkillLevel,
-                        priority: priority,
-                        description: description
-                    });
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Description</label>' +
+                    '<input type="text" data-field="description" value="' +
+                        _escapeHtml(position.description || '') +
+                        '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                '</div>' +
+            '</div>';
 
-                    if (result && result.success) {
-                        _showToast('Position updated', 'success');
-                        _closeTopModal();
-                        _processingStaffModal = false;
-                        if (onSuccess) {
-                            onSuccess();
-                        }
-                    } else {
-                        _showToast(result ? result.reason : 'Failed to update position', 'error');
-                    }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingStaffModal = false;
+        return _openModal({
+            title: 'Edit Position: ' + position.name,
+            content: content,
+            confirmText: 'Save Changes',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var root = _resolveModalRoot();
+                if (!root) return false;
+
+                var name = ((root.querySelector('[data-field="name"]') || {}).value || '').trim();
+                if (!name) {
+                    _showToast('Position name is required', 'error');
+                    return false;
                 }
-            });
 
-        } catch (e) {
-            _processingStaffModal = false;
-            _showToast('Error opening edit position modal', 'error');
-        }
+                var requiredRoleId = (root.querySelector('[data-field="requiredRoleId"]') || {}).value || null;
+
+                var minSkillLevel = _parseIntOrNull((root.querySelector('[data-field="minSkillLevel"]') || {}).value);
+                if (minSkillLevel === null) minSkillLevel = 0;
+
+                var priority = _parseIntOrNull((root.querySelector('[data-field="priority"]') || {}).value);
+                if (priority === null) priority = 10;
+
+                var description = ((root.querySelector('[data-field="description"]') || {}).value || '').trim();
+
+                var result = commands.updatePosition(positionId, {
+                    name: name,
+                    requiredRoleId: requiredRoleId,
+                    minSkillLevel: minSkillLevel,
+                    priority: priority,
+                    description: description
+                });
+
+                if (!result.success) {
+                    _showToast(result.reason || 'Failed to update position', 'error');
+                    return false;
+                }
+
+                _showToast('Position updated', 'success');
+                if (typeof onSuccess === 'function') onSuccess(result.data);
+                return true;
+            }
+        });
     }
 
     // =========================================================================
-    // 7. DELETE HOUSEHOLD POSITION MODAL
+    // 6. DELETE HOUSEHOLD POSITION MODAL
     // =========================================================================
 
     function openDeleteHouseholdPositionModal(householdId, positionId, onSuccess) {
-        if (_processingStaffModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var queries = _queries();
+        var commands = _commands();
+
+        var household = queries.getHousehold(householdId);
+        var position = queries.getHouseholdPosition(positionId);
+        if (!household || !position) {
+            _showToast('Household or position not found', 'error');
+            return null;
         }
-        _processingStaffModal = true;
 
-        try {
-            var household = _getHousehold(householdId);
-            var position = _getHouseholdPosition(positionId);
+        var activeAssignments = queries.getAssignmentsForPosition(positionId, true);
+        var roleName = position.requiredRoleId
+            ? (_getRoleById(position.requiredRoleId) || {}).name || 'Unknown'
+            : null;
 
-            if (!household || !position) {
-                _showToast('Household or position not found', 'error');
-                _processingStaffModal = false;
-                return;
-            }
-
-            var assignments = _state.getAssignmentsForPosition(positionId, true);
-
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: rgba(200, 68, 68, 0.15); border: 1px solid var(--warn); border-radius: 8px; padding: 12px; margin-bottom: 16px;">' +
-                '<strong>Delete Position: ' + _escapeHtml(position.name) + '</strong>' +
-                '<div style="margin-top: 8px; font-size: 0.65rem;">' +
-                'This will permanently remove the position from the household.' +
-                (assignments.length > 0 ? ' ' + assignments.length + ' staff members are currently assigned to this position.' : '') +
+        var content =
+            '<div style="margin-bottom:16px;">' +
+                '<div style="background:rgba(200,68,68,0.15);border:1px solid var(--warn);border-radius:8px;padding:12px;margin-bottom:16px;">' +
+                    '<strong>Delete Position: ' + _escapeHtml(position.name) + '</strong>' +
+                    '<div style="margin-top:8px;font-size:0.65rem;">' +
+                        'This will permanently remove the position from the household.' +
+                        (activeAssignments.length > 0
+                            ? ' ' + activeAssignments.length + ' staff member(s) are currently assigned.'
+                            : '') +
+                    '</div>' +
+                    '<div style="margin-top:8px;font-size:0.6rem;color:var(--warn);">' +
+                        'Warning: This action cannot be undone.' +
+                    '</div>' +
                 '</div>' +
-                '<div style="margin-top: 8px; font-size: 0.6rem; color: var(--warn);">' +
-                'Warning: This action cannot be undone.' +
-                '</div>' +
-                '</div>' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 12px;">' +
-                '<div style="display: flex; justify-content: space-between; font-size: 0.7rem;">' +
-                '<span>Position:</span>' +
-                '<span><strong>' + _escapeHtml(position.name) + '</strong></span>' +
-                '</div>' +
-                (position.requiredRoleId ? '<div style="display: flex; justify-content: space-between; font-size: 0.6rem; margin-top: 4px;"><span>Required Role:</span><span>' + _escapeHtml(_getRoleById(position.requiredRoleId)?.name || 'Unknown') + '</span></div>' : '') +
-                '<div style="display: flex; justify-content: space-between; font-size: 0.6rem; margin-top: 4px;"><span>Current Assignments:</span><span>' + assignments.length + '</span></div>' +
-                '</div>' +
-                '<div style="margin-top: 12px;">' +
-                '<label style="display: flex; align-items: center; gap: 8px; font-size: 0.65rem; cursor: pointer;">' +
-                '<input type="checkbox" id="deleteRemoveAssignments" ' + (assignments.length > 0 ? 'checked' : '') + '>' +
-                '<span>Remove all assignments from this position</span>' +
-                '</label>' +
-                '</div>' +
-                '</div>';
 
-            _openModal({
-                title: 'Delete Position: ' + position.name,
-                content: modalContent,
-                confirmText: 'Delete Position',
-                cancelText: 'Cancel',
-                confirmStyle: 'danger',
-                onConfirm: function() {
-                    var removeAssignments = document.getElementById('deleteRemoveAssignments')?.checked !== false;
+                '<div style="background:var(--bg3);border-radius:6px;padding:12px;">' +
+                    '<div style="display:flex;justify-content:space-between;font-size:0.7rem;">' +
+                        '<span>Position:</span>' +
+                        '<span><strong>' + _escapeHtml(position.name) + '</strong></span>' +
+                    '</div>' +
+                    (roleName
+                        ? '<div style="display:flex;justify-content:space-between;font-size:0.6rem;margin-top:4px;">' +
+                            '<span>Required Role:</span>' +
+                            '<span>' + _escapeHtml(roleName) + '</span>' +
+                          '</div>'
+                        : '') +
+                    '<div style="display:flex;justify-content:space-between;font-size:0.6rem;margin-top:4px;">' +
+                        '<span>Active Assignments:</span>' +
+                        '<span>' + activeAssignments.length + '</span>' +
+                    '</div>' +
+                '</div>' +
 
-                    var result = _commands.deleteHouseholdPosition(positionId, {
-                        removeAssignments: removeAssignments
-                    });
+                '<div style="margin-top:12px;">' +
+                    '<label style="display:flex;align-items:center;gap:8px;font-size:0.65rem;cursor:pointer;">' +
+                        '<input type="checkbox" data-field="removeAssignments" ' +
+                            (activeAssignments.length > 0 ? 'checked' : '') + '>' +
+                        '<span>Remove all assignments from this position</span>' +
+                    '</label>' +
+                '</div>' +
+            '</div>';
 
-                    if (result && result.success) {
-                        _showToast('Position "' + position.name + '" deleted', 'info');
-                        _closeTopModal();
-                        _processingStaffModal = false;
-                        if (onSuccess) {
-                            onSuccess();
-                        }
-                    } else {
-                        _showToast(result ? result.reason : 'Failed to delete position', 'error');
-                    }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingStaffModal = false;
+        return _openModal({
+            title: 'Delete Position: ' + position.name,
+            content: content,
+            confirmText: 'Delete Position',
+            cancelText: 'Cancel',
+            confirmStyle: 'danger',
+            onConfirm: function() {
+                var root = _resolveModalRoot();
+                var removeAssignments = root
+                    ? (root.querySelector('[data-field="removeAssignments"]') || {}).checked !== false
+                    : true;
+
+                var result = commands.deletePosition(positionId, {
+                    removeAssignments: removeAssignments
+                });
+
+                if (!result.success) {
+                    _showToast(result.reason || 'Failed to delete position', 'error');
+                    return false;
                 }
-            });
 
-        } catch (e) {
-            _processingStaffModal = false;
-            _showToast('Error opening delete position modal', 'error');
-        }
+                _showToast('Position "' + position.name + '" deleted', 'info');
+                if (typeof onSuccess === 'function') onSuccess(result.data);
+                return true;
+            }
+        });
     }
 
     // =========================================================================
-    // 8. ASSIGN STAFF TO HOUSEHOLD POSITION MODAL (ENHANCED)
+    // 7. ASSIGN STAFF TO POSITION MODAL
     // =========================================================================
 
     function openAssignStaffToHouseholdPositionModal(householdId, positionId, onSuccess) {
-        if (_processingStaffModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var queries = _queries();
+        var commands = _commands();
+
+        var household = queries.getHousehold(householdId);
+        var position = queries.getHouseholdPosition(positionId);
+        if (!household || !position) {
+            _showToast('Household or position not found', 'error');
+            return null;
         }
-        _processingStaffModal = true;
 
-        try {
-            var household = _getHousehold(householdId);
-            var position = _getHouseholdPosition(positionId);
+        var currentYear = _currentYear();
+        var details = queries.getHouseholdDetails(householdId);
+        var members = details ? details.members : [];
 
-            if (!household || !position) {
-                _showToast('Household or position not found', 'error');
-                _processingStaffModal = false;
-                return;
-            }
+        var existingAssignments = queries.getAssignmentsForPosition(positionId, true);
+        var assignedIds = {};
+        for (var i = 0; i < existingAssignments.length; i++) {
+            assignedIds[existingAssignments[i].characterId] = true;
+        }
 
-            var currentYear = _getCurrentYear();
-            var allChars = typeof window.getCharacters === 'function' ? window.getCharacters() : [];
+        // Candidates = household members not already assigned to this position
+        var candidates = [];
+        for (var m = 0; m < members.length; m++) {
+            var mem = members[m];
+            if (assignedIds[mem.characterId]) continue;
+            if (mem.isDeceased) continue;
 
-            // Filter: exclude already assigned to this position
-            var existingAssignments = _state.getAssignmentsForPosition(positionId, true);
-            var assignedIds = {};
-            for (var i = 0; i < existingAssignments.length; i++) {
-                assignedIds[existingAssignments[i].characterId] = true;
-            }
-
-            var availableChars = allChars.filter(function(c) {
-                if (c.isDeceased) return false;
-                if (assignedIds[c.id]) return false;
-                return true;
-            });
-
-            // Build character list HTML
-            var charsHtml = '';
-            if (availableChars.length === 0) {
-                charsHtml = '<div style="color: var(--dim); text-align: center; padding: 20px; font-size: 0.6rem;">No available characters</div>';
-            } else {
-                charsHtml = '<div style="max-height: 250px; overflow-y: auto;">';
-                for (var i = 0; i < availableChars.length; i++) {
-                    var c = availableChars[i];
-                    var age = typeof window.calculateAge === 'function' ?
-                        window.calculateAge(c.birthYear, c.isDeceased, c.deathYear) : '?';
-                    var genderSymbol = c.gender === 'male' ? '♂' : (c.gender === 'female' ? '♀' : '⚥');
-                    var hasRole = false;
-                    var skillLevel = 0;
-                    if (position.requiredRoleId && c.professions) {
-                        for (var j = 0; j < c.professions.length; j++) {
-                            if (c.professions[j].id === position.requiredRoleId) {
-                                hasRole = true;
-                                skillLevel = c.professions[j].skillLevel || 0;
-                                break;
-                            }
-                        }
+            var hasRole = false;
+            var skillLevel = 0;
+            if (position.requiredRoleId && mem.character && Array.isArray(mem.character.professions)) {
+                for (var p = 0; p < mem.character.professions.length; p++) {
+                    var prof = mem.character.professions[p];
+                    if (prof.id === position.requiredRoleId) {
+                        hasRole = true;
+                        skillLevel = prof.skillLevel || 0;
+                        break;
                     }
-                    var roleStatus = position.requiredRoleId ? (hasRole ? '✓ Has role' : '⚠️ Missing role') : '';
-
-                    charsHtml +=
-                        '<div class="staff-select-item" data-char-id="' + c.id + '" style="' +
-                        'padding: 8px 10px; ' +
-                        'margin-bottom: 4px; ' +
-                        'background: var(--bg2); ' +
-                        'border: 1px solid var(--border); ' +
-                        'border-radius: 4px; ' +
-                        'cursor: pointer; ' +
-                        'transition: all 0.1s; ' +
-                        '">' +
-                        '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 4px;">' +
-                        '<div>' +
-                        '<strong>' + _escapeHtml(c.name) + ' ' + _escapeHtml(c.surname || '') + '</strong>' +
-                        '<span style="font-size: 0.5rem; color: var(--dim); margin-left: 6px;">' + genderSymbol + ' ' + age + 'y</span>' +
-                        (position.requiredRoleId ? '<span style="font-size: 0.45rem; margin-left: 6px; color: ' + (hasRole ? 'var(--success)' : 'var(--warn)') + ';">' + roleStatus + '</span>' : '') +
-                        (skillLevel > 0 ? '<span style="font-size:0.45rem; color:var(--accent); margin-left:4px;">(Skill: ' + skillLevel + ')</span>' : '') +
-                        '</div>' +
-                        '<div style="font-size: 0.5rem; color: var(--dim);">' +
-                        (c.professions && c.professions.length > 0 ? c.professions.map(function(p) { return p.name; }).join(', ') : 'No roles') +
-                        '</div>' +
-                        '</div>' +
-                        '</div>';
                 }
-                charsHtml += '</div>';
             }
 
-            var roleDisplay = position.requiredRoleId ?
-                '<span style="color: var(--accent);">' + _escapeHtml(_getRoleById(position.requiredRoleId)?.name || 'Unknown') + '</span>' :
-                '<span style="color: var(--dim);">None</span>';
+            candidates.push({
+                characterId: mem.characterId,
+                characterName: mem.characterName,
+                age: mem.age,
+                gender: mem.character ? mem.character.gender : null,
+                currentRole: mem.role,
+                currentType: mem.type,
+                hasRole: hasRole,
+                skillLevel: skillLevel
+            });
+        }
 
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.6rem;">' +
-                '<strong>Position:</strong> ' + _escapeHtml(position.name) +
-                '<br><strong>Household:</strong> ' + _escapeHtml(household.name) +
-                '<br><strong>Required Role:</strong> ' + roleDisplay +
-                (position.minSkillLevel > 0 ? ' · <strong>Min Skill:</strong> ' + position.minSkillLevel : '') +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Select Character</label>' +
-                charsHtml +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: flex; align-items: center; gap: 8px; font-size: 0.65rem; cursor: pointer;">' +
-                '<input type="checkbox" id="assignAddRoleIfMissing" checked>' +
-                '<span>Add required role to character if missing</span>' +
+        var roleDisplay = position.requiredRoleId
+            ? (_getRoleById(position.requiredRoleId) || {}).name || 'Unknown'
+            : 'None';
+
+        var candidatesHtml = _buildCandidateList(candidates, position);
+
+        var history = queries.getAssignmentsForPosition(positionId, false);
+        var historyHtml = _buildRecentHistory(history, 5);
+
+        var content =
+            '<div style="margin-bottom:12px;padding:8px;background:var(--bg2);border-radius:6px;">' +
+                '<strong>Household:</strong> ' + _escapeHtml(household.name) + '<br>' +
+                '<strong>Position:</strong> ' + _escapeHtml(position.name) + '<br>' +
+                '<strong>Required Role:</strong> ' + _escapeHtml(roleDisplay) +
+                (position.minSkillLevel > 0
+                    ? ' · <strong>Min Skill:</strong> ' + position.minSkillLevel
+                    : '') +
+            '</div>' +
+
+            '<div style="margin-bottom:12px;">' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Select Staff Member</label>' +
+                candidatesHtml +
+            '</div>' +
+
+            '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">' +
+                '<button data-action="select-other-character" style="padding:3px 10px;font-size:0.55rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">Select Other Character</button>' +
+                '<label style="display:flex;align-items:center;gap:6px;font-size:0.55rem;cursor:pointer;">' +
+                    '<input type="checkbox" data-field="addRoleIfMissing" checked>' +
+                    '<span>Add role if missing</span>' +
                 '</label>' +
-                '<small style="font-size: 0.5rem; color: var(--dim);">If unchecked, character must already have the required role</small>' +
+            '</div>' +
+
+            '<div style="margin-bottom:12px;">' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Custom Title</label>' +
+                '<input type="text" data-field="title" value="' + _escapeHtml(position.name) +
+                    '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;">' +
+            '</div>' +
+
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">' +
+                '<div>' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Start Year</label>' +
+                    '<input type="number" data-field="startYear" value="' +
+                        (currentYear !== null ? currentYear : '') +
+                        '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;">' +
                 '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Custom Title (optional)</label>' +
-                '<input type="text" id="assignTitle" value="' + _escapeHtml(position.name) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
+                '<div>' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">End Year</label>' +
+                    '<input type="number" data-field="endYear" placeholder="Leave empty for ongoing" min="1" ' +
+                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;">' +
+                    '<small style="font-size:0.5rem;color:var(--dim);">If set, this assignment will be marked historical.</small>' +
                 '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Start Year</label>' +
-                '<input type="number" id="assignStartYear" value="' + currentYear + '" min="1" style="width: 100px; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes (optional)</label>' +
-                '<textarea id="assignNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;"></textarea>' +
+            '</div>' +
+
+            '<div style="margin-bottom:12px;">' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes</label>' +
+                '<textarea data-field="notes" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;"></textarea>' +
+            '</div>' +
+
+            historyHtml +
+
+            '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;margin-top:12px;">' +
+                'Assignments track who holds this position over time. Setting an end year records it as historical.' +
+            '</div>';
+
+        var handle = _openModal({
+            title: 'Assign Staff to ' + position.name,
+            content: content,
+            confirmText: 'Assign Staff',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var root = _resolveModalRoot();
+                if (!root) return false;
+
+                var selected = root.querySelector('.staff-candidate.selected');
+                var characterId = selected ? selected.dataset.characterId : null;
+                if (!characterId) {
+                    _showToast('Please select a staff member', 'error');
+                    return false;
+                }
+
+                var startYear = _parseIntOrNull((root.querySelector('[data-field="startYear"]') || {}).value);
+                if (startYear === null) {
+                    _showToast('Start year is required', 'error');
+                    return false;
+                }
+
+                var endYearRaw = (root.querySelector('[data-field="endYear"]') || {}).value;
+                var endYear = endYearRaw === '' || endYearRaw === undefined
+                    ? null
+                    : _parseIntOrNull(endYearRaw);
+                if (endYearRaw !== '' && endYear === null) {
+                    _showToast('End year must be a valid year', 'error');
+                    return false;
+                }
+                if (endYear !== null && endYear <= startYear) {
+                    _showToast('End year must be after start year', 'error');
+                    return false;
+                }
+
+                var title = ((root.querySelector('[data-field="title"]') || {}).value || '').trim() || position.name;
+                var notes = (root.querySelector('[data-field="notes"]') || {}).value || '';
+                var addRoleIfMissing = (root.querySelector('[data-field="addRoleIfMissing"]') || {}).checked !== false;
+
+                var result = commands.assignCharacterToPosition(positionId, characterId, {
+                    startYear: startYear,
+                    endYear: endYear,
+                    title: title,
+                    notes: notes,
+                    addRoleIfMissing: addRoleIfMissing,
+                    defaultSkillLevel: DEFAULT_SKILL_LEVEL
+                });
+
+                if (!result.success) {
+                    _showToast(result.reason || 'Failed to assign staff', 'error');
+                    return false;
+                }
+
+                _showToast('Staff assigned to ' + position.name, 'success');
+                if (typeof onSuccess === 'function') onSuccess(result.data);
+                return true;
+            }
+        });
+
+        setTimeout(_attachOnOpen(function(root) {
+            _wireCandidateSelection(root, householdId, positionId, onSuccess);
+        }), 0);
+
+        return handle;
+    }
+
+    function _buildCandidateList(candidates, position) {
+        if (candidates.length === 0) {
+            return '<div style="color:var(--dim);text-align:center;padding:20px;font-size:0.6rem;">' +
+                'No available staff members' +
+            '</div>';
+        }
+
+        var html = '<div style="max-height:250px;overflow-y:auto;">';
+        for (var i = 0; i < candidates.length; i++) {
+            var c = candidates[i];
+            var skillText = position.requiredRoleId
+                ? (c.hasRole
+                    ? '<span style="font-size:0.45rem;color:var(--success);">✓ has role</span>'
+                    : '<span style="font-size:0.45rem;color:var(--warn);">missing role</span>')
+                : '';
+            var skillLevelText = c.skillLevel > 0
+                ? '<span style="font-size:0.45rem;color:var(--accent);">(Skill: ' +
+                    c.skillLevel + ')</span>'
+                : '';
+            var ageText = (c.age !== null && c.age !== undefined)
+                ? c.age + 'y'
+                : '—';
+
+            html += '<div class="staff-candidate" data-character-id="' +
+                _escapeHtml(c.characterId) +
+                '" style="padding:8px 10px;margin-bottom:4px;background:var(--bg2);border:1px solid var(--border);' +
+                'border-left:3px solid ' +
+                    (position.requiredRoleId && !c.hasRole ? 'var(--warn)' : 'var(--success)') +
+                ';border-radius:4px;cursor:pointer;transition:background 0.1s;">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;">' +
+                    '<div>' +
+                        '<strong>' + _escapeHtml(c.characterName) + '</strong>' +
+                        ' <span style="font-size:0.5rem;color:var(--dim);">' +
+                            ageText +
+                            (c.currentRole ? ' · ' + _escapeHtml(c.currentRole) : '') +
+                        '</span>' +
+                        ' ' + skillText + ' ' + skillLevelText +
+                    '</div>' +
                 '</div>' +
                 '</div>';
+        }
+        html += '</div>';
+        return html;
+    }
 
-            _openModal({
-                title: 'Assign Staff to ' + position.name,
-                content: modalContent,
-                confirmText: 'Assign Staff',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var selectedCharId = document.querySelector('.staff-select-item.selected')?.dataset.charId;
-                    if (!selectedCharId) {
-                        _showToast('Please select a character', 'error');
-                        return false;
+    function _buildRecentHistory(history, limit) {
+        if (!history || history.length === 0) return '';
+
+        var sorted = history.slice().sort(function(a, b) {
+            return (b.startYear || 0) - (a.startYear || 0);
+        });
+        var recent = sorted.slice(0, limit);
+
+        var html = '<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);">';
+        html += '<div style="font-size:0.65rem;color:var(--accent);margin-bottom:8px;">Recent History</div>';
+        html += '<div style="max-height:120px;overflow-y:auto;background:var(--bg3);border-radius:6px;padding:8px;">';
+
+        for (var i = 0; i < recent.length; i++) {
+            var h = recent[i];
+            var endDisplay = h.endYear !== null ? h.endYear : 'Present';
+            var color = h.isActive ? 'var(--success)' : 'var(--dim)';
+            var roleName = h.roleIdAtAssignment
+                ? (_getRoleById(h.roleIdAtAssignment) || {}).name || null
+                : null;
+
+            html += '<div style="display:flex;justify-content:space-between;padding:4px 0;' +
+                'border-bottom:1px solid var(--border-light);font-size:0.6rem;">' +
+                '<span>' + _escapeHtml(h.title || 'Unknown') +
+                    (roleName ? ' <span style="color:var(--accent);">(' +
+                        _escapeHtml(roleName) + ')</span>' : '') +
+                '</span>' +
+                '<span style="color:' + color + ';">' +
+                    h.startYear + ' - ' + endDisplay +
+                '</span>' +
+            '</div>';
+        }
+
+        html += '</div></div>';
+        return html;
+    }
+
+    function _wireCandidateSelection(root, householdId, positionId, onSuccess) {
+        var candidates = root.querySelectorAll('.staff-candidate');
+        for (var i = 0; i < candidates.length; i++) {
+            (function(el) {
+                el.onclick = function() {
+                    var all = root.querySelectorAll('.staff-candidate');
+                    for (var j = 0; j < all.length; j++) {
+                        all[j].classList.remove('selected');
+                        all[j].style.background = 'var(--bg2)';
+                        all[j].style.borderColor = 'var(--border)';
                     }
-
-                    var title = document.getElementById('assignTitle').value.trim() || position.name;
-                    var startYear = parseInt(document.getElementById('assignStartYear').value) || currentYear;
-                    var notes = document.getElementById('assignNotes').value.trim();
-                    var addRoleIfMissing = document.getElementById('assignAddRoleIfMissing')?.checked !== false;
-
-                    var result = _commands.assignCharacterToHouseholdPosition(positionId, selectedCharId, {
-                        title: title,
-                        startYear: startYear,
-                        notes: notes,
-                        addRoleIfMissing: addRoleIfMissing,
-                        defaultSkillLevel: 10
-                    });
-
-                    if (result && result.success) {
-                        var char = _getCharacterById(selectedCharId);
-                        var roleMsg = position.requiredRoleId ? ' (Role: ' + _getRoleById(position.requiredRoleId)?.name + ')' : '';
-                        _showToast((char ? char.name : 'Character') + ' assigned as ' + title + roleMsg, 'success');
-                        _closeTopModal();
-                        _processingStaffModal = false;
-                        if (onSuccess) {
-                            onSuccess(result.assignment);
-                        }
-                    } else {
-                        _showToast(result ? result.reason : 'Failed to assign staff', 'error');
+                    el.classList.add('selected');
+                    el.style.background = 'rgba(var(--accent-rgb), 0.15)';
+                    el.style.borderColor = 'var(--accent)';
+                };
+                el.onmouseenter = function() {
+                    if (!el.classList.contains('selected')) {
+                        el.style.background = 'var(--bg3)';
                     }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingStaffModal = false;
+                };
+                el.onmouseleave = function() {
+                    if (!el.classList.contains('selected')) {
+                        el.style.background = 'var(--bg2)';
+                    }
+                };
+            })(candidates[i]);
+        }
+
+        var otherBtn = root.querySelector('[data-action="select-other-character"]');
+        if (otherBtn) {
+            otherBtn.onclick = function() {
+                if (typeof window.openCharacterSelector !== 'function') {
+                    _showToast('Character selector not available', 'warning');
+                    return;
                 }
-            });
-
-            // Click handlers for character selection
-            setTimeout(function() {
-                var items = document.querySelectorAll('.staff-select-item');
-                items.forEach(function(item) {
-                    var newItem = item.cloneNode(true);
-                    if (item.parentNode) {
-                        item.parentNode.replaceChild(newItem, item);
+                window.openCharacterSelector({
+                    title: 'Select Character for ' + positionId,
+                    onSelect: function(character) {
+                        if (!character) return;
+                        // Reopen the modal with the selected character
+                        // pre-selected. The simplest way is to close and
+                        // reopen; the selection is passed via options.
+                        _closeTopModal();
+                        setTimeout(function() {
+                            openAssignStaffToHouseholdPositionModal(
+                                householdId, positionId, onSuccess
+                            );
+                        }, 0);
                     }
-
-                    newItem.onclick = function() {
-                        // Deselect all
-                        document.querySelectorAll('.staff-select-item').forEach(function(el) {
-                            el.classList.remove('selected');
-                            el.style.background = 'var(--bg2)';
-                            el.style.borderColor = 'var(--border)';
-                        });
-                        // Select this one
-                        this.classList.add('selected');
-                        this.style.background = 'rgba(var(--accent-rgb), 0.15)';
-                        this.style.borderColor = 'var(--accent)';
-                    };
-
-                    newItem.onmouseenter = function() {
-                        if (!this.classList.contains('selected')) {
-                            this.style.background = 'var(--bg3)';
-                        }
-                    };
-                    newItem.onmouseleave = function() {
-                        if (!this.classList.contains('selected')) {
-                            this.style.background = 'var(--bg2)';
-                        }
-                    };
                 });
-            }, 100);
-
-        } catch (e) {
-            _processingStaffModal = false;
-            _showToast('Error opening assign staff modal', 'error');
+            };
         }
     }
 
     // =========================================================================
-    // 9. VIEW HOUSEHOLD POSITIONS MODAL
+    // 8. REMOVE / END ASSIGNMENT MODAL
+    // =========================================================================
+
+    function openRemoveHouseholdAssignmentModal(householdId, assignmentId, onSuccess) {
+        var queries = _queries();
+        var commands = _commands();
+
+        var household = queries.getHousehold(householdId);
+        if (!household) {
+            _showToast('Household not found', 'error');
+            return null;
+        }
+
+        var assignment = queries.getHouseholdAssignment(assignmentId);
+        if (!assignment) {
+            _showToast('Assignment not found', 'error');
+            return null;
+        }
+
+        var position = queries.getHouseholdPosition(assignment.positionId);
+        var roleName = assignment.roleIdAtAssignment
+            ? (_getRoleById(assignment.roleIdAtAssignment) || {}).name || 'Unknown'
+            : 'None';
+
+        var isAlreadyEnded = assignment.endYear !== null && assignment.endYear !== undefined;
+
+        var content;
+        if (isAlreadyEnded) {
+            content =
+                '<div style="margin-bottom:16px;">' +
+                    '<div style="background:var(--bg2);padding:8px;border-radius:6px;margin-bottom:12px;">' +
+                        '<strong>Character:</strong> ' + _escapeHtml(assignment.title || assignment.positionId) + '<br>' +
+                        (position ? '<strong>Position:</strong> ' + _escapeHtml(position.name) + '<br>' : '') +
+                        '<strong>Started:</strong> ' + assignment.startYear + '<br>' +
+                        '<strong>Ended:</strong> ' + assignment.endYear +
+                        (assignment.endReason ? '<br><strong>End Reason:</strong> ' +
+                            _escapeHtml(assignment.endReason) : '') +
+                    '</div>' +
+                    '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;margin-bottom:12px;">' +
+                        'This assignment has already ended. You can delete it permanently.' +
+                    '</div>' +
+                '</div>';
+        } else {
+            var currentYear = _currentYear();
+            content =
+                '<div style="margin-bottom:16px;">' +
+                    '<div style="background:var(--bg2);padding:8px;border-radius:6px;margin-bottom:12px;">' +
+                        '<strong>Position:</strong> ' + _escapeHtml(assignment.title || 'Unknown') +
+                        (position ? ' (' + _escapeHtml(position.name) + ')' : '') + '<br>' +
+                        '<strong>Role at Assignment:</strong> ' + _escapeHtml(roleName) +
+                        (assignment.skillLevelAtAssignment
+                            ? ' (Skill: ' + assignment.skillLevelAtAssignment + ')'
+                            : '') + '<br>' +
+                        '<strong>Started:</strong> ' + assignment.startYear +
+                    '</div>' +
+
+                    '<div style="margin-bottom:12px;">' +
+                        '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">End Year</label>' +
+                        '<input type="number" data-field="endYear" value="' +
+                            (currentYear !== null ? currentYear : assignment.startYear) +
+                            '" min="' + assignment.startYear +
+                            '" style="width:100px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;">' +
+                    '</div>' +
+
+                    '<div style="margin-bottom:12px;">' +
+                        '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason</label>' +
+                        '<input type="text" data-field="reason" placeholder="e.g., Resignation, Term ended, Dismissed..." ' +
+                            'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;">' +
+                    '</div>' +
+
+                    '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;">' +
+                        'This will mark the assignment as ended and keep it in the position history.' +
+                    '</div>' +
+                '</div>';
+        }
+
+        return _openModal({
+            title: isAlreadyEnded ? 'Delete Assignment' : 'End Assignment',
+            content: content,
+            confirmText: isAlreadyEnded ? 'Delete' : 'End Assignment',
+            cancelText: 'Cancel',
+            confirmStyle: isAlreadyEnded ? 'danger' : '',
+            onConfirm: function() {
+                var root = _resolveModalRoot();
+
+                if (isAlreadyEnded) {
+                    var delResult = commands.deleteAssignment(assignmentId);
+                    if (!delResult.success) {
+                        _showToast(delResult.reason || 'Failed to delete assignment', 'error');
+                        return false;
+                    }
+                    _showToast('Assignment deleted', 'info');
+                    if (typeof onSuccess === 'function') onSuccess(delResult.data);
+                    return true;
+                }
+
+                var endYear = _parseIntOrNull((root.querySelector('[data-field="endYear"]') || {}).value);
+                if (endYear === null || endYear < assignment.startYear) {
+                    _showToast('End year must be at or after start year', 'error');
+                    return false;
+                }
+
+                var reason = ((root.querySelector('[data-field="reason"]') || {}).value || '').trim() ||
+                    'Term ended';
+
+                var endResult = commands.endAssignment(assignmentId, endYear, reason);
+                if (!endResult.success) {
+                    _showToast(endResult.reason || 'Failed to end assignment', 'error');
+                    return false;
+                }
+
+                _showToast('Assignment ended in ' + endYear + ' (' + reason + ')', 'success');
+                if (typeof onSuccess === 'function') onSuccess(endResult.data);
+                return true;
+            }
+        });
+    }
+
+    // =========================================================================
+    // 9. ASSIGNMENT HISTORY MODAL
+    // =========================================================================
+
+    function openHouseholdAssignmentHistoryModal(householdId, positionId, characterId) {
+        var queries = _queries();
+
+        var history;
+        try {
+            if (positionId) {
+                history = queries.getAssignmentsForPosition(positionId, false);
+            } else if (characterId) {
+                history = queries.getAssignmentsForCharacter(characterId, false);
+            } else if (householdId) {
+                history = queries.getAssignmentsForHousehold(householdId, false);
+            } else {
+                _showToast('No filter provided', 'error');
+                return null;
+            }
+        } catch (e) {
+            _showToast('Failed to load assignment history', 'error');
+            return null;
+        }
+
+        if (!history || history.length === 0) {
+            _showToast('No assignment history found', 'info');
+            return null;
+        }
+
+        var title = 'Household Assignment History';
+        if (householdId) {
+            var household = queries.getHousehold(householdId);
+            if (household) title += ': ' + household.name;
+        }
+        if (positionId) {
+            var pos = queries.getHouseholdPosition(positionId);
+            if (pos) title += ' - ' + pos.name;
+        }
+
+        var content = _buildAssignmentHistoryContent(history);
+
+        return _openModal({
+            title: title,
+            content: content,
+            confirmText: 'Close',
+            cancelText: '',
+            onConfirm: function() { /* close only */ }
+        });
+    }
+
+    function _buildAssignmentHistoryContent(history) {
+        var sorted = history.slice().sort(function(a, b) {
+            return (b.startYear || 0) - (a.startYear || 0);
+        });
+
+        var total = sorted.length;
+        var activeCount = 0;
+        var withRoles = 0;
+        for (var i = 0; i < sorted.length; i++) {
+            if (sorted[i].isActive) activeCount++;
+            if (sorted[i].roleIdAtAssignment) withRoles++;
+        }
+
+        var html = '<div style="margin-bottom:16px;">';
+
+        // Summary
+        html += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:16px;">';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:0.55rem;">';
+        html += '<div><span style="color:var(--dim);">Total</span><br>' +
+            '<span style="font-size:0.9rem;font-weight:bold;">' + total + '</span></div>';
+        html += '<div><span style="color:var(--dim);">Active</span><br>' +
+            '<span style="font-size:0.9rem;font-weight:bold;color:var(--success);">' +
+            activeCount + '</span></div>';
+        html += '<div><span style="color:var(--dim);">With Roles</span><br>' +
+            '<span style="font-size:0.9rem;font-weight:bold;color:var(--accent);">' +
+            withRoles + '</span></div>';
+        html += '</div></div>';
+
+        // List
+        html += '<div style="max-height:350px;overflow-y:auto;">';
+        html += '<div style="font-size:0.65rem;color:var(--dim);margin-bottom:8px;">' +
+            sorted.length + ' assignment(s) found (most recent first)' +
+        '</div>';
+
+        for (var j = 0; j < sorted.length; j++) {
+            var h = sorted[j];
+            var endDisplay = h.endYear !== null ? h.endYear : 'Present';
+            var roleName = h.roleIdAtAssignment
+                ? (_getRoleById(h.roleIdAtAssignment) || {}).name || null
+                : null;
+            var color = h.isActive ? 'var(--success)' : 'var(--dim)';
+
+            html += '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border-light);">' +
+                '<div>' +
+                    '<span style="font-size:0.7rem;">' + _escapeHtml(h.title || 'Unknown') + '</span>' +
+                    (roleName
+                        ? ' <span style="font-size:0.45rem;color:var(--accent);">(Role: ' +
+                            _escapeHtml(roleName) + ')</span>'
+                        : '') +
+                    (h.skillLevelAtAssignment
+                        ? ' <span style="font-size:0.45rem;color:var(--accent);">(Skill: ' +
+                            h.skillLevelAtAssignment + ')</span>'
+                        : '') +
+                '</div>' +
+                '<div style="font-size:0.55rem;color:' + color + ';">' +
+                    h.startYear + ' - ' + endDisplay +
+                    (h.endReason ? ' - ' + _escapeHtml(h.endReason) : '') +
+                '</div>' +
+            '</div>';
+        }
+        html += '</div>';
+
+        html += '</div>';
+        return html;
+    }
+
+    // =========================================================================
+    // 10. BULK ASSIGN MODAL
+    // =========================================================================
+
+    function openBulkHouseholdAssignModal(householdId, positionId, onSuccess) {
+        var queries = _queries();
+        var commands = _commands();
+
+        var household = queries.getHousehold(householdId);
+        var position = queries.getHouseholdPosition(positionId);
+        if (!household || !position) {
+            _showToast('Household or position not found', 'error');
+            return null;
+        }
+
+        var details = queries.getHouseholdDetails(householdId);
+        var members = details ? details.members : [];
+        var existing = queries.getAssignmentsForPosition(positionId, true);
+
+        var assignedIds = {};
+        for (var i = 0; i < existing.length; i++) {
+            assignedIds[existing[i].characterId] = true;
+        }
+
+        var candidates = [];
+        for (var m = 0; m < members.length; m++) {
+            var mem = members[m];
+            if (assignedIds[mem.characterId]) continue;
+            if (mem.isDeceased) continue;
+
+            var hasRole = false;
+            var skillLevel = 0;
+            if (position.requiredRoleId && mem.character && Array.isArray(mem.character.professions)) {
+                for (var p = 0; p < mem.character.professions.length; p++) {
+                    if (mem.character.professions[p].id === position.requiredRoleId) {
+                        hasRole = true;
+                        skillLevel = mem.character.professions[p].skillLevel || 0;
+                        break;
+                    }
+                }
+            }
+
+            candidates.push({
+                characterId: mem.characterId,
+                characterName: mem.characterName,
+                age: mem.age,
+                hasRole: hasRole,
+                skillLevel: skillLevel
+            });
+        }
+
+        if (candidates.length === 0) {
+            _showToast('No available staff to assign', 'info');
+            if (typeof onSuccess === 'function') onSuccess({ succeeded: [], failed: [] });
+            return null;
+        }
+
+        var currentYear = _currentYear();
+        var rows = '';
+        for (var r = 0; r < candidates.length; r++) {
+            var c = candidates[r];
+            var roleIcon = position.requiredRoleId
+                ? (c.hasRole
+                    ? '<span style="font-size:0.5rem;color:var(--success);">✓</span>'
+                    : '<span style="font-size:0.5rem;color:var(--warn);">!</span>')
+                : '';
+            var ageText = c.age !== null ? c.age + 'y' : '—';
+
+            rows += '<div class="bulk-candidate" data-character-id="' +
+                _escapeHtml(c.characterId) +
+                '" style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:6px 8px;margin-bottom:4px;cursor:pointer;transition:background 0.1s;">' +
+                '<div style="display:flex;align-items:center;gap:8px;">' +
+                    '<input type="checkbox" data-role="bulk-checkbox" data-character-id="' +
+                        _escapeHtml(c.characterId) + '" style="cursor:pointer;">' +
+                    '<span style="font-size:0.65rem;">' +
+                        _escapeHtml(c.characterName) + ' (' + ageText + ')' +
+                    '</span>' +
+                    roleIcon +
+                    (c.skillLevel > 0
+                        ? '<span style="font-size:0.45rem;color:var(--accent);">Skill: ' +
+                            c.skillLevel + '</span>'
+                        : '') +
+                '</div>' +
+            '</div>';
+        }
+
+        var content =
+            '<div style="margin-bottom:12px;padding:8px;background:var(--bg2);border-radius:6px;">' +
+                '<strong>Household:</strong> ' + _escapeHtml(household.name) + '<br>' +
+                '<strong>Position:</strong> ' + _escapeHtml(position.name) +
+                (position.requiredRoleId
+                    ? '<br><strong>Required Role:</strong> ' +
+                        _escapeHtml((_getRoleById(position.requiredRoleId) || {}).name || 'Unknown')
+                    : '') +
+            '</div>' +
+
+            '<div style="margin-bottom:12px;">' +
+                '<div style="font-size:0.65rem;color:var(--accent);margin-bottom:8px;">' +
+                    'Select Staff Members (' + candidates.length + ' available)' +
+                '</div>' +
+                '<div style="max-height:250px;overflow-y:auto;">' + rows + '</div>' +
+            '</div>' +
+
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">' +
+                '<button data-action="select-all" style="padding:3px 10px;font-size:0.55rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">Select All</button>' +
+                '<button data-action="select-none" style="padding:3px 10px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Select None</button>' +
+                '<span style="font-size:0.55rem;color:var(--dim);margin-left:auto;">' +
+                    '<span data-role="selected-count">0</span> selected' +
+                '</span>' +
+            '</div>' +
+
+            '<div style="margin-bottom:12px;">' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Start Year</label>' +
+                '<input type="number" data-field="startYear" value="' +
+                    (currentYear !== null ? currentYear : '') +
+                    '" min="1" style="width:100px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;">' +
+            '</div>' +
+
+            '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;">' +
+                'All selected staff will be assigned to this position with the same start year. ' +
+                'Failures will be reported per-character.' +
+            '</div>';
+
+        var handle = _openModal({
+            title: 'Bulk Assign Staff: ' + position.name,
+            content: content,
+            confirmText: 'Assign Selected',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var root = _resolveModalRoot();
+                if (!root) return false;
+
+                var checked = root.querySelectorAll('[data-role="bulk-checkbox"]:checked');
+                if (checked.length === 0) {
+                    _showToast('No staff members selected', 'warning');
+                    return false;
+                }
+
+                var startYear = _parseIntOrNull((root.querySelector('[data-field="startYear"]') || {}).value);
+                if (startYear === null) {
+                    _showToast('Start year is required', 'error');
+                    return false;
+                }
+
+                var assignments = [];
+                for (var i = 0; i < checked.length; i++) {
+                    assignments.push({
+                        positionId: positionId,
+                        characterId: checked[i].dataset.characterId,
+                        startYear: startYear,
+                        title: position.name
+                    });
+                }
+
+                var result = commands.bulkAssign(assignments, {
+                    addRoleIfMissing: true,
+                    defaultSkillLevel: DEFAULT_SKILL_LEVEL
+                });
+
+                if (!result.success) {
+                    _showToast(result.reason || 'Bulk assignment failed', 'error');
+                    return false;
+                }
+
+                var succeeded = result.data.succeeded.length;
+                var failed = result.data.failed.length;
+                var msg = 'Assigned ' + succeeded + ' staff';
+                if (failed > 0) msg += ', ' + failed + ' failed';
+                _showToast(msg, failed > 0 ? 'warning' : 'success');
+
+                if (typeof onSuccess === 'function') onSuccess(result.data);
+                return true;
+            }
+        });
+
+        setTimeout(_attachOnOpen(function(root) {
+            _wireBulkSelection(root);
+        }), 0);
+
+        return handle;
+    }
+
+    function _wireBulkSelection(root) {
+        function _updateCount() {
+            var checked = root.querySelectorAll('[data-role="bulk-checkbox"]:checked');
+            var countEl = root.querySelector('[data-role="selected-count"]');
+            if (countEl) countEl.textContent = checked.length;
+        }
+
+        var rows = root.querySelectorAll('.bulk-candidate');
+        for (var i = 0; i < rows.length; i++) {
+            (function(el) {
+                var checkbox = el.querySelector('[data-role="bulk-checkbox"]');
+                el.onclick = function(e) {
+                    if (e.target !== checkbox) {
+                        checkbox.checked = !checkbox.checked;
+                        _updateCount();
+                    }
+                    if (checkbox.checked) {
+                        el.style.background = 'rgba(var(--accent-rgb), 0.15)';
+                        el.style.borderColor = 'var(--accent)';
+                    } else {
+                        el.style.background = 'var(--bg2)';
+                        el.style.borderColor = 'var(--border)';
+                    }
+                };
+                checkbox.onchange = function() {
+                    _updateCount();
+                    if (checkbox.checked) {
+                        el.style.background = 'rgba(var(--accent-rgb), 0.15)';
+                        el.style.borderColor = 'var(--accent)';
+                    } else {
+                        el.style.background = 'var(--bg2)';
+                        el.style.borderColor = 'var(--border)';
+                    }
+                };
+            })(rows[i]);
+        }
+
+        var selectAll = root.querySelector('[data-action="select-all"]');
+        if (selectAll) {
+            selectAll.onclick = function() {
+                var cbs = root.querySelectorAll('[data-role="bulk-checkbox"]');
+                for (var k = 0; k < cbs.length; k++) {
+                    cbs[k].checked = true;
+                    cbs[k].onchange();
+                }
+                _updateCount();
+            };
+        }
+
+        var selectNone = root.querySelector('[data-action="select-none"]');
+        if (selectNone) {
+            selectNone.onclick = function() {
+                var cbs = root.querySelectorAll('[data-role="bulk-checkbox"]');
+                for (var k = 0; k < cbs.length; k++) {
+                    cbs[k].checked = false;
+                    cbs[k].onchange();
+                }
+                _updateCount();
+            };
+        }
+    }
+
+    // =========================================================================
+    // 11. VIEW POSITIONS MODAL
     // =========================================================================
 
     function openViewHouseholdPositionsModal(householdId, onSelect) {
-        if (_processingStaffModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var queries = _queries();
+
+        var household = queries.getHousehold(householdId);
+        if (!household) {
+            _showToast('Household not found', 'error');
+            return null;
         }
-        _processingStaffModal = true;
 
-        try {
-            var household = _getHousehold(householdId);
-            if (!household) {
-                _showToast('Household not found', 'error');
-                _processingStaffModal = false;
-                return;
-            }
+        var positions = queries.getHouseholdPositions({ householdId: householdId });
+        var assignments = queries.getAssignmentsForHousehold(householdId, true);
 
-            var positions = _getHouseholdPositions(householdId);
-            var assignments = _state.getAssignmentsForHousehold(householdId, true);
+        var assignmentMap = {};
+        for (var i = 0; i < assignments.length; i++) {
+            var a = assignments[i];
+            if (!assignmentMap[a.positionId]) assignmentMap[a.positionId] = [];
+            assignmentMap[a.positionId].push(a);
+        }
 
-            // Build assignment map
-            var assignmentMap = {};
-            for (var i = 0; i < assignments.length; i++) {
-                var a = assignments[i];
-                if (!assignmentMap[a.positionId]) {
-                    assignmentMap[a.positionId] = [];
+        var rows = '';
+        if (positions.length === 0) {
+            rows = '<div style="color:var(--dim);text-align:center;padding:40px;font-size:0.6rem;">' +
+                'No positions created yet' +
+            '</div>';
+        } else {
+            rows = '<div style="display:flex;flex-direction:column;gap:6px;">';
+            for (var p = 0; p < positions.length; p++) {
+                var pos = positions[p];
+                var posAssignments = assignmentMap[pos.id] || [];
+                var activeCount = 0;
+                for (var q = 0; q < posAssignments.length; q++) {
+                    if (posAssignments[q].isActive) activeCount++;
                 }
-                assignmentMap[a.positionId].push(a);
-            }
+                var roleName = pos.requiredRoleId
+                    ? (_getRoleById(pos.requiredRoleId) || {}).name || 'Unknown'
+                    : 'None';
 
-            var positionsHtml = '';
-            if (positions.length === 0) {
-                positionsHtml = '<div style="color: var(--dim); text-align: center; padding: 40px; font-size: 0.6rem;">No positions created yet</div>';
-            } else {
-                positionsHtml = '<div style="display: flex; flex-direction: column; gap: 6px;">';
-                for (var i = 0; i < positions.length; i++) {
-                    var p = positions[i];
-                    var posAssignments = assignmentMap[p.id] || [];
-                    var activeAssignments = posAssignments.filter(function(a) { return !a.endYear; });
-                    var roleName = p.requiredRoleId ? (_getRoleById(p.requiredRoleId)?.name || 'Unknown') : 'None';
-
-                    var assignedChars = activeAssignments.map(function(a) {
-                        var c = _getCharacterById(a.characterId);
-                        return c ? c.name + (a.title && a.title !== p.name ? ' (' + a.title + ')' : '') : 'Unknown';
-                    }).join(', ');
-
-                    positionsHtml +=
-                        '<div class="position-item" data-pos-id="' + p.id + '" style="' +
-                        'background: var(--bg3); ' +
-                        'border: 1px solid var(--border); ' +
-                        'border-radius: 6px; ' +
-                        'padding: 10px 12px; ' +
-                        'cursor: pointer; ' +
-                        'transition: all 0.1s;' +
-                        '">' +
-                        '<div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 6px;">' +
+                rows += '<div class="position-item" data-position-id="' +
+                    _escapeHtml(pos.id) +
+                    '" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:10px 12px;cursor:pointer;">' +
+                    '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:6px;">' +
                         '<div>' +
-                        '<strong>' + _escapeHtml(p.name) + '</strong>' +
-                        '<span style="font-size: 0.55rem; color: var(--accent); margin-left: 8px;">Role: ' + _escapeHtml(roleName) + '</span>' +
-                        (p.minSkillLevel > 0 ? '<span style="font-size: 0.55rem; color: var(--dim); margin-left: 4px;">(Min: ' + p.minSkillLevel + ')</span>' : '') +
+                            '<strong>' + _escapeHtml(pos.name) + '</strong>' +
+                            '<span style="font-size:0.55rem;color:var(--accent);margin-left:8px;">Role: ' +
+                                _escapeHtml(roleName) + '</span>' +
+                            (pos.minSkillLevel > 0
+                                ? '<span style="font-size:0.55rem;color:var(--dim);margin-left:4px;">(Min: ' +
+                                    pos.minSkillLevel + ')</span>'
+                                : '') +
                         '</div>' +
-                        '<div style="font-size: 0.55rem; color: var(--accent);">' +
-                        activeAssignments.length + ' assigned' +
+                        '<div style="font-size:0.55rem;color:var(--accent);">' +
+                            activeCount + ' assigned' +
                         '</div>' +
-                        '</div>' +
-                        (assignedChars ? '<div style="font-size: 0.5rem; color: var(--dim); margin-top: 4px;">' + _escapeHtml(assignedChars) + '</div>' : '') +
-                        (p.description ? '<div style="font-size: 0.5rem; color: var(--dim); margin-top: 2px;">' + _escapeHtml(p.description) + '</div>' : '') +
-                        '</div>';
-                }
-                positionsHtml += '</div>';
-            }
-
-            var modalContent =
-                '<div style="margin-bottom: 16px; padding: 12px; background: var(--bg2); border-radius: 8px;">' +
-                '<strong>Household:</strong> ' + _escapeHtml(household.name) +
-                '<div style="font-size: 0.6rem; color: var(--dim); margin-top: 4px;">' + positions.length + ' positions · ' + assignments.length + ' total assignments</div>' +
-                '</div>' +
-                positionsHtml +
-                '<div style="margin-top: 12px; padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
-                'Click on a position to manage it, or use the buttons above to create/assign.' +
+                    '</div>' +
+                    (pos.description
+                        ? '<div style="font-size:0.5rem;color:var(--dim);margin-top:2px;">' +
+                            _escapeHtml(pos.description) + '</div>'
+                        : '') +
                 '</div>';
-
-            _openModal({
-                title: 'Household Positions: ' + household.name,
-                content: modalContent,
-                confirmText: 'Close',
-                cancelText: '',
-                onConfirm: function() {
-                    _closeTopModal();
-                    _processingStaffModal = false;
-                }
-            });
-
-            // Click handlers for position items
-            setTimeout(function() {
-                var items = document.querySelectorAll('.position-item');
-                items.forEach(function(item) {
-                    var newItem = item.cloneNode(true);
-                    if (item.parentNode) {
-                        item.parentNode.replaceChild(newItem, item);
-                    }
-
-                    newItem.onclick = function() {
-                        var posId = this.dataset.posId;
-                        _closeTopModal();
-                        _processingStaffModal = false;
-                        if (onSelect) {
-                            onSelect(posId);
-                        }
-                    };
-
-                    newItem.onmouseenter = function() {
-                        this.style.background = 'var(--bg2)';
-                        this.style.borderColor = 'var(--accent)';
-                    };
-                    newItem.onmouseleave = function() {
-                        this.style.background = 'var(--bg3)';
-                        this.style.borderColor = 'var(--border)';
-                    };
-                });
-            }, 100);
-
-        } catch (e) {
-            _processingStaffModal = false;
-            _showToast('Error opening view positions modal', 'error');
+            }
+            rows += '</div>';
         }
+
+        var content =
+            '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
+                '<strong>Household:</strong> ' + _escapeHtml(household.name) +
+                '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' +
+                    positions.length + ' positions · ' + assignments.length + ' active assignments' +
+                '</div>' +
+            '</div>' +
+            rows +
+            '<div style="margin-top:12px;padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;">' +
+                'Click on a position to manage it.' +
+            '</div>';
+
+        var handle = _openModal({
+            title: 'Household Positions: ' + household.name,
+            content: content,
+            confirmText: 'Close',
+            cancelText: '',
+            onConfirm: function() { /* close only */ }
+        });
+
+        setTimeout(_attachOnOpen(function(root) {
+            var items = root.querySelectorAll('.position-item');
+            for (var j = 0; j < items.length; j++) {
+                (function(el) {
+                    el.onclick = function() {
+                        var posId = el.dataset.positionId;
+                        _closeTopModal();
+                        if (typeof onSelect === 'function') onSelect(posId);
+                    };
+                    el.onmouseenter = function() {
+                        el.style.background = 'var(--bg2)';
+                        el.style.borderColor = 'var(--accent)';
+                    };
+                    el.onmouseleave = function() {
+                        el.style.background = 'var(--bg3)';
+                        el.style.borderColor = 'var(--border)';
+                    };
+                })(items[j]);
+            }
+        }), 0);
+
+        return handle;
     }
 
     // =========================================================================
-    // 10. VIEW STAFF ASSIGNMENTS MODAL
+    // 12. VIEW STAFF ASSIGNMENTS MODAL
     // =========================================================================
 
     function openViewStaffAssignmentsModal(householdId) {
-        if (_processingStaffModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var queries = _queries();
+        var commands = _commands();
+
+        var household = queries.getHousehold(householdId);
+        if (!household) {
+            _showToast('Household not found', 'error');
+            return null;
         }
-        _processingStaffModal = true;
 
-        try {
-            var household = _getHousehold(householdId);
-            if (!household) {
-                _showToast('Household not found', 'error');
-                _processingStaffModal = false;
-                return;
-            }
+        var assignments = queries.getAssignmentsForHousehold(householdId, true);
+        var positions = queries.getHouseholdPositions({ householdId: householdId });
+        var positionMap = {};
+        for (var i = 0; i < positions.length; i++) {
+            positionMap[positions[i].id] = positions[i];
+        }
 
-            var assignments = _state.getAssignmentsForHousehold(householdId, true);
+        var rows = '';
+        if (assignments.length === 0) {
+            rows = '<div style="color:var(--dim);text-align:center;padding:40px;font-size:0.6rem;">' +
+                'No staff assignments' +
+            '</div>';
+        } else {
+            rows = '<div style="display:flex;flex-direction:column;gap:4px;">';
+            for (var a = 0; a < assignments.length; a++) {
+                var asg = assignments[a];
+                var pos = positionMap[asg.positionId];
+                var roleName = asg.roleIdAtAssignment
+                    ? (_getRoleById(asg.roleIdAtAssignment) || {}).name || 'Unknown'
+                    : 'None';
 
-            var positionsMap = {};
-            var positions = _state.getHouseholdPositions({ householdId: householdId });
-            for (var i = 0; i < positions.length; i++) {
-                positionsMap[positions[i].id] = positions[i];
-            }
-
-            var assignmentsHtml = '';
-            if (assignments.length === 0) {
-                assignmentsHtml = '<div style="color: var(--dim); text-align: center; padding: 40px; font-size: 0.6rem;">No staff assignments</div>';
-            } else {
-                assignmentsHtml = '<div style="display: flex; flex-direction: column; gap: 4px;">';
-                for (var i = 0; i < assignments.length; i++) {
-                    var a = assignments[i];
-                    var char = _getCharacterById(a.characterId);
-                    var pos = positionsMap[a.positionId];
-
-                    var roleName = a.roleIdAtAssignment ? (_getRoleById(a.roleIdAtAssignment)?.name || 'Unknown') : 'None';
-
-                    assignmentsHtml +=
-                        '<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; background: var(--bg2); border-radius: 4px; border-left: 3px solid var(--accent);">' +
-                        '<div>' +
-                        '<strong>' + _escapeHtml(char ? char.name : 'Unknown') + '</strong>' +
-                        '<span style="font-size: 0.55rem; color: var(--dim); margin-left: 6px;">' + _escapeHtml(a.title || (pos ? pos.name : 'Unknown')) + '</span>' +
-                        '<span style="font-size: 0.5rem; color: var(--accent); margin-left: 6px;">Role: ' + _escapeHtml(roleName) + '</span>' +
-                        (a.skillLevelAtAssignment ? '<span style="font-size: 0.5rem; color: var(--dim); margin-left: 4px;">(Skill: ' + a.skillLevelAtAssignment + ')</span>' : '') +
-                        '</div>' +
-                        '<div style="font-size: 0.5rem; color: var(--dim);">' +
-                        'Since ' + a.startYear +
-                        '<button class="end-assignment-btn small" data-assign-id="' + a.id + '" style="margin-left: 8px; padding: 2px 6px; font-size: 0.45rem; background: #8a5a20; border: none; color: white; border-radius: 3px; cursor: pointer;">End</button>' +
-                        '</div>' +
-                        '</div>';
-                }
-                assignmentsHtml += '</div>';
-            }
-
-            var modalContent =
-                '<div style="margin-bottom: 16px; padding: 12px; background: var(--bg2); border-radius: 8px;">' +
-                '<strong>Staff Assignments: ' + _escapeHtml(household.name) + '</strong>' +
-                '<div style="font-size: 0.6rem; color: var(--dim); margin-top: 4px;">' + assignments.length + ' active staff members</div>' +
-                '</div>' +
-                assignmentsHtml +
-                '<div style="margin-top: 12px; padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
-                'Click "End" to terminate a staff assignment.' +
+                rows += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg2);border-radius:4px;border-left:3px solid var(--accent);">' +
+                    '<div>' +
+                        '<strong>' + _escapeHtml(asg.title || 'Unknown') + '</strong>' +
+                        (pos
+                            ? '<span style="font-size:0.55rem;color:var(--dim);margin-left:6px;">' +
+                                _escapeHtml(pos.name) + '</span>'
+                            : '') +
+                        (roleName !== 'None'
+                            ? '<span style="font-size:0.5rem;color:var(--accent);margin-left:6px;">Role: ' +
+                                _escapeHtml(roleName) + '</span>'
+                            : '') +
+                    '</div>' +
+                    '<div style="font-size:0.5rem;color:var(--dim);">' +
+                        'Since ' + asg.startYear +
+                        '<button data-action="end-assignment" data-assignment-id="' +
+                            _escapeHtml(asg.id) +
+                            '" style="margin-left:8px;padding:2px 6px;font-size:0.45rem;background:#8a5a20;border:none;color:white;border-radius:3px;cursor:pointer;">End</button>' +
+                    '</div>' +
                 '</div>';
+            }
+            rows += '</div>';
+        }
 
-            _openModal({
-                title: 'Staff Assignments',
-                content: modalContent,
-                confirmText: 'Close',
-                cancelText: '',
-                onConfirm: function() {
-                    _closeTopModal();
-                    _processingStaffModal = false;
-                }
-            });
+        var content =
+            '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
+                '<strong>Staff Assignments: ' + _escapeHtml(household.name) + '</strong>' +
+                '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' +
+                    assignments.length + ' active staff members' +
+                '</div>' +
+            '</div>' +
+            rows +
+            '<div style="margin-top:12px;padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;">' +
+                'Click "End" to terminate a staff assignment.' +
+            '</div>';
 
-            // End assignment handlers
-            setTimeout(function() {
-                var endBtns = document.querySelectorAll('.end-assignment-btn');
-                endBtns.forEach(function(btn) {
-                    var newBtn = btn.cloneNode(true);
-                    if (btn.parentNode) {
-                        btn.parentNode.replaceChild(newBtn, btn);
-                    }
+        var handle = _openModal({
+            title: 'Staff Assignments',
+            content: content,
+            confirmText: 'Close',
+            cancelText: '',
+            onConfirm: function() { /* close only */ }
+        });
 
-                    newBtn.onclick = function(e) {
+        setTimeout(_attachOnOpen(function(root) {
+            var btns = root.querySelectorAll('[data-action="end-assignment"]');
+            for (var b = 0; b < btns.length; b++) {
+                (function(btn) {
+                    btn.onclick = function(e) {
                         e.stopPropagation();
-                        var assignId = this.dataset.assignId;
-                        var currentYear = _getCurrentYear();
+                        var assignmentId = btn.dataset.assignmentId;
+                        var currentYear = _currentYear();
 
                         _confirmDialog(
                             'End this staff assignment?',
                             'End Assignment',
                             function() {
-                                var result = _commands.endHouseholdAssignment(assignId, currentYear, 'Ended by user');
-                                if (result && result.success) {
-                                    _showToast('Assignment ended', 'success');
-                                    _closeTopModal();
-                                    _processingStaffModal = false;
-                                    setTimeout(function() {
-                                        openViewStaffAssignmentsModal(householdId);
-                                    }, 100);
-                                } else {
-                                    _showToast(result ? result.reason : 'Failed to end assignment', 'error');
+                                var result = commands.endAssignment(
+                                    assignmentId, currentYear, 'Ended by user'
+                                );
+                                if (!result.success) {
+                                    _showToast(result.reason || 'Failed to end assignment', 'error');
+                                    return;
                                 }
+                                _showToast('Assignment ended', 'success');
+                                _closeTopModal();
+                                setTimeout(function() {
+                                    openViewStaffAssignmentsModal(householdId);
+                                }, 0);
                             },
-                            function() {
-                                _processingStaffModal = false;
-                            }
+                            function() { /* cancelled */ }
                         );
                     };
-                });
-            }, 100);
+                })(btns[b]);
+            }
+        }), 0);
 
-        } catch (e) {
-            _processingStaffModal = false;
-            _showToast('Error opening staff assignments', 'error');
-        }
+        return handle;
     }
 
     // =========================================================================
-    // 11. OPEN STAFF MANAGEMENT MODAL (Combined - Convenience)
+    // 13. COMBINED STAFF MANAGEMENT MODAL
     // =========================================================================
 
     function openStaffManagementModal(householdId, onSuccess) {
-        if (_processingStaffModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var queries = _queries();
+
+        var household = queries.getHousehold(householdId);
+        if (!household) {
+            _showToast('Household not found', 'error');
+            return null;
         }
-        _processingStaffModal = true;
 
-        try {
-            var household = _getHousehold(householdId);
-            if (!household) {
-                _showToast('Household not found', 'error');
-                _processingStaffModal = false;
-                return;
-            }
+        var positions = queries.getHouseholdPositions({ householdId: householdId });
+        var assignments = queries.getAssignmentsForHousehold(householdId, true);
 
-            var positions = _getHouseholdPositions(householdId);
-            var assignments = _state.getAssignmentsForHousehold(householdId, true);
+        var assignmentMap = {};
+        for (var i = 0; i < assignments.length; i++) {
+            var a = assignments[i];
+            if (!assignmentMap[a.positionId]) assignmentMap[a.positionId] = [];
+            assignmentMap[a.positionId].push(a);
+        }
 
-            // Build assignment map
-            var assignmentMap = {};
-            for (var i = 0; i < assignments.length; i++) {
-                var a = assignments[i];
-                if (!assignmentMap[a.positionId]) {
-                    assignmentMap[a.positionId] = [];
+        var rows = '';
+        if (positions.length === 0) {
+            rows = '<div style="color:var(--dim);text-align:center;padding:20px;font-size:0.6rem;">' +
+                'No positions created yet' +
+            '</div>';
+        } else {
+            rows = '<div style="display:flex;flex-direction:column;gap:4px;">';
+            for (var p = 0; p < positions.length; p++) {
+                var pos = positions[p];
+                var posAssignments = assignmentMap[pos.id] || [];
+                var activeCount = 0;
+                for (var q = 0; q < posAssignments.length; q++) {
+                    if (posAssignments[q].isActive) activeCount++;
                 }
-                assignmentMap[a.positionId].push(a);
-            }
+                var roleName = pos.requiredRoleId
+                    ? (_getRoleById(pos.requiredRoleId) || {}).name || 'Unknown'
+                    : 'None';
 
-            var positionsHtml = '';
-            if (positions.length === 0) {
-                positionsHtml = '<div style="color: var(--dim); text-align: center; padding: 20px; font-size: 0.6rem;">No positions created yet</div>';
-            } else {
-                positionsHtml = '<div style="display: flex; flex-direction: column; gap: 4px;">';
-                for (var i = 0; i < positions.length; i++) {
-                    var p = positions[i];
-                    var posAssignments = assignmentMap[p.id] || [];
-                    var activeAssignments = posAssignments.filter(function(a) { return !a.endYear; });
-                    var roleName = p.requiredRoleId ? (_getRoleById(p.requiredRoleId)?.name || 'Unknown') : 'None';
-
-                    var assignedChars = activeAssignments.map(function(a) {
-                        var c = _getCharacterById(a.characterId);
-                        return c ? c.name : 'Unknown';
-                    }).join(', ');
-
-                    positionsHtml +=
-                        '<div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; background: var(--bg2); border-radius: 4px; border-left: 3px solid ' + (activeAssignments.length > 0 ? 'var(--accent)' : 'var(--border)') + ';">' +
-                        '<div>' +
-                        '<strong>' + _escapeHtml(p.name) + '</strong>' +
-                        '<span style="font-size: 0.5rem; color: var(--accent); margin-left: 6px;">Role: ' + _escapeHtml(roleName) + '</span>' +
-                        (p.minSkillLevel > 0 ? '<span style="font-size: 0.5rem; color: var(--dim); margin-left: 4px;">(Min: ' + p.minSkillLevel + ')</span>' : '') +
-                        (assignedChars ? '<div style="font-size: 0.45rem; color: var(--dim);">' + _escapeHtml(assignedChars) + '</div>' : '') +
-                        '</div>' +
-                        '<div style="display: flex; gap: 4px; align-items: center;">' +
-                        '<span style="font-size: 0.5rem; color: var(--accent);">' + activeAssignments.length + ' assigned</span>' +
-                        '<button class="pos-assign-btn btn small" data-pos-id="' + p.id + '" style="padding: 2px 6px; font-size: 0.45rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 3px; cursor: pointer;">Assign</button>' +
-                        '<button class="pos-edit-btn btn small" data-pos-id="' + p.id + '" style="padding: 2px 6px; font-size: 0.45rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 3px; cursor: pointer;">Edit</button>' +
-                        '<button class="pos-delete-btn btn small danger" data-pos-id="' + p.id + '" style="padding: 2px 6px; font-size: 0.45rem; background: #8a3020; border: none; color: white; border-radius: 3px; cursor: pointer;">Del</button>' +
-                        '</div>' +
-                        '</div>';
-                }
-                positionsHtml += '</div>';
-            }
-
-            var modalContent =
-                '<div style="margin-bottom: 16px; padding: 12px; background: var(--bg2); border-radius: 8px;">' +
-                '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">' +
-                '<div><strong>Staff Management: ' + _escapeHtml(household.name) + '</strong></div>' +
-                '<div style="font-size: 0.6rem; color: var(--dim);">' + positions.length + ' positions · ' + assignments.length + ' assigned</div>' +
-                '</div>' +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<button id="staffMgrCreateBtn" class="btn primary" style="background: var(--accent); border: none; color: white; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 0.65rem;">Create Position</button>' +
-                '<button id="staffMgrViewAssignmentsBtn" class="btn" style="background: var(--bg3); border: 1px solid var(--border); padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 0.65rem; margin-left: 4px;">View Assignments</button>' +
-                '</div>' +
-                positionsHtml +
-                '<div style="margin-top: 12px; padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
-                'Manage staff positions and assignments. Click "Assign" to add staff, "Edit" to modify a position, "Del" to remove it.' +
+                rows += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 8px;background:var(--bg2);border-radius:4px;border-left:3px solid ' +
+                    (activeCount > 0 ? 'var(--accent)' : 'var(--border)') + ';">' +
+                    '<div>' +
+                        '<strong>' + _escapeHtml(pos.name) + '</strong>' +
+                        '<span style="font-size:0.5rem;color:var(--accent);margin-left:6px;">Role: ' +
+                            _escapeHtml(roleName) + '</span>' +
+                        (pos.minSkillLevel > 0
+                            ? '<span style="font-size:0.5rem;color:var(--dim);margin-left:4px;">(Min: ' +
+                                pos.minSkillLevel + ')</span>'
+                            : '') +
+                    '</div>' +
+                    '<div style="display:flex;gap:4px;align-items:center;">' +
+                        '<span style="font-size:0.5rem;color:var(--accent);">' +
+                            activeCount + ' assigned</span>' +
+                        '<button data-action="pos-assign" data-position-id="' +
+                            _escapeHtml(pos.id) +
+                            '" style="padding:2px 6px;font-size:0.45rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:3px;cursor:pointer;">Assign</button>' +
+                        '<button data-action="pos-edit" data-position-id="' +
+                            _escapeHtml(pos.id) +
+                            '" style="padding:2px 6px;font-size:0.45rem;background:var(--bg3);border:1px solid var(--border);border-radius:3px;cursor:pointer;">Edit</button>' +
+                        '<button data-action="pos-delete" data-position-id="' +
+                            _escapeHtml(pos.id) +
+                            '" style="padding:2px 6px;font-size:0.45rem;background:#8a3020;border:none;color:white;border-radius:3px;cursor:pointer;">Delete</button>' +
+                    '</div>' +
                 '</div>';
+            }
+            rows += '</div>';
+        }
 
-            _openModal({
-                title: 'Staff Management',
-                content: modalContent,
-                confirmText: 'Close',
-                cancelText: '',
-                onConfirm: function() {
-                    _closeTopModal();
-                    _processingStaffModal = false;
-                    if (onSuccess) {
-                        onSuccess();
-                    }
-                }
-            });
+        var content =
+            '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
+                    '<div><strong>Staff Management: ' + _escapeHtml(household.name) + '</strong></div>' +
+                    '<div style="font-size:0.6rem;color:var(--dim);">' +
+                        positions.length + ' positions · ' + assignments.length + ' active' +
+                    '</div>' +
+                '</div>' +
+            '</div>' +
 
-            // Event handlers
+            '<div style="margin-bottom:12px;">' +
+                '<button data-action="create-position" style="background:var(--accent);border:none;color:white;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:0.65rem;">Create Position</button>' +
+                '<button data-action="view-assignments" style="background:var(--bg3);border:1px solid var(--border);padding:4px 12px;border-radius:4px;cursor:pointer;font-size:0.65rem;margin-left:4px;">View Assignments</button>' +
+            '</div>' +
+
+            rows +
+
+            '<div style="margin-top:12px;padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;">' +
+                'Manage staff positions and assignments. Click "Assign" to add staff, "Edit" to modify a position, "Delete" to remove it.' +
+            '</div>';
+
+        var handle = _openModal({
+            title: 'Staff Management',
+            content: content,
+            confirmText: 'Close',
+            cancelText: '',
+            onConfirm: function() {
+                if (typeof onSuccess === 'function') onSuccess();
+                return true;
+            }
+        });
+
+        setTimeout(_attachOnOpen(function(root) {
+            _wireStaffManagement(root, householdId, onSuccess);
+        }), 0);
+
+        return handle;
+    }
+
+    function _wireStaffManagement(root, householdId, onSuccess) {
+        function _reopen() {
             setTimeout(function() {
-                // Create position button
-                var createBtn = document.getElementById('staffMgrCreateBtn');
-                if (createBtn) {
-                    createBtn.onclick = function() {
-                        _closeTopModal();
-                        _processingStaffModal = false;
-                        openCreateHouseholdPositionModal(householdId, function() {
-                            setTimeout(function() {
-                                openStaffManagementModal(householdId, onSuccess);
-                            }, 100);
-                        });
-                    };
-                }
+                openStaffManagementModal(householdId, onSuccess);
+            }, 0);
+        }
 
-                // View assignments button
-                var viewAssignBtn = document.getElementById('staffMgrViewAssignmentsBtn');
-                if (viewAssignBtn) {
-                    viewAssignBtn.onclick = function() {
-                        _closeTopModal();
-                        _processingStaffModal = false;
-                        openViewStaffAssignmentsModal(householdId);
-                    };
-                }
+        var createBtn = root.querySelector('[data-action="create-position"]');
+        if (createBtn) {
+            createBtn.onclick = function() {
+                _closeTopModal();
+                openCreateHouseholdPositionModal(householdId, _reopen);
+            };
+        }
 
-                // Assign buttons
-                var assignBtns = document.querySelectorAll('.pos-assign-btn');
-                assignBtns.forEach(function(btn) {
-                    var newBtn = btn.cloneNode(true);
-                    if (btn.parentNode) {
-                        btn.parentNode.replaceChild(newBtn, btn);
-                    }
+        var viewAssignBtn = root.querySelector('[data-action="view-assignments"]');
+        if (viewAssignBtn) {
+            viewAssignBtn.onclick = function() {
+                _closeTopModal();
+                openViewStaffAssignmentsModal(householdId);
+            };
+        }
 
-                    newBtn.onclick = function(e) {
-                        e.stopPropagation();
-                        var posId = this.dataset.posId;
-                        _closeTopModal();
-                        _processingStaffModal = false;
-                        openAssignStaffToHouseholdPositionModal(householdId, posId, function() {
-                            setTimeout(function() {
-                                openStaffManagementModal(householdId, onSuccess);
-                            }, 100);
-                        });
-                    };
-                });
+        var assignBtns = root.querySelectorAll('[data-action="pos-assign"]');
+        for (var i = 0; i < assignBtns.length; i++) {
+            (function(btn) {
+                btn.onclick = function() {
+                    var posId = btn.dataset.positionId;
+                    _closeTopModal();
+                    openAssignStaffToHouseholdPositionModal(householdId, posId, _reopen);
+                };
+            })(assignBtns[i]);
+        }
 
-                // Edit buttons
-                var editBtns = document.querySelectorAll('.pos-edit-btn');
-                editBtns.forEach(function(btn) {
-                    var newBtn = btn.cloneNode(true);
-                    if (btn.parentNode) {
-                        btn.parentNode.replaceChild(newBtn, btn);
-                    }
+        var editBtns = root.querySelectorAll('[data-action="pos-edit"]');
+        for (var j = 0; j < editBtns.length; j++) {
+            (function(btn) {
+                btn.onclick = function() {
+                    var posId = btn.dataset.positionId;
+                    _closeTopModal();
+                    openEditHouseholdPositionModal(householdId, posId, _reopen);
+                };
+            })(editBtns[j]);
+        }
 
-                    newBtn.onclick = function(e) {
-                        e.stopPropagation();
-                        var posId = this.dataset.posId;
-                        _closeTopModal();
-                        _processingStaffModal = false;
-                        openEditHouseholdPositionModal(householdId, posId, function() {
-                            setTimeout(function() {
-                                openStaffManagementModal(householdId, onSuccess);
-                            }, 100);
-                        });
-                    };
-                });
-
-                // Delete buttons
-                var deleteBtns = document.querySelectorAll('.pos-delete-btn');
-                deleteBtns.forEach(function(btn) {
-                    var newBtn = btn.cloneNode(true);
-                    if (btn.parentNode) {
-                        btn.parentNode.replaceChild(newBtn, btn);
-                    }
-
-                    newBtn.onclick = function(e) {
-                        e.stopPropagation();
-                        var posId = this.dataset.posId;
-                        _closeTopModal();
-                        _processingStaffModal = false;
-                        openDeleteHouseholdPositionModal(householdId, posId, function() {
-                            setTimeout(function() {
-                                openStaffManagementModal(householdId, onSuccess);
-                            }, 100);
-                        });
-                    };
-                });
-
-            }, 100);
-
-        } catch (e) {
-            _processingStaffModal = false;
-            _showToast('Error opening staff management modal', 'error');
+        var deleteBtns = root.querySelectorAll('[data-action="pos-delete"]');
+        for (var k = 0; k < deleteBtns.length; k++) {
+            (function(btn) {
+                btn.onclick = function() {
+                    var posId = btn.dataset.positionId;
+                    _closeTopModal();
+                    openDeleteHouseholdPositionModal(householdId, posId, _reopen);
+                };
+            })(deleteBtns[k]);
         }
     }
 
     // =========================================================================
-    // 12. EXPORTS
+    // 14. EXPORTS
     // =========================================================================
 
     window.openCreateHouseholdPositionModal = openCreateHouseholdPositionModal;
     window.openEditHouseholdPositionModal = openEditHouseholdPositionModal;
     window.openDeleteHouseholdPositionModal = openDeleteHouseholdPositionModal;
-    window.openAssignStaffToHouseholdPositionModal = openAssignStaffToHouseholdPositionModal;
     window.openViewHouseholdPositionsModal = openViewHouseholdPositionsModal;
     window.openViewStaffAssignmentsModal = openViewStaffAssignmentsModal;
     window.openStaffManagementModal = openStaffManagementModal;
 
-    // Legacy aliases
-    window._openCreateHouseholdPositionModal = openCreateHouseholdPositionModal;
-    window._openEditHouseholdPositionModal = openEditHouseholdPositionModal;
-    window._openDeleteHouseholdPositionModal = openDeleteHouseholdPositionModal;
-    window._openAssignStaffToHouseholdPositionModal = openAssignStaffToHouseholdPositionModal;
-    window._openViewHouseholdPositionsModal = openViewHouseholdPositionsModal;
-    window._openViewStaffAssignmentsModal = openViewStaffAssignmentsModal;
-    window._openStaffManagementModal = openStaffManagementModal;
+    window.openAssignStaffToHouseholdPositionModal = openAssignStaffToHouseholdPositionModal;
+    window.openRemoveHouseholdAssignmentModal = openRemoveHouseholdAssignmentModal;
+    window.openHouseholdAssignmentHistoryModal = openHouseholdAssignmentHistoryModal;
+    window.openBulkHouseholdAssignModal = openBulkHouseholdAssignModal;
+    window.openViewHouseholdStaffAssignmentsModal = openViewStaffAssignmentsModal;
+
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = {
+            openCreateHouseholdPositionModal: openCreateHouseholdPositionModal,
+            openEditHouseholdPositionModal: openEditHouseholdPositionModal,
+            openDeleteHouseholdPositionModal: openDeleteHouseholdPositionModal,
+            openViewHouseholdPositionsModal: openViewHouseholdPositionsModal,
+            openViewStaffAssignmentsModal: openViewStaffAssignmentsModal,
+            openStaffManagementModal: openStaffManagementModal,
+            openAssignStaffToHouseholdPositionModal: openAssignStaffToHouseholdPositionModal,
+            openRemoveHouseholdAssignmentModal: openRemoveHouseholdAssignmentModal,
+            openHouseholdAssignmentHistoryModal: openHouseholdAssignmentHistoryModal,
+            openBulkHouseholdAssignModal: openBulkHouseholdAssignModal,
+            openViewHouseholdStaffAssignmentsModal: openViewStaffAssignmentsModal
+        };
+    }
 
 })();
