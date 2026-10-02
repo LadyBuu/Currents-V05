@@ -1,689 +1,393 @@
 /**
- * =============================================================================
- * STILL WATERS - GOVERNMENT MODALS (js/government/modals-government.js)
- * =============================================================================
- * 
- * This file contains ALL government-related UI modals:
- * - Government type CRUD
- * - Government assignment
- * - Department CRUD
- * - Position management
- * - Assignment management
- * 
- * REFACTORED: Uses GovernmentState, GovernmentCommands, GovernmentQueries
- * REFACTORED: Uses unified character selector from modals-core.js
- * REFACTORED: Uses unified location dropdown from modals-core.js
- * REFACTORED: Uses icon dropdown from modals-core.js
- * FIXED: Double toast issue - removed internal toasts
- * FIXED: All confirm buttons use plain text (no SVG icons)
- * FIXED: Recursion guards on all modal functions
- * FIXED: Icons from icons.js only (no emojis)
- * FIXED: Government type creation saves properly
- * FIXED: No duplicate event handlers
- * 
- * =============================================================================
+ * modals-government.js
+ * Government type + department CRUD, government assignment, and placement modals.
+ * Reads via GovernmentQueries. Writes via GovernmentCommands. UI owns presentation.
  */
-
 (function() {
     'use strict';
 
-    // =========================================================================
-    // 1. RECURSION GUARD
-    // =========================================================================
+    var Queries = window.GovernmentQueries;
+    var Commands = window.GovernmentCommands;
+    var _LocationQueries = window.LocationQueries;
+    var _RoleQueries = window.RoleQueries;
 
-    var _openingModal = false;
-
-    // =========================================================================
-    // 2. ICON HELPERS (using icons.js)
-    // =========================================================================
-
-    function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
-        if (window.Icons && window.Icons.CIRCLE) {
-            return window.Icons.CIRCLE;
-        }
-        return '';
-    }
-
-    // =========================================================================
-    // 3. DEPENDENCY WRAPPERS
-    // =========================================================================
+    if (!Queries) throw new Error('modals-government.js requires GovernmentQueries');
+    if (!Commands) throw new Error('modals-government.js requires GovernmentCommands');
+    if (!_LocationQueries) throw new Error('modals-government.js requires LocationQueries');
 
     function _escapeHtml(str) {
         if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        if (!str && str !== 0) return '';
+        return String(str)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    function _attr(s) { return _escapeHtml(s); }
+
+    function _toast(msg, type) {
+        var plain = typeof msg === 'string' ? msg.replace(/<[^>]*>/g, '') : msg;
+        if (typeof window._showToast === 'function') window._showToast(plain, type);
+        else if (typeof window.showToast === 'function') window.showToast(plain, type);
+        else if (typeof window.showToastMessage === 'function') window.showToastMessage(plain, type);
     }
 
-    function _showToast(msg, type) {
-        var plainMessage = msg;
-        if (typeof msg === 'string') {
-            plainMessage = msg.replace(/<[^>]*>/g, '');
+    function _openModal(opts) {
+        if (typeof window.openModal !== 'function') {
+            throw new Error('modals-government.js: openModal not available');
         }
-        if (typeof window._showToast === 'function') {
-            window._showToast(plainMessage, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(plainMessage, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(plainMessage, type);
-        }
+        return window.openModal(opts);
     }
-
-    function _openModal(options) {
-        if (typeof window.openModal === 'function') {
-            return window.openModal(options);
-        }
-        return null;
-    }
-
     function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') {
-            window.closeTopModal();
+        if (typeof window.closeTopModal === 'function') window.closeTopModal();
+    }
+    function _getIcon(name) {
+        if (typeof window._getIcon === 'function') return window._getIcon(name);
+        return window.Icons && window.Icons[name] ? window.Icons[name] : '';
+    }
+    function _iconSpan(name) {
+        var i = _getIcon(name);
+        return i ? '<span style="display:inline-flex;align-items:center;vertical-align:middle;">' + i + '</span>' : '';
+    }
+
+    function _buildIconOptions(selectedIcon) {
+        if (typeof window.buildIconOptions === 'function') {
+            return window.buildIconOptions(selectedIcon);
         }
-    }
-
-    function _confirmDialog(message, title, onConfirm) {
-        if (typeof window.confirmDialog === 'function') {
-            return window.confirmDialog(message, title, onConfirm);
+        // Minimal fallback: the icon catalogue is Icons keys, if available.
+        var icons = window.Icons || {};
+        var keys = Object.keys(icons);
+        if (keys.length === 0) return '<option value="">None</option>';
+        var html = '<option value="">None</option>';
+        for (var i = 0; i < keys.length; i++) {
+            var k = keys[i];
+            var sel = k === selectedIcon ? 'selected' : '';
+            html += '<option value="' + _attr(k) + '" ' + sel + '>' + _escapeHtml(k) + '</option>';
         }
-        if (confirm(message)) {
-            onConfirm();
+        return html;
+    }
+
+    function _buildRankOptions(selectedIds) {
+        var ranks = (_RoleQueries && _RoleQueries.getAllRankSummaries)
+            ? _RoleQueries.getAllRankSummaries()
+            : [];
+        var selected = {};
+        if (selectedIds) for (var s = 0; s < selectedIds.length; s++) selected[selectedIds[s]] = true;
+        var html = '';
+        for (var i = 0; i < ranks.length; i++) {
+            var r = ranks[i];
+            var sel = selected[r.id] ? 'selected' : '';
+            html += '<option value="' + _attr(r.id) + '" ' + sel + '>' +
+                (r.symbol ? _escapeHtml(r.symbol) + ' ' : '') + _escapeHtml(r.name) + '</option>';
         }
+        return html;
     }
 
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
-    function _getCharacterById(id) {
-        return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
-    }
-
-    function _getCharacters() {
-        return typeof window.getCharacters === 'function' ? window.getCharacters() : [];
-    }
-
-    function _getPlaceById(id) {
-        return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
-    }
-
-    function _getPlaces() {
-        return typeof window.getPlaces === 'function' ? window.getPlaces() : [];
-    }
-
-    function _getLocationTypeById(id) {
-        return typeof window.getLocationTypeById === 'function' ? window.getLocationTypeById(id) : null;
-    }
-
-    function _getIconDropdown(selectedIcon, placeholder) {
-        if (typeof window.getIconDropdown === 'function') {
-            return window.getIconDropdown(selectedIcon, placeholder);
-        }
-        return '<input type="text" id="editGovTypeIcon" value="' + _escapeHtml(selectedIcon || '') + '" placeholder="' + _escapeHtml(placeholder || 'Icon') + '" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">';
-    }
-
-    function _buildLocationDropdown(selectedId, placeholderText, includeAll) {
+    function _buildLocationOptions(selectedId, placeholder, includeAll) {
         if (typeof window.buildLocationDropdown === 'function') {
-            return window.buildLocationDropdown(selectedId, placeholderText, includeAll);
+            return window.buildLocationDropdown(selectedId, placeholder, includeAll);
         }
-        var places = _getPlaces();
+        var places = _LocationQueries.getPlaceSummaries ? _LocationQueries.getPlaceSummaries() : [];
         var html = '';
-        if (placeholderText) {
-            html += '<option value="">' + _escapeHtml(placeholderText) + '</option>';
-        }
-        if (includeAll) {
-            html += '<option value="all">All Locations</option>';
-        }
+        if (placeholder) html += '<option value="">' + _escapeHtml(placeholder) + '</option>';
+        if (includeAll) html += '<option value="all">All Locations</option>';
         for (var i = 0; i < places.length; i++) {
-            var selected = (selectedId === places[i].id) ? 'selected' : '';
-            var type = _getLocationTypeById(places[i].typeId);
-            var icon = (type && type.icon) ? type.icon : '⌂';
-            html += '<option value="' + places[i].id + '" ' + selected + '>' +
-                icon + ' ' + _escapeHtml(places[i].displayName) +
-                (type ? ' (' + _escapeHtml(type.displayName) + ')' : '') +
-                '</option>';
+            var p = places[i];
+            var sel = selectedId === p.id ? 'selected' : '';
+            html += '<option value="' + _attr(p.id) + '" ' + sel + '>' + _escapeHtml(p.displayName) + '</option>';
         }
-        html += '<option value="unknown" ' + (selectedId === 'unknown' ? 'selected' : '') + '>Unknown Location</option>';
+        html += '<option value="unknown"' + (selectedId === 'unknown' ? ' selected' : '') + '>Unknown Location</option>';
         return html;
     }
 
-    function _openCharacterSelector(options) {
-        var onSelect = options.onSelect;
-        var title = options.title || 'Select Character';
-        var excludeId = options.excludeId || null;
-        var filters = options.filters || {};
-
-        if (typeof window.openUnifiedCharacterSelector === 'function') {
-            window.openUnifiedCharacterSelector({
-                title: title,
-                targetId: excludeId || null,
-                onSelect: onSelect,
-                filters: {
-                    gender: filters.gender || 'all',
-                    status: filters.status || 'all',
-                    showDeceased: filters.showDeceased || false,
-                    location: filters.locationFilter || 'all',
-                    ageMin: filters.ageMin || null,
-                    ageMax: filters.ageMax || null
-                },
-                preset: filters.preset || null
-            });
-            return;
-        }
-
-        if (typeof window.openCharacterSelector === 'function') {
-            window.openCharacterSelector({
-                title: title,
-                targetId: excludeId || null,
-                onSelect: onSelect,
-                filters: {
-                    gender: filters.gender || 'all',
-                    status: filters.status || 'all',
-                    showDeceased: filters.showDeceased || false,
-                    location: filters.locationFilter || 'all'
-                },
-                preset: filters.preset || null
-            });
-            return;
-        }
-
-        if (typeof window.openCharacterSelectModal === 'function') {
-            window.openCharacterSelectModal({
-                title: title,
-                targetCharacterId: excludeId || null,
-                onSelect: onSelect,
-                includeDeceased: filters.showDeceased || false
-            });
-            return;
-        }
-
-        _showToast('Character selector not available', 'error');
+    function _bind(root, selector, event, handler) {
+        var el = root.querySelector(selector);
+        if (el) el.addEventListener(event, handler);
+    }
+    function _setConfirmHandlers(root, onConfirm) {
+        // modals-core typically provides confirm/cancel via its own buttons; we
+        // only need this if it exposes the modal root for post-mount hookup.
+        return onConfirm;
     }
 
-    function _buildRankOptions() {
-        var ranks = typeof window.getRanks === 'function' ? window.getRanks() : [];
-        var html = '';
-        for (var i = 0; i < ranks.length; i++) {
-            var r = ranks[i];
-            html += '<option value="' + r.id + '">' + (r.symbol || '✦') + ' ' + _escapeHtml(r.name) + '</option>';
-        }
-        return html;
-    }
-
-    function _buildRankOptionsWithSelection(selectedIds) {
-        var ranks = typeof window.getRanks === 'function' ? window.getRanks() : [];
-        var html = '';
-        var selectedSet = {};
-        for (var i = 0; i < selectedIds.length; i++) {
-            selectedSet[selectedIds[i]] = true;
-        }
-        for (var i = 0; i < ranks.length; i++) {
-            var r = ranks[i];
-            var selected = selectedSet[r.id] ? 'selected' : '';
-            html += '<option value="' + r.id + '" ' + selected + '>' + (r.symbol || '✦') + ' ' + _escapeHtml(r.name) + '</option>';
-        }
-        return html;
-    }
-
-    // =========================================================================
-    // 4. GOVERNMENT TYPE MODALS - FIXED: No double toasts
-    // =========================================================================
+    // ---- Government type: add -------------------------------------------------
 
     function openAddGovernmentTypeModal(onSuccess) {
-        if (_openingModal) {
-            _showToast('Modal is already opening', 'warning');
-            return;
-        }
-        _openingModal = true;
+        var infoIcon = _iconSpan('CIRCLE_DOT');
 
-        try {
-            var infoIcon = _getIcon('CIRCLE_DOT');
-            var iconDropdown = _getIconDropdown('SHIELD', 'Select an icon');
+        var html =
+            '<div style="max-height:500px;overflow-y:auto;padding:4px;">' +
+            '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Government Type Name</label>' +
+            '<input type="text" id="newGovTypeName" placeholder="e.g., Monarchy, Republic, Theocracy" autofocus style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '</div>' +
+            '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Description</label>' +
+            '<textarea id="newGovTypeDesc" rows="2" placeholder="Description of this government type..." style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);"></textarea>' +
+            '</div>' +
+            '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Icon</label>' +
+            '<select id="newGovTypeIcon" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            _buildIconOptions('SHIELD') +
+            '</select>' +
+            '<small style="font-size:0.55rem;color:var(--dim);">Optional</small>' +
+            '</div>' +
+            '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Allowed Ranks</label>' +
+            '<select id="newGovTypeRanks" multiple size="5" style="width:100%;height:120px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            _buildRankOptions([]) +
+            '</select>' +
+            '<small style="font-size:0.55rem;color:var(--dim);">Hold Ctrl/Cmd to select multiple. Empty = all ranks.</small>' +
+            '</div>' +
+            '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
+            infoIcon + ' Government types define the structure of governance for locations.' +
+            '</div>' +
+            '</div>';
 
-            var modalContent =
-                '<div style="max-height: 500px; overflow-y: auto; padding: 4px;">' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Government Type Name</label>' +
-                '<input type="text" id="newGovTypeName" placeholder="e.g., Monarchy, Republic, Theocracy" autofocus style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Description</label>' +
-                '<textarea id="newGovTypeDesc" rows="2" placeholder="Description of this government type..." style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);"></textarea>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Icon</label>' +
-                '<select id="newGovTypeIcon" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-                iconDropdown +
-                '</select>' +
-                '<small style="font-size:0.55rem; color:var(--dim);">Optional: Icon for this government type</small>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Allowed Ranks</label>' +
-                '<select id="newGovTypeRanks" multiple size="5" style="width:100%; height:120px; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-                _buildRankOptions() +
-                '</select>' +
-                '<small style="font-size:0.55rem; color:var(--dim);">Hold Ctrl/Cmd to select multiple ranks. Leave empty to allow all ranks.</small>' +
-                '</div>' +
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
-                infoIcon + ' Government types define the structure of governance for locations.' +
-                '</div>' +
-                '</div>';
+        _openModal({
+            title: 'Add Government Type',
+            content: html,
+            confirmText: 'Create Type',
+            cancelText: 'Cancel',
+            onConfirm: function(root) {
+                var name = root.querySelector('#newGovTypeName').value.trim();
+                if (!name) { _toast('Government type name is required', 'error'); return false; }
+                var desc = root.querySelector('#newGovTypeDesc').value || '';
+                var rankSel = root.querySelector('#newGovTypeRanks');
+                var allowedRanks = rankSel ? Array.prototype.slice.call(rankSel.selectedOptions).map(function(o) { return o.value; }) : [];
+                var icon = root.querySelector('#newGovTypeIcon').value || '';
 
-            _openModal({
-                title: 'Add Government Type',
-                content: modalContent,
-                confirmText: 'Create Type',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var name = document.getElementById('newGovTypeName').value.trim();
-                    if (!name) {
-                        _showToast('Government type name is required', 'error');
-                        return false;
-                    }
-
-                    var description = document.getElementById('newGovTypeDesc').value || '';
-                    var rankSelect = document.getElementById('newGovTypeRanks');
-                    var allowedRankIds = rankSelect ? Array.from(rankSelect.selectedOptions).map(function(opt) { return opt.value; }) : [];
-                    var icon = document.getElementById('newGovTypeIcon').value || '';
-
-                    var result = window.GovernmentCommands.createGovernmentType({
-                        name: name,
-                        description: description,
-                        allowedRankIds: allowedRankIds,
-                        icon: icon
-                    });
-
-                    if (result) {
-                        // Force save - GovernmentCommands does this too, but double-check
-                        if (typeof window.saveMasterData === 'function') {
-                            window.saveMasterData(true);
-                        }
-                        if (typeof window.invalidateAccessorCaches === 'function') {
-                            window.invalidateAccessorCaches();
-                        }
-                        if (typeof window.GovernmentState !== 'undefined' && 
-                            typeof window.GovernmentState.invalidateCache === 'function') {
-                            window.GovernmentState.invalidateCache();
-                        }
-                        _closeTopModal();
-                        // Toast is shown by GovernmentCommands.createGovernmentType
-                        if (onSuccess) onSuccess(result);
-                        _openingModal = false;
-                        return true;
-                    }
-                    // Only show error if command failed
-                    _showToast('Failed to create government type', 'error');
+                var result = Commands.createGovernmentType({
+                    name: name, description: desc, allowedRankIds: allowedRanks, icon: icon
+                });
+                if (!result.success) {
+                    _toast(result.reason || 'Failed to create government type', 'error');
                     return false;
-                },
-                onCancel: function() {
-                    _openingModal = false;
                 }
-            });
-
-        } finally {
-            _openingModal = false;
-        }
+                _closeTopModal();
+                _toast('Government type "' + name + '" created', 'success');
+                if (onSuccess) onSuccess(result.data);
+                return true;
+            }
+        });
     }
 
-    // =========================================================================
-    // 5. EDIT GOVERNMENT TYPE MODAL - FIXED: No double toasts
-    // =========================================================================
+    // ---- Government type: edit -----------------------------------------------
 
     function openEditGovernmentTypeModal(typeId, onSuccess) {
-        if (_openingModal) {
-            _showToast('Modal is already opening', 'warning');
-            return;
-        }
-        _openingModal = true;
+        var type = Queries.getGovernmentType(typeId);
+        if (!type) { _toast('Government type not found', 'error'); return; }
 
-        try {
-            var type = window.GovernmentState.getGovernmentTypeById(typeId);
-            if (!type) {
-                _showToast('Government type not found', 'error');
-                _openingModal = false;
-                return;
-            }
+        var infoIcon = _iconSpan('CIRCLE_DOT');
 
-            var ranks = typeof window.getRanks === 'function' ? window.getRanks() : [];
-            var selectedRankIds = type.allowedRankIds || [];
-            var rankOptions = ranks.map(function(r) {
-                var selected = selectedRankIds.indexOf(r.id) !== -1 ? 'selected' : '';
-                return '<option value="' + r.id + '" ' + selected + '>' + (r.symbol || '✦') + ' ' + _escapeHtml(r.name) + '</option>';
-            }).join('');
+        var html =
+            '<div style="max-height:500px;overflow-y:auto;padding:4px;">' +
+            '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Government Type Name</label>' +
+            '<input type="text" id="editGovTypeName" value="' + _attr(type.name) + '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '</div>' +
+            '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Description</label>' +
+            '<textarea id="editGovTypeDesc" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' + _escapeHtml(type.description) + '</textarea>' +
+            '</div>' +
+            '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Icon</label>' +
+            '<select id="editGovTypeIcon" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            _buildIconOptions(type.icon) +
+            '</select>' +
+            '</div>' +
+            '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Allowed Ranks</label>' +
+            '<select id="editGovTypeRanks" multiple size="5" style="width:100%;height:120px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            _buildRankOptions(type.allowedRankIds) +
+            '</select>' +
+            '</div>' +
+            '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
+            infoIcon + ' Edit government type details.' +
+            '</div>' +
+            '</div>';
 
-            var infoIcon = _getIcon('CIRCLE_DOT');
-            var iconDropdown = _getIconDropdown(type.icon || 'SHIELD', 'Select an icon');
+        _openModal({
+            title: 'Edit Government Type: ' + type.name,
+            content: html,
+            confirmText: 'Save Changes',
+            cancelText: 'Cancel',
+            onConfirm: function(root) {
+                var name = root.querySelector('#editGovTypeName').value.trim();
+                if (!name) { _toast('Government type name is required', 'error'); return false; }
+                var desc = root.querySelector('#editGovTypeDesc').value || '';
+                var rankSel = root.querySelector('#editGovTypeRanks');
+                var allowedRanks = rankSel ? Array.prototype.slice.call(rankSel.selectedOptions).map(function(o) { return o.value; }) : [];
+                var icon = root.querySelector('#editGovTypeIcon').value || '';
 
-            var modalContent =
-                '<div style="max-height: 500px; overflow-y: auto; padding: 4px;">' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Government Type Name</label>' +
-                '<input type="text" id="editGovTypeName" value="' + _escapeHtml(type.name) + '" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Description</label>' +
-                '<textarea id="editGovTypeDesc" rows="2" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' + _escapeHtml(type.description || '') + '</textarea>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Icon</label>' +
-                '<select id="editGovTypeIcon" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-                iconDropdown +
-                '</select>' +
-                '<small style="font-size:0.55rem; color:var(--dim);">Optional: Icon for this government type</small>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Allowed Ranks</label>' +
-                '<select id="editGovTypeRanks" multiple size="5" style="width:100%; height:120px; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-                rankOptions +
-                '</select>' +
-                '<small style="font-size:0.55rem; color:var(--dim);">Hold Ctrl/Cmd to select multiple ranks.</small>' +
-                '</div>' +
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
-                infoIcon + ' Edit government type details.' +
-                '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Edit Government Type: ' + type.name,
-                content: modalContent,
-                confirmText: 'Save Changes',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var name = document.getElementById('editGovTypeName').value.trim();
-                    if (!name) {
-                        _showToast('Government type name is required', 'error');
-                        return false;
-                    }
-
-                    var description = document.getElementById('editGovTypeDesc').value || '';
-                    var rankSelect = document.getElementById('editGovTypeRanks');
-                    var allowedRankIds = rankSelect ? Array.from(rankSelect.selectedOptions).map(function(opt) { return opt.value; }) : [];
-                    var icon = document.getElementById('editGovTypeIcon').value || '';
-
-                    var result = window.GovernmentCommands.updateGovernmentType(typeId, {
-                        name: name,
-                        description: description,
-                        allowedRankIds: allowedRankIds,
-                        icon: icon
-                    });
-
-                    if (result) {
-                        if (typeof window.saveMasterData === 'function') {
-                            window.saveMasterData(true);
-                        }
-                        if (typeof window.invalidateAccessorCaches === 'function') {
-                            window.invalidateAccessorCaches();
-                        }
-                        if (typeof window.GovernmentState !== 'undefined' && 
-                            typeof window.GovernmentState.invalidateCache === 'function') {
-                            window.GovernmentState.invalidateCache();
-                        }
-                        _closeTopModal();
-                        // Toast is shown by GovernmentCommands.updateGovernmentType
-                        if (onSuccess) onSuccess(result);
-                        _openingModal = false;
-                        return true;
-                    }
-                    _showToast('Failed to update government type', 'error');
+                var result = Commands.updateGovernmentType(typeId, {
+                    name: name, description: desc, allowedRankIds: allowedRanks, icon: icon
+                });
+                if (!result.success) {
+                    _toast(result.reason || 'Failed to update government type', 'error');
                     return false;
-                },
-                onCancel: function() {
-                    _openingModal = false;
                 }
-            });
-
-        } finally {
-            _openingModal = false;
-        }
+                _closeTopModal();
+                _toast('Government type updated', 'success');
+                if (onSuccess) onSuccess(result.data);
+                return true;
+            }
+        });
     }
 
-    // =========================================================================
-    // 6. DELETE GOVERNMENT TYPE MODAL
-    // =========================================================================
+    // ---- Government type: delete ---------------------------------------------
 
     function openDeleteGovernmentTypeModal(typeId, onSuccess) {
-        if (_openingModal) {
-            _showToast('Modal is already opening', 'warning');
+        var type = Queries.getGovernmentType(typeId);
+        if (!type) { _toast('Government type not found', 'error'); return; }
+
+        var usage = (_LocationQueries.getPlacesUsingGovernmentType)
+            ? _LocationQueries.getPlacesUsingGovernmentType(typeId)
+            : [];
+
+        if (usage && usage.length > 0) {
+            var names = usage.map(function(p) { return p.displayName || p.name || 'Unknown'; }).join(', ');
+            _toast('Cannot delete: used by ' + usage.length + ' location(s): ' + names, 'warning');
             return;
         }
-        _openingModal = true;
 
-        try {
-            var type = window.GovernmentState.getGovernmentTypeById(typeId);
-            if (!type) {
-                _showToast('Government type not found', 'error');
-                _openingModal = false;
-                return;
-            }
-
-            var places = typeof window.getPlaces === 'function' ? window.getPlaces() : [];
-            var usedBy = places.filter(function(p) { return p.governmentTypeId === typeId; });
-            if (usedBy.length > 0) {
-                var placeNames = usedBy.map(function(p) { return p.displayName || p.name || 'Unknown'; }).join(', ');
-                _showToast('Cannot delete: Used by ' + usedBy.length + ' location(s): ' + placeNames, 'warning');
-                _openingModal = false;
-                return;
-            }
-
-            _confirmDialog('Delete government type "' + type.name + '"?', 'Delete Government Type', function() {
-                var result = window.GovernmentCommands.deleteGovernmentType(typeId);
-                if (result) {
-                    if (typeof window.saveMasterData === 'function') {
-                        window.saveMasterData(true);
-                    }
-                    if (typeof window.invalidateAccessorCaches === 'function') {
-                        window.invalidateAccessorCaches();
-                    }
-                    if (typeof window.GovernmentState !== 'undefined' && 
-                        typeof window.GovernmentState.invalidateCache === 'function') {
-                        window.GovernmentState.invalidateCache();
-                    }
-                    _closeTopModal();
-                    // Toast is shown by GovernmentCommands.deleteGovernmentType
-                    if (onSuccess) onSuccess();
-                    _openingModal = false;
-                } else {
-                    _showToast('Failed to delete government type', 'error');
-                    _openingModal = false;
+        if (typeof window.confirmDialog === 'function') {
+            window.confirmDialog('Delete government type "' + type.name + '"?', 'Delete Government Type', function() {
+                var result = Commands.deleteGovernmentType(typeId);
+                if (!result.success) {
+                    _toast(result.reason || 'Failed to delete government type', 'error');
+                    return;
                 }
+                _closeTopModal();
+                _toast('Government type deleted', 'info');
+                if (onSuccess) onSuccess(result.data);
             });
-
-        } catch (e) {
-            _openingModal = false;
-            _showToast('Error opening delete modal', 'error');
+        } else {
+            _toast('confirmDialog unavailable', 'error');
         }
     }
 
-    // =========================================================================
-    // 7. GOVERNMENT ASSIGNMENT MODAL
-    // =========================================================================
+    // ---- Assign government to place ------------------------------------------
 
     function openAssignGovernmentModal(placeId, onSuccess) {
-        if (_openingModal) {
-            _showToast('Modal is already opening', 'warning');
-            return;
+        var place = _LocationQueries.getPlaceSummary(placeId);
+        if (!place) { _toast('Place not found', 'error'); return; }
+
+        var types = Queries.getGovernmentTypes();
+        var current = place.governmentTypeId ? Queries.getGovernmentType(place.governmentTypeId) : null;
+        var locationIcon = _iconSpan('LOCATION');
+
+        var optionsHtml = '<option value="">None</option>';
+        for (var i = 0; i < types.length; i++) {
+            var g = types[i];
+            var sel = place.governmentTypeId === g.id ? 'selected' : '';
+            optionsHtml += '<option value="' + _attr(g.id) + '" ' + sel + '>' + _escapeHtml(g.name) + '</option>';
         }
-        _openingModal = true;
 
-        try {
-            var place = _getPlaceById(placeId);
-            if (!place) {
-                _showToast('Place not found', 'error');
-                return;
-            }
+        var html =
+            '<div style="margin-bottom:16px;padding:12px;background:var(--bg3);border-radius:8px;">' +
+            '<strong>' + locationIcon + ' ' + _escapeHtml(place.displayName) + '</strong>' +
+            '<div style="font-size:0.65rem;color:var(--dim);">Current: ' + _escapeHtml(current ? current.name : 'None') + '</div>' +
+            '</div>' +
+            '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Government Type</label>' +
+            '<select id="govTypeId" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            optionsHtml + '</select>' +
+            '</div>' +
+            '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Government Style</label>' +
+            '<input type="text" id="govStyle" value="' + _attr(place.governmentStyle || '') + '" placeholder="e.g., Absolute, Constitutional, Feudal" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '</div>';
 
-            var governmentTypes = window.GovernmentState.getGovernmentTypes();
-            var currentGovType = place.governmentTypeId ? window.GovernmentState.getGovernmentTypeById(place.governmentTypeId) : null;
-            var locationIcon = _getIcon('LOCATION');
+        _openModal({
+            title: 'Assign Government: ' + place.displayName,
+            content: html,
+            confirmText: 'Assign',
+            cancelText: 'Cancel',
+            onConfirm: function(root) {
+                var govTypeId = root.querySelector('#govTypeId').value || null;
+                var govStyle = root.querySelector('#govStyle').value.trim() || null;
 
-            var modalContent =
-                '<div style="margin-bottom: 16px; padding: 12px; background: var(--bg3); border-radius: 8px;">' +
-                '<strong>' + locationIcon + ' ' + _escapeHtml(place.displayName) + '</strong>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">Current government: ' + (currentGovType ? _escapeHtml(currentGovType.name) : (place.governmentTypeId || 'None')) + '</div>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Government Type</label>' +
-                '<select id="govTypeId" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-                '<option value="">None</option>' +
-                governmentTypes.map(function(g) {
-                    var selected = place.governmentTypeId === g.id ? 'selected' : '';
-                    return '<option value="' + g.id + '" ' + selected + '>' + _escapeHtml(g.name) + '</option>';
-                }).join('') +
-                '</select>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Government Style</label>' +
-                '<input type="text" id="govStyle" value="' + _escapeHtml(place.governmentStyle || '') + '" placeholder="e.g., Absolute, Constitutional, Feudal" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-                '</div>';
-
-            _openModal({
-                title: 'Assign Government: ' + place.displayName,
-                content: modalContent,
-                confirmText: 'Assign',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var govTypeId = document.getElementById('govTypeId').value || null;
-                    var govStyle = document.getElementById('govStyle').value.trim() || null;
-
-                    if (typeof window.assignGovernment === 'function') {
-                        window.assignGovernment(placeId, govTypeId, govStyle);
-                        if (typeof window.saveMasterData === 'function') {
-                            window.saveMasterData(true);
-                        }
-                        if (typeof window.invalidateAccessorCaches === 'function') {
-                            window.invalidateAccessorCaches();
-                        }
-                        _showToast('Government assigned to ' + place.displayName, 'success');
-                        _closeTopModal();
-                        if (onSuccess) onSuccess();
-                    } else {
-                        _showToast('assignGovernment not available', 'error');
-                    }
-                    return true;
-                },
-                onCancel: function() {
-                    _openingModal = false;
+                var result = Commands.assignGovernmentToPlace(placeId, govTypeId, govStyle);
+                if (!result.success) {
+                    _toast(result.reason || 'Failed to assign government', 'error');
+                    return false;
                 }
-            });
-
-        } finally {
-            _openingModal = false;
-        }
+                _closeTopModal();
+                _toast('Government assigned to ' + place.displayName, 'success');
+                if (onSuccess) onSuccess(result.data);
+                return true;
+            }
+        });
     }
 
-    // =========================================================================
-    // 8. DEPARTMENT MODALS
-    // =========================================================================
+    // ---- Department: create ---------------------------------------------------
 
     function openCreateGovernmentDepartmentModal(locationId, onSuccess) {
-        if (_openingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var locationOptions = _buildLocationOptions(locationId, 'Select a location', true);
+
+        var depts = Queries.getDepartments({});
+        var deptOptions = '<option value="">None (Top-level)</option>';
+        for (var i = 0; i < depts.length; i++) {
+            deptOptions += '<option value="' + _attr(depts[i].id) + '">' + _escapeHtml(depts[i].name) + '</option>';
         }
-        _openingModal = true;
 
-        try {
-            var locationOptionsHtml = _buildLocationDropdown(locationId, 'Select a location', true);
+        var infoIcon = _iconSpan('CIRCLE_DOT');
 
-            var departments = window.GovernmentState.getAllDepartments({ includeDeprecated: false });
-            var deptOptions = '<option value="">None (Top-level)</option>' +
-                departments.map(function(d) {
-                    return '<option value="' + d.id + '">' + _escapeHtml(d.name) + '</option>';
-                }).join('');
+        var html =
+            '<div style="max-height:500px;overflow-y:auto;padding:4px;">' +
+            '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Department Name</label>' +
+            '<input type="text" id="newDeptName" placeholder="e.g., Ministry of Education" autofocus style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '</div>' +
+            '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Description</label>' +
+            '<textarea id="newDeptDescription" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);"></textarea>' +
+            '</div>' +
+            '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Location</label>' +
+            '<select id="newDeptLocation" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            locationOptions + '</select>' +
+            '</div>' +
+            '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Parent Department</label>' +
+            '<select id="newDeptParent" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            deptOptions + '</select>' +
+            '</div>' +
+            '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
+            infoIcon + ' Departments can be organized hierarchically.' +
+            '</div>' +
+            '</div>';
 
-            var infoIcon = _getIcon('CIRCLE_DOT');
+        _openModal({
+            title: 'Create Government Department',
+            content: html,
+            confirmText: 'Create Department',
+            cancelText: 'Cancel',
+            onConfirm: function(root) {
+                var name = root.querySelector('#newDeptName').value.trim();
+                if (!name) { _toast('Department name is required', 'error'); return false; }
+                var locId = root.querySelector('#newDeptLocation').value;
+                if (!locId) { _toast('Location is required', 'error'); return false; }
 
-            var modalContent =
-                '<div style="max-height: 500px; overflow-y: auto; padding: 4px;">' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Department Name</label>' +
-                '<input type="text" id="newDeptName" placeholder="e.g., Ministry of Education" autofocus style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Description</label>' +
-                '<textarea id="newDeptDescription" rows="2" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);"></textarea>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Location</label>' +
-                '<select id="newDeptLocation" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-                locationOptionsHtml +
-                '</select>' +
-                '<small style="font-size:0.55rem; color:var(--dim);">Selecting a parent location affects all sub-locations</small>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Parent Department</label>' +
-                '<select id="newDeptParent" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-                deptOptions +
-                '</select>' +
-                '</div>' +
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
-                infoIcon + ' Departments can be organized hierarchically. Child departments report to parent departments.' +
-                '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Create Government Department',
-                content: modalContent,
-                confirmText: 'Create Department',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var name = document.getElementById('newDeptName').value.trim();
-                    if (!name) {
-                        _showToast('Department name is required', 'error');
-                        return false;
-                    }
-
-                    var locationIdValue = document.getElementById('newDeptLocation').value;
-                    if (!locationIdValue) {
-                        _showToast('Location is required', 'error');
-                        return false;
-                    }
-
-                    var result = window.GovernmentCommands.createDepartment({
-                        name: name,
-                        description: document.getElementById('newDeptDescription').value || '',
-                        locationId: locationIdValue,
-                        parentDepartmentId: document.getElementById('newDeptParent').value || null
-                    });
-
-                    if (result) {
-                        if (typeof window.saveMasterData === 'function') {
-                            window.saveMasterData(true);
-                        }
-                        if (typeof window.invalidateAccessorCaches === 'function') {
-                            window.invalidateAccessorCaches();
-                        }
-                        if (typeof window.GovernmentState !== 'undefined' && 
-                            typeof window.GovernmentState.invalidateCache === 'function') {
-                            window.GovernmentState.invalidateCache();
-                        }
-                        _showToast('Department "' + name + '" created', 'success');
-                        _closeTopModal();
-                        if (onSuccess) onSuccess(result.id);
-                        _openingModal = false;
-                        return true;
-                    }
+                var result = Commands.createDepartment({
+                    name: name,
+                    description: root.querySelector('#newDeptDescription').value || '',
+                    locationId: locId,
+                    parentDepartmentId: root.querySelector('#newDeptParent').value || null
+                });
+                if (!result.success) {
+                    _toast(result.reason || 'Failed to create department', 'error');
                     return false;
-                },
-                onCancel: function() {
-                    _openingModal = false;
                 }
-            });
-
-        } finally {
-            _openingModal = false;
-        }
+                _closeTopModal();
+                _toast('Department "' + name + '" created', 'success');
+                if (onSuccess) onSuccess(result.data);
+                return true;
+            }
+        });
     }
 
-    // =========================================================================
-    // 9. EXPORTS
-    // =========================================================================
+    // ---- Export --------------------------------------------------------------
 
     window.openAddGovernmentTypeModal = openAddGovernmentTypeModal;
     window.openEditGovernmentTypeModal = openEditGovernmentTypeModal;
@@ -691,21 +395,13 @@
     window.openAssignGovernmentModal = openAssignGovernmentModal;
     window.openCreateGovernmentDepartmentModal = openCreateGovernmentDepartmentModal;
 
-    // Keep legacy aliases but don't create duplicates
-    if (typeof window._openAddGovernmentTypeModal === 'undefined') {
-        window._openAddGovernmentTypeModal = openAddGovernmentTypeModal;
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = {
+            openAddGovernmentTypeModal: openAddGovernmentTypeModal,
+            openEditGovernmentTypeModal: openEditGovernmentTypeModal,
+            openDeleteGovernmentTypeModal: openDeleteGovernmentTypeModal,
+            openAssignGovernmentModal: openAssignGovernmentModal,
+            openCreateGovernmentDepartmentModal: openCreateGovernmentDepartmentModal
+        };
     }
-    if (typeof window._openEditGovernmentTypeModal === 'undefined') {
-        window._openEditGovernmentTypeModal = openEditGovernmentTypeModal;
-    }
-    if (typeof window._openDeleteGovernmentTypeModal === 'undefined') {
-        window._openDeleteGovernmentTypeModal = openDeleteGovernmentTypeModal;
-    }
-    if (typeof window._openAssignGovernmentModal === 'undefined') {
-        window._openAssignGovernmentModal = openAssignGovernmentModal;
-    }
-    if (typeof window._openCreateGovernmentDepartmentModal === 'undefined') {
-        window._openCreateGovernmentDepartmentModal = openCreateGovernmentDepartmentModal;
-    }
-
 })();
