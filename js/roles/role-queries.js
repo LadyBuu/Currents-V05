@@ -7,20 +7,17 @@
  *
  * Contract:
  *   - No mutations, no side effects, no events, no persistence.
- *   - No recursion guards. These are synchronous pure reads; there is no
- *     recursive graph to protect, and a guard would only break legitimate
- *     composition between queries.
- *   - No fallbacks. If a required dependency is missing at load time, this
- *     module throws. If RoleState is not initialised, the underlying call
- *     throws and the error propagates.
- *   - No presentation data. Icons, labels, colours belong in the UI layer.
+ *   - No recursion guards.
+ *   - No fallbacks. Required dependencies fail loudly.
+ *   - No presentation data in domain projections. Icons and labels
+ *     belong in the UI layer.
  *   - Skill-tier classification delegated entirely to SkillUtils.
  *
  * DEPENDENCIES:
  *   - role-state.js       (RoleState)
  *   - role-constants.js   (RoleConstants)
  *   - skill-utils.js      (SkillUtils)
- *   - accessors.js        (getCharacterById, getCharacters)
+ *   - accessors.js        (getCharacterById, getCharacters, getRankById)
  *
  * =============================================================================
  */
@@ -56,10 +53,6 @@
     // 2. PRIVATE HELPERS
     // =========================================================================
 
-    function _roleHasId(role, roleId) {
-        return role && role.id === roleId;
-    }
-
     function _characterHasRole(character, roleId) {
         if (!character || !Array.isArray(character.professions)) return false;
         for (var i = 0; i < character.professions.length; i++) {
@@ -89,16 +82,6 @@
     // 3. ROLE COLLECTION QUERIES
     // =========================================================================
 
-    /**
-     * Returns all roles, optionally filtered.
-     *
-     * @param {Object} [filters]
-     * @param {string} [filters.category]   Category id, or 'all'.
-     * @param {string} [filters.gender]     'male', 'female', 'both', or 'all'.
-     * @param {string} [filters.search]     Case-insensitive name/notes substring.
-     * @param {string[]} [filters.excludeIds] Role ids to omit from the result.
-     * @returns {Array} Sorted by name.
-     */
     function getRoles(filters) {
         filters = filters || {};
         var roles = RS.getAllRoles();
@@ -139,9 +122,6 @@
         return result;
     }
 
-    /**
-     * Searches roles by name only. Intended for autocomplete-style lookups.
-     */
     function searchRoles(searchTerm, options) {
         options = options || {};
         return getRoles({
@@ -152,19 +132,102 @@
     }
 
     // =========================================================================
-    // 4. CATEGORY QUERIES
+    // 4. ROLE SUMMARY PROJECTIONS
+    // =========================================================================
+    //
+    // Defensive, flat projections used by cross-domain consumers and UI
+    // that need role facts without reaching into role-state.
     // =========================================================================
 
     /**
-     * Returns the category map. No icons, no presentation data.
+     * Returns a defensive summary of a role.
+     *
+     * @param {string} roleId
+     * @returns {Object|null}
      */
+    function getRoleSummary(roleId) {
+        if (!roleId) return null;
+        var role = RS.getRole(roleId);
+        if (!role) return null;
+
+        return {
+            id: role.id,
+            name: role.name || '',
+            category: role.category || null,
+            genderRestriction: role.genderRestriction || 'both',
+            icon: role.icon || null,
+            descriptions: role.descriptions ? Object.assign({}, role.descriptions) : {},
+            specializations: Array.isArray(role.specializations)
+                ? role.specializations.slice()
+                : [],
+            notes: role.notes || ''
+        };
+    }
+
+    /**
+     * Returns summaries for all roles.
+     *
+     * @param {Object} [filters] same shape as getRoles
+     * @returns {Array<Object>}
+     */
+    function getAllRoleSummaries(filters) {
+        var roles = getRoles(filters);
+        var out = [];
+        for (var i = 0; i < roles.length; i++) {
+            var s = getRoleSummary(roles[i].id);
+            if (s) out.push(s);
+        }
+        return out;
+    }
+
+    /**
+     * Returns a defensive summary of a rank.
+     *
+     * Delegates to getRankById (accessors). Rank is canonical in
+     * masterData.data.ranks; this projection is what UI and cross-domain
+     * consumers use.
+     *
+     * @param {string} rankId
+     * @returns {Object|null}
+     */
+    function getRankSummary(rankId) {
+        if (!rankId) return null;
+        if (typeof window.getRankById !== 'function') return null;
+        var rank = window.getRankById(rankId);
+        if (!rank) return null;
+
+        return {
+            id: rank.id,
+            name: rank.name || '',
+            symbol: rank.symbol || null,
+            priority: rank.priority !== undefined ? rank.priority : null
+        };
+    }
+
+    /**
+     * Returns summaries for all ranks.
+     *
+     * @returns {Array<Object>}
+     */
+    function getAllRankSummaries() {
+        if (typeof window.getRanks !== 'function') return [];
+        var ranks = window.getRanks();
+        var out = [];
+        for (var i = 0; i < ranks.length; i++) {
+            var s = getRankSummary(ranks[i].id);
+            if (s) out.push(s);
+        }
+        return out;
+    }
+
+    // =========================================================================
+    // 5. CATEGORY QUERIES
+    // =========================================================================
+
     function getRoleCategories() {
         return RS.getCategories();
     }
 
-    /**
-     * Returns categories as a sorted array with role counts.
-     */
     function getRoleCategoriesWithCounts() {
         var categories = RS.getCategories();
         var roles = RS.getAllRoles();
@@ -193,23 +256,9 @@
     }
 
     // =========================================================================
-    // 5. CHARACTER-ROLE QUERIES
+    // 6. CHARACTER-ROLE QUERIES
     // =========================================================================
 
-    /**
-     * Returns characters who hold a role, with their profession details.
-     *
-     * Options:
-     *   minSkill       - Only include professions with skillLevel >= minSkill.
-     *   minTier        - Only include professions whose tier id is >= this tier.
-     *                    One of: 'novice','apprentice','journeyman','expert','master'.
-     *   mastersOnly    - Shortcut for minTier: 'master'   (level 91+)
-     *   expertsAndUp   - Shortcut for minTier: 'expert'   (level 76+)
-     *   canTeachOnly   - Only include characters eligible to teach (51+).
-     *
-     * Note: `mastersOnly` means MASTER (91+), matching the canonical tier
-     * names. If you want "expert and above", use `expertsAndUp`.
-     */
     function getCharactersWithRoleDetails(roleId, options) {
         options = options || {};
 
@@ -277,19 +326,12 @@
         return results;
     }
 
-    /**
-     * Convenience: just the character records.
-     */
     function getCharactersWithRole(roleId, options) {
         return getCharactersWithRoleDetails(roleId, options).map(function (entry) {
             return entry.character;
         });
     }
 
-    /**
-     * Returns the character's skill level in a role, or null if they do not
-     * hold the role.
-     */
     function getSkillLevel(characterId, roleId) {
         var character = window.getCharacterById(characterId);
         if (!character) return null;
@@ -300,39 +342,15 @@
             : 0;
     }
 
-    /**
-     * True if the character currently holds this role.
-     */
     function characterHasRole(characterId, roleId) {
         var character = window.getCharacterById(characterId);
         return _characterHasRole(character, roleId);
     }
 
     // =========================================================================
-    // 6. ELIGIBILITY QUERY
+    // 7. ELIGIBILITY QUERY
     // =========================================================================
 
-    /**
-     * Returns characters eligible to be assigned a role.
-     *
-     * A character is eligible when:
-     *   - they are alive
-     *   - they satisfy the role's gender restriction
-     *   - they do not already hold the role
-     *
-     * UI-side filters (search text, current location, gender dropdown) are
-     * applied by this query so that every screen uses one definition of
-     * "eligible".
-     *
-     * @param {string} roleId
-     * @param {Object} [filters]
-     * @param {string} [filters.search]         Case-insensitive name/surname substring.
-     * @param {string} [filters.gender]         'male' | 'female' | 'all'.
-     * @param {string} [filters.locationId]     Place id, or 'all'.
-     * @param {Function} [filters.getLocation]  Optional location resolver
-     *                                          (character) -> locationId.
-     * @returns {Array} Characters sorted by birth year ascending.
-     */
     function getEligibleCharactersForRole(roleId, filters) {
         filters = filters || {};
         var role = RS.getRole(roleId);
@@ -385,11 +403,6 @@
         return result;
     }
 
-    /**
-     * Returns the distinct location ids currently occupied by any live
-     * character. Optional location resolver, same contract as
-     * getEligibleCharactersForRole.
-     */
     function getOccupiedLocationIds(getLocation) {
         if (typeof getLocation !== 'function') return [];
         var characters = window.getCharacters();
@@ -409,16 +422,9 @@
     }
 
     // =========================================================================
-    // 7. STATISTICS
+    // 8. STATISTICS
     // =========================================================================
 
-    /**
-     * Returns statistics for a role based on current character data.
-     *
-     * The returned `specializations` array is a copy. `canTeachCount` uses
-     * SkillUtils' teaching threshold, so it can never drift from the tier
-     * classification.
-     */
     function getRoleStatistics(roleId) {
         var role = RS.getRole(roleId);
         if (!role) {
@@ -466,21 +472,15 @@
     }
 
     // =========================================================================
-    // 8. SPECIALIZATION QUERIES
+    // 9. SPECIALIZATION QUERIES
     // =========================================================================
 
-    /**
-     * Returns a copy of the role's specializations.
-     */
     function getRoleSpecializations(roleId) {
         var role = RS.getRole(roleId);
         if (!role || !Array.isArray(role.specializations)) return [];
         return role.specializations.slice();
     }
 
-    /**
-     * Returns every distinct specialization across all roles, sorted.
-     */
     function getAllRoleSpecializations() {
         var roles = RS.getAllRoles();
         var seen = {};
@@ -499,9 +499,6 @@
         return result;
     }
 
-    /**
-     * Returns roles that list the given specialization.
-     */
     function getRolesWithSpecialization(specialization) {
         if (typeof specialization !== 'string' || !specialization) return [];
         var roles = RS.getAllRoles();
@@ -512,21 +509,13 @@
     }
 
     // =========================================================================
-    // 9. TEACHING QUERIES
+    // 10. TEACHING QUERIES
     // =========================================================================
 
-    /**
-     * Returns characters who hold this role and are eligible to teach it.
-     */
     function getPotentialTeachersForRole(roleId) {
         return getCharactersWithRoleDetails(roleId, { canTeachOnly: true });
     }
 
-    /**
-     * True if the character can teach this specific role.
-     * Being a teacher in general is not enough — the character must hold the
-     * role at or above the teaching threshold.
-     */
     function canCharacterTeachRole(characterId, roleId) {
         var level = getSkillLevel(characterId, roleId);
         if (level === null) return false;
@@ -534,13 +523,19 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 11. EXPORTS
     // =========================================================================
 
     window.RoleQueries = {
         // Role collection
         getRoles: getRoles,
         searchRoles: searchRoles,
+
+        // Summary projections
+        getRoleSummary: getRoleSummary,
+        getAllRoleSummaries: getAllRoleSummaries,
+        getRankSummary: getRankSummary,
+        getAllRankSummaries: getAllRankSummaries,
 
         // Categories
         getRoleCategories: getRoleCategories,
