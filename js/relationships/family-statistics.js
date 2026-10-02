@@ -1,91 +1,107 @@
 /**
- * =============================================================================
- * STILL WATERS - FAMILY STATISTICS (family-statistics.js)
- * =============================================================================
- * 
- * LOCATION: js/modules/relationships/family-statistics.js
- * 
- * SCOPE:
- *   Aggregate statistics for a character's family graph.
- * 
- * DEPENDENCIES:
- *   - family-accessors.js
- *   - household-queries.js (optional, for household info)
- * 
- * ICON POLICY: No emojis. No icons.
- * 
- * =============================================================================
+ * family-statistics.js
+ *
+ * Aggregates family projections for a character.
+ * Depends only on FamilyQueries and CharacterQueries.
+ * No policy, no mutation, no persistence.
  */
 
 (function() {
     'use strict';
 
-    function _requireFamily() {
-        if (typeof window.FamilyAccessors === 'undefined') {
-            throw new Error('family-statistics.js: family-accessors.js must load first.');
+    function _requireDeps() {
+        if (!window.FamilyQueries) {
+            throw new Error('family-statistics.js: FamilyQueries must load first');
+        }
+        if (typeof window.getCharacterById !== 'function') {
+            throw new Error('family-statistics.js: getCharacterById required');
         }
     }
 
+    function _isLiving(characterId) {
+        var c = window.getCharacterById(characterId);
+        return !!(c && !c.isDeceased);
+    }
+
     function getFamilyStatistics(characterId) {
-        _requireFamily();
-        var fa = window.FamilyAccessors;
-        var character = window.getCharacterById
-            ? window.getCharacterById(characterId)
-            : null;
+        _requireDeps();
+        var FQ = window.FamilyQueries;
+        var character = window.getCharacterById(characterId);
         if (!character) return null;
 
-        var parents = fa.getParents(characterId);
-        var children = fa.getAllChildren(characterId, true);
-        var siblings = fa.getSiblings(characterId, true, true, true);
-        var grandchildren = fa.getGrandchildren(characterId, true);
-        var spouses = fa.getSpouses(characterId, true);
+        var parents = FQ.getParents(characterId, { activeOnly: true });
+        var childrenIds = FQ.getChildren(characterId, { activeOnly: true });
+        var siblings = FQ.getSiblings(characterId, { activeOnly: true });
+        var grandchildrenIds = FQ.getGrandchildren(characterId, { activeOnly: true });
+        var spouses = FQ.getSpouseIds(characterId);
 
-        var livingChildren = children.filter(function(c) {
-            return !c.character.isDeceased;
-        });
+        var livingChildren = childrenIds.filter(_isLiving);
         var livingSiblings = siblings.filter(function(s) {
-            return !s.character.isDeceased;
+            return _isLiving(s.siblingId);
         });
-        var livingGrandchildren = grandchildren.filter(function(g) {
-            return !g.isDeceased;
-        });
+        var livingGrandchildren = grandchildrenIds.filter(_isLiving);
+
+        var fullSiblings = siblings.filter(function(s) {
+            return s.siblingType === 'full';
+        }).length;
+        var halfSiblings = siblings.filter(function(s) {
+            return s.siblingType === 'half';
+        }).length;
+        var stepSiblings = siblings.filter(function(s) {
+            return s.siblingType === 'step';
+        }).length;
+        var adoptiveSiblings = siblings.filter(function(s) {
+            return s.siblingType === 'adoptive';
+        }).length;
 
         return {
-            character: character,
+            characterId: characterId,
+
             parents: {
-                father: parents.father,
-                mother: parents.mother,
-                hasParents: parents.father !== null || parents.mother !== null
+                fathers: parents.fathers,
+                mothers: parents.mothers,
+                others: parents.others,
+                total: parents.fathers.length +
+                       parents.mothers.length +
+                       parents.others.length,
+                hasParents: (parents.fathers.length +
+                             parents.mothers.length +
+                             parents.others.length) > 0
             },
+
             children: {
-                total: children.length,
+                total: childrenIds.length,
                 living: livingChildren.length,
-                biological: children.filter(function(c) { return c.biological; }).length,
-                adopted: children.filter(function(c) { return c.adopted; }).length,
-                eldest: fa.getEldestChild(characterId, true, true),
-                youngest: fa.getYoungestChild(characterId, true, true)
+                ids: childrenIds
             },
+
             siblings: {
                 total: siblings.length,
                 living: livingSiblings.length,
-                full: siblings.filter(function(s) { return s.full; }).length,
-                half: siblings.filter(function(s) { return s.half; }).length,
-                adoptive: siblings.filter(function(s) { return s.adoptive; }).length,
-                eldest: fa.getEldestSibling(characterId, true, true),
-                youngest: fa.getYoungestSibling(characterId, true, true)
+                full: fullSiblings,
+                half: halfSiblings,
+                step: stepSiblings,
+                adoptive: adoptiveSiblings,
+                entries: siblings
             },
+
             grandchildren: {
-                total: grandchildren.length,
-                living: livingGrandchildren.length
+                total: grandchildrenIds.length,
+                living: livingGrandchildren.length,
+                ids: grandchildrenIds
             },
-            spouse: spouses.length > 0 ? {
-                character: spouses[0].character,
-                marriageYear: spouses[0].startYear
-            } : null,
-            isOrphan: fa.isOrphan(characterId, true),
-            hasChildren: fa.hasChildren(characterId, true, false)
+
+            spouses: spouses,
+
+            isOrphan: FQ.isOrphan(characterId),
+            hasChildren: childrenIds.length > 0,
+            hasSiblings: siblings.length > 0
         };
     }
 
     window.getFamilyStatistics = getFamilyStatistics;
+    window.FamilyStatistics = {
+        getFamilyStatistics: getFamilyStatistics
+    };
+
 })();
