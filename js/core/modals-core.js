@@ -1,87 +1,14 @@
 /**
- * =============================================================================
- * STILL WATERS - MODALS CORE (modals-core.js)
- * =============================================================================
- *
- * LOCATION: js/core/modals-core.js
- *
- * SCOPE:
- *   - Modal manager (open, close, stack)
- *   - Simple dialogs (alert, confirm, success, error)
- *   - Preview modal with consequences list
- *
- * OUT OF SCOPE (belongs elsewhere):
- *   - Location dropdowns → js/selectors/location-dropdown.js
- *   - Icon dropdown → js/selectors/icon-dropdown.js
- *   - Undo/redo → js/core/history.js
- *   - Character selector bridge → js/selectors/modals-char-select.js
- *   - Data accessors → call window.getCharacterById etc. directly
- *   - Modal visual presentation → CSS (.modal, .modal--small, etc.)
- *
- * SEMANTIC RULES:
- *   - Missing (undefined/null) options use defaults. Invalid explicit
- *     options (wrong type, unknown enum value) throw.
- *   - openModal's titleHtml / contentHtml are TRUSTED HTML. Callers must
- *     escape user-supplied strings. Simple dialogs escape their message
- *     arguments; the raw openModal does not.
- *   - onConfirm / onCancel exceptions propagate to the caller. The modal
- *     does NOT auto-close after a callback throws, and does NOT swallow
- *     the error. Callers are responsible for handling failures.
- *   - onOpen exceptions are logged and contained. The modal is not
- *     rethrown out of openModal. Rationale: onOpen is a setup hook, not
- *     the user's action; a failure there should not prevent the modal
- *     from having been created.
- *   - Missing dependencies throw. No silent fallbacks.
- *   - openModal returns { element, close }.
- *
- * CALLBACK CONTRACT:
- *   onConfirm is invoked when the user confirms. If it throws, the modal
- *   stays open and the exception propagates out of the click handler
- *   (the browser will log it). A future revision may support an async
- *   onConfirm that resolves to "close" or "keep open"; for now, callers
- *   who need that behaviour should not use the built-in confirm button.
- *
- *   onCancel follows the same rule: it propagates on throw.
- *
- *   onOpen is called after DOM insertion. If it throws, the error is
- *   logged and the modal remains open.
- *
- * FOCUS:
- *   The modal container is focused on open, and focus is restored to
- *   the previously focused element on close. A full focus trap (tab
- *   cycling) is not implemented; the modal container being focused
- *   means tabbing into the underlying page is possible, which is a
- *   known limitation of this module. Callers requiring strict focus
- *   containment should build it on top.
- *
- * UNDO:
- *   modals-core does NOT know about the undo system. Callers who want
- *   to offer an undo prompt after confirmation pass an onUndo callback
- *   to openPreviewModal. The undo machinery (history.js) is the
- *   caller's concern.
- *
- * DEPENDENCIES (REQUIRED):
- *   - formatting.js: escapeHtml
- *   - icons.js:      Icons
- *
- * ICON POLICY: Uses icons.js. No emojis.
- *
- * =============================================================================
+ * modals-core.js
+ * Modal manager. onConfirm/onMount receive the modal root. onConfirm
+ * returning false keeps the modal open. No silent fallbacks for required deps.
  */
-
 (function() {
     'use strict';
 
-    // =========================================================================
-    // 0. DEPENDENCY GUARDS
-    // =========================================================================
-
     function _requireFormatting() {
         if (typeof window.escapeHtml !== 'function') {
-            throw new Error(
-                'modals-core.js: formatting.js must load first ' +
-                '(escapeHtml missing).'
-            );
+            throw new Error('modals-core.js: formatting.js must load first (escapeHtml missing).');
         }
     }
 
@@ -102,51 +29,51 @@
         return v === undefined || v === null;
     }
 
-    // =========================================================================
-    // 1. MODAL MANAGER
-    // =========================================================================
+    // ---- Modal manager -------------------------------------------------------
 
     var _modalStack = [];
     var _currentModalId = 0;
-
     var _VALID_SIZES = ['small', 'medium', 'large'];
 
     /**
      * Opens a modal dialog.
      *
-     * TRUST: `titleHtml` and `contentHtml` are inserted as innerHTML.
-     * Callers are responsible for escaping any user-supplied content.
+     * TRUST: titleHtml and contentHtml are inserted as innerHTML.
+     *
+     * Callback contract:
+     *   - onMount(root)  — called after DOM insertion. Errors are logged.
+     *   - onOpen(root)   — alias for onMount. If both supplied, onMount wins.
+     *   - onConfirm(root) — called on confirm. Return false to keep the modal
+     *                       open. Any other return (including undefined) closes.
+     *                       Exceptions propagate; modal stays open.
+     *   - onCancel(root)  — called on cancel. Same return semantics as onConfirm.
      *
      * @param {Object} [options]
-     * @param {string} [options.titleHtml] - trusted HTML
-     * @param {string} [options.contentHtml] - trusted HTML
-     * @param {Function} [options.onConfirm] - called on confirm; exceptions
-     *                                          propagate and keep the modal open
-     * @param {Function} [options.onCancel]  - called on cancel; exceptions
-     *                                          propagate
-     * @param {Function} [options.onOpen]    - called after DOM insertion;
-     *                                          receives the modal element;
-     *                                          exceptions are logged
-     * @param {string} [options.confirmText] - default 'Confirm'
-     * @param {string} [options.cancelText]  - default 'Cancel'
-     * @param {boolean} [options.closeOnOverlay] - default true
-     * @param {boolean} [options.showCloseButton] - default true
-     * @param {string} [options.size] - 'small' | 'medium' | 'large'
+     * @param {string} [options.titleHtml]      trusted HTML
+     * @param {string} [options.contentHtml]    trusted HTML
+     * @param {Function} [options.onMount]      receives modal element
+     * @param {Function} [options.onOpen]       alias for onMount
+     * @param {Function} [options.onConfirm]    receives modal element; false keeps open
+     * @param {Function} [options.onCancel]     receives modal element; false keeps open
+     * @param {string} [options.confirmText]    default 'Confirm'
+     * @param {string} [options.cancelText]     default 'Cancel'
+     * @param {boolean} [options.closeOnOverlay]  default true
+     * @param {boolean} [options.showCloseButton] default true
+     * @param {string} [options.size]           'small' | 'medium' | 'large'
      * @returns {{ element: HTMLElement, close: Function }}
-     * @throws {Error} for invalid options, size, or missing dependencies
      */
     function openModal(options) {
-        if (_isMissing(options)) {
-            options = {};
-        } else if (typeof options !== 'object' || Array.isArray(options)) {
+        if (_isMissing(options)) options = {};
+        else if (typeof options !== 'object' || Array.isArray(options)) {
             throw new Error('openModal: options must be an object');
         }
 
         var titleHtml = _isMissing(options.titleHtml) ? 'Modal' : options.titleHtml;
         var contentHtml = _isMissing(options.contentHtml) ? '' : options.contentHtml;
+        var onMount = _isMissing(options.onMount) ? null : options.onMount;
+        var onOpen = _isMissing(options.onOpen) ? null : options.onOpen;
         var onConfirm = _isMissing(options.onConfirm) ? null : options.onConfirm;
         var onCancel = _isMissing(options.onCancel) ? null : options.onCancel;
-        var onOpen = _isMissing(options.onOpen) ? null : options.onOpen;
         var confirmText = _isMissing(options.confirmText) ? 'Confirm' : options.confirmText;
         var cancelText = _isMissing(options.cancelText) ? 'Cancel' : options.cancelText;
         var closeOnOverlay = options.closeOnOverlay !== false;
@@ -154,25 +81,25 @@
         var size = _isMissing(options.size) ? 'medium' : options.size;
 
         if (_VALID_SIZES.indexOf(size) === -1) {
-            throw new Error(
-                'openModal: unknown size "' + size + '". ' +
-                'Expected one of: ' + _VALID_SIZES.join(', ')
-            );
+            throw new Error('openModal: unknown size "' + size + '". Expected one of: ' + _VALID_SIZES.join(', '));
         }
-
+        if (onMount !== null && typeof onMount !== 'function') {
+            throw new Error('openModal: onMount must be a function');
+        }
+        if (onOpen !== null && typeof onOpen !== 'function') {
+            throw new Error('openModal: onOpen must be a function');
+        }
         if (onConfirm !== null && typeof onConfirm !== 'function') {
             throw new Error('openModal: onConfirm must be a function');
         }
         if (onCancel !== null && typeof onCancel !== 'function') {
             throw new Error('openModal: onCancel must be a function');
         }
-        if (onOpen !== null && typeof onOpen !== 'function') {
-            throw new Error('openModal: onOpen must be a function');
-        }
+
+        // onMount takes precedence; onOpen is a compatibility alias.
+        var mountHook = onMount || onOpen;
 
         var modalId = 'modal_' + (++_currentModalId);
-
-        // Capture the currently focused element for restoration on close.
         var previouslyFocused = document.activeElement;
 
         var modal = document.createElement('div');
@@ -186,8 +113,6 @@
         var titleId = modalId + '-title';
         modal.setAttribute('aria-labelledby', titleId);
 
-        // titleHtml / contentHtml are the caller's responsibility to
-        // escape. Trusted SVG icons are permitted via _getIcon().
         modal.innerHTML =
             '<div class="modal-overlay"></div>' +
             '<div class="modal-container">' +
@@ -212,7 +137,6 @@
 
         document.body.appendChild(modal);
 
-        // Focus the modal container so keyboard users are inside it.
         var container = modal.querySelector('.modal-container');
         container.setAttribute('tabindex', '-1');
         container.focus();
@@ -220,7 +144,6 @@
         var stackEntry = { id: modalId, element: modal, escapeHandler: null, close: null };
         _modalStack.push(stackEntry);
 
-        // ---- Single canonical close routine ----
         function closeModal() {
             if (stackEntry.escapeHandler) {
                 document.removeEventListener('keydown', stackEntry.escapeHandler);
@@ -229,8 +152,6 @@
             var idx = _modalStack.indexOf(stackEntry);
             if (idx !== -1) _modalStack.splice(idx, 1);
             if (modal.parentNode) modal.parentNode.removeChild(modal);
-
-            // Restore focus to whatever held it before this modal opened.
             if (previouslyFocused
                 && typeof previouslyFocused.focus === 'function'
                 && previouslyFocused !== document.body) {
@@ -240,72 +161,53 @@
 
         stackEntry.close = closeModal;
 
-        // ---- Close button ----
         var closeBtn = modal.querySelector('.modal-close-btn');
-        if (closeBtn) {
-            closeBtn.addEventListener('click', closeModal);
-        }
+        if (closeBtn) closeBtn.addEventListener('click', closeModal);
 
-        // ---- Overlay click ----
         if (closeOnOverlay) {
             var overlay = modal.querySelector('.modal-overlay');
-            if (overlay) {
-                overlay.addEventListener('click', closeModal);
-            }
+            if (overlay) overlay.addEventListener('click', closeModal);
         }
 
-        // ---- Cancel button ----
-        // Exceptions propagate; the modal stays open on failure.
+        // Cancel: exception propagates; false return keeps open.
         var cancelBtn = modal.querySelector('.cancel-btn');
         if (cancelBtn) {
             cancelBtn.addEventListener('click', function() {
-                if (onCancel) onCancel();
+                var result;
+                if (onCancel) result = onCancel(modal);
+                if (result === false) return;
                 closeModal();
             });
         }
 
-        // ---- Confirm button ----
-        // Exceptions propagate; the modal stays open on failure.
+        // Confirm: exception propagates; false return keeps open.
         var confirmBtn = modal.querySelector('.confirm-btn');
         if (confirmBtn && onConfirm) {
             confirmBtn.addEventListener('click', function() {
-                onConfirm();
+                var result = onConfirm(modal);
+                if (result === false) return;
                 closeModal();
             });
         }
 
-        // ---- Escape key ----
+        // Escape closes the top modal.
         var escapeHandler = function(e) {
             if (e.key !== 'Escape') return;
             var top = _modalStack[_modalStack.length - 1];
-            if (top && top.id === modalId) {
-                closeModal();
-            }
+            if (top && top.id === modalId) closeModal();
         };
         stackEntry.escapeHandler = escapeHandler;
         document.addEventListener('keydown', escapeHandler);
 
-        // ---- onOpen ----
-        // Exceptions are logged and contained; the modal is already
-        // created and should remain usable.
-        if (onOpen) {
-            try {
-                onOpen(modal);
-            } catch (err) {
-                console.error('modals-core.js: onOpen threw:', err);
-            }
+        // Mount hook: exceptions logged and contained.
+        if (mountHook) {
+            try { mountHook(modal); }
+            catch (err) { console.error('modals-core.js: mount hook threw:', err); }
         }
 
-        return {
-            element: modal,
-            close: closeModal
-        };
+        return { element: modal, close: closeModal };
     }
 
-    /**
-     * Closes the top-most modal, if any.
-     * Internal stack corruption throws rather than being silently repaired.
-     */
     function closeTopModal() {
         if (_modalStack.length === 0) return;
         var top = _modalStack[_modalStack.length - 1];
@@ -315,18 +217,11 @@
         top.close();
     }
 
-    /**
-     * Closes all open modals.
-     */
     function closeAllModals() {
-        while (_modalStack.length > 0) {
-            closeTopModal();
-        }
+        while (_modalStack.length > 0) closeTopModal();
     }
 
-    // =========================================================================
-    // 2. SIMPLE DIALOGS
-    // =========================================================================
+    // ---- Simple dialogs ------------------------------------------------------
 
     function alertDialog(message, title) {
         var resolvedTitle = _isMissing(title) ? 'Notice' : title;
@@ -371,16 +266,10 @@
         });
     }
 
-    // =========================================================================
-    // 3. PREVIEW MODAL
-    // =========================================================================
+    // ---- Preview modal -------------------------------------------------------
 
     var _VALID_SEVERITIES = ['info', 'warning', 'error'];
 
-    /**
-     * Validates the consequences array shape.
-     * @private
-     */
     function _validateConsequences(consequences) {
         if (!Array.isArray(consequences)) {
             throw new Error('openPreviewModal: consequences must be an array');
@@ -388,52 +277,24 @@
         for (var i = 0; i < consequences.length; i++) {
             var c = consequences[i];
             if (!c || typeof c !== 'object' || Array.isArray(c)) {
-                throw new Error(
-                    'openPreviewModal: consequences[' + i + '] must be an object'
-                );
+                throw new Error('openPreviewModal: consequences[' + i + '] must be an object');
             }
             if (typeof c.message !== 'string') {
-                throw new Error(
-                    'openPreviewModal: consequences[' + i + '].message must be a string'
-                );
+                throw new Error('openPreviewModal: consequences[' + i + '].message must be a string');
             }
-            if (!_isMissing(c.severity)
-                && _VALID_SEVERITIES.indexOf(c.severity) === -1) {
-                throw new Error(
-                    'openPreviewModal: consequences[' + i + '].severity must be ' +
-                    'one of: ' + _VALID_SEVERITIES.join(', ')
-                );
+            if (!_isMissing(c.severity) && _VALID_SEVERITIES.indexOf(c.severity) === -1) {
+                throw new Error('openPreviewModal: consequences[' + i + '].severity must be one of: ' + _VALID_SEVERITIES.join(', '));
             }
         }
     }
 
-    /**
-     * Opens a confirmation modal with a consequences list.
-     *
-     * @param {Object} [options]
-     * @param {string} [options.title]
-     * @param {Array<{ message: string, severity?: 'info'|'warning'|'error' }>} [options.consequences]
-     * @param {string} [options.actionDescription] - shown in the info note
-     * @param {Function} [options.onConfirm] - called on confirm; exceptions
-     *                                          propagate and keep modal open
-     * @param {Function} [options.onUndo]    - called after successful confirm
-     *                                          if the caller wants to offer undo.
-     *                                          modals-core does NOT know about
-     *                                          the undo system.
-     * @param {Function} [options.onRedo]    - passed through to onUndo when
-     *                                          supported by the caller
-     * @returns {{ element: HTMLElement, close: Function }}
-     */
     function openPreviewModal(options) {
-        if (_isMissing(options)) {
-            options = {};
-        } else if (typeof options !== 'object' || Array.isArray(options)) {
+        if (_isMissing(options)) options = {};
+        else if (typeof options !== 'object' || Array.isArray(options)) {
             throw new Error('openPreviewModal: options must be an object');
         }
 
-        if (!_isMissing(options.consequences)) {
-            _validateConsequences(options.consequences);
-        }
+        if (!_isMissing(options.consequences)) _validateConsequences(options.consequences);
         if (!_isMissing(options.onConfirm) && typeof options.onConfirm !== 'function') {
             throw new Error('openPreviewModal: onConfirm must be a function');
         }
@@ -460,9 +321,6 @@
             '</div>';
         }).join('');
 
-        // The checkbox lives only inside this modal, so no global ID is
-        // required. We use a class-based query and rely on the modal
-        // container being scoped. No random ID generation.
         var modalContent =
             '<div class="preview-modal">' +
                 (consequencesHtml ?
@@ -487,42 +345,31 @@
             contentHtml: modalContent,
             confirmText: 'Confirm',
             cancelText: 'Cancel',
-            onOpen: function(modal) {
+            onMount: function(modal) {
                 var checkbox = modal.querySelector('.preview-confirm-checkbox');
                 var confirmBtn = modal.querySelector('.modal-footer .confirm-btn');
                 if (checkbox && confirmBtn) {
-                    var update = function() {
-                        confirmBtn.disabled = !checkbox.checked;
-                    };
+                    var update = function() { confirmBtn.disabled = !checkbox.checked; };
                     checkbox.addEventListener('change', update);
                     update();
                 }
             },
             onConfirm: function() {
-                // onConfirm exceptions propagate out of openModal's click
-                // handler and keep the modal open. Undo is only offered
-                // after a successful confirm.
                 if (options.onConfirm) options.onConfirm();
-                if (options.onUndo) {
-                    options.onUndo(options.actionDescription, options.onRedo);
-                }
+                if (options.onUndo) options.onUndo(options.actionDescription, options.onRedo);
             }
         });
     }
 
-    // =========================================================================
-    // 4. EXPORTS
-    // =========================================================================
+    // ---- Exports -------------------------------------------------------------
 
     window.openModal = openModal;
     window.closeTopModal = closeTopModal;
     window.closeAllModals = closeAllModals;
-
     window.alertDialog = alertDialog;
     window.confirmDialog = confirmDialog;
     window.successDialog = successDialog;
     window.errorDialog = errorDialog;
-
     window.openPreviewModal = openPreviewModal;
 
 })();
