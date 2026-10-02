@@ -1,663 +1,398 @@
 /**
- * =============================================================================
- * GOVERNMENT DEPARTMENT MODALS (js/government/modals-government-departments.js)
- * =============================================================================
- * 
- * PURPOSE: UI modals for government department management.
- * 
- * DEPENDS ON:
- *   - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
- *   - government-state.js (GovernmentState)
- *   - government-commands.js (GovernmentCommands)
- *   - government-queries.js (GovernmentQueries)
- *   - modals-char-select.js (openCharacterSelector)
- * 
- * ICON POLICY:
- *   - All icons from icons.js via _getIcon()
- *   - NO emojis
- *   - NO icons in confirm/cancel buttons (plain text only)
- * 
- * =============================================================================
+ * modals-government-departments.js
+ * Department create/edit/delete/details modals.
+ * Reads via GovernmentQueries. Writes via GovernmentCommands.
  */
-
 (function() {
     'use strict';
 
-    // =========================================================================
-    // 0. RECURSION GUARD
-    // =========================================================================
+    var Queries = window.GovernmentQueries;
+    var Commands = window.GovernmentCommands;
+    var _LocationQueries = window.LocationQueries;
 
-    var _processingModal = false;
+    if (!Queries) throw new Error('modals-government-departments.js requires GovernmentQueries');
+    if (!Commands) throw new Error('modals-government-departments.js requires GovernmentCommands');
+    if (!_LocationQueries) throw new Error('modals-government-departments.js requires LocationQueries');
 
-    // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
-    // =========================================================================
-
-    function _openModal(options) {
-        if (typeof window.openModal === 'function') {
-            return window.openModal(options);
-        }
-        if (typeof window._openModal === 'function') {
-            return window._openModal(options);
-        }
-        return null;
+    function _escapeHtml(str) {
+        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
+        if (!str && str !== 0) return '';
+        return String(str)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
+    function _attr(s) { return _escapeHtml(s); }
 
+    function _toast(msg, type) {
+        var plain = typeof msg === 'string' ? msg.replace(/<[^>]*>/g, '') : msg;
+        if (typeof window._showToast === 'function') window._showToast(plain, type);
+        else if (typeof window.showToast === 'function') window.showToast(plain, type);
+        else if (typeof window.showToastMessage === 'function') window.showToastMessage(plain, type);
+    }
+    function _openModal(opts) {
+        if (typeof window.openModal !== 'function') throw new Error('openModal not available');
+        return window.openModal(opts);
+    }
     function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') {
-            window.closeTopModal();
-        }
-        if (typeof window._closeTopModal === 'function') {
-            window._closeTopModal();
-        }
+        if (typeof window.closeTopModal === 'function') window.closeTopModal();
     }
-
     function _confirmDialog(message, title, onConfirm, onCancel) {
         if (typeof window.confirmDialog === 'function') {
             return window.confirmDialog(message, title, onConfirm, onCancel);
         }
-        if (typeof window._confirmDialog === 'function') {
-            return window._confirmDialog(message, title, onConfirm, onCancel);
-        }
-        if (confirm(message)) {
-            if (onConfirm) onConfirm();
-        } else {
-            if (onCancel) onCancel();
-        }
+        throw new Error('modals-government-departments.js requires confirmDialog');
     }
-
-    function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
-        }
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
-
-    function _showToast(message, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(message, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(message, type);
-        }
-    }
-
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
     function _getIcon(name) {
-        if (typeof window._getIcon === 'function') {
-            return window._getIcon(name);
-        }
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
-        return '';
+        if (typeof window._getIcon === 'function') return window._getIcon(name);
+        return window.Icons && window.Icons[name] ? window.Icons[name] : '';
+    }
+    function _iconSpan(name) {
+        var i = _getIcon(name);
+        return i ? '<span style="display:inline-flex;align-items:center;vertical-align:middle;">' + i + '</span>' : '';
     }
 
-    function _buildLocationDropdown(selectedId, placeholderText, includeAll) {
+    function _buildLocationOptions(selectedId, placeholder, includeAll) {
         if (typeof window.buildLocationDropdown === 'function') {
-            return window.buildLocationDropdown(selectedId, placeholderText, includeAll, true);
+            return window.buildLocationDropdown(selectedId, placeholder, includeAll);
         }
-        if (typeof window._buildLocationDropdown === 'function') {
-            return window._buildLocationDropdown(selectedId, placeholderText, includeAll, true);
+        var places = _LocationQueries.getPlaceSummaries ? _LocationQueries.getPlaceSummaries() : [];
+        var html = '';
+        if (placeholder) html += '<option value="">' + _escapeHtml(placeholder) + '</option>';
+        if (includeAll) html += '<option value="all">All Locations</option>';
+        for (var i = 0; i < places.length; i++) {
+            var p = places[i];
+            var sel = selectedId === p.id ? 'selected' : '';
+            html += '<option value="' + _attr(p.id) + '" ' + sel + '>' + _escapeHtml(p.displayName) + '</option>';
         }
-        return '';
+        html += '<option value="unknown"' + (selectedId === 'unknown' ? ' selected' : '') + '>Unknown Location</option>';
+        return html;
     }
 
-    function _openCharacterSelector(options) {
-        if (typeof window.openCharacterSelector === 'function') {
-            return window.openCharacterSelector(options);
-        }
-        if (typeof window.openUnifiedCharacterSelector === 'function') {
-            return window.openUnifiedCharacterSelector(options);
-        }
-        if (typeof window._openCharacterSelector === 'function') {
-            return window._openCharacterSelector(options);
-        }
-        _showToast('Character selector not available', 'error');
-        return null;
-    }
-
-    // =========================================================================
-    // 2. STATE AND COMMANDS REFERENCE
-    // =========================================================================
-
-    var _state = window.GovernmentState;
-    var _commands = window.GovernmentCommands;
-    var _queries = window.GovernmentQueries;
-
-    // =========================================================================
-    // 3. ICON HELPERS
-    // =========================================================================
-
-    function _getIconSafe(name) {
-        var icon = _getIcon(name);
-        return icon || '';
-    }
-
-    function _iconSpan(icon, title) {
-        if (!icon) return '';
-        var titleAttr = title ? ' title="' + _escapeHtml(title) + '"' : '';
-        return '<span style="display:inline-flex;align-items:center;vertical-align:middle;' + (title ? 'cursor:help;' : '') + '"' + titleAttr + '>' + icon + '</span>';
-    }
-
-    // =========================================================================
-    // 4. BUSINESS LOGIC WRAPPERS
-    // =========================================================================
-
-    function _getDepartment(departmentId) {
-        return _state ? _state.getDepartment(departmentId) : null;
-    }
-
-    function _getAllDepartments() {
-        return _state ? _state.getAllDepartments({ includeDeprecated: false }) : [];
-    }
-
-    function _getPositionsForDepartment(departmentId) {
-        return _state ? _state.getPositionsForDepartment(departmentId) : [];
-    }
-
-    function _getPositionById(departmentId, positionId) {
-        return _state ? _state.getPositionById(departmentId, positionId) : null;
-    }
-
-    function _getAssignmentsForDepartment(departmentId, activeOnly) {
-        return _state ? _state.getAssignmentsForDepartment(departmentId, activeOnly) : [];
-    }
-
-    function _getAssignmentsForPosition(departmentId, positionId, activeOnly) {
-        return _state ? _state.getAssignmentsForPosition(departmentId, positionId, activeOnly) : [];
-    }
-
-    function _getCharacterById(characterId) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(characterId);
-        }
-        return null;
-    }
-
-    function _getCharacters() {
-        if (typeof window.getCharacters === 'function') {
-            return window.getCharacters();
-        }
-        return [];
-    }
-
-    function _getPlaceById(placeId) {
-        if (typeof window.getPlaceById === 'function') {
-            return window.getPlaceById(placeId);
-        }
-        return null;
-    }
-
-    function _getRoleById(id) {
-        if (typeof window.getRoleById === 'function') {
-            return window.getRoleById(id);
-        }
-        return null;
-    }
-
-    function _getAllRoles() {
-        if (typeof window.RoleState !== 'undefined' && window.RoleState.getAllRoles) {
-            return window.RoleState.getAllRoles();
-        }
-        if (typeof window.getRoles === 'function') {
-            return window.getRoles();
-        }
-        return [];
-    }
-
-    // =========================================================================
-    // 5. CREATE DEPARTMENT MODAL
-    // =========================================================================
+    // ---- Create --------------------------------------------------------------
 
     function openCreateGovernmentDepartmentModal(locationId, onSuccess) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var locationOptions = _buildLocationOptions(locationId, 'Select a location', true);
+
+        var depts = Queries.getDepartments({});
+        var deptOptions = '<option value="">None (Top-level)</option>';
+        for (var i = 0; i < depts.length; i++) {
+            deptOptions += '<option value="' + _attr(depts[i].id) + '">' + _escapeHtml(depts[i].name) + '</option>';
         }
-        _processingModal = true;
 
-        try {
-            var locationOptionsHtml = _buildLocationDropdown(locationId, 'Select a location', true);
+        var infoIcon = _iconSpan('CIRCLE_DOT');
 
-            var departments = _getAllDepartments();
-            var deptOptions = '<option value="">None (Top-level)</option>' + 
-                departments.map(function(d) {
-                    return '<option value="' + d.id + '">' + _escapeHtml(d.name) + '</option>';
-                }).join('');
+        var html =
+            '<div style="max-height:500px;overflow-y:auto;padding:4px;">' +
+            '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Department Name *</label>' +
+            '<input type="text" id="newDeptName" placeholder="e.g., Ministry of Education" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '</div>' +
+            '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Description</label>' +
+            '<textarea id="newDeptDescription" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);"></textarea>' +
+            '</div>' +
+            '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Location</label>' +
+            '<select id="newDeptLocation" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            locationOptions + '</select>' +
+            '<small style="font-size:0.55rem;color:var(--dim);">Selecting a parent location affects all sub-locations</small>' +
+            '</div>' +
+            '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Parent Department</label>' +
+            '<select id="newDeptParent" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            deptOptions + '</select>' +
+            '</div>' +
+            '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
+            infoIcon + ' Departments can be organized hierarchically. Child departments report to parent departments.' +
+            '</div>' +
+            '</div>';
 
-            var infoIcon = _getIcon('CIRCLE_DOT');
+        _openModal({
+            title: 'Create Government Department',
+            content: html,
+            confirmText: 'Create Department',
+            cancelText: 'Cancel',
+            onMount: function(root) {
+                var el = root.querySelector('#newDeptName');
+                if (el) el.focus();
+            },
+            onConfirm: function(root) {
+                var name = root.querySelector('#newDeptName').value.trim();
+                if (!name) { _toast('Department name is required', 'error'); return false; }
 
-            var modalContent =
-                '<div style="max-height: 500px; overflow-y: auto; padding: 4px;">' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Department Name *</label>' +
-                '<input type="text" id="newDeptName" placeholder="e.g., Ministry of Education" autofocus style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Description</label>' +
-                '<textarea id="newDeptDescription" rows="2" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);"></textarea>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Location</label>' +
-                '<select id="newDeptLocation" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-                locationOptionsHtml +
-                '</select>' +
-                '<small style="font-size:0.55rem; color:var(--dim);">Selecting a parent location affects all sub-locations</small>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Parent Department</label>' +
-                '<select id="newDeptParent" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-                deptOptions +
-                '</select>' +
-                '</div>' +
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
-                infoIcon + ' Departments can be organized hierarchically. Child departments report to parent departments.' +
-                '</div>' +
-                '</div>';
+                var locId = root.querySelector('#newDeptLocation').value;
+                if (!locId) { _toast('Location is required', 'error'); return false; }
 
-            _openModal({
-                title: 'Create Government Department',
-                content: modalContent,
-                confirmText: 'Create Department',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var name = document.getElementById('newDeptName').value.trim();
-                    if (!name) {
-                        _showToast('Department name is required', 'error');
-                        return false;
-                    }
+                var parentId = root.querySelector('#newDeptParent').value || null;
 
-                    var locationId = document.getElementById('newDeptLocation').value;
-                    if (!locationId) {
-                        _showToast('Location is required', 'error');
-                        return false;
-                    }
-
-                    var result = _commands.createDepartment({
-                        name: name,
-                        description: document.getElementById('newDeptDescription').value || '',
-                        locationId: locationId,
-                        parentDepartmentId: document.getElementById('newDeptParent').value || null
-                    });
-
-                    if (result) {
-                        _showToast('Department "' + name + '" created', 'success');
-                        _closeTopModal();
-                        _processingModal = false;
-                        if (onSuccess) {
-                            onSuccess(result.id);
-                        }
-                        return true;
-                    }
+                var result = Commands.createDepartment({
+                    name: name,
+                    description: root.querySelector('#newDeptDescription').value || '',
+                    locationId: locId,
+                    parentDepartmentId: parentId
+                });
+                if (!result.success) {
+                    _toast(result.reason || 'Failed to create department', 'error');
                     return false;
-                },
-                onCancel: function() {
-                    _processingModal = false;
                 }
-            });
-
-            setTimeout(function() {
-                var nameInput = document.getElementById('newDeptName');
-                if (nameInput) {
-                    nameInput.focus();
-                }
-            }, 100);
-
-        } catch (e) {
-            _processingModal = false;
-            _showToast('Error opening create department modal', 'error');
-        }
+                _closeTopModal();
+                _toast('Department "' + name + '" created', 'success');
+                if (onSuccess) onSuccess(result.data);
+                return true;
+            }
+        });
     }
 
-    // =========================================================================
-    // 6. EDIT DEPARTMENT MODAL
-    // =========================================================================
+    // ---- Edit ----------------------------------------------------------------
 
     function openEditGovernmentDepartmentModal(deptId, onSuccess) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var dept = Queries.getDepartment(deptId);
+        if (!dept) { _toast('Department not found', 'error'); return; }
+
+        var locationOptions = _buildLocationOptions(dept.locationId, 'Select a location', true);
+
+        var depts = Queries.getDepartments({});
+        var deptOptions = '<option value="">None (Top-level)</option>';
+        for (var i = 0; i < depts.length; i++) {
+            if (depts[i].id === deptId) continue;
+            var sel = depts[i].id === dept.parentDepartmentId ? 'selected' : '';
+            deptOptions += '<option value="' + _attr(depts[i].id) + '" ' + sel + '>' + _escapeHtml(depts[i].name) + '</option>';
         }
-        _processingModal = true;
 
-        try {
-            var dept = _getDepartment(deptId);
-            if (!dept) {
-                _showToast('Department not found', 'error');
-                _processingModal = false;
-                return;
-            }
+        var infoIcon = _iconSpan('CIRCLE_DOT');
 
-            var locationOptionsHtml = _buildLocationDropdown(dept.locationId, 'Select a location', true);
+        var html =
+            '<div style="max-height:500px;overflow-y:auto;padding:4px;">' +
+            '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Department Name *</label>' +
+            '<input type="text" id="editDeptName" value="' + _attr(dept.name) + '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '</div>' +
+            '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Description</label>' +
+            '<textarea id="editDeptDescription" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' + _escapeHtml(dept.description) + '</textarea>' +
+            '</div>' +
+            '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Location</label>' +
+            '<select id="editDeptLocation" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            locationOptions + '</select>' +
+            '</div>' +
+            '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Parent Department</label>' +
+            '<select id="editDeptParent" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            deptOptions + '</select>' +
+            '</div>' +
+            '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
+            infoIcon + ' Changing the parent department will move this department in the hierarchy.' +
+            '</div>' +
+            '</div>';
 
-            var departments = _getAllDepartments();
-            var deptOptions = '<option value="">None (Top-level)</option>' +
-                departments.filter(function(d) { return d.id !== deptId; }).map(function(d) {
-                    var selected = d.id === dept.parentDepartmentId ? 'selected' : '';
-                    return '<option value="' + d.id + '" ' + selected + '>' + _escapeHtml(d.name) + '</option>';
-                }).join('');
+        _openModal({
+            title: 'Edit Department: ' + dept.name,
+            content: html,
+            confirmText: 'Save Changes',
+            cancelText: 'Cancel',
+            onConfirm: function(root) {
+                var name = root.querySelector('#editDeptName').value.trim();
+                if (!name) { _toast('Department name is required', 'error'); return false; }
 
-            var infoIcon = _getIcon('CIRCLE_DOT');
-
-            var modalContent =
-                '<div style="max-height: 500px; overflow-y: auto; padding: 4px;">' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Department Name *</label>' +
-                '<input type="text" id="editDeptName" value="' + _escapeHtml(dept.name) + '" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Description</label>' +
-                '<textarea id="editDeptDescription" rows="2" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' + _escapeHtml(dept.description || '') + '</textarea>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Location</label>' +
-                '<select id="editDeptLocation" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-                locationOptionsHtml +
-                '</select>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Parent Department</label>' +
-                '<select id="editDeptParent" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-                deptOptions +
-                '</select>' +
-                '</div>' +
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
-                infoIcon + ' Changing the parent department will move this department in the hierarchy.' +
-                '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Edit Department: ' + dept.name,
-                content: modalContent,
-                confirmText: 'Save Changes',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var name = document.getElementById('editDeptName').value.trim();
-                    if (!name) {
-                        _showToast('Department name is required', 'error');
-                        return false;
-                    }
-
-                    var result = _commands.updateDepartment(deptId, {
-                        name: name,
-                        description: document.getElementById('editDeptDescription').value || '',
-                        locationId: document.getElementById('editDeptLocation').value,
-                        parentDepartmentId: document.getElementById('editDeptParent').value || null
-                    });
-
-                    if (result) {
-                        _showToast('Department updated', 'success');
-                        _closeTopModal();
-                        _processingModal = false;
-                        if (onSuccess) {
-                            onSuccess();
-                        }
-                        return true;
-                    }
+                var result = Commands.updateDepartment(deptId, {
+                    name: name,
+                    description: root.querySelector('#editDeptDescription').value || '',
+                    locationId: root.querySelector('#editDeptLocation').value,
+                    parentDepartmentId: root.querySelector('#editDeptParent').value || null
+                });
+                if (!result.success) {
+                    _toast(result.reason || 'Failed to update department', 'error');
                     return false;
-                },
-                onCancel: function() {
-                    _processingModal = false;
                 }
-            });
-
-        } catch (e) {
-            _processingModal = false;
-            _showToast('Error opening edit department modal', 'error');
-        }
+                _closeTopModal();
+                _toast('Department updated', 'success');
+                if (onSuccess) onSuccess(result.data);
+                return true;
+            }
+        });
     }
 
-    // =========================================================================
-    // 7. DELETE DEPARTMENT MODAL
-    // =========================================================================
+    // ---- Delete --------------------------------------------------------------
 
     function openDeleteGovernmentDepartmentModal(deptId, onSuccess) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingModal = true;
+        var dept = Queries.getDepartment(deptId);
+        if (!dept) { _toast('Department not found', 'error'); return; }
 
-        try {
-            var dept = _getDepartment(deptId);
-            if (!dept) {
-                _showToast('Department not found', 'error');
-                _processingModal = false;
+        var impact = Queries.getDepartmentDeletionImpact(deptId);
+        if (!impact) { _toast('Department not found', 'error'); return; }
+
+        var message = 'Delete department "' + dept.name + '"?';
+        if (impact.hasChildren || impact.hasActiveAssignments) {
+            var details = [];
+            if (impact.hasChildren) {
+                details.push(impact.descendantDepartmentCount + ' descendant department(s)');
+            }
+            if (impact.hasActiveAssignments) {
+                details.push(impact.activeAssignmentCount + ' active assignment(s)');
+            }
+            message = 'This department has ' + details.join(' and ') + '. Delete them as well?';
+        }
+
+        _confirmDialog(message, 'Delete Department', function() {
+            var result = Commands.deleteDepartment(deptId, { cascade: true });
+            if (!result.success) {
+                _toast(result.reason || 'Failed to delete department', 'error');
                 return;
             }
-
-            var children = _state.getDepartmentsByParent(deptId);
-            var hasChildren = children.length > 0;
-            var assignments = _state.getAssignmentsForDepartment(deptId, true);
-            var hasAssignments = assignments.length > 0;
-
-            var message = 'Delete department "' + dept.name + '"?';
-            if (hasChildren || hasAssignments) {
-                var details = [];
-                if (hasChildren) details.push(children.length + ' child departments');
-                if (hasAssignments) details.push(assignments.length + ' active assignments');
-                message = 'This department has ' + details.join(' and ') + '.\n\nDelete them as well?';
-            }
-
-            _confirmDialog(message, 'Delete Department', function() {
-                var result = _commands.deleteDepartment(deptId, { cascade: true });
-                if (result) {
-                    _showToast('Department deleted', 'info');
-                    if (onSuccess) {
-                        onSuccess();
-                    }
-                    _closeTopModal();
-                    _processingModal = false;
-                }
-            }, function() {
-                _processingModal = false;
-            });
-
-        } catch (e) {
-            _processingModal = false;
-            _showToast('Error opening delete department modal', 'error');
-        }
+            _toast('Department deleted', 'info');
+            if (onSuccess) onSuccess(result.data);
+        });
     }
 
-    // =========================================================================
-    // 8. VIEW DEPARTMENT DETAILS MODAL
-    // =========================================================================
+    // ---- Details -------------------------------------------------------------
 
     function openViewDepartmentDetailsModal(departmentId) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var details = Queries.getDepartmentDetails(departmentId);
+        if (!details) { _toast('Department not found', 'error'); return; }
+
+        var infoIcon = _iconSpan('CIRCLE_DOT');
+
+        var positionsHtml = '';
+        if (details.positions.length === 0) {
+            positionsHtml = '<div style="color:var(--dim);font-size:0.55rem;text-align:center;padding:8px;">No positions</div>';
+        } else {
+            positionsHtml = '<div style="display:flex;flex-direction:column;gap:4px;">';
+            var shownPositions = details.positions.slice(0, 10);
+            for (var i = 0; i < shownPositions.length; i++) {
+                var p = shownPositions[i];
+                positionsHtml +=
+                    '<div style="display:flex;justify-content:space-between;padding:4px 8px;background:var(--bg2);border-radius:4px;font-size:0.55rem;border-left:3px solid ' + (p.requiredRoleId ? 'var(--accent)' : 'var(--border)') + ';">' +
+                    '<span>' + _escapeHtml(p.name) +
+                    (p.requiredRoleId ? ' <span style="color:var(--accent);">(Role: ' + _escapeHtml(p.requiredRoleName) + ')</span>' : '') +
+                    '</span>' +
+                    '<span style="color:var(--dim);">' + p.activeAssignmentCount + ' assigned · Priority: ' + p.priority + '</span>' +
+                    '</div>';
+            }
+            if (details.positions.length > 10) {
+                positionsHtml += '<div style="font-size:0.5rem;color:var(--dim);text-align:center;">... and ' + (details.positions.length - 10) + ' more</div>';
+            }
+            positionsHtml += '</div>';
         }
-        _processingModal = true;
 
-        try {
-            var dept = _getDepartment(departmentId);
-            if (!dept) {
-                _showToast('Department not found', 'error');
-                _processingModal = false;
-                return;
+        var assignmentsHtml = '';
+        if (details.assignments.length === 0) {
+            assignmentsHtml = '<div style="color:var(--dim);font-size:0.55rem;text-align:center;padding:8px;">No assignments</div>';
+        } else {
+            assignmentsHtml = '<div style="display:flex;flex-direction:column;gap:4px;">';
+            var shownAssignments = details.assignments.slice(0, 10);
+            for (var j = 0; j < shownAssignments.length; j++) {
+                var a = shownAssignments[j];
+                var isActive = a.isActive;
+                var endLabel = a.endYear != null ? ' - ' + a.endYear : ' - Present';
+                assignmentsHtml +=
+                    '<div style="display:flex;justify-content:space-between;padding:4px 8px;background:var(--bg2);border-radius:4px;font-size:0.55rem;border-left:3px solid ' + (isActive ? 'var(--success)' : 'var(--dim)') + ';">' +
+                    '<span>' + _escapeHtml(a.characterName || 'Unknown') +
+                    (a.title ? ' (' + _escapeHtml(a.title) + ')' : '') +
+                    (a.roleIdAtAssignment ? ' <span style="color:var(--accent);">(Role: ' + _escapeHtml(a.roleNameAtAssignment || 'Unknown') + ')</span>' : '') +
+                    '</span>' +
+                    '<span style="color:' + (isActive ? 'var(--success)' : 'var(--dim)') + ';">' + a.startYear + endLabel + '</span>' +
+                    '</div>';
             }
-
-            var positions = _getPositionsForDepartment(departmentId);
-            var assignments = _getAssignmentsForDepartment(departmentId, false);
-            var activeAssignments = _getAssignmentsForDepartment(departmentId, true);
-            var locationName = dept.locationId ? (_getPlaceById(dept.locationId)?.displayName || 'Unknown') : 'None';
-            var parentName = dept.parentDepartmentId ? (_getDepartment(dept.parentDepartmentId)?.name || 'None') : 'None';
-
-            var rolePositions = positions.filter(function(p) { return p.requiredRoleId; }).length;
-
-            var positionHtml = '';
-            if (positions.length === 0) {
-                positionHtml = '<div style="color: var(--dim); font-size: 0.55rem; text-align: center; padding: 8px;">No positions</div>';
-            } else {
-                positionHtml = '<div style="display: flex; flex-direction: column; gap: 4px;">';
-                for (var i = 0; i < Math.min(positions.length, 10); i++) {
-                    var p = positions[i];
-                    var posAssignments = _getAssignmentsForPosition(departmentId, p.id, true);
-                    var roleName = p.requiredRoleId ? (_getRoleById(p.requiredRoleId)?.name || 'Unknown') : 'None';
-                    positionHtml +=
-                        '<div style="display: flex; justify-content: space-between; padding: 4px 8px; background: var(--bg2); border-radius: 4px; font-size: 0.55rem; border-left: 3px solid ' + (p.requiredRoleId ? 'var(--accent)' : 'var(--border)') + ';">' +
-                        '<span>' + _escapeHtml(p.name) + (p.requiredRoleId ? ' <span style="color: var(--accent);">(Role: ' + _escapeHtml(roleName) + ')</span>' : '') + '</span>' +
-                        '<span style="color: var(--dim);">' + posAssignments.length + ' assigned · Priority: ' + (p.priority || 10) + '</span>' +
-                        '</div>';
-                }
-                if (positions.length > 10) {
-                    positionHtml += '<div style="font-size: 0.5rem; color: var(--dim); text-align: center;">... and ' + (positions.length - 10) + ' more</div>';
-                }
-                positionHtml += '</div>';
+            if (details.assignments.length > 10) {
+                assignmentsHtml += '<div style="font-size:0.5rem;color:var(--dim);text-align:center;">... and ' + (details.assignments.length - 10) + ' more</div>';
             }
+            assignmentsHtml += '</div>';
+        }
 
-            var assignmentHtml = '';
-            if (assignments.length === 0) {
-                assignmentHtml = '<div style="color: var(--dim); font-size: 0.55rem; text-align: center; padding: 8px;">No assignments</div>';
-            } else {
-                assignmentHtml = '<div style="display: flex; flex-direction: column; gap: 4px;">';
-                var displayAssignments = assignments.slice(0, 10);
-                for (var i = 0; i < displayAssignments.length; i++) {
-                    var a = displayAssignments[i];
-                    var isActive = !a.endYear;
-                    var char = _getCharacterById(a.characterId);
-                    var roleName = a.roleIdAtAssignment ? (_getRoleById(a.roleIdAtAssignment)?.name || 'Unknown') : 'None';
-                    assignmentHtml +=
-                        '<div style="display: flex; justify-content: space-between; padding: 4px 8px; background: var(--bg2); border-radius: 4px; font-size: 0.55rem; border-left: 3px solid ' + (isActive ? 'var(--success)' : 'var(--dim)') + ';">' +
-                        '<span>' + _escapeHtml(a.characterName || (char ? char.name : 'Unknown')) + 
-                        (a.title ? ' (' + _escapeHtml(a.title) + ')' : '') +
-                        (a.roleIdAtAssignment ? ' <span style="color: var(--accent);">(Role: ' + _escapeHtml(roleName) + ')</span>' : '') +
-                        '</span>' +
-                        '<span style="color: ' + (isActive ? 'var(--success)' : 'var(--dim)') + ';">' + a.startYear + (a.endYear ? ' - ' + a.endYear : ' - Present') + '</span>' +
-                        '</div>';
-                }
-                if (assignments.length > 10) {
-                    assignmentHtml += '<div style="font-size: 0.5rem; color: var(--dim); text-align: center;">... and ' + (assignments.length - 10) + ' more</div>';
-                }
-                assignmentHtml += '</div>';
-            }
+        var html =
+            '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;">' +
+            '<div>' +
+            '<div style="font-size:0.9rem;font-weight:bold;">' + _escapeHtml(details.name) + '</div>' +
+            '<div style="font-size:0.6rem;color:var(--dim);">' +
+            'Location: ' + _escapeHtml(details.locationName || 'None') +
+            ' · Parent: ' + _escapeHtml(details.parentDepartmentName || 'None') +
+            '</div>' +
+            '</div>' +
+            '<div style="font-size:0.55rem;color:var(--accent);text-align:right;">' +
+            '<div>' + details.positionCount + ' positions (' + details.rolePositionCount + ' with role)</div>' +
+            '<div>' + details.activeAssignmentCount + ' active · ' + details.assignmentCount + ' total</div>' +
+            '</div>' +
+            '</div>' +
+            (details.description ? '<div style="font-size:0.6rem;color:var(--dim);margin-top:8px;">' + _escapeHtml(details.description) + '</div>' : '') +
+            '</div>' +
+            '<div style="margin-bottom:12px;">' +
+            '<div style="font-size:0.65rem;color:var(--accent);margin-bottom:6px;">Positions</div>' +
+            positionsHtml +
+            '</div>' +
+            '<div style="margin-bottom:12px;">' +
+            '<div style="font-size:0.65rem;color:var(--accent);margin-bottom:6px;">Assignments</div>' +
+            assignmentsHtml +
+            '</div>' +
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;border-top:1px solid var(--border);padding-top:12px;">' +
+            '<button type="button" id="deptDetailsEditBtn" class="btn small" style="padding:4px 12px;font-size:0.55rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">Edit</button>' +
+            '<button type="button" id="deptDetailsAddPosBtn" class="btn small" style="padding:4px 12px;font-size:0.55rem;background:var(--accent);border:none;color:white;border-radius:4px;cursor:pointer;">Add Position</button>' +
+            '<button type="button" id="deptDetailsDeleteBtn" class="btn small danger" style="padding:4px 12px;font-size:0.55rem;background:#8a3020;border:none;color:white;border-radius:4px;cursor:pointer;">Delete</button>' +
+            '<button type="button" id="deptDetailsCloseBtn" class="btn small" style="padding:4px 12px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Close</button>' +
+            '</div>' +
+            '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);margin-top:8px;">' +
+            infoIcon + ' Department details' +
+            '</div>';
 
-            var modalContent =
-                '<div style="margin-bottom: 16px; padding: 12px; background: var(--bg2); border-radius: 8px;">' +
-                '<div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px;">' +
-                '<div>' +
-                '<div style="font-size: 0.9rem; font-weight: bold;">' + _escapeHtml(dept.name) + '</div>' +
-                '<div style="font-size: 0.6rem; color: var(--dim);">' +
-                'Location: ' + _escapeHtml(locationName) +
-                ' · Parent: ' + _escapeHtml(parentName) +
-                '</div>' +
-                '</div>' +
-                '<div style="font-size: 0.55rem; color: var(--accent); text-align: right;">' +
-                '<div>' + positions.length + ' positions (' + rolePositions + ' with role)</div>' +
-                '<div>' + activeAssignments.length + ' active · ' + assignments.length + ' total assignments</div>' +
-                '</div>' +
-                '</div>' +
-                (dept.description ? '<div style="font-size: 0.6rem; color: var(--dim); margin-top: 8px;">' + _escapeHtml(dept.description) + '</div>' : '') +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<div style="font-size: 0.65rem; color: var(--accent); margin-bottom: 6px;">Positions</div>' +
-                positionHtml +
-                '</div>' +
-                '<div style="margin-bottom: 12px;">' +
-                '<div style="font-size: 0.65rem; color: var(--accent); margin-bottom: 6px;">Assignments</div>' +
-                assignmentHtml +
-                '</div>' +
-                '<div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; border-top: 1px solid var(--border); padding-top: 12px;">' +
-                '<button id="deptDetailsEditBtn" class="btn small" style="padding: 4px 12px; font-size: 0.55rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer;">Edit</button>' +
-                '<button id="deptDetailsAddPosBtn" class="btn small" style="padding: 4px 12px; font-size: 0.55rem; background: var(--accent); border: none; color: white; border-radius: 4px; cursor: pointer;">Add Position</button>' +
-                '<button id="deptDetailsDeleteBtn" class="btn small danger" style="padding: 4px 12px; font-size: 0.55rem; background: #8a3020; border: none; color: white; border-radius: 4px; cursor: pointer;">Delete</button>' +
-                '<button id="deptDetailsCloseBtn" class="btn small" style="padding: 4px 12px; font-size: 0.55rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Close</button>' +
-                '</div>';
-
-            _openModal({
-                title: 'Department Details: ' + dept.name,
-                content: modalContent,
-                confirmText: '',
-                cancelText: '',
-                onConfirm: function() {
+        _openModal({
+            title: 'Department Details: ' + details.name,
+            content: html,
+            confirmText: '',
+            cancelText: '',
+            onMount: function(root) {
+                var editBtn = root.querySelector('#deptDetailsEditBtn');
+                if (editBtn) editBtn.addEventListener('click', function() {
                     _closeTopModal();
-                    _processingModal = false;
-                }
-            });
+                    openEditGovernmentDepartmentModal(departmentId, function() {
+                        openViewDepartmentDetailsModal(departmentId);
+                    });
+                });
 
-            setTimeout(function() {
-                var editBtn = document.getElementById('deptDetailsEditBtn');
-                if (editBtn) {
-                    editBtn.onclick = function() {
-                        _closeTopModal();
-                        _processingModal = false;
-                        openEditGovernmentDepartmentModal(deptId, function() {
-                            setTimeout(function() {
-                                openViewDepartmentDetailsModal(deptId);
-                            }, 100);
+                var addPosBtn = root.querySelector('#deptDetailsAddPosBtn');
+                if (addPosBtn) addPosBtn.addEventListener('click', function() {
+                    _closeTopModal();
+                    if (typeof window.openAddPositionModal === 'function') {
+                        window.openAddPositionModal(departmentId, function() {
+                            openViewDepartmentDetailsModal(departmentId);
                         });
-                    };
-                }
+                    } else {
+                        _toast('Add position modal unavailable', 'error');
+                    }
+                });
 
-                var addPosBtn = document.getElementById('deptDetailsAddPosBtn');
-                if (addPosBtn) {
-                    addPosBtn.onclick = function() {
-                        _closeTopModal();
-                        _processingModal = false;
-                        if (typeof window.openAddPositionModal === 'function') {
-                            window.openAddPositionModal(deptId, function() {
-                                setTimeout(function() {
-                                    openViewDepartmentDetailsModal(deptId);
-                                }, 100);
-                            });
-                        } else {
-                            _showToast('Add position modal not available', 'error');
-                        }
-                    };
-                }
+                var deleteBtn = root.querySelector('#deptDetailsDeleteBtn');
+                if (deleteBtn) deleteBtn.addEventListener('click', function() {
+                    _closeTopModal();
+                    openDeleteGovernmentDepartmentModal(departmentId, function() {
+                        // Modal already closed by delete flow.
+                    });
+                });
 
-                var deleteBtn = document.getElementById('deptDetailsDeleteBtn');
-                if (deleteBtn) {
-                    deleteBtn.onclick = function() {
-                        _closeTopModal();
-                        _processingModal = false;
-                        openDeleteGovernmentDepartmentModal(deptId, function() {
-                            _processingModal = false;
-                        });
-                    };
-                }
-
-                var closeBtn = document.getElementById('deptDetailsCloseBtn');
-                if (closeBtn) {
-                    closeBtn.onclick = function() {
-                        _closeTopModal();
-                        _processingModal = false;
-                    };
-                }
-            }, 100);
-
-        } catch (e) {
-            _processingModal = false;
-            _showToast('Error opening department details', 'error');
-        }
+                var closeBtn = root.querySelector('#deptDetailsCloseBtn');
+                if (closeBtn) closeBtn.addEventListener('click', function() {
+                    _closeTopModal();
+                });
+            },
+            onConfirm: function() {
+                _closeTopModal();
+            }
+        });
     }
 
-    // =========================================================================
-    // 9. EXPORTS
-    // =========================================================================
+    // ---- Export --------------------------------------------------------------
 
     window.openCreateGovernmentDepartmentModal = openCreateGovernmentDepartmentModal;
     window.openEditGovernmentDepartmentModal = openEditGovernmentDepartmentModal;
     window.openDeleteGovernmentDepartmentModal = openDeleteGovernmentDepartmentModal;
     window.openViewDepartmentDetailsModal = openViewDepartmentDetailsModal;
 
-    // Legacy aliases
-    window._openCreateGovernmentDepartmentModal = openCreateGovernmentDepartmentModal;
-    window._openEditGovernmentDepartmentModal = openEditGovernmentDepartmentModal;
-    window._openDeleteGovernmentDepartmentModal = openDeleteGovernmentDepartmentModal;
-    window._openViewDepartmentDetailsModal = openViewDepartmentDetailsModal;
-
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = {
+            openCreateGovernmentDepartmentModal: openCreateGovernmentDepartmentModal,
+            openEditGovernmentDepartmentModal: openEditGovernmentDepartmentModal,
+            openDeleteGovernmentDepartmentModal: openDeleteGovernmentDepartmentModal,
+            openViewDepartmentDetailsModal: openViewDepartmentDetailsModal
+        };
+    }
 })();
