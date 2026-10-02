@@ -1,2049 +1,838 @@
-# COMPLETE RELATIONSHIP SYSTEM DOCUMENTATION
+# Still Waters — Relationship System Documentation
 
-## Version 3.1 | Generated: 2026-07-15
-
----
-
-# TABLE OF CONTENTS
-
-1. [SYSTEM OVERVIEW](#1-system-overview)
-2. [ARCHITECTURE](#2-architecture)
-3. [RELATIONSHIP-TYPES.JS](#3-relationship-typesjs)
-4. [RELATIONSHIP-REGISTRY.JS](#4-relationship-registryjs)
-5. [RELATIONSHIP-QUERIES.JS](#5-relationship-queriesjs)
-6. [ROMANCE-LOGIC.JS](#6-romance-logicjs)
-7. [FAMILY-LOGIC.JS](#7-family-logicjs)
-8. [FRIENDSHIP-LOGIC.JS](#8-friendship-logicjs)
-9. [PROFESSIONAL-LOGIC.JS](#9-professional-logicjs)
-10. [JEALOUSY-SYSTEM.JS](#10-jealousy-systemjs)
-11. [AFFAIR-SYSTEM.JS](#11-affair-systemjs)
-12. [MODALS-RELATIONSHIP.JS](#12-modals-relationshipjs)
-13. [MODALS-FAMILY.JS](#13-modals-familyjs)
-14. [MODALS-FRIENDSHIP.JS](#14-modals-friendshipjs)
-15. [RELATIONSHIP FINDER UI](#15-relationship-finder-ui)
-16. [DATA SCHEMAS](#16-data-schemas)
-17. [COMPLETE FUNCTION LIST](#17-complete-function-list)
-18. [DEPENDENCY MAP](#18-dependency-map)
-19. [INTEGRATION ANALYSIS](#19-integration-analysis)
-20. [LOAD ORDER](#20-load-order)
+**Version 4.0** | Clean-slate architecture
 
 ---
 
-# 1. SYSTEM OVERVIEW
+## 1. Overview
 
-## Purpose
+The relationship system manages every interpersonal connection between characters. It is organised as a strict layered architecture with one canonical source of truth, pure policy functions, semantic reads, and transactional writes.
 
-The Relationship System manages all interpersonal connections in the Still Waters simulation. It provides a unified framework for romantic, familial, social, and professional relationships with a clean separation between data storage, business logic, and user interface.
+### Principles
 
-## Key Principles
-
-| Principle | Description |
-|-----------|-------------|
-| **Three Romantic Types** | Relationships are either `one_night_stand`, `casual_dating`, or `committed` |
-| **Attributes are Flavor Text** | `MARRIED`, `ENGAGED`, `COHABITING`, etc. have NO gameplay effect |
-| **No Special Marriage Type** | Marriage is just the `MARRIED` attribute on a committed relationship |
-| **No Divorce Function** | Use `breakUp()` for all relationship endings |
-| **Database Layer** | `relationship-registry.js` is the pure data layer |
-| **Separation of Concerns** | Registry, logic, queries, and UI are all separate files |
-| **Bidirectional Consistency** | All relationships are stored on both participants |
-| **Type Registry** | All relationship types, statuses, and attributes are centrally defined |
-| **No Business Logic in Registry** | The registry only manages entities, not rules |
-| **Graph Queries** | Pure query functions for social distance, path finding, and network analysis |
-
-## Key Design Decisions
-
-| Decision | Rationale |
-|----------|-----------|
-| No special marriage type | Marriage is just an attribute; simplifies the system |
-| No divorce function | `breakUp()` handles all relationship endings |
-| Attributes are flavor text | No gameplay effect; purely descriptive |
-| One night stands auto-end | End in the same year they start |
-| Widowed status | `deathEndsRelationship()` sets status to WIDOWED |
-| Smart creation | Auto-detects when a relationship should be an affair |
-| Conflict detection | Validates relationships before creation |
+| Principle | Rule |
+|-----------|------|
+| **Single source of truth** | `RelationshipState` owns every relationship entity. No other module stores relationship data. |
+| **Layer separation** | Constants → State → Rules → Queries → Commands → UI. Each layer only depends downward. |
+| **Fail loud** | No fallback values. A missing dependency throws. Nothing invents `1250`, `[]`, `null`, or `Math.random()`. |
+| **Defensive reads** | Queries return projections, never live canonical objects. UI cannot mutate state by accident. |
+| **One commit boundary** | One logical operation = one command = one `saveMasterData()`. |
+| **Randomness is injected** | Rules are deterministic. Random values are passed in or come from `window.Random`. |
+| **Derived, not stored** | Kinship, affair classification, marriage status are computed. Nothing is duplicated into storage. |
 
 ---
 
-# 2. ARCHITECTURE
-
-## Architecture Diagram
+## 2. Layer Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         RELATIONSHIP SYSTEM                                 │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐       │
-│  │ RELATIONSHIP-   │     │ RELATIONSHIP-   │     │ RELATIONSHIP-   │       │
-│  │   TYPES.JS      │────▶│   REGISTRY.JS   │────▶│   QUERIES.JS    │       │
-│  │ (Definitions)   │     │  (Data Layer)   │     │  (Graph Queries)│       │
-│  └─────────────────┘     └─────────────────┘     └─────────────────┘       │
-│         │                        │                        │                 │
-│         ▼                        ▼                        ▼                 │
-│  ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐       │
-│  │  ROMANCE-       │     │  FAMILY-        │     │  FRIENDSHIP-    │       │
-│  │   LOGIC.JS      │     │   LOGIC.JS      │     │   LOGIC.JS      │       │
-│  │ (Romance Rules) │     │ (Family Rules)  │     │ (Friendship     │       │
-│  └─────────────────┘     └─────────────────┘     │  Rules)         │       │
-│                                                    └─────────────────┘       │
-│  ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐       │
-│  │ PROFESSIONAL-   │     │   JEALOUSY-     │     │    AFFAIR-      │       │
-│  │   LOGIC.JS      │     │   SYSTEM.JS     │     │   SYSTEM.JS     │       │
-│  │ (Work Rules)    │     │ (Conflict)      │     │ (Affair Mgmt)   │       │
-│  └─────────────────┘     └─────────────────┘     └─────────────────┘       │
-│                                                                             │
-│  ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐       │
-│  │   MODALS-       │     │   MODALS-       │     │   MODALS-       │       │
-│  │ RELATIONSHIP.JS │     │   FAMILY.JS     │     │  FRIENDSHIP.JS  │       │
-│  │ (Unified Modal) │     │ (Family UI)     │     │ (Friendship UI) │       │
-│  └─────────────────┘     └─────────────────┘     └─────────────────┘       │
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                    RELATIONSHIP FINDER UI                          │   │
-│  │                 (Relationship Visualization)                       │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         CHARACTER SYSTEM                                    │
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                    masterData.data.characters                        │   │
-│  │                  (Each character has a .relationships array)        │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────┐
+│                          UI LAYER                             │
+│  modals-relationship.js   modals-family.js                    │
+│  modals-friendship.js     relationship-finder.js              │
+│  relationship-ui-metadata.js (icons, labels, colors)          │
+└──────────────────────────┬────────────────────────────────────┘
+                           │ dispatch + render
+┌──────────────────────────▼────────────────────────────────────┐
+│                       COMMANDS LAYER                          │
+│  RelationshipCommands  RomanceCommands  FriendshipCommands    │
+│  FamilyCommands  ProfessionalCommands  JealousyCommands       │
+│  AffairCommands                                               │
+└──────────────────────────┬────────────────────────────────────┘
+                           │ orchestrate
+┌──────────────────────────▼────────────────────────────────────┐
+│                        QUERIES LAYER                          │
+│  RelationshipQueries  RomanceQueries  FriendshipQueries       │
+│  FamilyQueries  ProfessionalQueries  JealousyQueries          │
+│  AffairQueries  RelationshipFinderQueries                     │
+└──────────────────────────┬────────────────────────────────────┘
+                           │ read
+┌──────────────────────────▼────────────────────────────────────┐
+│                         RULES LAYER                           │
+│  RelationshipRules  RomanceRules  FriendshipRules             │
+│  FamilyRules  ProfessionalRules  JealousyRules  AffairRules   │
+└──────────────────────────┬────────────────────────────────────┘
+                           │ reference
+┌──────────────────────────▼────────────────────────────────────┐
+│                        STATE LAYER                            │
+│  RelationshipState (entities, indexes)                        │
+└──────────────────────────┬────────────────────────────────────┘
+                           │ reference
+┌──────────────────────────▼────────────────────────────────────┐
+│                       VOCABULARY LAYER                        │
+│  relationship-types.js (archetypes, attributes, statuses)     │
+└───────────────────────────────────────────────────────────────┘
 ```
 
-## Relationship Types (The Three)
-
-| Type | ID | Description |
-|------|-----|-------------|
-| **One Night Stand** | `one_night_stand` | Ephemeral encounter, auto-ends same year |
-| **Casual Dating** | `casual_dating` | Non-committed romantic relationship |
-| **Committed** | `committed` | Serious relationship with optional attributes |
-
-## Relationship Attributes (Flavor Text Only)
-
-| Attribute | ID | Description |
-|-----------|-----|-------------|
-| `MARRIED` | `married` | Legally and religiously married |
-| `HANDFASTED` | `handfasted` | Common-law marriage |
-| `ENGAGED` | `engaged` | Betrothed, promised to marry |
-| `COHABITING` | `cohabiting` | Living together without formal marriage |
-| `CIVIL_UNION` | `civil_union` | Legal recognition without religious ceremony |
-| `POLYAMOROUS` | `polyamorous` | Open to multiple committed relationships |
-| `MONOGAMOUS` | `monogamous` | Exclusive to one partner |
-| `ARRANGED` | `arranged` | Family-arranged match |
-| `LOVE_MATCH` | `love_match` | Based on romantic love |
-| `DUTY_MATCH` | `duty_match` | Based on obligation or duty |
-| `SECRET` | `secret` | Hidden from society |
-| `PUBLIC` | `public` | Openly acknowledged |
-| `SCANDALOUS` | `scandalous` | Known and disapproved of |
-| `MORGANATIC` | `morganatic` | Spouse retains lower rank, children don't inherit |
-| `LEVITIC` | `levitic` | Marriage to brother's widow |
-| `POSTHUMOUS` | `posthumous` | Marriage after one partner's death |
+**Rules never call State. Rules never call Queries. Rules are pure.**
 
 ---
 
-# 3. RELATIONSHIP-TYPES.JS
+## 3. Vocabulary (`relationship-types.js`)
 
-## Purpose
+### Archetypes
 
-Central registry of ALL relationship archetypes, statuses, attributes, and their metadata. This is the single source of truth for what relationship types exist and how they behave.
+| ID | Category | Direction |
+|----|----------|-----------|
+| `casual_dating` | Romantic | symmetric |
+| `one_night_stand` | Romantic | symmetric |
+| `committed` | Romantic | symmetric |
+| `friendship` | Social | symmetric |
+| `rivalry` | Social | symmetric |
+| `enmity` | Social | symmetric |
+| `parent_child` | Family | A=parent, B=child |
+| `sibling` | Family | symmetric |
+| `grandparent` | Family | A=grandparent, B=grandchild |
+| `aunt_uncle` | Family | A=aunt/uncle, B=niece/nephew |
+| `cousin` | Family | symmetric |
+| `apprenticeship` | Professional | A=master, B=apprentice |
+| `mastership` | Professional | A=master, B=expert |
+| `employment` | Professional | A=employer, B=employee |
+| `guild_membership` | Professional | symmetric |
 
-## Dependencies
+### Attributes (committed relationships only)
 
-None (pure type definitions)
+| Group | Attributes |
+|-------|-----------|
+| Legal status | `married`, `engaged`, `cohabiting`, `civil_union`, `handfasted` |
+| Structure | `polyamorous`, `monogamous` |
+| Origin | `arranged`, `love_match`, `duty_match` |
+| Visibility | `secret`, `public`, `scandalous` |
+| Special | `morganatic`, `levitic`, `posthumous` |
 
-## Exports
+### Statuses
 
-### Relationship Archetypes
+`ongoing`, `ended`, `widowed`, `pending`, `proposed`, `declined`
 
-```javascript
-window.RELATIONSHIP_ARCHETYPES = {
-    // Romantic
-    CASUAL_DATING: 'casual_dating',
-    ONE_NIGHT_STAND: 'one_night_stand',
-    COMMITTED: 'committed',
-    
-    // Social
-    FRIENDSHIP: 'friendship',
-    RIVALRY: 'rivalry',
-    ENMITY: 'enmity',
-    
-    // Family
-    PARENT_CHILD: 'parent_child',
-    SIBLING: 'sibling',
-    GRANDPARENT: 'grandparent',
-    AUNT_UNCLE: 'aunt_uncle',
-    COUSIN: 'cousin',
-    
-    // Professional
-    APPRENTICESHIP: 'apprenticeship',
-    EMPLOYMENT: 'employment',
-    GUILD_MEMBERSHIP: 'guild_membership',
-    MASTERSHIP: 'mastership'
-};
+### Valid transitions
+
+```
+pending  → ongoing | declined
+proposed → ongoing | declined
+ongoing  → ended | widowed
+ended    → (none)
+widowed  → (none)
+declined → (none)
 ```
 
-### Relationship Attributes
+---
 
-```javascript
-window.RELATIONSHIP_ATTRIBUTES = {
-    // Legal status (committed only)
-    MARRIED: 'married',
-    ENGAGED: 'engaged',
-    COHABITING: 'cohabiting',
-    CIVIL_UNION: 'civil_union',
-    HANDFASTED: 'handfasted',
-    
-    // Structure
-    POLYAMOROUS: 'polyamorous',
-    MONOGAMOUS: 'monogamous',
-    
-    // Origin
-    ARRANGED: 'arranged',
-    LOVE_MATCH: 'love_match',
-    DUTY_MATCH: 'duty_match',
-    
-    // Visibility
-    SECRET: 'secret',
-    PUBLIC: 'public',
-    SCANDALOUS: 'scandalous',
-    
-    // Special
-    MORGANATIC: 'morganatic',
-    LEVITIC: 'levitic',
-    POSTHUMOUS: 'posthumous'
-};
+## 4. Relationship Identity Contract
+
+```
+relationshipId     uniquely identifies ONE entity (global)
+participantPair    identifies the two participants (index only)
+archetype          exactly one per entity, immutable
+attributes[]       descriptors on committed relationships
+status             lifecycle state
+startYear          required
+endYear            required if status ∈ {ended, widowed}
 ```
 
-### Relationship Status
+**Invariant:** `(A, B)` may have N relationship entities. N ≥ 0.
 
-```javascript
-window.RELATIONSHIP_STATUS = {
-    ONGOING: 'ongoing',
-    ENDED: 'ended',
-    WIDOWED: 'widowed',
-    PENDING: 'pending',
-    PROPOSED: 'proposed',
-    DECLINED: 'declined'
-};
+**Index invariant:** `byParticipantPair: Map<pairKey, Set<relationshipId>>` — never a single id.
+
+---
+
+## 5. State (`relationship-state.js`)
+
+Storage only. No validation, no policy, no persistence.
+
+```js
+RelationshipState.register(entity)        // → entity | null
+RelationshipState.unregister(id)          // → boolean
+RelationshipState.get(id)                 // → entity | null
+RelationshipState.idsForCharacter(id)     // → string[]
+RelationshipState.idsForType(type)        // → string[]
+RelationshipState.idsForPair(a, b)        // → string[]
+RelationshipState.allIds()                // → string[]
+RelationshipState.all()                   // → entity[]
+RelationshipState.replaceAll(entities)    // load / migrate only
+RelationshipState.clear()
+RelationshipState.size()
 ```
 
-### Status Transitions
+---
 
-```javascript
-window.RELATIONSHIP_STATUS_TRANSITIONS = {
-    'pending': ['ongoing', 'declined'],
-    'proposed': ['ongoing', 'declined'],
-    'ongoing': ['ended', 'widowed'],
-    'ended': ['ongoing'],
-    'widowed': [],
-    'declined': []
-};
+## 6. Rules
+
+### `RelationshipRules`
+
+```js
+isValidStatus(status)
+isValidTransition(from, to)
+isSymmetric(archetype)
+allowsMultiplePerPair(archetype)
+minimumAge(archetype)
+validateAttributes(archetype, attributes) → { valid, conflicts }
+canCreate(options) → { valid, errors }
 ```
 
-## Helper Functions
+### `RomanceRules`
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getValidationRulesForArchetype(archetype)` | string | Object | Gets validation rules for an archetype |
-| `getDefaultValidationRules()` | None | Object | Gets default validation rules |
-| `isValidStatusTransition(from, to)` | string, string | boolean | Checks if status transition is valid |
-| `isValidAgeForArchetype(archetype, age)` | string, number | boolean | Checks if age meets minimum for archetype |
-| `isAgeGapValid(archetype, age1, age2)` | string, number, number | boolean | Checks if age gap is valid |
-| `getArchetypeName(archetype)` | string | string | Gets display name for archetype |
-| `getArchetypeIcon(archetype)` | string | string | Gets icon name for archetype |
-| `getArchetypeColor(archetype)` | string | string | Gets color for archetype |
-| `canHaveAttributes(archetype)` | string | boolean | Checks if archetype can have attributes |
-| `isAutoGeneratedOnly(archetype)` | string | boolean | Checks if archetype is auto-generated only |
-| `getAttributeName(attribute)` | string | string | Gets display name for attribute |
-| `getAttributeIcon(attribute)` | string | string | Gets icon name for attribute |
-| `getAttributeColor(attribute)` | string | string | Gets color for attribute |
-| `getAttributeGroup(attribute)` | string | string | Gets group for attribute |
-| `areAttributesCompatible(attributes)` | Array | { valid, conflicts } | Checks attribute compatibility |
-| `isAttributeValidForArchetype(archetype, attribute)` | string, string | boolean | Checks if attribute valid for archetype |
-| `getMarriageStatus(attributes)` | Array | string \| null | Gets marriage status from attributes |
-| `getAllowedAttributes()` | None | Array | Gets all allowed attributes |
-| `getRelationshipCategory(archetype)` | string | string | Gets category for archetype |
-| `getArchetypesByCategory(category)` | string | Array | Gets archetypes by category |
-| `getAllRelationshipCategories()` | None | Array | Gets all categories |
-| `getRelationshipStatusName(status)` | string | string | Gets display name for status |
-| `getRelationshipStatusIcon(status)` | string | string | Gets icon for status |
-| `getAllArchetypes()` | None | Array | Gets all archetype IDs |
-| `getAllAttributes()` | None | Array | Gets all attribute IDs |
-| `getAllRelationshipStatuses()` | None | Array | Gets all status IDs |
-| `getAttributeValidationRules(attribute)` | string | Object | Gets validation rules for attribute |
-| `getAttributeGroups()` | None | Object | Gets attribute groups |
-| `getMirroredRelationshipType(archetype)` | string | string | Gets mirrored type for directional relationships |
-| `isDirectionalRelationship(archetype)` | string | boolean | Checks if relationship is directional |
-| `migrateLegacyRelationshipType(legacyType)` | string | { archetype, attributes } | Migrates legacy type to new system |
-
----
-
-# 4. RELATIONSHIP-REGISTRY.JS
-
-## Purpose
-
-**PURE DATABASE LAYER.** Manages relationship entities with bidirectional consistency. Knows NOTHING about romance, friendship, marriage, or business logic. Only manages relationship entities and their persistence.
-
-## Dependencies
-
-| Module | Functions Used |
-|--------|----------------|
-| `accessors.js` | `getCharacters`, `getCharacterById` |
-| `relationship-types.js` | `RELATIONSHIP_ARCHETYPES`, `RELATIONSHIP_STATUS`, `RELATIONSHIP_ATTRIBUTES` |
-| `ids.js` | `generateId` |
-| `time.js` | `getCurrentYearSafe` |
-| `storage.js` | `saveMasterData` |
-
-## Internal Structure
-
-### Relationship Index (Cache)
-
-```javascript
-var _relationshipIndex = {
-    byId: new Map(),           // id -> relationship
-    byCharacter: new Map(),    // characterId -> Set of relationship ids
-    byType: new Map(),         // type -> Set of relationship ids
-    byParticipantPair: new Map() // participantA|participantB -> relationship id
-};
+```js
+isRomanticArchetype(type)
+minimumAge(type)
+validateAttributes(archetype, attributes)
+isAgeValid(archetype, age)
+canHaveMultiplePartners(facts)
+classifyNewRelationship(facts) → { classification, reason }
+resolveAttributes(input) → string[]
+canBreakUp(facts)
+canBeWidowed(facts)
+isAffair(attributes) → boolean
+canAddAttribute(facts)
+canRemoveAttribute(facts)
 ```
 
-## Functions
+**Affair classification** is derived, never stored:
+```
+committed + SECRET attribute = affair
+```
 
-### Index Management
+### `FriendshipRules`
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `rebuildRelationshipIndex()` | None | void | Rebuilds the entire index from character data |
-| `markIndexDirty()` | None | void | Marks index as needing rebuild |
-| `ensureIndex()` | None | void | Rebuilds index if dirty |
-| `getCanonicalPairKey(idA, idB)` | string, string | string | Gets canonical key for a pair |
+```js
+clampStrength(value)
+isValidStrength(value)
+canCreate(facts)
+canChangeStrength(facts)
+canRecordEvent(facts)
+canRemove(facts)
+applyStrengthChange({ currentStrength, delta }) → { newStrength, ended }
+applyEventImpact({ currentStrength, impact })
+strengthTier(strength) → 'acquaintance' | 'friend' | 'close_friend' | 'best_friend'
+```
 
-### Relationship Creation
+Constants: `STRENGTH_MIN=0`, `STRENGTH_MAX=100`, `STRENGTH_DEFAULT=50`, `INCREASE_DEFAULT=5`, `DECREASE_DEFAULT=10`, `END_THRESHOLD=0`.
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `createRelationship(characterAId, characterBId, options)` | string, string, Object | Object \| null | Creates a bidirectional relationship |
+### `FamilyRules`
 
-**Options:**
+```js
+canSetParent(facts)
+normalizeParentRole(requestedRole, gender)
+isBiological(type)
+isLegalOrSocial(type)
+deriveSiblingship(aParents, bParents) → { type, sharedParents }
+classifyKinship(aId, bId, provider) → { type, degree?, removed? }
+isBloodRelated(aId, bId, provider)
+isOrphan(facts)
+hasAnyParent(facts)
+canCreateAdoption(facts)
+canLegitimize(facts)
+```
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `type` | string | `'committed'` | Relationship archetype |
-| `status` | string | `'ongoing'` | Relationship status |
-| `startYear` | number | current year | Year relationship started |
-| `attributes` | Array | [] | Attribute IDs (flavor text) |
-| `allowMultiple` | boolean | false | Allow multiple relationships of same type |
-| `metadata` | Object | {} | Additional metadata |
+Parent types: `biological`, `legal`, `social`
+Parent roles: `father`, `mother`, `parent`
+Sibling types: `full`, `half`, `step`, `adoptive`
+Kinship types: `self`, `parent`, `child`, `sibling`, `grandparent`, `grandchild`, `great_grandparent`, `great_grandchild`, `aunt_uncle`, `niece_nephew`, `cousin`, `unrelated`
 
-### Relationship Deletion
+### `ProfessionalRules`
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `deleteRelationship(relationshipId)` | string | boolean | Permanently deletes a relationship |
-| `endRelationship(relationshipId, endYear, endReason)` | string, number, string | boolean | Ends a relationship (sets status to ended) |
-| `reactivateRelationship(relationshipId)` | string | boolean | Reactivates an ended relationship |
-| `setRelationshipWidowed(relationshipId, endYear)` | string, number | boolean | Sets relationship status to widowed |
+```js
+clampSkill(value)
+skillTier(value) → 'untrained' | 'novice' | 'apprentice' | 'journeyman' | 'expert' | 'master'
+canTeach(skillLevel, minSkill?)
+canCreateApprenticeship(facts)
+canProgressApprenticeship(facts)
+canCompleteApprenticeship(facts)
+canCreateEmployment(facts)
+canCreateGuildMembership(facts)
+isProfessionalType(type)
+```
 
-### Relationship Queries
+Constants: `TEACHING_MIN_SKILL=51`, `MASTER_MIN_SKILL=76`.
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getRelationshipById(relationshipId)` | string | Object \| null | Gets relationship by ID |
-| `getRelationshipBetween(characterAId, characterBId)` | string, string | Object \| null | Gets relationship between two characters |
-| `relationshipExists(characterAId, characterBId)` | string, string | boolean | Checks if relationship exists |
-| `getRelationshipTypeBetween(characterAId, characterBId)` | string, string | string \| null | Gets type of relationship between two |
-| `hasActiveRelationship(characterAId, characterBId)` | string, string | boolean | Checks if active relationship exists |
-| `hasRelationshipOfType(characterAId, characterBId, type)` | string, string, string | boolean | Checks if specific type exists |
-| `getMostRecentRelationship(characterAId, characterBId)` | string, string | Object \| null | Gets most recent relationship |
-| `getRelationshipsForCharacter(characterId, options)` | string, Object | Array | Gets all relationships for a character |
-| `getRelationshipsByType(type, options)` | string, Object | Array | Gets all relationships of a type |
-| `getRelationshipsByTypeAndStatus(type, status)` | string, string | Array | Gets relationships by type and status |
-| `getActiveRelationships(characterId)` | string | Array | Gets active relationships for a character |
-| `getCharacterRelationshipsByType(characterId, type)` | string, string | Array | Gets relationships by type |
-| `getAllRelationships()` | None | Array | Gets ALL relationships |
+### `JealousyRules`
 
-### Relationship Updates
+```js
+calculateJealousy(facts) → { level, triggers, type }
+adjustConfrontationLevel(level, traits) → number
+determineConsequence(level) → consequence id
+shouldConfrontAnnually({ jealousyLevel, traits, roll }) → { triggered, chance }
+consequenceCreatesRivalry(consequenceId)
+dominantType(typeScores)
+```
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `updateRelationship(relationshipId, updates)` | string, Object | Object \| null | Updates a relationship |
+Consequences (descending threshold):
 
-**Update Fields:**
+| ID | Min level |
+|----|-----------|
+| `murder` | 0.85 |
+| `self_destruct` | 0.70 |
+| `sabotage` | 0.65 |
+| `fight` | 0.60 |
+| `confrontation` | 0.40 |
+| `rumors` | 0.30 |
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `type` | string | New archetype |
-| `status` | string | New status |
-| `endYear` | number | Year relationship ended |
-| `attributes` | Array | New attributes |
-| `metadata` | Object | New metadata |
+### `AffairRules`
 
-### Bulk Operations
+```js
+isValidAffairType(t)
+normalizeAffairType(t)
+calculateDiscoveryRisk(facts) → number in [0.05, 0.95]
+annualDiscoveryChance(baseRisk) → number
+eligibleConsequences(facts) → consequence id[]
+calculateReconciliationChance(facts) → number
+calculateScandalImpact(facts) → { totalImpact, participants }
+```
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `deleteAllRelationshipsForCharacter(characterId)` | string | number | Deletes all relationships for a character |
-| `getRelationshipCount(characterId)` | string | number | Counts relationships for a character |
-| `getRelationshipCountByType(characterId, type)` | string, string | number | Counts relationships by type |
-
-### Validation
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `validateRelationshipIntegrity()` | None | { isValid, issueCount, issues } | Validates bidirectional consistency |
-
----
-
-# 5. RELATIONSHIP-QUERIES.JS
-
-## Purpose
-
-PURE graph query functions. No business logic. Provides social distance, path finding, and network analysis.
-
-## Dependencies
-
-| Module | Functions Used |
-|--------|----------------|
-| `relationship-registry.js` | `getRelationshipBetween`, `getRelationshipsForCharacter` |
-| `accessors.js` | `getCharacterById` |
-| `time.js` | `getCurrentYearSafe` |
-
-## Caching
-
-| Cache | Description | TTL |
-|-------|-------------|-----|
-| `_socialDistanceCache` | Social distance calculations | 60s |
-| `_pathCache` | Relationship paths | 60s |
-| `_recommendationCache` | Relationship recommendations | 60s |
-
-## Functions
-
-### Relationship Existence
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `hasAnyRelationship(characterIdA, characterIdB)` | string, string | boolean | Checks if any relationship exists |
-| `hasRelationshipOfType(characterIdA, characterIdB, type)` | string, string, string | boolean | Checks if specific type exists |
-| `hasRelationshipWithStatus(characterIdA, characterIdB, status)` | string, string, string | boolean | Checks if specific status exists |
-| `hasActiveRelationship(characterIdA, characterIdB)` | string, string | boolean | Checks if active relationship exists |
-
-### Mutual Connections
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getMutualConnections(characterIdA, characterIdB, options)` | string, string, Object | Array | Gets mutual connections |
-| `getMutualConnectionsByType(characterIdA, characterIdB, type)` | string, string, string | Array | Gets mutual connections by type |
-| `getMutualConnectionsByStatus(characterIdA, characterIdB, status)` | string, string, string | Array | Gets mutual connections by status |
-| `getCommonRelationships(characterIdA, characterIdB, thirdId)` | string, string, string | Object | Gets relationships with third party |
-
-**Options for getMutualConnections:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `type` | string | Filter by type |
-| `status` | string | Filter by status |
-| `includeDetails` | boolean | Include relationship details |
-
-### Social Distance
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getSocialDistance(startId, targetId, options)` | string, string, Object | number | Gets social distance (degrees of separation) |
-| `findRelationshipPath(startId, targetId, options)` | string, string, Object | Array \| null | Finds path between characters |
-| `getRelationshipPathWithMetadata(startId, targetId, options)` | string, string, Object | Object \| null | Gets path with edge metadata |
-
-**Options for social distance:**
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `maxDepth` | number | 6 | Maximum degrees to search |
-| `type` | string | null | Filter by type |
-| `status` | string | null | Filter by status |
-| `useCache` | boolean | true | Use cached results |
-
-### Network Analysis
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getNthDegreeConnections(characterId, degree, options)` | string, number, Object | Array | Gets Nth degree connections |
-| `getCharactersWithinDistance(characterId, maxDistance, options)` | string, number, Object | Array | Gets characters within distance |
-| `getRelationshipNetwork(characterId, options)` | string, Object | Array | Gets relationship network |
-| `getNetworkDegree(characterId, options)` | string, Object | number | Gets network degree (connection count) |
-| `getRelationshipDensity(characterIds, options)` | Array, Object | number | Gets relationship density |
-| `getCharacterNetworkStats(characterId, options)` | string, Object | Object | Gets network statistics |
-| `getAllConnectedComponents(characterIds, options)` | Array, Object | Array | Gets connected components |
-| `isGroupConnected(characterIds, options)` | Array, Object | boolean | Checks if group is connected |
-
-### Advanced Analytics
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getInfluenceScore(characterId, options)` | string, Object | number | Gets influence score |
-| `getEgoNetwork(characterId, options)` | string, Object | { nodes, edges } | Gets ego network |
-
-### Recommendations
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getRelationshipRecommendations(characterId, options)` | string, Object | Array | Gets relationship recommendations |
-
-**Options for getRelationshipRecommendations:**
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `maxRecommendations` | number | 10 | Maximum recommendations |
-| `minSocialDistance` | number | 2 | Minimum social distance |
-| `maxSocialDistance` | number | 3 | Maximum social distance |
-| `type` | string | null | Filter by type |
-| `useCache` | boolean | true | Use cached results |
-
-### Cache Management
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `clearSocialDistanceCache()` | None | void | Clears all caches |
-| `invalidateRelationshipCache()` | None | void | Invalidates all relationship caches |
+Affair types: `secret`, `open`, `emotional`, `one_night`.
+Consequences: `discovery`, `scandal`, `breakup`, `murder`, `execution`, `reconciliation`, `legitimization`.
 
 ---
 
-# 6. ROMANCE-LOGIC.JS
+## 7. Queries
 
-## Purpose
+All queries return **projections**, never live entities. Every projection is a fresh object.
 
-Romance-specific business logic built on top of the relationship registry.
+### `RelationshipQueries`
 
-## Key Principles
+```js
+getById(id)
+getBetween(a, b, options?)
+getBetweenOfType(a, b, type, options?)
+getActiveBetweenOfType(a, b, type)
+getForCharacter(id, options?)
+getActiveForCharacter(id)
+getByType(type, options?)
+hasAnyBetween(a, b)
+hasActiveBetween(a, b)
+hasActiveBetweenOfType(a, b, type)
+countActiveForCharacter(id)
+countByTypeForCharacter(id, type)
+```
 
-- Relationships are: `one_night_stand`, `casual_dating`, or `committed`
-- Everything else is an **ATTRIBUTE** on committed relationships (flavor text only)
-- **No special "marriage" type** - it's just `MARRIED` attribute
-- One night stands start and end in the same year automatically
-- `breakUp()` ends any relationship (same for committed and casual)
-- `widowed` status for death of partner
-- Smart creation with auto-affair detection
-- Validation with conflict detection
+Options: `{ type, status, activeOnly, startYearMin, startYearMax }`.
 
-## Dependencies
+### `RomanceQueries`
 
-| Module | Functions Used |
-|--------|----------------|
-| `relationship-registry.js` | All registry functions |
-| `relationship-types.js` | All type definitions |
-| `accessors.js` | `getCharacterById`, `getCharacters` |
-| `time.js` | `calculateAge`, `getCurrentYearSafe` |
-| `storage.js` | `saveMasterData` |
+```js
+getRomanticRelationships(id, options?)
+getActiveRomanticRelationships(id)
+hasActiveRomanticRelationship(id)
+hasActiveCommittedRelationship(id)
+getRomanticRelationshipsBetween(a, b, options?)
+getActiveRomanticRelationshipsBetween(a, b)
+getCommittedRelationshipsBetween(a, b)
+getActiveCommittedBetween(a, b)
+hasActiveRomanticBetween(a, b)
+hasActiveCommittedBetween(a, b)
+getActiveCommittedPartners(id)   // → [{ relationship, partnerId }]
+getActiveRomanticPartners(id)
+countActiveCommittedPartners(id)
+getAffairsForCharacter(id, options?)
+getActiveAffairsForCharacter(id)
+getAffairBetween(a, b)
+isAffair(relationshipId)
+isSecretRelationship(a, b)
+hasRelationshipAttribute(a, b, attribute)
+getCommittedAttributesBetween(a, b)
+getMarriageStatus(relationshipId)
+getMarriageStatusBetween(a, b)
+getMultiPartnerFacts(id, externalFacts)
+```
 
-## Functions
+### `FriendshipQueries`
 
-### Relationship Creation
+```js
+areFriends(a, b)
+getFriendshipBetween(a, b)
+getActiveFriendshipBetween(a, b)
+getFriendshipsForCharacter(id, options?)
+getFriends(id)                    // → [{ relationshipId, friendId, strength, ... }]
+getFriendsOfCharacterSortedByStrength(id)
+getFriendCount(id)
+getBestFriend(id)
+getFriendshipStrength(a, b)
+getFriendshipStrengthById(relationshipId)
+getMutualFriends(a, b)
+getFriendshipStats(id)
+```
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `startCasualDating(characterAId, characterBId, options)` | string, string, Object | Object \| null | Starts casual dating |
-| `startOneNightStand(characterAId, characterBId, options)` | string, string, Object | Object \| null | Creates a one-night stand (auto-ends) |
-| `startCommittedRelationship(characterAId, characterBId, options)` | string, string, Object | Object \| null | Starts a committed relationship |
+### `FamilyQueries`
 
-**Options for startCommittedRelationship:**
+```js
+getParentRelationships(childId, options?)
+getParents(childId, options?)     // → { fathers, mothers, others }
+getAllParentIds(childId, options?)
+getBiologicalParentIds(childId, options?)
+getLegalParentIds(childId, options?)
+getSocialParentIds(childId, options?)
+hasLivingParent(childId, options?)
+getChildRelationships(parentId, options?)
+getChildren(parentId, options?)
+hasChildren(parentId, options?)
+getSiblingFacts(childId, options?)
+getSiblings(childId, options?)    // → [{ siblingId, siblingType, ... }]
+hasSibling(childId, options?)
+getGrandparents(childId, generation?)
+getGrandchildren(parentId, options?)
+getSpouseIds(characterId, options?)
+hasSpouse(characterId)
+classifyKinship(a, b)
+isBloodRelated(a, b)
+isOrphan(childId)
+getFamilyStatistics(characterId)
+```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `startYear` | number | Year relationship started |
-| `attributes` | Array | Attributes (flavor text only) |
-| `notes` | string | Additional notes |
+### `ProfessionalQueries`
 
-### Attribute Management
+```js
+getMasterRelationships(apprenticeId, options?)
+getMasterIds(apprenticeId, options?)
+getMaster(apprenticeId, options?)
+isApprentice(id)
+getApprentices(masterId, options?)
+isMaster(id)
+getApprenticeshipBetween(masterId, apprenticeId)
+getApprenticeshipRoleId(apprenticeId)
+getEmployerRelationships(employeeId, options?)
+getEmployerIds(employeeId, options?)
+getEmployer(employeeId, options?)
+isEmployed(id)
+getEmployees(employerId, options?)
+getEmploymentBetween(employerId, employeeId)
+getGuildMembers(guildId, options?)
+getGuildMembershipsForCharacter(characterId, options?)
+isInGuild(characterId, guildId)
+getGuildMembership(characterId, guildId)
+getGuildRank(characterId, guildId)
+getProfessionalRelationships(characterId, options?)
+getProfessionalRelationshipsBetween(a, b, options?)
+```
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `addRelationshipAttribute(characterAId, characterBId, attribute)` | string, string, string | boolean | Adds an attribute (flavor text) |
-| `removeRelationshipAttribute(characterAId, characterBId, attribute)` | string, string, string | boolean | Removes an attribute |
+### `JealousyQueries`
 
-### Validation & Conflict Detection
+```js
+getJealousyBetween(subjectId, targetId, aboutId?)
+findAllJealousyTargets(subjectId)  // → [{ targetId, aboutId, level, triggers, type }]
+getPrimaryJealousyTarget(subjectId)
+getJealousyHistory(characterId)
+getConflictHistory(characterId)
+```
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `canStartRelationship(characterAId, characterBId, options)` | string, string, Object | { canStart, conflicts, advice } | Validates if relationship can start |
-| `getRelationshipConflicts(characterAId, characterBId)` | string, string | Array | Gets conflicts for starting a relationship |
-| `getRelationshipAdviceString(characterAId, characterBId)` | string, string | string | Gets user-friendly advice |
-| `canHaveMultiplePartners(characterId)` | string | boolean | Checks if character can have multiple partners |
+### `AffairQueries`
 
-**canStartRelationship Return:**
+```js
+getAffairs(characterId, options?)
+getActiveAffairs(characterId)
+getDiscoveredAffairs(characterId)
+isHavingAffair(characterId)
+getAffairBetween(a, b)
+getDiscoveryRisk(relationshipId, options?)  // → { risk, annualChance, facts }
+getAffairStatistics(characterId, options?)
+```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `canStart` | boolean | Whether relationship can start |
-| `conflicts` | Array | Array of conflict objects |
-| `advice` | string \| null | User-friendly advice |
+### `RelationshipFinderQueries`
 
-**Conflict Object:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `type` | string | Conflict type |
-| `message` | string | Human-readable message |
-
-**Conflict Types:**
-- `missing_character` - Character not found
-- `already_together` - Already in a relationship
-- `existing_relationship_a` - Character A has existing relationships
-- `existing_relationship_b` - Character B has existing relationships
-- `underage_a` - Character A is underage
-- `underage_b` - Character B is underage
-
-### Relationship Ending
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `breakUp(characterAId, characterBId, options)` | string, string, Object | { success, reason } | Ends ANY relationship |
-| `deathEndsRelationship(survivingId, deceasedId, options)` | string, string, Object | { success, reason } | Sets relationship to widowed |
-
-**Options for breakUp:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `endYear` | number | Year of breakup |
-| `reason` | string | Reason for breakup |
-
-**Options for deathEndsRelationship:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `deathYear` | number | Year of death |
-
-### Relationship Queries
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getActiveRomanticRelationships(characterId)` | string | Array | Gets all active romantic relationships |
-| `hasActiveRomanticRelationship(characterId)` | string | boolean | Checks if character has any active romantic relationship |
-| `getPrimaryPartner(characterId)` | string | Object \| null | Gets primary partner |
-| `getAffairs(characterId)` | string | Array | Gets all affairs for a character |
-| `hasRelationshipAttribute(characterAId, characterBId, attribute)` | string, string, string | boolean | Checks if relationship has attribute |
-| `isAffair(characterAId, characterBId)` | string, string | boolean | Checks if relationship is an affair |
-| `isSecretRelationship(characterAId, characterBId)` | string, string | boolean | Alias for isAffair |
-
-### Smart Relationship Creation
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `createRomanticRelationship(characterAId, characterBId, options)` | string, string, Object | Object | Smart creation with auto-affair detection |
-
-**Options for createRomanticRelationship:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `archetype` | string | Relationship type |
-| `startYear` | number | Year started |
-| `attributes` | Array | Attributes (flavor text) |
-| `notes` | string | Additional notes |
-| `forceAffair` | boolean | Force creation as affair |
-| `isScandalous` | boolean | Make affair scandalous |
-| `affairType` | string | Type of affair |
-
-**Return Object:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `success` | boolean | Whether creation succeeded |
-| `relationship` | Object \| null | Created relationship |
-| `affairCreated` | boolean | Whether an affair was created |
-| `affairReason` | string \| null | Reason affair was created |
-| `advice` | string | User-friendly message |
+```js
+getReport(aId, bId, options?)
+findConnectionPath(aId, bId, options?)
+findCommonAncestors(aId, bId)
+```
 
 ---
 
-# 7. FAMILY-LOGIC.JS
+## 8. Commands
 
-## Purpose
+Every command returns `{ success, ... }` or `{ success: false, code, message }`. Never throws for domain errors.
 
-Family-specific business logic built on top of the relationship registry. Handles parent-child, sibling, grandparent, and consanguinity relationships.
+### `RelationshipCommands`
 
-## Dependencies
+```js
+create(options)                     // options: { participantA, participantB, type,
+                                    //            status?, startYear, endYear?, attributes?, metadata? }
+update(id, updates)                 // updates: { status?, endYear?, attributes?, metadata? }
+end(id, endYear, reason?)
+setWidowed(id, endYear)
+remove(id)
+addAttribute(id, attribute)
+removeAttribute(id, attribute)
+```
 
-| Module | Functions Used |
-|--------|----------------|
-| `relationship-registry.js` | All registry functions |
-| `relationship-types.js` | All type definitions |
-| `accessors.js` | `getCharacterById`, `getCharacters` |
-| `time.js` | `getCurrentYearSafe`, `calculateAge` |
-| `storage.js` | `saveMasterData` |
-| `family-accessors.js` | `FamilyAccessors` (core module) |
+### `RomanceCommands`
 
-## Integration with FamilyAccessors
+```js
+startCasualDating(aId, bId, options?)
+startOneNightStand(aId, bId, options?)
+startCommittedRelationship(aId, bId, options?)
+    // options: { startYear?, attributes?, forceAffair?, isScandalous?, notes? }
+addRelationshipAttribute(relationshipId, attribute)
+removeRelationshipAttribute(relationshipId, attribute)
+breakUp(relationshipId, options?)
+deathEndsRelationship(relationshipId, options?)
+```
 
-`family-logic.js` uses `FamilyAccessors` (core module) for data access, and adds business logic on top:
+### `FriendshipCommands`
 
-| FamilyAccessor | Used For |
-|----------------|----------|
-| `getAllChildren()` | Getting children with relationship info |
-| `getParents()` | Getting parents with relationship info |
-| `getSiblings()` | Getting siblings with relationship info |
-| `getGrandparents()` | Getting grandparents with relationship info |
-| `getSpouses()` | Getting spouses with relationship info |
-| `getFamilyStatistics()` | Getting comprehensive family statistics |
+```js
+createFriendship(aId, bId, options?)              // options: { startYear?, strength?, notes? }
+createMutualFriendships(ids, options?)            // one commit for the whole batch
+increaseFriendshipStrength(aId, bId, amount?)
+decreaseFriendshipStrength(aId, bId, amount?)
+recordFriendshipEvent(aId, bId, event)            // one atomic mutation
+removeFriendship(aId, bId, options?)
+```
 
-## Functions
+### `FamilyCommands`
 
-### Parent-Child Relationships
+```js
+setParent(childId, parentId, options?)
+    // options: { parentRole?, parentType?, startYear?, notes? }
+removeParent(childId, parentId, options?)
+createAdoption(childId, adopterId, options?)
+removeAdoption(childId, adopterId, options?)
+legitimize(childId, options?)
+    // options: { fatherId, motherId, year?, inheritanceRights?, notes? }
+handleCharacterDeath(characterId, deathYear)      // cascade hook
+```
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `setParent(childId, parentId, parentType, options)` | string, string, string, Object | Object \| null | Sets a parent for a child |
-| `removeParent(childId, parentId, options)` | string, string, Object | boolean | Removes a parent relationship |
-| `getParents(characterId)` | string | { father, mother } | Gets both parents of a character |
-| `getChildren(characterId, activeOnly)` | string, boolean | Array | Gets children of a character |
+### `ProfessionalCommands`
 
-**Options for setParent:**
+```js
+createApprenticeship(masterId, apprenticeId, options?)
+progressApprenticeship(masterId, apprenticeId, amount?)
+completeApprenticeship(masterId, apprenticeId, finalSkill)
+endApprenticeship(masterId, apprenticeId, options?)
+createEmployment(employerId, employeeId, options?)
+endEmployment(employerId, employeeId, options?)
+createGuildMembership(guildId, memberId, options?)
+removeGuildMembership(guildId, memberId, options?)
+setGuildRank(guildId, memberId, rank)
+```
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `biological` | boolean | true | Is this a biological parent |
-| `startYear` | number | birthYear or current | Year relationship started |
-| `notes` | string | '' | Additional notes |
+### `JealousyCommands`
 
-**parentType Values:**
-- `'father'` or `'male'` - Sets as father
-- `'mother'` or `'female'` - Sets as mother
+```js
+triggerConfrontation(jalouxId, targetId, options?)
+processAnnualJealousy(options?)
+```
 
-### Sibling Relationships
+### `AffairCommands`
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getSiblings(characterId, activeOnly)` | string, boolean | Array | Gets siblings of a character |
-
-**Automatic Sibling Management:**
-- When a parent is set, sibling relationships are automatically created between all children sharing that parent
-- When a parent is removed, sibling relationships are automatically cleaned up
-
-### Grandparent Relationships
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getGrandparents(characterId, generation)` | string, number | Array | Gets grandparents of a character |
-| `getGrandchildren(characterId, activeOnly)` | string, boolean | Array | Gets grandchildren of a character |
-
-**generation Values:**
-- `0` - Parents
-- `1` - Grandparents (default)
-- `2` - Great-grandparents
-
-### Consanguinity
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getConsanguinityDegree(charId1, charId2)` | string, string | string \| null | Gets consanguinity relationship |
-| `getRelationshipDescription(charId1, charId2)` | string, string | string | Gets human-readable relationship description |
-
-**Consanguinity Return Values:**
-- `'Self'` - Same person
-- `'Parent'` - Parent-child
-- `'Child'` - Child-parent
-- `'Sibling'` - Sibling
-- `'Grandparent'` - Grandparent-grandchild
-- `'Grandchild'` - Grandchild-grandparent
-- `'Uncle'` / `'Aunt'` - Uncle/Aunt relationship
-- `'Cousin'` - Cousin relationship
-- `null` - Unrelated
-
-### Spouse Relationships (NEW)
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getSpouses(characterId, activeOnly)` | string, boolean | Array | Gets spouses of a character |
-| `getCurrentSpouse(characterId)` | string | Object \| null | Gets current spouse |
-
-### Family Statistics (NEW)
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getFamilyStatistics(characterId)` | string | Object | Gets comprehensive family statistics |
-
-**Family Statistics Object:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `character` | Object | Character being analyzed |
-| `parents` | { father, mother, hasParents } | Parent information |
-| `children` | { total, living, eldest, youngest } | Children information |
-| `siblings` | { total, living, full, half, eldest, youngest } | Sibling information |
-| `grandchildren` | { total, living } | Grandchildren information |
-| `spouse` | Object \| null | Current spouse |
-| `isOrphan` | boolean | Whether character is an orphan |
-| `hasChildren` | boolean | Whether character has children |
-| `totalFamilyMembers` | number | Total family members |
+```js
+createAffair(aId, bId, options?)
+rollDiscovery(relationshipId, options?)
+applyConsequences(relationshipId, options?)
+endAffair(relationshipId, options?)
+legitimizeAffair(relationshipId, options?)
+reconcileAfterAffair(relationshipId, wrongedPartyId, options?)
+endAllAffairsForCharacter(characterId, options?)
+```
 
 ---
 
-# 8. FRIENDSHIP-LOGIC.JS
+## 9. UI Modules
 
-## Purpose
+### `modals-relationship.js`
 
-Friendship-specific business logic built on top of the relationship registry. Handles friendship creation, management, and queries.
+```js
+openRelationshipModal(char1, char2, onSuccess?, context?)
+```
 
-## Dependencies
+Unified creation modal. Dispatches to the appropriate domain command based on selected archetype. Attributes are only shown for committed relationships.
 
-| Module | Functions Used |
-|--------|----------------|
-| `relationship-registry.js` | All registry functions |
-| `relationship-types.js` | All type definitions |
-| `accessors.js` | `getCharacterById`, `getCharacters` |
-| `time.js` | `getCurrentYearSafe`, `calculateAge` |
+### `modals-family.js`
 
-## Functions
+```js
+openSetBirthParentsModal(child, father, mother, onSuccess?)
+openCreateAdoptionModal(child, guardian, partner, onSuccess?)
+openRemoveAdoptionModal(child, guardian, partner, onSuccess?)
+openLegitimizationModal(child, father, mother, onSuccess?)
+openAdoptionSearchModal(onSelect)
+```
 
-### Friendship Creation
+### `modals-friendship.js`
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `createFriendship(charAId, charBId, options)` | string, string, Object | Object \| null | Creates a friendship between two characters |
-| `createMutualFriendships(characterIds, options)` | Array, Object | number | Creates friendships between all pairs in a group |
+```js
+openFriendshipModal(characters, onSuccess?)
+openViewFriendshipModal(aId, bId, onEdit?)
+openEditFriendshipModal(aId, bId, onSuccess?)
+openBreakupFriendshipModal(aId, bId, onSuccess?)
+```
 
-**Options for createFriendship:**
+### `relationship-finder.js`
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `startYear` | number | current year | Year friendship started |
-| `strength` | number | 50 | Friendship strength (0-100) |
-| `notes` | string | '' | Additional notes |
+```js
+renderRelationshipFinder(containerId)
+```
 
-### Friendship Queries
+Renders a two-character picker + report panel. Reads from `RelationshipFinderQueries.getReport()`.
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `areFriends(charAId, charBId)` | string, string | boolean | Checks if two characters are friends |
-| `getFriends(characterId)` | string | Array | Gets all friends of a character |
-| `getFriendsWithDetails(characterId)` | string | Array | Gets friends with detailed info |
-| `getMutualFriends(charAId, charBId)` | string, string | Array | Gets mutual friends |
-| `getFriendshipStrength(charAId, charBId)` | string, string | number | Gets friendship strength (0-100) |
-| `getBestFriend(characterId)` | string | Object \| null | Gets best friend |
-| `getFriendshipStats(characterId)` | string | Object | Gets friendship statistics |
+### `relationship-ui-metadata.js`
 
-**Friend Detail Object:**
+Icons, colors, labels, past/present tense strings for archetypes, attributes, and statuses. Consumed only by UI modules.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `character` | Object | Friend character |
-| `startYear` | number | Year friendship started |
-| `strength` | number | Friendship strength (0-100) |
-| `events` | Array | Friendship events |
-| `notes` | string | Additional notes |
-| `relationshipId` | string | Relationship ID |
-
-**Friendship Stats Object:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `totalFriends` | number | Total friend count |
-| `averageStrength` | number | Average friendship strength |
-| `longestFriendship` | number | Year of longest friendship start |
-| `totalStrength` | number | Sum of all friendship strengths |
-
-### Friendship Management
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `increaseFriendshipStrength(charAId, charBId, increase)` | string, string, number | number | Increases friendship strength |
-| `decreaseFriendshipStrength(charAId, charBId, decrease)` | string, string, number | number | Decreases friendship strength |
-| `recordFriendshipEvent(charAId, charBId, event)` | string, string, Object | void | Records an event in a friendship |
-| `removeFriendship(charAId, charBId, options)` | string, string, Object | boolean | Ends a friendship |
-
-**Event Object:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `type` | string | Event type |
-| `year` | number | Year of event |
-| `description` | string | Event description |
-| `impact` | number | Impact on friendship strength (+/-) |
-
-**Options for removeFriendship:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `endYear` | number | Year friendship ended |
-| `reason` | string | Reason for ending |
-| `notes` | string | Additional notes |
+```js
+RelationshipUI.archetypeName(type)
+RelationshipUI.archetypeIcon(type)
+RelationshipUI.archetypeColor(type)
+RelationshipUI.archetypeTense(type, 'past' | 'present')
+RelationshipUI.attributeName(attr)
+RelationshipUI.attributeIcon(attr)
+RelationshipUI.attributeColor(attr)
+RelationshipUI.statusName(status)
+RelationshipUI.statusIcon(status)
+```
 
 ---
 
-# 9. PROFESSIONAL-LOGIC.JS
+## 10. Data Shapes
 
-## Purpose
+### Relationship entity (canonical, in State)
 
-Professional relationship business logic built on top of the relationship registry. Includes Apprenticeship, Employment, and Guild Membership.
-
-## Dependencies
-
-| Module | Functions Used |
-|--------|----------------|
-| `relationship-registry.js` | All registry functions |
-| `relationship-types.js` | All type definitions |
-| `accessors.js` | `getCharacterById`, `getCharacters`, `getRoleById` |
-
-## Functions
-
-### Apprenticeship
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `createApprenticeship(masterId, apprenticeId, options)` | string, string, Object | Object \| null | Creates an apprenticeship |
-| `getMaster(characterId)` | string | Object \| null | Gets the master of a character |
-| `getApprentices(masterId, activeOnly)` | string, boolean | Array | Gets apprentices of a master |
-| `progressApprenticeship(masterId, apprenticeId, amount)` | string, string, number | Object | Progresses an apprenticeship |
-| `completeApprenticeship(masterId, apprenticeId, finalSkillLevel)` | string, string, number | boolean | Completes an apprenticeship |
-| `endApprenticeship(masterId, apprenticeId, options)` | string, string, Object | boolean | Ends an apprenticeship |
-
-**Options for createApprenticeship:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `roleId` | string | Profession/role ID |
-| `startYear` | number | Year apprenticeship started |
-| `initialSkill` | number | Initial skill level (0-100) |
-| `specializations` | Array | Specializations to teach |
-| `notes` | string | Additional notes |
-
-**Apprentice Object:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Relationship ID |
-| `character` | Object | Apprentice character |
-| `roleId` | string | Profession ID |
-| `roleName` | string | Profession name |
-| `skillLevel` | number | Current skill level |
-| `stage` | string | Training stage |
-| `startYear` | number | Year started |
-| `specializationsTaught` | Array | Specializations being taught |
-| `status` | string | Relationship status |
-
-**Progress Result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `success` | boolean | Whether progression succeeded |
-| `oldLevel` | number | Previous skill level |
-| `newLevel` | number | New skill level |
-| `gained` | number | Amount gained |
-| `oldStage` | string | Previous stage name |
-| `newStage` | string | New stage name |
-| `stageChanged` | boolean | Whether stage changed |
-| `completed` | boolean | Whether apprenticeship completed |
-
-### Employment
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `createEmployment(employerId, employeeId, options)` | string, string, Object | Object \| null | Creates an employment relationship |
-| `getEmployer(characterId)` | string | Object \| null | Gets the employer of a character |
-| `getEmployees(employerId, activeOnly)` | string, boolean | Array | Gets employees of an employer |
-
-**Options for createEmployment:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `role` | string | Job title/role |
-| `wages` | number | Wages paid |
-| `startYear` | number | Year employment started |
-| `notes` | string | Additional notes |
-
-### Guild Membership
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `createGuildMembership(guildId, memberId, options)` | string, string, Object | Object \| null | Creates a guild membership |
-| `getGuildMembers(guildId, activeOnly)` | string, boolean | Array | Gets guild members |
-
-**Options for createGuildMembership:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `rank` | string | Guild rank |
-| `startYear` | number | Year joined |
-| `notes` | string | Additional notes |
-
----
-
-# 10. JEALOUSY-SYSTEM.JS
-
-## Purpose
-
-Jealousy detection and conflict management. No trust - uses relationship strength and social distance.
-
-## Dependencies
-
-| Module | Functions Used |
-|--------|----------------|
-| `relationship-registry.js` | `getRelationshipsForCharacter`, `getRelationshipBetween`, `updateRelationship`, `endRelationship` |
-| `friendship-logic.js` | `getFriendshipStrength` |
-| `family-logic.js` | `getConsanguinityDegree` |
-| `accessors.js` | `getCharacterById`, `getCharacters` |
-
-## Constants
-
-### Jealousy Types
-
-| Type | ID | Name | Threshold |
-|------|-----|------|-----------|
-| Romantic | `'romantic'` | Romantic Jealousy | 0.6 |
-| Social | `'social'` | Social Jealousy | 0.4 |
-| Professional | `'professional'` | Professional Jealousy | 0.5 |
-| Family | `'family'` | Family Jealousy | 0.7 |
-
-### Jealousy Triggers
-
-| Trigger | Base Jealousy |
-|---------|---------------|
-| Partner Having Affair | 0.9 |
-| Partner with Someone Else | 0.8 |
-| Rival Advanced in Rank | 0.6 |
-| Family Shows Preference | 0.5 |
-| Social Slight or Insult | 0.4 |
-| Polyamorous Arrangement | 0.2 |
-| One Night Stand | 0.2 |
-
-### Jealousy Consequences
-
-| Consequence | Severity | Min Level |
-|-------------|----------|-----------|
-| Confrontation | 3 | 0.4 |
-| Physical Fight | 5 | 0.6 |
-| Spread Rumors | 2 | 0.3 |
-| Sabotage | 4 | 0.65 |
-| Murder Attempt | 10 | 0.85 |
-| Self-Destructive Behavior | 4 | 0.7 |
-
-## Functions
-
-### Jealousy Calculation
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `calculateJealousy(jalouxId, targetId, aboutId)` | string, string, string | { level, triggers, type } | Calculates jealousy level |
-
-**Returns:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `level` | number | Jealousy level (0-1) |
-| `triggers` | Array | Triggers that contributed |
-| `type` | Object | Jealousy type |
-
-### Jealousy Targets
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `findAllJealousyTargets(characterId)` | string | Array | Finds all jealousy targets |
-| `getPrimaryJealousyTarget(characterId)` | string | Object \| null | Gets primary jealousy target |
-
-**Target Object:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `target` | Object | Target character |
-| `about` | Object | Character causing jealousy |
-| `jealousyLevel` | number | Jealousy level |
-| `triggers` | Array | Triggers |
-| `type` | Object | Jealousy type |
-
-### Conflict Management
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `triggerConfrontation(jalouxId, targetId, options)` | string, string, Object | Object | Triggers a confrontation |
-| `processAnnualJealousy()` | None | Array | Processes annual jealousy events |
-
-**Options for triggerConfrontation:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `aboutId` | string | ID of character causing jealousy |
-
-### Queries
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getJealousyHistory(characterId)` | string | Array | Gets jealousy history |
-| `getCharacterConflictHistory(characterId)` | string | Array | Gets conflict history |
-
----
-
-# 11. AFFAIR-SYSTEM.JS
-
-## Purpose
-
-Affair creation, detection, consequences, and scandal impact.
-
-## Affair Types
-
-| Type | ID | Name | Base Discovery | Reputation Impact |
-|------|-----|------|----------------|-------------------|
-| SECRET | `'secret'` | Secret Affair | 0.3 | 0.5 |
-| OPEN | `'open'` | Open Affair | 0.9 | 0.8 |
-| EMOTIONAL | `'emotional'` | Emotional Affair | 0.2 | 0.3 |
-| ONE_NIGHT | `'one_night'` | One Night Stand | 0.15 | 0.4 |
-
-## Consequence Types
-
-| Type | ID |
-|------|-----|
-| Discovery | `'discovery'` |
-| Scandal | `'scandal'` |
-| Murder | `'murder'` |
-| Execution | `'execution'` |
-| Legitimization | `'legitimization'` |
-| Reconciliation | `'reconciliation'` |
-| Breakup | `'breakup'` |
-
-## Discovery Modifiers
-
-| Modifier | Value |
-|----------|-------|
-| Rank High | +0.3 |
-| Rank Medium | +0.15 |
-| Same Location | +0.2 |
-| Public Behavior | +0.25 |
-| Long Duration | +0.3 |
-| Multiple Affairs | +0.4 |
-| Previous Discovery | +0.5 |
-| Secretive Personality | -0.2 |
-
-## Functions
-
-### Affair Creation
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `createAffair(characterAId, characterBId, options)` | string, string, Object | Object \| null | Creates an affair |
-
-**Options for createAffair:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `type` | string | Affair type ('secret', 'open', 'emotional', 'one_night') |
-| `startYear` | number | Year started |
-| `isSecret` | boolean | Is it secret |
-| `isScandalous` | boolean | Is it scandalous |
-| `notes` | string | Additional notes |
-
-### Affair Detection
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getAffairDiscoveryRisk(affair)` | Object | number | Gets discovery risk (0-1) |
-| `rollAffairDiscovery(affair, options)` | Object, Object | boolean | Rolls for discovery |
-| `isAffairDiscovered(affair)` | Object | boolean | Checks if discovered |
-| `getAffairDiscoverer(affair)` | Object | Object \| null | Gets discoverer |
-| `getAffairDiscoveryCircumstances(affair)` | Object | string \| null | Gets discovery circumstances |
-
-### Affair Consequences
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `triggerAffairConsequences(affair, options)` | Object, Object | Array | Triggers consequences |
-
-**Options for triggerAffairConsequences:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `discovererId` | string | ID of discoverer |
-| `breakupChance` | number | Chance of breakup |
-| `murderChance` | number | Chance of murder |
-| `executionChance` | number | Chance of execution |
-| `victimId` | string | ID of victim |
-| `rulerId` | string | ID of ruler |
-| `condemned` | Array | Characters to condemn |
-| `forceScandal` | boolean | Force scandal |
-
-### Affair Management
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `endAffair(characterAId, characterBId, options)` | string, string, Object | boolean | Ends an affair |
-| `legitimizeAffair(characterAId, characterBId, options)` | string, string, Object | Object \| null | Legitimizes an affair |
-| `reconcileAfterAffair(affair, wrongedPartyId)` | Object, string | Object | Attempts reconciliation |
-
-**Options for legitimizeAffair:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `legitimizationYear` | number | Year of legitimization |
-| `attributes` | Array | Attributes for new relationship |
-
-**reconcileAfterAffair Return:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `success` | boolean | Whether reconciliation succeeded |
-| `reconciliationChance` | number | Chance used |
-| `wrongedParty` | Object | Wronged party |
-| `adulterer` | Object | Adulterer |
-
-### Affair Queries
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getAffairs(characterId)` | string | Array | Gets all affairs |
-| `getActiveAffairs(characterId)` | string | Array | Gets active affairs |
-| `getDiscoveredAffairs(characterId)` | string | Array | Gets discovered affairs |
-| `getAffairDuration(affair, currentYear)` | Object, number | number | Gets affair duration |
-| `isHavingAffair(characterId)` | string | boolean | Checks if having affair |
-| `getAffairBetween(characterAId, characterBId)` | string, string | Object \| null | Gets affair between two |
-| `getAffairStatistics(characterId)` | string | Object | Gets affair statistics |
-| `getAffairTypeName(affairTypeId)` | string | string | Gets affair type name |
-| `getAffairTypeIcon(affairTypeId)` | string | string | Gets affair type icon |
-
-**Affair Statistics Object:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `totalAffairs` | number | Total affairs |
-| `activeAffairs` | number | Active affairs |
-| `discoveredAffairs` | number | Discovered affairs |
-| `endedAffairs` | number | Ended affairs |
-| `averageDuration` | number | Average duration |
-| `typeBreakdown` | Object | Count by type |
-| `hasActiveAffair` | boolean | Has active affair |
-
-### Scandal Impact
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `calculateScandalImpact(affair)` | Object | { totalImpact, participants } | Calculates scandal impact |
-
-**Scandal Impact Return:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `totalImpact` | number | Total impact score |
-| `participants` | Object | Per-participant impacts |
-
-### Bulk Operations
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `endAllAffairsForCharacter(characterId, options)` | string, Object | number | Ends all affairs for a character |
-| `processAnnualAffairs()` | None | Array | Processes annual affair discoveries |
-
----
-
-# 12. MODALS-RELATIONSHIP.JS
-
-## Purpose
-
-Unified relationship modal that handles ALL relationship types. Creates romantic, friendship, rivalry, and professional relationships.
-
-## Dependencies
-
-| Module | Functions Used |
-|--------|----------------|
-| `relationship-types.js` | All type definitions |
-| `romance-logic.js` | All romance functions |
-| `friendship-logic.js` | All friendship functions |
-| `professional-logic.js` | All professional functions |
-| `accessors.js` | `getCharacterById`, `getCharacters` |
-
-## Functions
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `openRelationshipModal(char1, char2, onSuccess, context)` | Object, Object, Function, Object | void | Opens unified relationship modal |
-| `findSurpriseMatches(maxMatches)` | number | Array | Finds surprise romance matches |
-| `findLateSpringMatch()` | None | Object \| null | Finds late spring romance match |
-
-**Context Options:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `isLateSpring` | boolean | Late spring romance |
-| `forceAffair` | boolean | Force affair creation |
-| `isScandalous` | boolean | Make affair scandalous |
-
-**Relationship Types in Modal:**
-
-| Category | Types |
-|----------|-------|
-| ROMANTIC | Committed, Casual Dating, One Night Stand |
-| SOCIAL | Friendship, Rivalry, Enmity |
-| PROFESSIONAL | Apprenticeship, Employment, Guild Membership |
-
-**Attributes in Modal (flavor text only):**
-- Married, Handfasted, Engaged, Cohabiting, Civil Union
-- Polyamorous, Monogamous
-- Arranged, Love Match, Duty Match
-- Secret, Public, Scandalous
-- Morganatic, Levitic, Posthumous
-
----
-
-# 13. MODALS-FAMILY.JS
-
-## Purpose
-
-Family-specific UI modals for parent-child relationships, adoption, guardianship, and legitimization.
-
-## Dependencies
-
-| Module | Functions Used |
-|--------|----------------|
-| `modals-core.js` | `openModal`, `closeTopModal` |
-| `family-logic.js` | All family functions |
-| `accessors.js` | `getCharacterById`, `getCharacters` |
-| `family-accessors.js` | `FamilyAccessors` |
-
-## Functions
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `openSetBirthParentsModal(child, father, mother, onSuccess)` | Object, Object, Object, Function | void | Sets birth parents |
-| `openCreateAdoptionModal(child, guardian, partner, onSuccess)` | Object, Object, Object, Function | void | Creates adoption/guardianship |
-| `openEditAdoptionModal(child, parent, adoptionRecord, onSuccess)` | Object, Object, Object, Function | void | Edits adoption |
-| `openRemoveAdoptionModal(child, guardian, partner, onSuccess)` | Object, Object, Object, Function | void | Removes adoption |
-| `openAdoptionSearchModal(onSelect, options)` | Function, Object | void | Search for adoptable children |
-| `openLegitimizationModal(child, father, mother, onSuccess)` | Object, Object, Object, Function | void | Legitimizes a child |
-
-**Adoption Types:**
-- Legal Adoption (full parental rights)
-- Guardianship (caregiver, not legal parent)
-- Foster Care (temporary placement)
-
-**Legitimization Options:**
-- Year of legitimization
-- Change surname options
-- Inheritance rights (full, limited, none)
-- Household assignment
-
----
-
-# 14. MODALS-FRIENDSHIP.JS
-
-## Purpose
-
-Friendship-specific UI modals including creation, editing, ending, viewing, recommendations, and group management.
-
-## Dependencies
-
-| Module | Functions Used |
-|--------|----------------|
-| `modals-core.js` | `openModal`, `closeTopModal` |
-| `friendship-logic.js` | All friendship functions |
-| `accessors.js` | `getCharacterById`, `getCharacters` |
-
-## Friendship Modals
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `openFriendshipModal(characters, onSuccess)` | Array, Function | void | Creates friendships between multiple characters |
-| `openEditFriendshipModal(charId1, charId2, onSuccess)` | string, string, Function | void | Edits a friendship |
-| `openBreakupFriendshipModal(charId1, charId2, onSuccess)` | string, string, Function | void | Ends a friendship |
-| `openViewFriendshipModal(charId1, charId2, onEdit)` | string, string, Function | void | Views friendship details |
-
-## Recommendation Modal
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `openFriendRecommendationsModal(characterId, onSelect)` | string, Function | void | Shows friend recommendations |
-
-## Group Management
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `openGroupFriendshipModal(characterIds, onSuccess)` | Array, Function | void | Creates a friend group |
-| `getCharacterGroups(characterId)` | string | Array | Gets groups for a character |
-| `getGroupMembers(groupId)` | string | Array | Gets members of a group |
-| `getAllGroups()` | None | Array | Gets all groups |
-
-**Friendship Reasons for Ending:**
-- Drifted Apart
-- Betrayal
-- Major Argument
-- Jealousy
-- Distance
-- Different Paths
-- Romance
-- Rivalry
-- Mutual Agreement
-- Other
-
----
-
-# 15. RELATIONSHIP FINDER UI
-
-## Purpose
-
-UI tool for finding relationships between two characters. Shows rank symbol, gender, age, location, relationship path, and consanguinity.
-
-## Dependencies
-
-| Module | Functions Used |
-|--------|----------------|
-| `accessors.js` | `getCharacterById`, `getCharacters` |
-| `family-logic.js` | `getConsanguinityDegree`, `getRelationshipDescription` |
-| `friendship-logic.js` | `getFriends` |
-| `romance-logic.js` | `getActiveRomanticRelationships` |
-
-## Functions
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `renderRelationshipFinder(containerId)` | string | void | Renders the relationship finder UI |
-| `findDetailedConnectionPath(startId, endId, maxDepth)` | string, string, number | Array \| null | Finds path with relation metadata |
-| `getAllConnections(characterId)` | string | Array | Gets all connections of a character |
-| `findCommonAncestors(charId1, charId2)` | string, string | Array | Finds common ancestors |
-
-## UI Features
-
-- Character selection dropdowns with enhanced options
-- Rank symbol display (no rank names)
-- Gender, age, and location display
-- Relationship detection between two characters
-- Path finding through family/social connections
-- Consanguinity degree display
-- Connection path visualization
-- Romantic partner detection
-
----
-
-# 16. DATA SCHEMAS
-
-## Relationship Object (Stored in Character)
-
-```javascript
+```js
 {
-    id: string,                    // Unique relationship ID
-    partnerId: string,              // ID of the other character
-    status: string,                 // 'ongoing', 'ended', 'widowed', etc.
-    details: {
-        type: string,               // Archetype ID
-        startYear: number,          // Year relationship started
-        endYear: number,            // Year relationship ended (if ended)
-        endReason: string,          // Reason for ending
-        attributes: Array<string>,  // Attribute IDs (flavor text only)
-        notes: string,              // Additional notes
-        // Type-specific fields:
-        strength: number,           // Friendship strength (0-100)
-        skillLevel: number,         // Apprenticeship skill level
-        stage: string,              // Apprenticeship stage
-        roleId: string,             // Profession/role ID
-        roleName: string,           // Profession/role name
-        parentType: string,         // 'father' or 'mother'
-        biological: boolean,        // For parent-child
-        events: Array,              // Friendship events
-        teachingHistory: Array,     // Apprenticeship progress
-        wages: number,              // Employment wages
-        rank: string,               // Guild rank
-        // Affair fields:
-        affairType: string,         // 'secret', 'open', 'emotional', 'one_night'
-        isSecret: boolean,          // Is it secret
-        discovered: boolean,        // Has it been discovered
-        discoveryYear: number,      // Year discovered
-        discoveryCircumstances: string, // How it was discovered
-        consequences: Array,        // Consequences triggered
-        consequencesTriggered: boolean // Whether consequences applied
-    }
+    id: string,
+    type: string,              // archetype
+    status: string,
+    participantA: string,
+    participantB: string,
+    startYear: number,
+    endYear: number | null,
+    attributes: string[],      // committed only
+    metadata: {}               // domain-specific
 }
 ```
 
-## Registry Relationship Object
+### Relationship projection (from Queries)
 
-```javascript
+```js
 {
-    id: string,                     // Relationship ID
-    type: string,                   // Archetype ID
-    participantA: string,           // Character ID
-    participantB: string,           // Character ID
-    status: string,                 // Status ID
-    startYear: number,              // Start year
-    endYear: number,                // End year (if ended)
-    metadata: {
-        attributes: Array<string>,  // Attribute IDs (flavor text)
-        notes: string,              // Additional notes
-        // Type-specific fields...
-        // Affair fields...
-    }
+    id, type, status,
+    startYear, endYear,
+    participantA, participantB,
+    attributes: [...],         // fresh copy
+    metadata: {...}            // fresh copy
 }
 ```
 
-## Consanguinity Result
+### Domain-specific metadata
 
-| Value | Description |
-|-------|-------------|
-| `'Self'` | Same character |
-| `'Parent'` | Parent-child relationship |
-| `'Child'` | Child-parent relationship |
-| `'Sibling'` | Sibling relationship |
-| `'Grandparent'` | Grandparent-grandchild |
-| `'Grandchild'` | Grandchild-grandparent |
-| `'Uncle'` | Uncle/Aunt relationship |
-| `'Aunt'` | Aunt/Uncle relationship |
-| `'Cousin'` | Cousin relationship |
-| `null` | Not related |
+| Archetype | metadata keys |
+|-----------|---------------|
+| `friendship` | `strength: number`, `events: [{ type, year, impact, description }]`, `notes` |
+| `parent_child` | `parentType`, `parentRole`, `notes` |
+| `sibling` | `autoDerived: true` |
+| `apprenticeship` | `roleId`, `roleName`, `skillLevel`, `stage`, `specializationsTaught`, `notes` |
+| `employment` | `role`, `wages`, `notes` |
+| `guild_membership` | `rank`, `notes` |
+| `committed` | `notes`, plus affair-only: `affairType`, `discovered`, `discoveryYear`, `discoveryCircumstances`, `discovererId`, `consequences`, `consequencesTriggered`, `legitimizedFromAffair`, `legitimizationYear` |
 
----
+### Character projections
 
-# 17. COMPLETE FUNCTION LIST
+All Queries that reference characters return either:
+- a character **id** (string), or
+- a **summary** the caller builds — never a live character object.
 
-## relationship-types.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `getValidationRulesForArchetype(archetype)` | Query | Gets validation rules |
-| `getDefaultValidationRules()` | Query | Gets default rules |
-| `isValidStatusTransition(from, to)` | Query | Checks status transition |
-| `isValidAgeForArchetype(archetype, age)` | Query | Checks age requirement |
-| `isAgeGapValid(archetype, age1, age2)` | Query | Checks age gap |
-| `getArchetypeName(archetype)` | Query | Gets display name |
-| `getArchetypeIcon(archetype)` | Query | Gets icon name |
-| `getArchetypeColor(archetype)` | Query | Gets color |
-| `canHaveAttributes(archetype)` | Query | Checks if can have attributes |
-| `isAutoGeneratedOnly(archetype)` | Query | Checks if auto-generated only |
-| `getAttributeName(attribute)` | Query | Gets attribute display name |
-| `getAttributeIcon(attribute)` | Query | Gets attribute icon |
-| `getAttributeColor(attribute)` | Query | Gets attribute color |
-| `getAttributeGroup(attribute)` | Query | Gets attribute group |
-| `areAttributesCompatible(attributes)` | Query | Checks attribute compatibility |
-| `isAttributeValidForArchetype(archetype, attribute)` | Query | Checks attribute validity |
-| `getMarriageStatus(attributes)` | Query | Gets marriage status |
-| `getAllowedAttributes()` | Query | Gets allowed attributes |
-| `getRelationshipCategory(archetype)` | Query | Gets category |
-| `getArchetypesByCategory(category)` | Query | Gets archetypes by category |
-| `getAllRelationshipCategories()` | Query | Gets all categories |
-| `getRelationshipStatusName(status)` | Query | Gets status name |
-| `getRelationshipStatusIcon(status)` | Query | Gets status icon |
-| `getAllArchetypes()` | Query | Gets all archetypes |
-| `getAllAttributes()` | Query | Gets all attributes |
-| `getAllRelationshipStatuses()` | Query | Gets all statuses |
-| `getAttributeValidationRules(attribute)` | Query | Gets attribute validation rules |
-| `getAttributeGroups()` | Query | Gets attribute groups |
-| `getMirroredRelationshipType(archetype)` | Query | Gets mirrored type |
-| `isDirectionalRelationship(archetype)` | Query | Checks if directional |
-| `migrateLegacyRelationshipType(legacyType)` | Query | Migrates legacy type |
-
-## relationship-registry.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `rebuildRelationshipIndex()` | Command | Rebuilds index |
-| `markIndexDirty()` | Command | Marks index dirty |
-| `ensureIndex()` | Command | Ensures index is built |
-| `getCanonicalPairKey(a, b)` | Query | Gets canonical key |
-| `createRelationship(a, b, options)` | Command | Creates relationship |
-| `deleteRelationship(id)` | Command | Deletes relationship |
-| `endRelationship(id, year, reason)` | Command | Ends relationship |
-| `reactivateRelationship(id)` | Command | Reactivates relationship |
-| `setRelationshipWidowed(id, year)` | Command | Sets relationship widowed |
-| `getRelationshipById(id)` | Query | Gets relationship by ID |
-| `getRelationshipBetween(a, b)` | Query | Gets relationship between two |
-| `relationshipExists(a, b)` | Query | Checks if exists |
-| `getRelationshipTypeBetween(a, b)` | Query | Gets type between two |
-| `hasActiveRelationship(a, b)` | Query | Checks if active |
-| `hasRelationshipOfType(a, b, type)` | Query | Checks if type exists |
-| `getMostRecentRelationship(a, b)` | Query | Gets most recent |
-| `getRelationshipsForCharacter(id, options)` | Query | Gets character relationships |
-| `getRelationshipsByType(type, options)` | Query | Gets by type |
-| `getRelationshipsByTypeAndStatus(type, status)` | Query | Gets by type and status |
-| `getActiveRelationships(id)` | Query | Gets active relationships |
-| `getCharacterRelationshipsByType(id, type)` | Query | Gets by type for character |
-| `getAllRelationships()` | Query | Gets all relationships |
-| `updateRelationship(id, updates)` | Command | Updates relationship |
-| `deleteAllRelationshipsForCharacter(id)` | Command | Deletes all for character |
-| `getRelationshipCount(id)` | Query | Counts relationships |
-| `getRelationshipCountByType(id, type)` | Query | Counts by type |
-| `validateRelationshipIntegrity()` | Query | Validates integrity |
-
-## relationship-queries.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `hasAnyRelationship(a, b)` | Query | Checks if any relationship |
-| `hasRelationshipOfType(a, b, type)` | Query | Checks if type exists |
-| `hasRelationshipWithStatus(a, b, status)` | Query | Checks if status exists |
-| `hasActiveRelationship(a, b)` | Query | Checks if active |
-| `getMutualConnections(a, b, options)` | Query | Gets mutual connections |
-| `getMutualConnectionsByType(a, b, type)` | Query | Gets mutual by type |
-| `getMutualConnectionsByStatus(a, b, status)` | Query | Gets mutual by status |
-| `getCommonRelationships(a, b, c)` | Query | Gets common relationships |
-| `getSocialDistance(a, b, options)` | Query | Gets social distance |
-| `findRelationshipPath(a, b, options)` | Query | Finds path |
-| `getRelationshipPathWithMetadata(a, b, options)` | Query | Gets path with metadata |
-| `getNthDegreeConnections(id, degree, options)` | Query | Gets Nth degree connections |
-| `getCharactersWithinDistance(id, max, options)` | Query | Gets characters within distance |
-| `getRelationshipNetwork(id, options)` | Query | Gets network |
-| `getNetworkDegree(id, options)` | Query | Gets network degree |
-| `getRelationshipDensity(ids, options)` | Query | Gets density |
-| `getCharacterNetworkStats(id, options)` | Query | Gets network stats |
-| `getAllConnectedComponents(ids, options)` | Query | Gets connected components |
-| `isGroupConnected(ids, options)` | Query | Checks if connected |
-| `getInfluenceScore(id, options)` | Query | Gets influence score |
-| `getEgoNetwork(id, options)` | Query | Gets ego network |
-| `getRelationshipRecommendations(id, options)` | Query | Gets recommendations |
-| `clearSocialDistanceCache()` | Command | Clears cache |
-| `invalidateRelationshipCache()` | Command | Invalidates cache |
-
-## romance-logic.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `startCasualDating(a, b, options)` | Command | Starts casual dating |
-| `startOneNightStand(a, b, options)` | Command | Starts one night stand |
-| `startCommittedRelationship(a, b, options)` | Command | Starts committed relationship |
-| `addRelationshipAttribute(a, b, attribute)` | Command | Adds attribute (flavor text) |
-| `removeRelationshipAttribute(a, b, attribute)` | Command | Removes attribute |
-| `canStartRelationship(a, b, options)` | Query | Validates relationship start |
-| `getRelationshipConflicts(a, b)` | Query | Gets conflicts |
-| `getRelationshipAdviceString(a, b)` | Query | Gets advice |
-| `breakUp(a, b, options)` | Command | Ends ANY relationship |
-| `deathEndsRelationship(a, b, options)` | Command | Sets relationship widowed |
-| `getActiveRomanticRelationships(id)` | Query | Gets active romantic relationships |
-| `hasActiveRomanticRelationship(id)` | Query | Checks if has romantic relationship |
-| `getPrimaryPartner(id)` | Query | Gets primary partner |
-| `getAffairs(id)` | Query | Gets affairs |
-| `hasRelationshipAttribute(a, b, attribute)` | Query | Checks if has attribute |
-| `isAffair(a, b)` | Query | Checks if affair |
-| `isSecretRelationship(a, b)` | Query | Checks if secret |
-| `canHaveMultiplePartners(id)` | Query | Checks if can have multiple partners |
-| `createRomanticRelationship(a, b, options)` | Command | Smart creation with auto-affair detection |
-
-## family-logic.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `setParent(child, parent, type, options)` | Command | Sets parent |
-| `removeParent(child, parent, options)` | Command | Removes parent |
-| `getParents(character)` | Query | Gets parents |
-| `getChildren(character, activeOnly)` | Query | Gets children |
-| `getSiblings(character, activeOnly)` | Query | Gets siblings |
-| `getGrandparents(character, generation)` | Query | Gets grandparents |
-| `getGrandchildren(character, activeOnly)` | Query | Gets grandchildren |
-| `getSpouses(character, activeOnly)` | Query | Gets spouses |
-| `getCurrentSpouse(character)` | Query | Gets current spouse |
-| `getConsanguinityDegree(a, b)` | Query | Gets consanguinity |
-| `getRelationshipDescription(a, b)` | Query | Gets description |
-| `getFamilyStatistics(character)` | Query | Gets family statistics |
-
-## friendship-logic.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `createFriendship(a, b, options)` | Command | Creates friendship |
-| `createMutualFriendships(ids, options)` | Command | Creates multiple friendships |
-| `areFriends(a, b)` | Query | Checks if friends |
-| `getFriends(id)` | Query | Gets friends |
-| `getFriendsWithDetails(id)` | Query | Gets friends with details |
-| `getMutualFriends(a, b)` | Query | Gets mutual friends |
-| `getFriendshipStrength(a, b)` | Query | Gets friendship strength |
-| `increaseFriendshipStrength(a, b, amount)` | Command | Increases strength |
-| `decreaseFriendshipStrength(a, b, amount)` | Command | Decreases strength |
-| `recordFriendshipEvent(a, b, event)` | Command | Records event |
-| `removeFriendship(a, b, options)` | Command | Removes friendship |
-| `getFriendshipStats(id)` | Query | Gets stats |
-| `getBestFriend(id)` | Query | Gets best friend |
-
-## professional-logic.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `createApprenticeship(master, apprentice, options)` | Command | Creates apprenticeship |
-| `getMaster(id)` | Query | Gets master |
-| `getApprentices(id, activeOnly)` | Query | Gets apprentices |
-| `progressApprenticeship(master, apprentice, amount)` | Command | Progresses training |
-| `completeApprenticeship(master, apprentice, level)` | Command | Completes training |
-| `endApprenticeship(master, apprentice, options)` | Command | Ends apprenticeship |
-| `createEmployment(employer, employee, options)` | Command | Creates employment |
-| `getEmployer(id)` | Query | Gets employer |
-| `getEmployees(id, activeOnly)` | Query | Gets employees |
-| `createGuildMembership(guild, member, options)` | Command | Creates guild membership |
-| `getGuildMembers(id, activeOnly)` | Query | Gets guild members |
-
-## jealousy-system.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `calculateJealousy(jaloux, target, about)` | Query | Calculates jealousy level |
-| `findAllJealousyTargets(id)` | Query | Finds jealousy targets |
-| `getPrimaryJealousyTarget(id)` | Query | Gets primary target |
-| `triggerConfrontation(jaloux, target, options)` | Command | Triggers confrontation |
-| `processAnnualJealousy()` | Command | Processes annual jealousy |
-| `getJealousyHistory(id)` | Query | Gets jealousy history |
-| `getCharacterConflictHistory(id)` | Query | Gets conflict history |
-
-## affair-system.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `createAffair(a, b, options)` | Command | Creates affair |
-| `getAffairDiscoveryRisk(affair)` | Query | Gets discovery risk |
-| `rollAffairDiscovery(affair, options)` | Command | Rolls for discovery |
-| `isAffairDiscovered(affair)` | Query | Checks if discovered |
-| `getAffairDiscoverer(affair)` | Query | Gets discoverer |
-| `getAffairDiscoveryCircumstances(affair)` | Query | Gets circumstances |
-| `triggerAffairConsequences(affair, options)` | Command | Triggers consequences |
-| `endAffair(a, b, options)` | Command | Ends affair |
-| `legitimizeAffair(a, b, options)` | Command | Legitimizes affair |
-| `reconcileAfterAffair(affair, party)` | Command | Attempts reconciliation |
-| `getAffairs(id)` | Query | Gets all affairs |
-| `getActiveAffairs(id)` | Query | Gets active affairs |
-| `getDiscoveredAffairs(id)` | Query | Gets discovered affairs |
-| `getAffairDuration(affair, year)` | Query | Gets duration |
-| `isHavingAffair(id)` | Query | Checks if having affair |
-| `getAffairBetween(a, b)` | Query | Gets affair between two |
-| `getAffairStatistics(id)` | Query | Gets statistics |
-| `getAffairTypeName(type)` | Query | Gets type name |
-| `getAffairTypeIcon(type)` | Query | Gets type icon |
-| `calculateScandalImpact(affair)` | Query | Calculates scandal impact |
-| `endAllAffairsForCharacter(id, options)` | Command | Ends all affairs |
-| `processAnnualAffairs()` | Command | Processes annual affairs |
-
-## modals-relationship.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `openRelationshipModal(char1, char2, onSuccess, context)` | UI | Opens unified relationship modal |
-| `findSurpriseMatches(maxMatches)` | UI | Finds surprise romance matches |
-| `findLateSpringMatch()` | UI | Finds late spring romance match |
-
-## modals-family.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `openSetBirthParentsModal(child, father, mother, onSuccess)` | UI | Sets birth parents |
-| `openCreateAdoptionModal(child, guardian, partner, onSuccess)` | UI | Creates adoption |
-| `openEditAdoptionModal(child, parent, record, onSuccess)` | UI | Edits adoption |
-| `openRemoveAdoptionModal(child, guardian, partner, onSuccess)` | UI | Removes adoption |
-| `openAdoptionSearchModal(onSelect, options)` | UI | Searches adoptable children |
-| `openLegitimizationModal(child, father, mother, onSuccess)` | UI | Legitimizes child |
-
-## modals-friendship.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `openFriendshipModal(characters, onSuccess)` | UI | Creates friendships |
-| `openEditFriendshipModal(id1, id2, onSuccess)` | UI | Edits friendship |
-| `openBreakupFriendshipModal(id1, id2, onSuccess)` | UI | Ends friendship |
-| `openViewFriendshipModal(id1, id2, onEdit)` | UI | Views friendship |
-| `openFriendRecommendationsModal(id, onSelect)` | UI | Shows recommendations |
-| `openGroupFriendshipModal(ids, onSuccess)` | UI | Creates group |
-| `getCharacterGroups(id)` | Query | Gets groups |
-| `getGroupMembers(id)` | Query | Gets group members |
-| `getAllGroups()` | Query | Gets all groups |
-
-## relationshipFinder.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `renderRelationshipFinder(containerId)` | UI | Renders finder UI |
-| `findDetailedConnectionPath(start, end, maxDepth)` | Query | Finds connection path |
-| `getAllConnections(id)` | Query | Gets all connections |
-| `findCommonAncestors(id1, id2)` | Query | Finds common ancestors |
+The UI is responsible for resolving ids to full character records if it needs names for display, via `getCharacterById()`.
 
 ---
 
-# 18. DEPENDENCY MAP
+## 11. Ownership Contract
 
-## Core Dependencies
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         CORE DEPENDENCIES                                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  relationship-types.js ────────┐                                            │
-│                                │                                            │
-│         ┌──────────────────────┤                                            │
-│         │                      │                                            │
-│         ▼                      ▼                                            │
-│  relationship-registry.js    romance-logic.js                               │
-│         │                      │                                            │
-│         ├──────────┬───────────┤                                            │
-│         │          │           │                                            │
-│         ▼          ▼           ▼                                            │
-│  family-logic  friendship   professional                                   │
-│     .js        -logic.js    -logic.js                                      │
-│     │             │             │                                          │
-│     └──────┬──────┴──────┬──────┘                                          │
-│            │             │                                                  │
-│            ▼             ▼                                                  │
-│     jealousy-system  relationship-queries                                   │
-│          │                  │                                               │
-│          └────────┬─────────┘                                               │
-│                   ▼                                                         │
-│            affair-system.js                                                 │
-│                   │                                                         │
-│     ┌─────────────┼─────────────┐                                          │
-│     │             │             │                                          │
-│     ▼             ▼             ▼                                          │
-│ modals-      modals-       modals-                                         │
-│ relationship  family      friendship                                       │
-│     │             │             │                                          │
-│     └─────────────┼─────────────┘                                          │
-│                   ▼                                                         │
-│            relationshipFinder.js                                           │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-## Character System Dependencies
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    RELATIONSHIP SYSTEM → CHARACTER SYSTEM                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  All relationship modules depend on:                                        │
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ accessors.js                                                         │   │
-│  │   ├── getCharacterById(id)                                           │   │
-│  │   ├── getCharacters()                                                │   │
-│  │   ├── getRoleById(id)                                               │   │
-│  │   └── getRoles()                                                     │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ storage.js                                                           │   │
-│  │   └── saveMasterData()                                               │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ time.js                                                              │   │
-│  │   ├── getCurrentYearSafe()                                           │   │
-│  │   └── calculateAge()                                                 │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ ids.js                                                               │   │
-│  │   └── generateId()                                                   │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ family-accessors.js                                                  │   │
-│  │   ├── getAllChildren()                                               │   │
-│  │   ├── getParents()                                                   │   │
-│  │   ├── getSiblings()                                                  │   │
-│  │   ├── getGrandparents()                                              │   │
-│  │   ├── getSpouses()                                                   │   │
-│  │   └── getFamilyStatistics()                                          │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-## Integration with Other Systems
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    INTEGRATION WITH OTHER SYSTEMS                           │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ CHARACTER SYSTEM                                                     │   │
-│  │   ├── CharacterState (state management)                              │   │
-│  │   ├── CharacterCommands (CRUD operations)                            │   │
-│  │   ├── CharacterQueries (query operations)                            │   │
-│  │   └── CharacterLifecycle (birth, aging, death)                       │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                    │                                        │
-│                                    ▼                                        │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ RELATIONSHIP SYSTEM                                                 │   │
-│  │   ├── Reads character data via accessors.js                         │   │
-│  │   ├── Writes relationship data to characters                        │   │
-│  │   ├── Hooks into CharacterLifecycle for death handling              │   │
-│  │   └── Uses FamilyAccessors for family queries                       │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                    │                                        │
-│                                    ▼                                        │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ UI SYSTEM                                                            │   │
-│  │   ├── modals-core.js for modal management                            │   │
-│  │   ├── icons.js for SVG icons                                         │   │
-│  │   └── ui.js for toast notifications                                  │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+| Domain | Owns |
+|--------|------|
+| `RelationshipState` | Every relationship entity and its indexes |
+| `CharacterState` | Character records (name, gender, birth, death, location, traits, rank assignment) |
+| `SkillQueries` / `SkillCommands` | Skill levels per character per role |
+| `Jealousy` | `character.jealousyHistory` (temporary; may move to `JealousyState` later) |
+| `Family` | Parent relationships are the source of truth for kinship. Sibling entities are derived convenience and may be recomputed. |
+| `Romance` | Nothing stored. Marriage status, affair classification, polyamory are derived from `committed` + attributes. |
+| `Affair` | Metadata on the committed entity only. Discovery/consequence state lives on that entity. |
+| `Groups` | (future) Not part of the relationship system. Groups belong in their own domain. |
+| Households | (future) Not part of the relationship system. Household membership is its own domain. |
 
 ---
 
-# 19. INTEGRATION ANALYSIS
+## 12. Rules of Use
 
-## Integration Score Summary
+### Do
 
-| System | Integration Level | Score |
-|--------|-------------------|-------|
-| Accessors.js | **Excellent** | 10/10 |
-| Time.js | **Excellent** | 10/10 |
-| Storage.js | **Excellent** | 10/10 |
-| IDs.js | **Excellent** | 10/10 |
-| FamilyAccessors | **Excellent** | 10/10 |
-| Modal System | **Excellent** | 10/10 |
-| UI Helpers | **Excellent** | 10/10 |
-| Selector System | **Excellent** | 10/10 |
-| CharacterState | **Good** | 8/10 |
-| CharacterCommands | **Good** | 8/10 |
-| CharacterQueries | **Good** | 8/10 |
-| CharacterLifecycle | **Good** | 7/10 |
-| Annual Processing | **Good** | 8/10 |
-| Event System | **Fair** | 5/10 |
-| Location System | **Fair** | 5/10 |
-| Culture System | **Poor** | 3/10 |
-| Religion System | **Poor** | 3/10 |
+- Use Queries for anything read-only.
+- Use Commands for every mutation.
+- Pass randomness into Rules as explicit values, or read it from `window.Random`.
+- Compare statuses against `RELATIONSHIP_STATUS` constants.
+- Compare archetypes against `RELATIONSHIP_ARCHETYPES` constants.
+- Return `{ success: false, code, message }` for domain errors.
 
-**Overall Integration Score: 8.2/10** (Excellent)
+### Don't
 
-## Core Integration Points
-
-| Feature | Status | Evidence |
-|---------|--------|----------|
-| `getCharacterById()` | ✅ Complete | Used in EVERY relationship module |
-| `getCharacters()` | ✅ Complete | Used for bulk operations and queries |
-| `getRoleById()` | ✅ Complete | Used in professional-logic.js |
-| `saveMasterData()` | ✅ Complete | All modules call this after mutations |
-| `getCurrentYearSafe()` | ✅ Complete | Used in all relationship creations and endings |
-| `calculateAge()` | ✅ Complete | Used for age validation |
-| `generateId()` | ✅ Complete | Used for relationship ID generation |
-
-## FamilyAccessors Integration
-
-| Feature | Status | Evidence |
-|---------|--------|----------|
-| `getAllChildren()` | ✅ Complete | Used in family-logic.js and modals-family.js |
-| `getParents()` | ✅ Complete | Used throughout family system |
-| `getSiblings()` | ✅ Complete | Used for sibling relationship management |
-| `getGrandparents()` | ✅ Complete | Used in family queries |
-| `getSpouses()` | ✅ Complete | Used in family-logic.js |
-| `getFamilyStatistics()` | ✅ Complete | Used in character details and modals |
-
-## Integration Gaps
-
-### High Priority Gaps
-
-| Gap | Impact | Recommendation |
-|-----|--------|----------------|
-| Religion integration | Medium | Add religion-based relationship validation |
-| Cultural rules | Medium | Add culture-based relationship rules |
-
-### Medium Priority Gaps
-
-| Gap | Impact | Recommendation |
-|-----|--------|----------------|
-| Event-driven updates | Medium | Fire events for relationship changes |
-| Location-based rules | Low | Add location-based relationship customs |
-
-### Low Priority Gaps
-
-| Gap | Impact | Recommendation |
-|-----|--------|----------------|
-| Character deletion cleanup | Low | Add more robust relationship cleanup |
-| Statistical reporting | Low | Add relationship stats to character statistics |
+- Don't read `character.relationships` — the state owns relationships.
+- Don't mutate the object a Query returned.
+- Don't call `saveMasterData()` outside a Command.
+- Don't use `||` for numeric values — use `!== undefined` or `??`.
+- Don't invent fallback values when a dependency is missing — throw.
+- Don't classify an affair by any field other than the `secret` attribute.
+- Don't store derived facts. Compute them.
 
 ---
 
-# 20. LOAD ORDER
+## 13. Load Order
 
-```
-<!-- ============================================================ -->
-<!-- CORE - MUST LOAD FIRST                                        -->
-<!-- ============================================================ -->
-
-<script src="js/core/constants.js"></script>
-<script src="js/core/randomness.js"></script>
-<script src="js/core/collections.js"></script>
-<script src="js/core/validation.js"></script>
-<script src="js/core/formatting.js"></script>
-<script src="js/core/time.js"></script>
+```html
+<!-- 1. Core (external) -->
 <script src="js/core/ids.js"></script>
 <script src="js/core/storage.js"></script>
+<script src="js/core/time.js"></script>
 <script src="js/core/accessors.js"></script>
-<script src="js/core/world.js"></script>
-<script src="js/core/names.js"></script>
-<script src="js/core/state.js"></script>
-<script src="js/core/integrity.js"></script>
-<script src="js/core/query-helpers.js"></script>
-<script src="js/core/family-accessors.js"></script>   <!-- PURE family queries -->
 <script src="js/core/icons.js"></script>
 <script src="js/core/ui.js"></script>
-<script src="js/core/collapsible.js"></script>
-<script src="js/core/responsive.js"></script>
 <script src="js/core/modals-core.js"></script>
-<script src="js/core/exportUtils.js"></script>
 
-<!-- ============================================================ -->
-<!-- CHARACTER SYSTEM                                              -->
-<!-- ============================================================ -->
+<!-- 2. Relationship core -->
+<script src="js/social/relationship-types.js"></script>
+<script src="js/social/relationship-state.js"></script>
+<script src="js/social/relationship-rules.js"></script>
+<script src="js/social/relationship-queries.js"></script>
+<script src="js/social/relationship-commands.js"></script>
 
-<script src="js/character/character-state.js"></script>
-<script src="js/character/character-commands.js"></script>
-<script src="js/character/character-queries.js"></script>
-<script src="js/character/character-lifecycle.js"></script>
-<script src="js/character/character-ui-list.js"></script>
-<script src="js/character/modals-character.js"></script>
+<!-- 3. UI metadata -->
+<script src="js/social/relationship-ui-metadata.js"></script>
 
-<!-- ============================================================ -->
-<!-- SELECTORS                                                     -->
-<!-- ============================================================ -->
+<!-- 4. Domain modules -->
+<script src="js/social/romance-rules.js"></script>
+<script src="js/social/romance-queries.js"></script>
+<script src="js/social/romance-commands.js"></script>
+<script src="js/social/friendship-rules.js"></script>
+<script src="js/social/friendship-queries.js"></script>
+<script src="js/social/friendship-commands.js"></script>
+<script src="js/social/family-rules.js"></script>
+<script src="js/social/family-queries.js"></script>
+<script src="js/social/family-commands.js"></script>
+<script src="js/social/family-statistics.js"></script>
+<script src="js/social/professional-rules.js"></script>
+<script src="js/social/professional-queries.js"></script>
+<script src="js/social/professional-commands.js"></script>
+<script src="js/social/jealousy-rules.js"></script>
+<script src="js/social/jealousy-queries.js"></script>
+<script src="js/social/jealousy-commands.js"></script>
+<script src="js/social/affair-rules.js"></script>
+<script src="js/social/affair-queries.js"></script>
+<script src="js/social/affair-commands.js"></script>
 
-<script src="js/selectors/locationDropdown.js"></script>
-<script src="js/selectors/modals-char-selector.js"></script>
-<script src="js/selectors/modals-household-selector.js"></script>
+<!-- 5. Finder -->
+<script src="js/social/relationship-finder-queries.js"></script>
+<script src="js/social/relationship-finder.js"></script>
 
-<!-- ============================================================ -->
-<!-- RELATIONSHIP SYSTEM - LOAD IN THIS ORDER                     -->
-<!-- ============================================================ -->
+<!-- 6. Modals -->
+<script src="js/social/modals-relationship.js"></script>
+<script src="js/social/modals-family.js"></script>
+<script src="js/social/modals-friendship.js"></script>
 
-<script src="js/social/relationship-types.js"></script>          <!-- 1. Definitions -->
-<script src="js/social/relationship-registry.js"></script>       <!-- 2. Data Layer -->
-<script src="js/social/relationship-queries.js"></script>        <!-- 3. Queries -->
-<script src="js/social/romance-logic.js"></script>              <!-- 4. Romance Rules -->
-<script src="js/social/family-logic.js"></script>               <!-- 5. Family Rules -->
-<script src="js/social/friendship-logic.js"></script>           <!-- 6. Friendship Rules -->
-<script src="js/social/professional-logic.js"></script>         <!-- 7. Professional Rules -->
-<script src="js/social/jealousy-system.js"></script>            <!-- 8. Jealousy -->
-<script src="js/social/affair-system.js"></script>              <!-- 9. Affairs -->
-<script src="js/social/modals-relationship.js"></script>        <!-- 10. Unified Modal -->
-<script src="js/social/modals-family.js"></script>              <!-- 11. Family Modals -->
-<script src="js/social/modals-friendship.js"></script>          <!-- 12. Friendship Modals -->
-<script src="js/social/relationshipFinder.js"></script>         <!-- 13. Relationship Finder -->
-
-<!-- ============================================================ -->
-<!-- LOCATION SYSTEM                                               -->
-<!-- ============================================================ -->
-
-<script src="js/location/location-state.js"></script>
-<script src="js/location/location-hierarchy.js"></script>
-<script src="js/location/location-movement.js"></script>
-<script src="js/location/location-queries.js"></script>
-<script src="js/location/location-commands.js"></script>
-<script src="js/location/location-ui-list.js"></script>
-<script src="js/location/modals-location.js"></script>
-<script src="js/location/modals-moves.js"></script>
-
-<!-- ============================================================ -->
-<!-- ORCHESTRATORS                                                -->
-<!-- ============================================================ -->
-
-<script src="js/events/annualProcessing.js"></script>
+<!-- 7. Bootstrap -->
+<script src="js/social/relationships-bootstrap.js"></script>
 ```
 
 ---
 
-# END OF DOCUMENTATION
+## 14. Bootstrap
 
-**Generated:** 2026-07-15
-**Version:** 3.1
-**File Count:** 13 core files + 6 character files + 3 selector files + 8 location files + 1 orchestrator
-**Total Size:** ~350 KB
+`relationships-bootstrap.js` runs on load and verifies that every required module and global exists. It throws if any are missing.
 
-**Key Updates:**
-- Added FamilyAccessors integration documentation
-- Added spouse relationship functions
-- Added family statistics functions
-- Updated integration analysis with full system scores
-- Added culture and religion integration gaps
-- Updated load order with all dependencies
+```js
+window.Relationships.init()              // re-verifies and returns status
+window.Relationships.State               // → RelationshipState
+window.Relationships.Rules               // → RelationshipRules
+window.Relationships.Queries             // → RelationshipQueries
+window.Relationships.Commands            // → RelationshipCommands
+window.Relationships.UI                  // → RelationshipUI
+window.Relationships.Romance             // → { Rules, Queries, Commands }
+window.Relationships.Friendship          // → { Rules, Queries, Commands }
+window.Relationships.Family              // → { Rules, Queries, Commands }
+window.Relationships.Professional        // → { Rules, Queries, Commands }
+window.Relationships.Jealousy            // → { Rules, Queries, Commands }
+window.Relationships.Affair              // → { Rules, Queries, Commands }
+window.Relationships.Finder              // → { Queries, render }
+```
+
+**The `window.Relationships.*` namespace is the recommended public entry point.** Global names on `window` also exist for backward compatibility with external subsystems, but new code should use the namespace.
+
+---
+
+## 15. External Dependencies
+
+Required at bootstrap:
+
+| Global | Provided by | Used for |
+|--------|-------------|----------|
+| `getCharacterById` | `accessors.js` | character projection |
+| `getCharacters` | `accessors.js` | iteration (jealousy, finder) |
+| `getCurrentYearSafe` | `time.js` | default startYear |
+| `calculateAge` | `time.js` | age checks |
+| `generateId` | `ids.js` | entity ids |
+| `saveMasterData` | `storage.js` | commit boundary |
+| `openModal` | `modals-core.js` | modal hosting |
+| `closeTopModal` | `modals-core.js` | modal dismissal |
+
+Optional but recommended:
+
+| Global | Used for |
+|--------|----------|
+| `Icons` | SVG icons in UI |
+| `escapeHtml` | HTML escaping |
+| `showToast` | toast notifications |
+| `logEvent` | event log |
+| `Random` | deterministic randomness for jealousy / affairs |
+| `SkillQueries` | professional queries depend on this |
+| `getCurrentLocation` | finder, affairs (same-location) |
+| `getActiveRankDisplay` | finder previews |
+| `getRankById` | rank priority lookups |
+
+If `SkillQueries` is absent, professional modules throw. If `Random` is absent, jealousy/affair commands throw when they need to roll.
+
+---
+
+## 16. Adding a New Archetype
+
+1. Add the id to `RELATIONSHIP_ARCHETYPES` and category/direction tables in `relationship-types.js`.
+2. Add presentation metadata in `relationship-ui-metadata.js`.
+3. Add any validation rules in `relationship-rules.js` (`validateAttributes`, `canCreate`, etc.).
+4. Add domain-specific queries/commands if the archetype needs its own semantic layer.
+5. Add a dispatch case in `modals-relationship.js`'s `_dispatchCreate()`.
+
+If the archetype is a straightforward symmetric relation with no domain policy beyond validation, `relationship-types.js` + `relationship-rules.js` are enough.
+
+---
+
+## 17. Adding a New Attribute
+
+1. Add the id to `RELATIONSHIP_ATTRIBUTES` and a group in `relationship-types.js`.
+2. Add presentation metadata in `relationship-ui-metadata.js`.
+3. Add any mutual-exclusion or requires rules in `RomanceRules.EXCLUSIVE_GROUPS` / `REQUIRES`.
+4. Add the checkbox in `modals-relationship.js`'s `_attributeCheckboxesHtml()` if it should be user-selectable.
+
+---
+
+## 18. Anti-Patterns (Previously Present, Now Forbidden)
+
+- ❌ `if (typeof window.foo === 'function')` dependency fallbacks
+- ❌ Default values fabricated when dependencies are missing (`1250`, `[]`, `null`, `0`)
+- ❌ Using `||` for numeric values where `0` is valid
+- ❌ Returning live canonical entities from Queries
+- ❌ Direct mutation of `character.relationships`
+- ❌ Calling `saveMasterData()` outside Commands
+- ❌ Storing derived facts (marriage status, affair classification, kinship)
+- ❌ Using `Math.random()` directly in Rules or Commands
+- ❌ Duplicating facts across `metadata` and top-level entity fields
+- ❌ Reading character records from UI or domain modules instead of Queries
+
+---
+
+## 19. Version History
+
+**v4.0** — Clean-slate rewrite.
+- Introduced strict layer separation (State / Rules / Queries / Commands).
+- Cardinality contract: pair may have N relationship entities.
+- Removed all dependency fallbacks.
+- Removed affair entity duplication (SECRET attribute is authoritative).
+- Removed direct character mutation from UI.
+- Centralised commit boundary in Commands.
+- Randomness injected via `window.Random`.
+- Sibling entities derived, not stored as truth.
+- Groups removed from friendship system (pending their own domain).
+
+---
+
+**End of Documentation**
