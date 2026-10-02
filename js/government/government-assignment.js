@@ -1,335 +1,244 @@
 /**
- * =============================================================================
- * GOVERNMENT ASSIGNMENT - Business logic for government assignments  js/government/government-assignment.js
- * =============================================================================
- * 
- * This file contains business logic for:
- * - Assignment validation and qualification checking
- * - Succession planning and heir identification
- * - Assignment history analysis
- * - Candidate scoring and ranking
- * 
- * DEPENDENCIES:
- *   - government-state.js (GovernmentState)
- *   - government-queries.js (GovernmentQueries)
- *   - accessors.js (getCharacterById, getCharacters, getCurrentYear)
- * 
- * =============================================================================
+ * government-assignment.js
+ * Compatibility façade. Real logic lives in GovernmentRules + GovernmentQueries.
+ * Will be deleted once callers migrate.
  */
-
 (function() {
     'use strict';
 
-    // =========================================================================
-    // 1. RECURSION GUARD
-    // =========================================================================
+    var Rules = window.GovernmentRules;
+    var Queries = window.GovernmentQueries;
+    var _CharacterQueries = window.CharacterQueries;
+    var _RoleQueries = window.RoleQueries;
 
-    var _processingAssignment = false;
+    if (!Rules) throw new Error('government-assignment.js requires GovernmentRules');
+    if (!Queries) throw new Error('government-assignment.js requires GovernmentQueries');
+    if (!_CharacterQueries) throw new Error('government-assignment.js requires CharacterQueries');
 
-    // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
-    // =========================================================================
+    function _now() { return window.getCurrentYearSafe(); }
 
-    function _getCharacterById(id) {
-        return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
-    }
-
-    function _getCharacters() {
-        return typeof window.getCharacters === 'function' ? window.getCharacters() : [];
-    }
-
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
-    function _calculateAge(birthYear, isDeceased, deathYear) {
-    // Delegates to time.js — do not reimplement age logic here.
-    if (typeof window.calculateAge === 'function') {
-        return window.calculateAge(birthYear, isDeceased, deathYear);
-    }
-    return null;
-}
-
-    function _getRankById(id) {
-        if (typeof window.getRankById === 'function') {
-            return window.getRankById(id);
-        }
-        return null;
-    }
-
-    function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
-        return '';
-    }
-
-    // =========================================================================
-    // 3. QUALIFICATION CHECKS
-    // =========================================================================
+    // ---- Qualification -------------------------------------------------------
 
     function isCharacterQualifiedForPosition(characterId, departmentId, positionId) {
-        if (_processingAssignment) {
-            console.warn('Assignment processing already running, skipping');
-            return false;
+        var charFacts = _CharacterQueries.getCharacterFacts(characterId);
+        if (!charFacts) return false;
+
+        var position = Queries.getPosition(departmentId, positionId);
+        if (!position) return false;
+
+        // If the character is already assigned, they are not a valid candidate
+        // for a new assignment to the same position.
+        var existing = Queries.getAssignmentsForPosition(departmentId, positionId, { activeOnly: true });
+        for (var i = 0; i < existing.length; i++) {
+            if (existing[i].characterId === characterId) return false;
         }
-        _processingAssignment = true;
 
-        try {
-            var character = _getCharacterById(characterId);
-            if (!character || character.isDeceased) return false;
-
-            var position = GovernmentState.getPositionById(departmentId, positionId);
-            if (!position) return false;
-
-            // Check age (minimum 18)
-            var age = _calculateAge(character.birthYear, false, null);
-            if (age < 18) return false;
-
-            // Check if already assigned to this position
-            var existing = GovernmentState.getAssignmentsForPosition(departmentId, positionId, true);
-            for (var i = 0; i < existing.length; i++) {
-                if (existing[i].characterId === characterId) return false;
-            }
-
-            // Check rank requirements (if any)
-            if (position.requiredRankId && character.activeRankId !== position.requiredRankId) {
-                return false;
-            }
-
-            // Check skill/experience requirements (if any)
-            if (position.minExperience && character.experienceYears < position.minExperience) {
-                return false;
-            }
-
-            // Check gender restrictions (if any)
-            if (position.genderRestriction && position.genderRestriction !== 'either') {
-                if (character.gender !== position.genderRestriction) return false;
-            }
-
-            return true;
-
-        } finally {
-            _processingAssignment = false;
-        }
+        var elig = Rules.checkPositionEligibility(charFacts, {
+            requiredRoleId: position.requiredRoleId,
+            minSkillLevel: position.minSkillLevel,
+            genderRestriction: position.genderRestriction,
+            requiredRankId: position.requiredRankId,
+            minExperience: position.minExperience
+        });
+        return elig.eligible;
     }
 
     function getQualifiedCandidates(departmentId, positionId, options) {
-        if (_processingAssignment) {
-            console.warn('Assignment processing already running, skipping');
-            return [];
-        }
-        _processingAssignment = true;
+        options = options || {};
+        var limit = options.limit != null ? options.limit : null;
 
-        try {
-            options = options || {};
+        var position = Queries.getPosition(departmentId, positionId);
+        if (!position) return [];
 
-            var allChars = _getCharacters();
-            var qualified = [];
+        var positionFacts = {
+            requiredRoleId: position.requiredRoleId,
+            minSkillLevel: position.minSkillLevel,
+            genderRestriction: position.genderRestriction,
+            requiredRankId: position.requiredRankId,
+            minExperience: position.minExperience
+        };
 
-            for (var i = 0; i < allChars.length; i++) {
-                var char = allChars[i];
-                if (char.isDeceased) continue;
+        var existing = Queries.getAssignmentsForPosition(departmentId, positionId, { activeOnly: true });
+        var assigned = {};
+        for (var e = 0; e < existing.length; e++) assigned[existing[e].characterId] = true;
 
-                var isQualified = isCharacterQualifiedForPosition(char.id, departmentId, positionId);
-                if (isQualified) {
-                    var age = _calculateAge(char.birthYear, false, null);
-                    var experience = char.experienceYears || 0;
-                    var rank = char.activeRankId ? _getRankById(char.activeRankId) : null;
+        var allFacts = _CharacterQueries.getAllCharacterFacts();
+        var out = [];
+        for (var i = 0; i < allFacts.length; i++) {
+            var f = allFacts[i];
+            if (f.isDeceased) continue;
+            if (assigned[f.id]) continue;
 
-                    // Calculate qualification score
-                    var score = 0;
-                    if (rank) {
-                        var rankPriority = rank.priority || 5;
-                        score += (6 - rankPriority) * 10;
-                    }
-                    score += Math.min(experience, 20) * 2;
-                    if (age >= 30 && age <= 50) score += 20;
-                    if (age >= 25 && age <= 55) score += 10;
+            var elig = Rules.checkPositionEligibility(f, positionFacts);
+            if (!elig.eligible) continue;
 
-                    qualified.push({
-                        character: char,
-                        age: age,
-                        experience: experience,
-                        rank: rank,
-                        score: Math.min(100, score),
-                        isReady: age >= 25 && experience >= 5
-                    });
-                }
-            }
-
-            // Sort by score
-            qualified.sort(function(a, b) {
-                return b.score - a.score;
+            var rankPriority = _rankPriorityOf(f.activeRankId);
+            var score = Rules.scoreCandidate({
+                age: f.age,
+                experienceYears: f.experienceYears,
+                rankPriority: rankPriority
             });
 
-            if (options.limit) {
-                qualified = qualified.slice(0, options.limit);
-            }
-
-            return qualified;
-
-        } finally {
-            _processingAssignment = false;
+            out.push({
+                characterId: f.id,
+                characterName: f.fullName,
+                age: f.age,
+                experience: f.experienceYears || 0,
+                rankId: f.activeRankId || null,
+                rankName: f.activeRankId ? _rankNameOf(f.activeRankId) : null,
+                skillLevel: position.requiredRoleId && f.skillLevels
+                    ? f.skillLevels[position.requiredRoleId]
+                    : null,
+                score: score,
+                isReady: Rules.isCandidateReady({
+                    age: f.age,
+                    experienceYears: f.experienceYears
+                })
+            });
         }
+
+        out.sort(function(a, b) {
+            return Rules.compareCandidates(
+                { score: a.score, experienceYears: a.experience, age: a.age, characterId: a.characterId },
+                { score: b.score, experienceYears: b.experience, age: b.age, characterId: b.characterId }
+            );
+        });
+
+        if (limit != null && limit > 0) out = out.slice(0, limit);
+        return out;
     }
 
-    // =========================================================================
-    // 4. SUCCESSION PLANNING
-    // =========================================================================
+    function _rankPriorityOf(rankId) {
+        if (!rankId || !_RoleQueries || !_RoleQueries.getRankSummary) return null;
+        var r = _RoleQueries.getRankSummary(rankId);
+        return r && r.priority != null ? r.priority : null;
+    }
+
+    function _rankNameOf(rankId) {
+        if (!rankId || !_RoleQueries || !_RoleQueries.getRankSummary) return null;
+        var r = _RoleQueries.getRankSummary(rankId);
+        return r ? r.name : null;
+    }
+
+    // ---- Succession ----------------------------------------------------------
 
     function getSuccessionPlan(departmentId, positionId) {
-        if (_processingAssignment) {
-            console.warn('Assignment processing already running, skipping');
-            return null;
-        }
-        _processingAssignment = true;
+        var position = Queries.getPosition(departmentId, positionId);
+        if (!position) return null;
 
-        try {
-            var position = GovernmentState.getPositionById(departmentId, positionId);
-            if (!position) return null;
+        var currentAssignments = Queries.getAssignmentsForPosition(departmentId, positionId, { activeOnly: true });
+        var currentHolder = currentAssignments.length > 0 ? {
+            assignmentId: currentAssignments[0].id,
+            characterId: currentAssignments[0].characterId,
+            characterName: currentAssignments[0].characterName,
+            startYear: currentAssignments[0].startYear,
+            title: currentAssignments[0].title
+        } : null;
 
-            var currentAssignments = GovernmentState.getAssignmentsForPosition(departmentId, positionId, true);
-            var currentHolder = currentAssignments.length > 0 ? currentAssignments[0] : null;
+        var candidates = getQualifiedCandidates(departmentId, positionId, { limit: 10 });
 
-            var candidates = getQualifiedCandidates(departmentId, positionId, { limit: 10 });
-
-            return {
-                positionId: positionId,
-                positionName: position.name,
-                departmentId: departmentId,
-                currentHolder: currentHolder ? {
-                    characterId: currentHolder.characterId,
-                    characterName: currentHolder.characterName,
-                    startYear: currentHolder.startYear,
-                    title: currentHolder.title
-                } : null,
-                candidates: candidates.map(function(c) {
-                    return {
-                        characterId: c.character.id,
-                        characterName: c.character.name + (c.character.surname ? ' ' + c.character.surname : ''),
-                        age: c.age,
-                        experience: c.experience,
-                        rank: c.rank ? c.rank.name : null,
-                        isReady: c.isReady,
-                        score: c.score
-                    };
-                }),
-                hasSuccessor: candidates.length > 0,
-                successorCount: candidates.length,
-                topCandidate: candidates.length > 0 ? {
-                    characterId: candidates[0].character.id,
-                    characterName: candidates[0].character.name + (candidates[0].character.surname ? ' ' + candidates[0].character.surname : '')
-                } : null
-            };
-
-        } finally {
-            _processingAssignment = false;
-        }
+        return {
+            positionId: positionId,
+            positionName: position.name,
+            departmentId: departmentId,
+            currentHolder: currentHolder,
+            candidates: candidates.map(function(c) {
+                return {
+                    characterId: c.characterId,
+                    characterName: c.characterName,
+                    age: c.age,
+                    experience: c.experience,
+                    rank: c.rankName,
+                    isReady: c.isReady,
+                    score: c.score
+                };
+            }),
+            hasSuccessor: candidates.length > 0,
+            successorCount: candidates.length,
+            topCandidate: candidates.length > 0 ? {
+                characterId: candidates[0].characterId,
+                characterName: candidates[0].characterName
+            } : null
+        };
     }
 
-    // =========================================================================
-    // 5. ASSIGNMENT HISTORY ANALYSIS
-    // =========================================================================
+    // ---- History analysis ----------------------------------------------------
+    // Uses Queries.getAssignmentHistory so projections stay consistent with the
+    // rest of the read layer.
 
     function analyzeAssignmentHistory(departmentId) {
-        if (_processingAssignment) {
-            console.warn('Assignment processing already running, skipping');
-            return null;
-        }
-        _processingAssignment = true;
+        var dept = Queries.getDepartment(departmentId);
+        if (!dept) return null;
 
-        try {
-            var assignments = GovernmentState.getAssignmentsForDepartment(departmentId, false);
-            var dept = GovernmentState.getDepartment(departmentId);
+        var assignments = Queries.getAssignmentsForDepartment(departmentId, { activeOnly: false });
 
-            if (!dept) return null;
+        var analysis = {
+            departmentId: departmentId,
+            departmentName: dept.name,
+            totalAssignments: assignments.length,
+            activeAssignments: 0,
+            endedAssignments: 0,
+            averageTenure: 0,
+            byPosition: {},
+            byYear: {},
+            byCharacter: {},
+            longestServing: null,
+            shortestServing: null,
+            mostRecent: null
+        };
 
-            var analysis = {
-                departmentId: departmentId,
-                departmentName: dept.name,
-                totalAssignments: assignments.length,
-                activeAssignments: 0,
-                endedAssignments: 0,
-                averageTenure: 0,
-                byPosition: {},
-                byYear: {},
-                byCharacter: {},
-                longestServing: null,
-                mostRecent: null,
-                shortestServing: null
-            };
+        var totalTenure = 0;
+        var tenureCount = 0;
+        var currentYear = _now();
 
-            var totalTenure = 0;
-            var tenureCount = 0;
+        for (var i = 0; i < assignments.length; i++) {
+            var a = assignments[i];
 
-            for (var i = 0; i < assignments.length; i++) {
-                var a = assignments[i];
-                var isActive = !a.endYear;
+            if (a.isActive) analysis.activeAssignments++;
+            else analysis.endedAssignments++;
 
-                if (isActive) {
-                    analysis.activeAssignments++;
-                } else {
-                    analysis.endedAssignments++;
+            if (a.positionId) {
+                analysis.byPosition[a.positionId] = (analysis.byPosition[a.positionId] || 0) + 1;
+            }
+            if (a.startYear != null) {
+                analysis.byYear[a.startYear] = (analysis.byYear[a.startYear] || 0) + 1;
+            }
+            if (a.characterId) {
+                analysis.byCharacter[a.characterId] = (analysis.byCharacter[a.characterId] || 0) + 1;
+            }
+
+            // Tenure aggregation: completed assignments only. Active assignments
+            // are reported separately via activeAssignments.
+            if (!a.isActive && a.startYear != null && a.endYear != null) {
+                var tenure = a.endYear - a.startYear;
+                if (tenure < 0) tenure = 0;
+                totalTenure += tenure;
+                tenureCount++;
+
+                if (!analysis.longestServing || tenure > analysis.longestServing.tenure) {
+                    analysis.longestServing = {
+                        characterId: a.characterId,
+                        characterName: a.characterName,
+                        startYear: a.startYear,
+                        endYear: a.endYear,
+                        tenure: tenure,
+                        positionId: a.positionId
+                    };
                 }
-
-                // By position
-                if (a.positionId) {
-                    if (!analysis.byPosition[a.positionId]) {
-                        analysis.byPosition[a.positionId] = 0;
-                    }
-                    analysis.byPosition[a.positionId]++;
+                if (!analysis.shortestServing || tenure < analysis.shortestServing.tenure) {
+                    analysis.shortestServing = {
+                        characterId: a.characterId,
+                        characterName: a.characterName,
+                        startYear: a.startYear,
+                        endYear: a.endYear,
+                        tenure: tenure,
+                        positionId: a.positionId
+                    };
                 }
+            }
 
-                // By year
-                var year = a.startYear || 0;
-                if (!analysis.byYear[year]) {
-                    analysis.byYear[year] = 0;
-                }
-                analysis.byYear[year]++;
-
-                // By character
-                if (a.characterId) {
-                    if (!analysis.byCharacter[a.characterId]) {
-                        analysis.byCharacter[a.characterId] = 0;
-                    }
-                    analysis.byCharacter[a.characterId]++;
-                }
-
-                // Tenure
-                if (a.endYear) {
-                    var tenure = a.endYear - a.startYear;
-                    totalTenure += tenure;
-                    tenureCount++;
-
-                    if (!analysis.longestServing || tenure > analysis.longestServing.tenure) {
-                        analysis.longestServing = {
-                            characterId: a.characterId,
-                            characterName: a.characterName,
-                            startYear: a.startYear,
-                            endYear: a.endYear,
-                            tenure: tenure,
-                            positionId: a.positionId
-                        };
-                    }
-
-                    if (!analysis.shortestServing || tenure < analysis.shortestServing.tenure) {
-                        analysis.shortestServing = {
-                            characterId: a.characterId,
-                            characterName: a.characterName,
-                            startYear: a.startYear,
-                            endYear: a.endYear,
-                            tenure: tenure,
-                            positionId: a.positionId
-                        };
-                    }
-                }
-
-                // Most recent
-                if (!analysis.mostRecent || (a.startYear || 0) > (analysis.mostRecent.startYear || 0)) {
+            if (a.startYear != null) {
+                if (!analysis.mostRecent || a.startYear > analysis.mostRecent.startYear) {
                     analysis.mostRecent = {
                         characterId: a.characterId,
                         characterName: a.characterName,
@@ -338,30 +247,26 @@
                     };
                 }
             }
-
-            analysis.averageTenure = tenureCount > 0 ? Math.round((totalTenure / tenureCount) * 10) / 10 : 0;
-
-            return analysis;
-
-        } finally {
-            _processingAssignment = false;
         }
+
+        analysis.averageTenure = tenureCount > 0
+            ? Math.round((totalTenure / tenureCount) * 10) / 10
+            : 0;
+        analysis.referenceYear = currentYear;
+
+        return analysis;
     }
 
-    // =========================================================================
-    // 6. EXPORTS
-    // =========================================================================
+    // ---- Export --------------------------------------------------------------
 
     window.GovernmentAssignment = {
-        // Qualification
         isCharacterQualifiedForPosition: isCharacterQualifiedForPosition,
         getQualifiedCandidates: getQualifiedCandidates,
-
-        // Succession
         getSuccessionPlan: getSuccessionPlan,
-
-        // History analysis
         analyzeAssignmentHistory: analyzeAssignmentHistory
     };
 
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.GovernmentAssignment;
+    }
 })();
