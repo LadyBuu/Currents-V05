@@ -1,42 +1,77 @@
 /**
  * =============================================================================
- * RESIDENCE MODALS (modals-residence.js)
+ * STILL WATERS - RESIDENCE MODALS (modals-residence.js)
  * =============================================================================
  * 
- * PURPOSE: UI modals for residence management (CRUD, details, units,
- *          vacancy, rehabilitation, demolition).
+ * LOCATION: js/systems/household/modals-residence.js
  * 
- * DEPENDS ON:
- *   - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
- *   - modals-char-select.js (openCharacterSelector)
- *   - modals-household-selector.js (openHouseholdSelector)
- *   - household-state.js (HouseholdState)
- *   - household-commands.js (HouseholdCommands)
- *   - residence-system.js (ResidenceSystem)
+ * PURPOSE
+ * -------
+ * Modal entry points for residence CRUD, units, vacancy, history,
+ * rehabilitation, and demolition.
  * 
- * EXPORTS:
- *   - openNewResidenceModal()
- *   - openEditResidenceModal()
- *   - openDeleteResidenceModal()
- *   - openResidenceDetailsModal()
- *   - openRenameResidenceModal()
- *   - openResidenceNameHistoryModal()
- *   - openAssignResidenceModal()
- *   - openVacateResidenceModal()
- *   - openRehabilitateResidenceModal()
- *   - openDemolishResidenceModal()
- *   - openResidenceHeirFinderModal()
- *   - openAddUnitModal()
- *   - openRemoveUnitModal()
- *   - openAssignUnitModal()
- *   - openMarkUnitVacantModal()
- *   - openUnitDetailsModal()
- *   - openResidenceSelector()
+ * This file consolidates the former:
+ *   - modals-residence.js
+ *   - modals-residence-vacancy.js
+ *   - modals-residence-history.js
  * 
- * ICON POLICY:
- *   - All icons from icons.js via _getIcon()
- *   - NO emojis
- *   - NO icons in confirm/cancel buttons (plain text only)
+ * Both of those become thin re-export shims.
+ * 
+ * MODALS PROVIDED
+ * ---------------
+ *   Create/Edit/Delete:
+ *     - openNewResidenceModal(locationId, locationName, onSuccess)
+ *     - openEditResidenceModal(residenceId, onSuccess)
+ *     - openDeleteResidenceModal(residenceId, onSuccess)
+ *     - openRenameResidenceModal(residenceId, onSuccess)
+ * 
+ *   Details:
+ *     - openResidenceDetailsModal(residenceId, onRefresh)
+ * 
+ *   Assignment:
+ *     - openAssignResidenceModal(residenceId, onSuccess)
+ *     - openVacateResidenceModal(residenceId, onSuccess)
+ *     - openEndResidenceAssociationModal(residenceId, onSuccess)
+ * 
+ *   Units:
+ *     - openAddUnitModal(residenceId, onSuccess)
+ *     - openRemoveUnitModal(residenceId, unitNumber, onSuccess)
+ *     - openAssignUnitModal(residenceId, unitNumber, onSuccess)
+ *     - openMarkUnitVacantModal(residenceId, unitNumber, onSuccess)
+ *     - openUnitDetailsModal(residenceId, unitNumber)
+ * 
+ *   Rehabilitation & demolition:
+ *     - openRehabilitateResidenceModal(residenceId, onSuccess)
+ *     - openDemolishResidenceModal(residenceId, onSuccess)
+ * 
+ *   History:
+ *     - openResidenceHistoryModal(residenceId)
+ *     - openResidenceNameHistoryModal(residenceId)
+ *     - openResidenceTimelineModal(residenceId)
+ *     - openResidenceAssociationHistoryModal(residenceId)
+ * 
+ *   Heir finder (placeholder):
+ *     - openResidenceHeirFinderModal(residenceId)
+ * 
+ *   Selector:
+ *     - openResidenceSelector(options)
+ * 
+ * OWNERSHIP
+ * ---------
+ *   Reads:  ResidenceSystem (getResidence, getUnits, getUnit, ...)
+ *           HouseholdQueries (getHousehold, getHouseholdDetails)
+ *   Writes: ResidenceSystem (all mutations)
+ *   UI:     modals-core, selectors, icons
+ * 
+ * WHAT THIS FILE DOES NOT DO
+ * --------------------------
+ *   - No direct household record mutation
+ *   - No residence record mutation
+ *   - No emoji icons
+ *   - No setTimeout(100)
+ *   - No fabricated 1250
+ *   - No silent failure swallowing
+ *   - No _processingResidenceModal guard
  * 
  * =============================================================================
  */
@@ -45,32 +80,19 @@
     'use strict';
 
     // =========================================================================
-    // 0. RECURSION GUARD
-    // =========================================================================
-
-    var _processingResidenceModal = false;
-
-    // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
+    // 1. DEPENDENCY ACCESS
     // =========================================================================
 
     function _openModal(options) {
-        if (typeof window.openModal === 'function') {
-            return window.openModal(options);
-        }
-        if (typeof window._openModal === 'function') {
-            return window._openModal(options);
-        }
-        return null;
+        if (typeof window.openModal === 'function') return window.openModal(options);
+        if (typeof window._openModal === 'function') return window._openModal(options);
+        throw new Error('modals-residence: openModal is required');
     }
 
     function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') {
-            window.closeTopModal();
-        }
-        if (typeof window._closeTopModal === 'function') {
-            window._closeTopModal();
-        }
+        if (typeof window.closeTopModal === 'function') return window.closeTopModal();
+        if (typeof window._closeTopModal === 'function') return window._closeTopModal();
+        throw new Error('modals-residence: closeTopModal is required');
     }
 
     function _confirmDialog(message, title, onConfirm, onCancel) {
@@ -80,2839 +102,2264 @@
         if (typeof window._confirmDialog === 'function') {
             return window._confirmDialog(message, title, onConfirm, onCancel);
         }
-        if (confirm(message)) {
+        if (window.confirm(message)) {
             if (onConfirm) onConfirm();
-        } else {
-            if (onCancel) onCancel();
+        } else if (onCancel) {
+            onCancel();
         }
     }
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
-        }
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
+        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
+        if (str === undefined || str === null) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     function _showToast(message, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(message, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(message, type);
-        }
+        if (typeof window._showToast === 'function') return window._showToast(message, type);
+        if (typeof window.showToast === 'function') return window.showToast(message, type);
     }
-
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
 
     function _getIcon(name) {
-        if (typeof window._getIcon === 'function') {
-            return window._getIcon(name);
-        }
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
+        if (typeof window._getIcon === 'function') return window._getIcon(name) || '';
+        if (window.Icons && window.Icons[name]) return window.Icons[name];
         return '';
     }
 
-    function _buildLocationDropdown(selectedId, placeholderText, includeAll) {
+    function _residence() {
+        if (typeof window.ResidenceSystem === 'undefined') {
+            throw new Error('modals-residence: ResidenceSystem is required');
+        }
+        return window.ResidenceSystem;
+    }
+
+    function _householdQueries() {
+        return typeof window.HouseholdQueries !== 'undefined'
+            ? window.HouseholdQueries
+            : null;
+    }
+
+    function _currentYear() {
+        if (typeof window.getCurrentYearSafe === 'function') {
+            return window.getCurrentYearSafe();
+        }
+        return null;
+    }
+
+    function _getPlaceById(id) {
+        if (typeof window.getPlaceById !== 'function') return null;
+        return window.getPlaceById(id);
+    }
+
+    function _buildLocationDropdown(selectedId, placeholder) {
         if (typeof window.buildLocationDropdown === 'function') {
-            return window.buildLocationDropdown(selectedId, placeholderText, includeAll, true);
+            return window.buildLocationDropdown(selectedId, placeholder, false);
         }
-        if (typeof window._buildLocationDropdown === 'function') {
-            return window._buildLocationDropdown(selectedId, placeholderText, includeAll, true);
+        if (typeof window.getPlaces !== 'function') {
+            return '<option value="">' + _escapeHtml(placeholder || '') + '</option>';
         }
-        return '';
+        var places = window.getPlaces() || [];
+        var html = '<option value="">' + _escapeHtml(placeholder || '') + '</option>';
+        var sorted = places.slice().sort(function(a, b) {
+            return (a.displayName || '').localeCompare(b.displayName || '');
+        });
+        for (var i = 0; i < sorted.length; i++) {
+            var p = sorted[i];
+            var selected = (selectedId === p.id) ? ' selected' : '';
+            html += '<option value="' + _escapeHtml(p.id) + '"' + selected + '>' +
+                _escapeHtml(p.displayName || p.name || 'Unknown') + '</option>';
+        }
+        return html;
     }
 
-    function _openCharacterSelector(options) {
-        if (typeof window.openCharacterSelector === 'function') {
-            return window.openCharacterSelector(options);
-        }
-        if (typeof window.openUnifiedCharacterSelector === 'function') {
-            return window.openUnifiedCharacterSelector(options);
-        }
-        if (typeof window._openCharacterSelector === 'function') {
-            return window._openCharacterSelector(options);
-        }
-        _showToast('Character selector not available', 'error');
-        return null;
+    function _resolveModalRoot() {
+        if (typeof document === 'undefined') return null;
+        return document.querySelector('[data-modal-root="top"]') ||
+               document.querySelector('.modal-root:last-of-type') ||
+               document.body;
     }
 
-    function _openHouseholdSelector(options) {
-        if (typeof window.openHouseholdSelector === 'function') {
-            return window.openHouseholdSelector(options);
-        }
-        if (typeof window._openHouseholdSelector === 'function') {
-            return window._openHouseholdSelector(options);
-        }
-        _showToast('Household selector not available', 'error');
-        return null;
+    function _attachOnOpen(handler) {
+        return function() {
+            var root = _resolveModalRoot();
+            if (root) handler(root);
+        };
+    }
+
+    function _parseIntOrNull(value) {
+        if (value === undefined || value === null) return null;
+        var s = String(value).trim();
+        if (s === '') return null;
+        var n = Number(s);
+        if (!isFinite(n)) return null;
+        return Math.floor(n);
     }
 
     // =========================================================================
-    // 2. STATE AND SYSTEM REFERENCE
-    // =========================================================================
-
-    var _state = window.HouseholdState;
-    var _commands = window.HouseholdCommands;
-    var _residence = window.ResidenceSystem;
-
-    // =========================================================================
-    // 3. ICON HELPERS
-    // =========================================================================
-
-    function _getIconSafe(name) {
-        var icon = _getIcon(name);
-        return icon || '';
-    }
-
-    function _iconSpan(icon, title) {
-        if (!icon) return '';
-        var titleAttr = title ? ' title="' + _escapeHtml(title) + '"' : '';
-        return '<span style="display:inline-flex;align-items:center;vertical-align:middle;' + (title ? 'cursor:help;' : '') + '"' + titleAttr + '>' + icon + '</span>';
-    }
-
-    // =========================================================================
-    // 4. BUSINESS LOGIC WRAPPERS
-    // =========================================================================
-
-    function _getHousehold(householdId) {
-        return _state ? _state.getHousehold(householdId) : null;
-    }
-
-    function _getCharacterById(characterId) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(characterId);
-        }
-        return null;
-    }
-
-    function _getCharacters() {
-        if (typeof window.getCharacters === 'function') {
-            return window.getCharacters();
-        }
-        return [];
-    }
-
-    function _getPlaceById(placeId) {
-        if (typeof window.getPlaceById === 'function') {
-            return window.getPlaceById(placeId);
-        }
-        return null;
-    }
-
-    function _getResidenceById(residenceId) {
-        return _residence ? _residence.getResidenceById(residenceId) : null;
-    }
-
-    function _getResidences() {
-        return _residence ? _residence.getResidences() : [];
-    }
-
-    function _getResidencesByLocation(locationId) {
-        return _residence ? _residence.getResidencesByLocation(locationId) : [];
-    }
-
-    function _getVacantResidences(locationId) {
-        return _residence ? _residence.getVacantResidences(locationId) : [];
-    }
-
-    function _getResidenceUnits(residenceId) {
-        return _residence ? _residence.getResidenceUnits(residenceId) : [];
-    }
-
-    function _getResidenceUnit(residenceId, unitNumber) {
-        return _residence ? _residence.getResidenceUnit(residenceId, unitNumber) : null;
-    }
-
-    function _getVacantUnits(residenceId) {
-        return _residence ? _residence.getVacantUnits(residenceId) : [];
-    }
-
-    function _getUnitStats(residenceId) {
-        return _residence ? _residence.getUnitStats(residenceId) : { total: 0, occupied: 0, vacant: 0, demolished: 0, occupancyRate: 0 };
-    }
-
-    function _getResidenceVacancyDetails(residenceId) {
-        return _residence ? _residence.getResidenceVacancyDetails(residenceId) : null;
-    }
-
-    function _getResidenceRecommendations(residenceId) {
-        return _residence ? _residence.getResidenceRecommendations(residenceId) : [];
-    }
-
-    function _getResidenceNameHistory(residenceId) {
-        return _residence ? _residence.getResidenceNameHistory(residenceId) : [];
-    }
-
-    function _getResidenceCurrentNameInfo(residenceId) {
-        return _residence ? _residence.getResidenceCurrentNameInfo(residenceId) : null;
-    }
-
-    function _getResidenceOriginalName(residenceId) {
-        return _residence ? _residence.getResidenceOriginalName(residenceId) : 'Unknown';
-    }
-
-    function _getResidenceNameChangeCount(residenceId) {
-        return _residence ? _residence.getResidenceNameChangeCount(residenceId) : 0;
-    }
-
-    function _getResidenceAssociationHistory(residenceId) {
-        return _residence ? _residence.getResidenceAssociationHistory(residenceId) : [];
-    }
-
-    function _getHouseholdUnits(householdId) {
-        return _residence ? _residence.getHouseholdUnits(householdId) : [];
-    }
-
-    function _getResidenceHouseholds(residenceId) {
-        return _residence ? _residence.getResidenceHouseholds(residenceId) : [];
-    }
-
-    function _createResidence(name, locationId, typeId, options) {
-        return _residence ? _residence.createResidence(name, locationId, typeId, options) : null;
-    }
-
-    function _updateResidence(residenceId, updates) {
-        return _residence ? _residence.updateResidence(residenceId, updates) : null;
-    }
-
-    function _deleteResidence(residenceId, options) {
-        return _residence ? _residence.deleteResidence(residenceId, options) : false;
-    }
-
-    function _updateResidenceNameWithHistory(residenceId, newName, options) {
-        return _residence ? _residence.updateResidenceNameWithHistory(residenceId, newName, options) : null;
-    }
-
-    function _assignHouseholdToVacantResidence(residenceId, householdId, householdName, year, options) {
-        return _residence ? _residence.assignHouseholdToVacantResidence(residenceId, householdId, householdName, year, options) : null;
-    }
-
-    function _markResidenceVacant(residenceId, reason, year) {
-        return _residence ? _residence.markResidenceVacant(residenceId, reason, year) : null;
-    }
-
-    function _rehabilitateResidence(residenceId, targetCondition, year) {
-        return _residence ? _residence.rehabilitateResidence(residenceId, targetCondition, year) : null;
-    }
-
-    function _calculateRepairCost(residence, targetCondition) {
-        return _residence ? _residence.calculateRepairCost(residence, targetCondition) : 0;
-    }
-
-    function _addResidenceUnit(residenceId, options) {
-        return _residence ? _residence.addResidenceUnit(residenceId, options) : null;
-    }
-
-    function _removeResidenceUnit(residenceId, unitNumber, options) {
-        return _residence ? _residence.removeResidenceUnit(residenceId, unitNumber, options) : null;
-    }
-
-    function _assignHouseholdToUnit(residenceId, unitNumber, householdId, householdName, year, options) {
-        return _residence ? _residence.assignHouseholdToUnit(residenceId, unitNumber, householdId, householdName, year, options) : null;
-    }
-
-    function _markUnitVacant(residenceId, unitNumber, reason, year) {
-        return _residence ? _residence.markUnitVacant(residenceId, unitNumber, reason, year) : null;
-    }
-
-    function _demolishUnit(residenceId, unitNumber, reason, year) {
-        return _residence ? _residence.demolishUnit(residenceId, unitNumber, reason, year) : null;
-    }
-
-    function _getAllResidenceTypes() {
-        return _residence ? _residence.getAllResidenceTypes() : {};
-    }
-
-    function _getAllResidenceConditions() {
-        return _residence ? _residence.getAllResidenceConditions() : [];
-    }
-
-    function _calculateAge(birthYear, isDeceased, deathYear) {
-    // Delegates to time.js — do not reimplement age logic here.
-    if (typeof window.calculateAge === 'function') {
-        return window.calculateAge(birthYear, isDeceased, deathYear);
-    }
-    return null;
-}
-
-    // =========================================================================
-    // 5. NEW RESIDENCE MODAL
+    // 2. CREATE RESIDENCE MODAL
     // =========================================================================
 
     function openNewResidenceModal(locationId, locationName, onSuccess) {
-        if (_processingResidenceModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var res = _residence();
+
+        var resolvedLocationId = null;
+        var resolvedLocationName = 'Unknown';
+
+        if (typeof locationId === 'string') {
+            resolvedLocationId = locationId;
+            var place = _getPlaceById(locationId);
+            if (place) resolvedLocationName = place.displayName || 'Unknown';
+            else if (locationName) resolvedLocationName = locationName;
+        } else if (locationId && typeof locationId === 'object' && locationId.id) {
+            resolvedLocationId = locationId.id;
+            resolvedLocationName = locationId.displayName || locationId.name || 'Unknown';
         }
-        _processingResidenceModal = true;
-
-        try {
-            var currentYear = _getCurrentYear();
-            var types = _getAllResidenceTypes();
-            var conditions = _getAllResidenceConditions();
-
-            // Resolve location
-            var resolvedLocationId = null;
-            var resolvedLocationName = 'Unknown';
-
-            if (locationId) {
-                if (typeof locationId === 'string') {
-                    resolvedLocationId = locationId;
-                    var place = _getPlaceById(locationId);
-                    if (place) {
-                        resolvedLocationName = place.displayName || 'Unknown';
-                    } else if (locationName) {
-                        resolvedLocationName = locationName;
-                    }
-                } else if (typeof locationId === 'object' && locationId.id) {
-                    resolvedLocationId = locationId.id;
-                    resolvedLocationName = locationId.displayName || locationId.name || 'Unknown';
-                }
-            }
-
-            if (locationName && typeof locationName === 'string') {
-                resolvedLocationName = locationName;
-            }
-
-            var typeOptions = '';
-            for (var key in types) {
-                var t = types[key];
-                typeOptions += '<option value="' + t.id + '">' + _escapeHtml(t.name) + ' (' + (t.isMultiUnit ? 'Multi-unit' : 'Single') + ')</option>';
-            }
-
-            var conditionOptions = conditions.map(function(c) {
-                return '<option value="' + c.id + '" ' + (c.id === 'good' ? 'selected' : '') + '>' + _escapeHtml(c.name) + '</option>';
-            }).join('');
-
-            var locationOptions = _buildLocationDropdown(resolvedLocationId, '— No location —', false);
-
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.6rem; color: var(--dim);">' +
-                'Creating a new residence in <strong>' + _escapeHtml(resolvedLocationName) + '</strong>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Residence Name *</label>' +
-                '<input type="text" id="newResidenceName" placeholder="e.g., Thornwood Manor" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Residence Type</label>' +
-                '<select id="newResidenceType" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                typeOptions +
-                '</select>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Location</label>' +
-                '<select id="newResidenceLocation" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                locationOptions +
-                '</select>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Condition</label>' +
-                '<select id="newResidenceCondition" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                conditionOptions +
-                '</select>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Built Year</label>' +
-                '<input type="number" id="newResidenceBuiltYear" value="' + currentYear + '" min="1" max="' + (currentYear + 5) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes (optional)</label>' +
-                '<textarea id="newResidenceNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;" placeholder="Historical notes..."></textarea>' +
-                '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Add Residence to ' + (resolvedLocationName || 'Location'),
-                content: modalContent,
-                confirmText: 'Create Residence',
-                cancelText: 'Cancel',
-                onOpen: function() {
-                    var nameInput = document.getElementById('newResidenceName');
-                    if (nameInput) {
-                        setTimeout(function() { nameInput.focus(); }, 100);
-                    }
-                },
-                onConfirm: function() {
-                    var name = document.getElementById('newResidenceName').value.trim();
-                    var typeId = document.getElementById('newResidenceType').value;
-                    var locationId = document.getElementById('newResidenceLocation').value;
-                    var condition = document.getElementById('newResidenceCondition').value;
-                    var builtYear = parseInt(document.getElementById('newResidenceBuiltYear').value);
-                    var notes = document.getElementById('newResidenceNotes').value;
-
-                    if (!name) {
-                        _showToast('Please enter a residence name', 'error');
-                        return false;
-                    }
-
-                    if (!typeId) {
-                        _showToast('Please select a residence type', 'error');
-                        return false;
-                    }
-
-                    if (isNaN(builtYear) || builtYear < 1) {
-                        _showToast('Please enter a valid built year', 'error');
-                        return false;
-                    }
-
-                    var finalLocationId = locationId || resolvedLocationId || null;
-
-                    var newResidence = _createResidence(name, finalLocationId, typeId, {
-                        condition: condition,
-                        builtYear: builtYear,
-                        notes: notes || null
-                    });
-
-                    if (newResidence) {
-                        _showToast('Residence "' + name + '" created', 'success');
-                        _closeTopModal();
-                        _processingResidenceModal = false;
-                        if (onSuccess) {
-                            onSuccess(newResidence.id);
-                        }
-                    } else {
-                        _showToast('Failed to create residence', 'error');
-                    }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingResidenceModal = false;
-                }
-            });
-
-        } catch (e) {
-            _processingResidenceModal = false;
-            _showToast('Error opening new residence modal', 'error');
+        if (locationName && typeof locationName === 'string') {
+            resolvedLocationName = locationName;
         }
+
+        var currentYear = _currentYear();
+
+        var types = res.getResidenceTypes();
+        var typeOptions = '';
+        var typeKeys = Object.keys(types);
+        for (var i = 0; i < typeKeys.length; i++) {
+            var t = types[typeKeys[i]];
+            typeOptions += '<option value="' + _escapeHtml(t.id) + '">' +
+                _escapeHtml(t.name) + ' (' +
+                (t.isMultiUnit ? 'Multi-unit' : 'Single') + ')</option>';
+        }
+
+        var conditions = res.getResidenceConditions();
+        var conditionOptions = '';
+        for (var c = 0; c < conditions.length; c++) {
+            conditionOptions += '<option value="' + _escapeHtml(conditions[c].id) + '"' +
+                (conditions[c].id === 'good' ? ' selected' : '') + '>' +
+                _escapeHtml(conditions[c].name) + '</option>';
+        }
+
+        var locationOptions = _buildLocationDropdown(resolvedLocationId, '— No location —');
+
+        var content =
+            '<div style="margin-bottom:16px;">' +
+                '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
+                    'Creating a new residence in <strong>' +
+                    _escapeHtml(resolvedLocationName) + '</strong>' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Residence Name *</label>' +
+                    '<input type="text" data-field="name" placeholder="e.g., Thornwood Manor" ' +
+                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Residence Type</label>' +
+                    '<select data-field="typeId" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                        typeOptions +
+                    '</select>' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Location</label>' +
+                    '<select data-field="locationId" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                        locationOptions +
+                    '</select>' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Condition</label>' +
+                    '<select data-field="condition" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                        conditionOptions +
+                    '</select>' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Built Year</label>' +
+                    '<input type="number" data-field="builtYear" value="' +
+                        (currentYear !== null ? currentYear : '') +
+                        '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes (optional)</label>' +
+                    '<textarea data-field="notes" rows="2" placeholder="Historical notes..." ' +
+                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;"></textarea>' +
+                '</div>' +
+            '</div>';
+
+        return _openModal({
+            title: 'Add Residence to ' + (resolvedLocationName || 'Location'),
+            content: content,
+            confirmText: 'Create Residence',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var root = _resolveModalRoot();
+                if (!root) return false;
+
+                var name = ((root.querySelector('[data-field="name"]') || {}).value || '').trim();
+                if (!name) { _showToast('Please enter a residence name', 'error'); return false; }
+
+                var typeId = (root.querySelector('[data-field="typeId"]') || {}).value;
+                if (!typeId) { _showToast('Please select a residence type', 'error'); return false; }
+
+                var finalLocationId = (root.querySelector('[data-field="locationId"]') || {}).value ||
+                    resolvedLocationId || null;
+
+                if (!finalLocationId) {
+                    _showToast('Please select a location', 'error');
+                    return false;
+                }
+
+                var condition = (root.querySelector('[data-field="condition"]') || {}).value || 'good';
+                var builtYear = _parseIntOrNull((root.querySelector('[data-field="builtYear"]') || {}).value);
+                if (builtYear === null || builtYear < 1) {
+                    _showToast('Please enter a valid built year', 'error');
+                    return false;
+                }
+                var notes = ((root.querySelector('[data-field="notes"]') || {}).value || '').trim();
+
+                var result = res.createResidence(name, finalLocationId, typeId, {
+                    condition: condition,
+                    builtYear: builtYear,
+                    notes: notes || null
+                });
+
+                if (!result.success) {
+                    _showToast(result.reason || 'Failed to create residence', 'error');
+                    return false;
+                }
+
+                _showToast('Residence "' + name + '" created', 'success');
+                if (typeof onSuccess === 'function') onSuccess(result.data.residenceId);
+                return true;
+            }
+        });
     }
 
     // =========================================================================
-    // 6. EDIT RESIDENCE MODAL
+    // 3. EDIT RESIDENCE MODAL
     // =========================================================================
 
     function openEditResidenceModal(residenceId, onSuccess) {
-        if (_processingResidenceModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var res = _residence();
+
+        var residence = res.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
         }
-        _processingResidenceModal = true;
 
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
+        var currentYear = _currentYear();
+        var types = res.getResidenceTypes();
+        var conditions = res.getResidenceConditions();
 
-            var currentYear = _getCurrentYear();
-            var types = _getAllResidenceTypes();
-            var conditions = _getAllResidenceConditions();
+        var typeOptions = '';
+        var typeKeys = Object.keys(types);
+        for (var i = 0; i < typeKeys.length; i++) {
+            var t = types[typeKeys[i]];
+            typeOptions += '<option value="' + _escapeHtml(t.id) + '"' +
+                (residence.typeId === t.id ? ' selected' : '') + '>' +
+                _escapeHtml(t.name) + '</option>';
+        }
 
-            var typeOptions = '';
-            for (var key in types) {
-                var t = types[key];
-                var selected = (residence.typeId === t.id) ? 'selected' : '';
-                typeOptions += '<option value="' + t.id + '" ' + selected + '>' + _escapeHtml(t.name) + ' (' + (t.isMultiUnit ? 'Multi-unit' : 'Single') + ')</option>';
-            }
+        var conditionOptions = '';
+        for (var c = 0; c < conditions.length; c++) {
+            conditionOptions += '<option value="' + _escapeHtml(conditions[c].id) + '"' +
+                (residence.condition === conditions[c].id ? ' selected' : '') + '>' +
+                _escapeHtml(conditions[c].name) + '</option>';
+        }
 
-            var conditionOptions = conditions.map(function(c) {
-                var selected = (residence.condition === c.id) ? 'selected' : '';
-                return '<option value="' + c.id + '" ' + selected + '>' + _escapeHtml(c.name) + '</option>';
-            }).join('');
+        var locationOptions = _buildLocationDropdown(residence.locationId, '— No location —');
 
-            var locationOptions = _buildLocationDropdown(residence.locationId, '— No location —', false);
-
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.6rem; color: var(--dim);">' +
-                'Editing <strong>' + _escapeHtml(residence.name) + '</strong>' +
-                ' · Type: ' + _escapeHtml(residence.typeName || residence.typeId) +
-                ' · Location: ' + _escapeHtml(residence.locationName || 'None') +
+        var content =
+            '<div style="margin-bottom:16px;">' +
+                '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
+                    'Editing <strong>' + _escapeHtml(residence.name) + '</strong>' +
                 '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Residence Name *</label>' +
-                '<input type="text" id="editResidenceName" value="' + _escapeHtml(residence.name) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Residence Name *</label>' +
+                    '<input type="text" data-field="name" value="' +
+                        _escapeHtml(residence.name) +
+                        '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
                 '</div>' +
-                '<div style="margin-bottom: 12px; padding: 8px; background: var(--bg3); border-radius: 6px;">' +
-                '<label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.65rem;">' +
-                '<input type="checkbox" id="editRenameWithHistory" checked>' +
-                '<span>Record this name change in history</span>' +
-                '</label>' +
-                '<div id="editRenameHistoryOptions" style="margin-top: 8px; padding-left: 24px;">' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">' +
-                '<div><label style="font-size: 0.55rem; color: var(--dim);">Year</label>' +
-                '<input type="number" id="editRenameYear" value="' + currentYear + '" min="1" style="width: 100%; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 0.55rem; color: var(--text);">' +
+                '<div style="margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
+                    '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.65rem;">' +
+                        '<input type="checkbox" data-field="recordNameHistory" checked>' +
+                        '<span>Record this name change in history</span>' +
+                    '</label>' +
+                    '<div data-role="rename-history-options" style="margin-top:8px;padding-left:24px;">' +
+                        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+                            '<div>' +
+                                '<label style="font-size:0.55rem;color:var(--dim);">Year</label>' +
+                                '<input type="number" data-field="renameYear" value="' +
+                                    (currentYear !== null ? currentYear : '') +
+                                    '" min="1" style="width:100%;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.55rem;color:var(--text);">' +
+                            '</div>' +
+                            '<div>' +
+                                '<label style="font-size:0.55rem;color:var(--dim);">Reason</label>' +
+                                '<input type="text" data-field="renameReason" placeholder="e.g., Inheritance..." ' +
+                                    'style="width:100%;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.55rem;color:var(--text);">' +
+                            '</div>' +
+                        '</div>' +
+                    '</div>' +
                 '</div>' +
-                '<div><label style="font-size: 0.55rem; color: var(--dim);">Reason</label>' +
-                '<input type="text" id="editRenameReason" placeholder="e.g., Renovation, Inheritance..." style="width: 100%; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 0.55rem; color: var(--text);">' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Residence Type</label>' +
+                    '<select data-field="typeId" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                        typeOptions +
+                    '</select>' +
                 '</div>' +
-                '</div></div></div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Residence Type</label>' +
-                '<select id="editResidenceType" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                typeOptions +
-                '</select>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Location</label>' +
+                    '<select data-field="locationId" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                        locationOptions +
+                    '</select>' +
                 '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Location</label>' +
-                '<select id="editResidenceLocation" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                locationOptions +
-                '</select>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Condition</label>' +
+                    '<select data-field="condition" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                        conditionOptions +
+                    '</select>' +
                 '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Condition</label>' +
-                '<select id="editResidenceCondition" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                conditionOptions +
-                '</select>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Built Year</label>' +
+                    '<input type="number" data-field="builtYear" value="' +
+                        (residence.builtYear !== null ? residence.builtYear : '') +
+                        '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
                 '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Built Year</label>' +
-                '<input type="number" id="editResidenceBuiltYear" value="' + (residence.builtYear || currentYear) + '" min="1" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes</label>' +
+                    '<textarea data-field="notes" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                        _escapeHtml(residence.notes || '') +
+                    '</textarea>' +
                 '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes</label>' +
-                '<textarea id="editResidenceNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' + _escapeHtml(residence.notes || '') + '</textarea>' +
-                '</div>' +
-                '</div>';
+            '</div>';
 
-            _openModal({
-                title: 'Edit Residence: ' + residence.name,
-                content: modalContent,
-                confirmText: 'Save Changes',
-                cancelText: 'Cancel',
-                onOpen: function() {
-                    var historyCheckbox = document.getElementById('editRenameWithHistory');
-                    var historyOptions = document.getElementById('editRenameHistoryOptions');
-                    if (historyCheckbox && historyOptions) {
-                        historyCheckbox.onchange = function() {
-                            historyOptions.style.display = this.checked ? 'block' : 'none';
-                        };
-                    }
-                    var nameInput = document.getElementById('editResidenceName');
-                    if (nameInput) {
-                        setTimeout(function() { nameInput.focus(); }, 100);
-                    }
-                },
-                onConfirm: function() {
-                    var name = document.getElementById('editResidenceName').value.trim();
-                    var typeId = document.getElementById('editResidenceType').value;
-                    var locationId = document.getElementById('editResidenceLocation').value;
-                    var condition = document.getElementById('editResidenceCondition').value;
-                    var builtYear = parseInt(document.getElementById('editResidenceBuiltYear').value);
-                    var notes = document.getElementById('editResidenceNotes').value.trim();
-                    var renameWithHistory = document.getElementById('editRenameWithHistory').checked;
-                    var renameYear = parseInt(document.getElementById('editRenameYear').value);
-                    var renameReason = document.getElementById('editRenameReason').value.trim();
+        return _openModal({
+            title: 'Edit Residence: ' + residence.name,
+            content: content,
+            confirmText: 'Save Changes',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var root = _resolveModalRoot();
+                if (!root) return false;
 
-                    if (!name) {
-                        _showToast('Please enter a residence name', 'error');
-                        return false;
-                    }
+                var name = ((root.querySelector('[data-field="name"]') || {}).value || '').trim();
+                if (!name) { _showToast('Please enter a residence name', 'error'); return false; }
 
-                    if (isNaN(builtYear) || builtYear < 1) {
-                        _showToast('Please enter a valid built year', 'error');
-                        return false;
-                    }
-
-                    // Handle name change
-                    if (name !== residence.name) {
-                        var nameResult = _updateResidenceNameWithHistory(residenceId, name, {
-                            year: renameYear || currentYear,
-                            reason: renameReason || 'Edited',
-                            changedBy: 'User',
-                            addToHistory: renameWithHistory
-                        });
-
-                        if (!nameResult || !nameResult.success) {
-                            _showToast(nameResult ? nameResult.reason : 'Failed to rename residence', 'error');
-                            return false;
-                        }
-
-                        if (renameWithHistory) {
-                            _showToast('Residence renamed from "' + residence.name + '" to "' + name + '" (' + (renameYear || currentYear) + ')', 'success');
-                        } else {
-                            _showToast('Residence name changed to "' + name + '" (no trace)', 'info');
-                        }
-                    }
-
-                    var updates = {
-                        typeId: typeId,
-                        locationId: locationId || null,
-                        condition: condition,
-                        builtYear: builtYear,
-                        notes: notes || null
-                    };
-
-                    if (name !== residence.name) {
-                        updates.name = name;
-                    }
-
-                    var result = _updateResidence(residenceId, updates);
-
-                    if (result) {
-                        _showToast('Residence updated', 'success');
-                        _closeTopModal();
-                        _processingResidenceModal = false;
-                        if (onSuccess) {
-                            onSuccess();
-                        }
-                    } else {
-                        _showToast('Failed to update residence', 'error');
-                    }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingResidenceModal = false;
+                var newTypeId = (root.querySelector('[data-field="typeId"]') || {}).value;
+                var newLocationId = (root.querySelector('[data-field="locationId"]') || {}).value || null;
+                var newCondition = (root.querySelector('[data-field="condition"]') || {}).value;
+                var newBuiltYear = _parseIntOrNull((root.querySelector('[data-field="builtYear"]') || {}).value);
+                if (newBuiltYear === null || newBuiltYear < 1) {
+                    _showToast('Please enter a valid built year', 'error');
+                    return false;
                 }
-            });
+                var newNotes = ((root.querySelector('[data-field="notes"]') || {}).value || '').trim();
 
-        } catch (e) {
-            _processingResidenceModal = false;
-            _showToast('Error opening edit residence modal', 'error');
-        }
+                var recordHistory = (root.querySelector('[data-field="recordNameHistory"]') || {}).checked !== false;
+                var renameYear = _parseIntOrNull((root.querySelector('[data-field="renameYear"]') || {}).value);
+                var renameReason = ((root.querySelector('[data-field="renameReason"]') || {}).value || '').trim();
+
+                // Handle rename first (separate command)
+                if (name !== residence.name) {
+                    var renameResult = res.updateResidenceName(residenceId, name, {
+                        year: renameYear || currentYear,
+                        reason: renameReason || 'Edited',
+                        changedBy: 'User',
+                        addToHistory: recordHistory
+                    });
+                    if (!renameResult.success) {
+                        _showToast(renameResult.reason || 'Failed to rename residence', 'error');
+                        return false;
+                    }
+                }
+
+                // Apply non-name updates
+                var updates = {
+                    typeId: newTypeId,
+                    locationId: newLocationId,
+                    condition: newCondition,
+                    builtYear: newBuiltYear,
+                    notes: newNotes || null
+                };
+
+                var result = res.updateResidence(residenceId, updates);
+                if (!result.success) {
+                    _showToast(result.reason || 'Failed to update residence', 'error');
+                    return false;
+                }
+
+                _showToast('Residence updated', 'success');
+                if (typeof onSuccess === 'function') onSuccess();
+                return true;
+            }
+        });
     }
 
     // =========================================================================
-    // 7. DELETE RESIDENCE MODAL
+    // 4. DELETE RESIDENCE MODAL
     // =========================================================================
 
     function openDeleteResidenceModal(residenceId, onSuccess) {
-        if (_processingResidenceModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var res = _residence();
+
+        var residence = res.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
         }
-        _processingResidenceModal = true;
 
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
+        var unitStats = res.getUnitStats(residenceId);
 
-            var unitCount = residence.units ? residence.units.length : 0;
-            var occupiedUnits = 0;
-            for (var i = 0; i < (residence.units || []).length; i++) {
-                if (!residence.units[i].isVacant && !residence.units[i].isDemolished) {
-                    occupiedUnits++;
+        var content =
+            '<div style="margin-bottom:16px;">' +
+                '<div style="background:rgba(244,67,54,0.1);border-radius:8px;padding:16px;border-left:3px solid #f44336;margin-bottom:16px;">' +
+                    '<div style="font-size:0.9rem;color:#f44336;">Warning: This action cannot be undone</div>' +
+                    '<div style="font-size:0.65rem;color:var(--dim);margin-top:4px;">' +
+                        'Deleting "' + _escapeHtml(residence.name) + '" will remove it from the game world.' +
+                        (unitStats.occupied > 0
+                            ? ' ' + unitStats.occupied + ' unit(s) are currently occupied.' : '') +
+                        (unitStats.total > 0
+                            ? ' ' + unitStats.total + ' total unit(s) will be removed.' : '') +
+                    '</div>' +
+                '</div>' +
+                '<div style="background:var(--bg3);border-radius:8px;padding:12px;margin-bottom:12px;">' +
+                    '<div style="display:flex;justify-content:space-between;font-size:0.7rem;">' +
+                        '<span>Name:</span>' +
+                        '<span style="font-weight:bold;">' + _escapeHtml(residence.name) + '</span>' +
+                    '</div>' +
+                    '<div style="display:flex;justify-content:space-between;font-size:0.7rem;margin-top:4px;">' +
+                        '<span>Type:</span>' +
+                        '<span>' + _escapeHtml(residence.typeName || residence.typeId || 'Unknown') + '</span>' +
+                    '</div>' +
+                    '<div style="display:flex;justify-content:space-between;font-size:0.7rem;margin-top:4px;">' +
+                        '<span>Units:</span>' +
+                        '<span>' + unitStats.total + ' (' + unitStats.occupied + ' occupied)</span>' +
+                    '</div>' +
+                '</div>' +
+                '<div style="font-size:0.6rem;color:var(--warn);">' +
+                    'Are you sure you want to delete this residence?' +
+                '</div>' +
+                '<div style="margin-top:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">' +
+                        'Type "<strong>' + _escapeHtml(residence.name) + '</strong>" to confirm' +
+                    '</label>' +
+                    '<input type="text" data-field="confirmName" placeholder="Enter residence name" ' +
+                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                '</div>' +
+            '</div>';
+
+        return _openModal({
+            title: 'Delete Residence: ' + residence.name,
+            content: content,
+            confirmText: 'Delete Residence',
+            cancelText: 'Cancel',
+            confirmStyle: 'danger',
+            onConfirm: function() {
+                var root = _resolveModalRoot();
+                if (!root) return false;
+
+                var confirmName = ((root.querySelector('[data-field="confirmName"]') || {}).value || '').trim();
+                if (confirmName !== residence.name) {
+                    _showToast('Residence name does not match', 'error');
+                    return false;
                 }
-            }
 
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: rgba(244, 67, 54, 0.1); border-radius: 8px; padding: 16px; border-left: 3px solid #f44336; margin-bottom: 16px;">' +
-                '<div style="font-size: 0.9rem; color: #f44336;">Warning: This action cannot be undone</div>' +
-                '<div style="font-size: 0.65rem; color: var(--dim); margin-top: 4px;">' +
-                'Deleting "' + _escapeHtml(residence.name) + '" will remove it from the game world.' +
-                (occupiedUnits > 0 ? ' ' + occupiedUnits + ' unit(s) are currently occupied.' : '') +
-                (unitCount > 0 ? ' ' + unitCount + ' total unit(s) will be removed.' : '') +
-                '</div>' +
-                '</div>' +
-                '<div style="background: var(--bg3); border-radius: 8px; padding: 12px; margin-bottom: 12px;">' +
-                '<div style="display: flex; justify-content: space-between; font-size: 0.7rem;">' +
-                '<span>Name:</span>' +
-                '<span style="font-weight: bold;">' + _escapeHtml(residence.name) + '</span>' +
-                '</div>' +
-                '<div style="display: flex; justify-content: space-between; font-size: 0.7rem; margin-top: 4px;">' +
-                '<span>Type:</span>' +
-                '<span>' + _escapeHtml(residence.typeName || residence.typeId) + '</span>' +
-                '</div>' +
-                '<div style="display: flex; justify-content: space-between; font-size: 0.7rem; margin-top: 4px;">' +
-                '<span>Units:</span>' +
-                '<span>' + unitCount + ' (' + occupiedUnits + ' occupied)</span>' +
-                '</div>' +
-                '</div>' +
-                '<div style="font-size: 0.6rem; color: var(--warn);">' +
-                'Are you sure you want to delete this residence?' +
-                '</div>' +
-                '<div class="form-group" style="margin-top: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Type "<strong>' + _escapeHtml(residence.name) + '</strong>" to confirm</label>' +
-                '<input type="text" id="confirmDeleteResidenceName" placeholder="Enter residence name" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Delete Residence: ' + residence.name,
-                content: modalContent,
-                confirmText: 'Delete Residence',
-                cancelText: 'Cancel',
-                confirmStyle: 'danger',
-                onConfirm: function() {
-                    var confirmName = document.getElementById('confirmDeleteResidenceName').value.trim();
-                    if (confirmName !== residence.name) {
-                        _showToast('Residence name does not match', 'error');
-                        return false;
-                    }
-
-                    var force = occupiedUnits === 0;
-                    var result = _deleteResidence(residenceId, { force: force });
-
-                    if (result) {
-                        _showToast('Residence "' + residence.name + '" deleted', 'info');
-                        _closeTopModal();
-                        _processingResidenceModal = false;
-                        if (onSuccess) {
-                            onSuccess();
-                        }
-                    } else {
-                        _showToast('Failed to delete residence - occupied units must be vacated first', 'error');
-                    }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingResidenceModal = false;
+                var force = unitStats.occupied === 0;
+                var result = res.deleteResidence(residenceId, { force: force });
+                if (!result.success) {
+                    _showToast(result.reason || 'Failed to delete residence', 'error');
+                    return false;
                 }
-            });
 
-        } catch (e) {
-            _processingResidenceModal = false;
-            _showToast('Error opening delete residence modal', 'error');
-        }
+                _showToast('Residence "' + residence.name + '" deleted', 'info');
+                if (typeof onSuccess === 'function') onSuccess();
+                return true;
+            }
+        });
     }
 
     // =========================================================================
-    // 8. RENAME RESIDENCE MODAL
+    // 5. RENAME RESIDENCE MODAL
     // =========================================================================
 
     function openRenameResidenceModal(residenceId, onSuccess) {
-        if (_processingResidenceModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var res = _residence();
+
+        var residence = res.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
         }
-        _processingResidenceModal = true;
 
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
+        var currentYear = _currentYear();
+        var nameHistory = res.getResidenceNameHistory(residenceId);
 
-            var currentYear = _getCurrentYear();
-            var nameHistory = _getResidenceNameHistory(residenceId);
-            var currentNameInfo = _getResidenceCurrentNameInfo(residenceId);
-
-            var historyHtml = '';
-            if (nameHistory.length > 0) {
-                var sortedHistory = nameHistory.slice().sort(function(a, b) { return b.year - a.year; });
-                historyHtml =
-                    '<div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);">' +
-                    '<div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 8px;">Name Change History</div>' +
-                    '<div style="max-height: 150px; overflow-y: auto; background: var(--bg3); border-radius: 6px; padding: 8px;">';
-                for (var i = 0; i < Math.min(sortedHistory.length, 10); i++) {
-                    var h = sortedHistory[i];
-                    historyHtml +=
-                        '<div style="font-size: 0.55rem; padding: 4px 0; border-bottom: 1px solid var(--border-light);">' +
-                        '<strong>' + h.year + ':</strong> ' + _escapeHtml(h.oldName || '—') + ' -> ' + _escapeHtml(h.newName) +
+        var historyHtml = '';
+        if (nameHistory.length > 0) {
+            var sorted = nameHistory.slice().sort(function(a, b) {
+                return (b.year || 0) - (a.year || 0);
+            });
+            historyHtml =
+                '<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);">' +
+                    '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:8px;">Name Change History</div>' +
+                    '<div style="max-height:150px;overflow-y:auto;background:var(--bg3);border-radius:6px;padding:8px;">';
+            var limit = Math.min(sorted.length, 10);
+            for (var i = 0; i < limit; i++) {
+                var h = sorted[i];
+                historyHtml +=
+                    '<div style="font-size:0.55rem;padding:4px 0;border-bottom:1px solid var(--border-light);">' +
+                        '<strong>' + h.year + ':</strong> ' +
+                        _escapeHtml(h.oldName || '—') + ' -> ' +
+                        _escapeHtml(h.newName) +
                         (h.reason ? ' (' + _escapeHtml(h.reason) + ')' : '') +
-                        '</div>';
-                }
-                if (sortedHistory.length > 10) {
-                    historyHtml += '<div style="font-size: 0.5rem; color: var(--dim); text-align: center; padding-top: 4px;">... and ' + (sortedHistory.length - 10) + ' more</div>';
-                }
-                historyHtml += '</div></div>';
+                    '</div>';
             }
-
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.6rem; color: var(--dim);">' +
-                'Current name: <strong>' + _escapeHtml(residence.name) + '</strong>' +
-                (currentNameInfo ? ' · Since: ' + currentNameInfo.since : '') +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">New Name *</label>' +
-                '<input type="text" id="renameResidenceInput" value="' + _escapeHtml(residence.name) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div style="margin-bottom: 12px; padding: 8px; background: var(--bg3); border-radius: 6px;">' +
-                '<label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.65rem;">' +
-                '<input type="checkbox" id="renameWithHistory" checked>' +
-                '<span>Record this name change in history</span>' +
-                '</label>' +
-                '<div id="renameHistoryOptions" style="margin-top: 8px; padding-left: 24px;">' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">' +
-                '<div><label style="font-size: 0.55rem; color: var(--dim);">Year</label>' +
-                '<input type="number" id="renameYear" value="' + currentYear + '" min="1" max="' + (currentYear + 5) + '" style="width: 100%; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 0.55rem; color: var(--text);">' +
-                '</div>' +
-                '<div><label style="font-size: 0.55rem; color: var(--dim);">Reason</label>' +
-                '<input type="text" id="renameReason" placeholder="e.g., Succession" style="width: 100%; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 0.55rem; color: var(--text);">' +
-                '</div>' +
-                '</div>' +
-                '</div>' +
-                '</div>' +
-                historyHtml +
+            if (sorted.length > 10) {
+                historyHtml += '<div style="font-size:0.5rem;color:var(--dim);text-align:center;padding-top:4px;">' +
+                    '... and ' + (sorted.length - 10) + ' more' +
                 '</div>';
-
-            _openModal({
-                title: 'Rename Residence: ' + residence.name,
-                content: modalContent,
-                confirmText: 'Rename',
-                cancelText: 'Cancel',
-                onOpen: function() {
-                    var input = document.getElementById('renameResidenceInput');
-                    if (input) {
-                        setTimeout(function() { input.focus(); input.select(); }, 100);
-                    }
-
-                    var historyCheckbox = document.getElementById('renameWithHistory');
-                    var historyOptions = document.getElementById('renameHistoryOptions');
-                    if (historyCheckbox && historyOptions) {
-                        historyCheckbox.onchange = function() {
-                            historyOptions.style.display = this.checked ? 'block' : 'none';
-                        };
-                    }
-                },
-                onConfirm: function() {
-                    var newName = document.getElementById('renameResidenceInput').value.trim();
-                    var year = parseInt(document.getElementById('renameYear').value);
-                    var reason = document.getElementById('renameReason').value.trim();
-                    var addToHistory = document.getElementById('renameWithHistory').checked;
-
-                    if (!newName) {
-                        _showToast('Please enter a residence name', 'error');
-                        return false;
-                    }
-
-                    if (newName === residence.name) {
-                        _showToast('Name is the same', 'info');
-                        _closeTopModal();
-                        _processingResidenceModal = false;
-                        if (onSuccess) {
-                            onSuccess();
-                        }
-                        return true;
-                    }
-
-                    if (isNaN(year) || year < 1) {
-                        _showToast('Please enter a valid year', 'error');
-                        return false;
-                    }
-
-                    var result = _updateResidenceNameWithHistory(residenceId, newName, {
-                        year: year,
-                        reason: reason || 'Renamed',
-                        changedBy: 'User',
-                        addToHistory: addToHistory
-                    });
-
-                    if (result && result.success) {
-                        _showToast('Residence renamed from "' + result.oldName + '" to "' + result.newName + '" (' + year + ')', 'success');
-                        _closeTopModal();
-                        _processingResidenceModal = false;
-                        if (onSuccess) {
-                            onSuccess();
-                        }
-                    } else {
-                        _showToast(result ? result.reason : 'Failed to rename residence', 'error');
-                    }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingResidenceModal = false;
-                }
-            });
-
-        } catch (e) {
-            _processingResidenceModal = false;
-            _showToast('Error opening rename residence modal', 'error');
-        }
-    }
-
-    // =========================================================================
-    // 9. RESIDENCE NAME HISTORY MODAL
-    // =========================================================================
-
-    function openResidenceNameHistoryModal(residenceId) {
-        if (_processingResidenceModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingResidenceModal = true;
-
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingResidenceModal = false;
-                return;
             }
+            historyHtml += '</div></div>';
+        }
 
-            var nameHistory = _getResidenceNameHistory(residenceId);
-            var currentNameInfo = _getResidenceCurrentNameInfo(residenceId);
-            var originalName = _getResidenceOriginalName(residenceId);
-
-            var historyHtml = '';
-            if (nameHistory.length === 0) {
-                historyHtml = '<div style="color: var(--dim); text-align: center; padding: 20px;">No name change history recorded</div>';
-            } else {
-                var sortedHistory = nameHistory.slice().sort(function(a, b) { return a.year - b.year; });
-                historyHtml = '<div style="display: flex; flex-direction: column; gap: 8px;">';
-                for (var i = 0; i < sortedHistory.length; i++) {
-                    var h = sortedHistory[i];
-                    var isCurrent = i === sortedHistory.length - 1;
-                    historyHtml +=
-                        '<div style="background: var(--bg3); border-radius: 6px; padding: 10px; border-left: 3px solid ' + (isCurrent ? 'var(--accent)' : 'var(--border)') + ';">' +
-                        '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">' +
-                        '<div><span style="font-weight: bold;">' + h.year + '</span> ' + _escapeHtml(h.oldName || '—') + ' -> <strong>' + _escapeHtml(h.newName) + '</strong></div>' +
-                        (isCurrent ? '<span style="font-size: 0.55rem; color: var(--accent);">Current</span>' : '') +
+        var content =
+            '<div style="margin-bottom:16px;">' +
+                '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
+                    'Current name: <strong>' + _escapeHtml(residence.name) + '</strong>' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">New Name *</label>' +
+                    '<input type="text" data-field="newName" value="' +
+                        _escapeHtml(residence.name) +
+                        '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                '</div>' +
+                '<div style="margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
+                    '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.65rem;">' +
+                        '<input type="checkbox" data-field="recordHistory" checked>' +
+                        '<span>Record this name change in history</span>' +
+                    '</label>' +
+                    '<div style="margin-top:8px;padding-left:24px;">' +
+                        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+                            '<div>' +
+                                '<label style="font-size:0.55rem;color:var(--dim);">Year</label>' +
+                                '<input type="number" data-field="year" value="' +
+                                    (currentYear !== null ? currentYear : '') +
+                                    '" min="1" style="width:100%;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.55rem;color:var(--text);">' +
+                            '</div>' +
+                            '<div>' +
+                                '<label style="font-size:0.55rem;color:var(--dim);">Reason</label>' +
+                                '<input type="text" data-field="reason" placeholder="e.g., Succession" ' +
+                                    'style="width:100%;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.55rem;color:var(--text);">' +
+                            '</div>' +
                         '</div>' +
-                        (h.reason ? '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">Reason: ' + _escapeHtml(h.reason) + '</div>' : '') +
-                        (h.changedBy ? '<div style="font-size: 0.5rem; color: var(--dim); margin-top: 2px;">By: ' + _escapeHtml(h.changedBy) + '</div>' : '') +
-                        '</div>';
-                }
-                historyHtml += '</div>';
-            }
-
-            var modalContent =
-                '<div style="margin-bottom: 16px; background: var(--bg2); padding: 12px; border-radius: 8px;">' +
-                '<div><strong>' + _escapeHtml(residence.name) + '</strong></div>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">Current name since: ' + (currentNameInfo ? currentNameInfo.since : 'Unknown') + '</div>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">Original name: ' + _escapeHtml(originalName) + '</div>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">Total name changes: ' + nameHistory.length + '</div>' +
+                    '</div>' +
                 '</div>' +
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="font-size: 0.7rem; color: var(--accent); margin-bottom: 8px;">Name Change History</div>' +
                 historyHtml +
-                '</div>' +
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
-                'Name changes help track the evolution of a residence through time.' +
-                '</div>';
+            '</div>';
 
-            _openModal({
-                title: 'Residence Name History: ' + residence.name,
-                content: modalContent,
-                confirmText: 'Close',
-                cancelText: '',
-                onConfirm: function() {
-                    _closeTopModal();
-                    _processingResidenceModal = false;
+        return _openModal({
+            title: 'Rename Residence: ' + residence.name,
+            content: content,
+            confirmText: 'Rename',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var root = _resolveModalRoot();
+                if (!root) return false;
+
+                var newName = ((root.querySelector('[data-field="newName"]') || {}).value || '').trim();
+                if (!newName) { _showToast('Please enter a residence name', 'error'); return false; }
+
+                if (newName === residence.name) {
+                    _showToast('Name is the same', 'info');
+                    if (typeof onSuccess === 'function') onSuccess();
+                    return true;
                 }
-            });
 
-        } catch (e) {
-            _processingResidenceModal = false;
-            _showToast('Error opening residence name history', 'error');
-        }
+                var year = _parseIntOrNull((root.querySelector('[data-field="year"]') || {}).value);
+                if (year === null || year < 1) {
+                    _showToast('Please enter a valid year', 'error');
+                    return false;
+                }
+
+                var reason = ((root.querySelector('[data-field="reason"]') || {}).value || '').trim();
+                var addToHistory = (root.querySelector('[data-field="recordHistory"]') || {}).checked !== false;
+
+                var result = res.updateResidenceName(residenceId, newName, {
+                    year: year,
+                    reason: reason || 'Renamed',
+                    changedBy: 'User',
+                    addToHistory: addToHistory
+                });
+
+                if (!result.success) {
+                    _showToast(result.reason || 'Failed to rename residence', 'error');
+                    return false;
+                }
+
+                _showToast('Residence renamed to "' + newName + '"', 'success');
+                if (typeof onSuccess === 'function') onSuccess(result.data);
+                return true;
+            }
+        });
     }
 
     // =========================================================================
-    // 10. RESIDENCE DETAILS MODAL
+    // 6. RESIDENCE DETAILS MODAL
     // =========================================================================
 
     function openResidenceDetailsModal(residenceId, onRefresh) {
-        if (_processingResidenceModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var res = _residence();
+
+        var residence = res.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
         }
-        _processingResidenceModal = true;
 
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingResidenceModal = false;
-                return;
+        var unitStats = res.getUnitStats(residenceId);
+        var units = res.getUnits(residenceId);
+        var recommendations = res.getResidenceRecommendations(residenceId);
+        var associationHistory = res.getResidenceAssociationHistory(residenceId);
+
+        var content = _buildDetailsContent(residence, unitStats, units,
+            recommendations, associationHistory, residenceId);
+
+        var handle = _openModal({
+            title: 'Residence Details: ' + residence.name,
+            content: content,
+            confirmText: 'Close',
+            cancelText: '',
+            onConfirm: function() {
+                if (typeof onRefresh === 'function') onRefresh();
             }
+        });
 
-            var currentYear = _getCurrentYear();
-            var isVacant = residence.isVacant === true;
-            var isDemolished = residence.isDemolished === true;
-            var location = _getPlaceById(residence.locationId);
-            var isMultiUnit = residence.isMultiUnit === true;
-            var units = residence.units || [];
-            var unitStats = _getUnitStats(residenceId);
-            var associationHistory = _getResidenceAssociationHistory(residenceId);
-            var recommendations = _getResidenceRecommendations(residenceId);
+        setTimeout(_attachOnOpen(function(root) {
+            _wireDetailsActions(root, residenceId, residence, onRefresh);
+        }), 0);
 
-            var locationDisplay = location ? location.displayName : 'Unknown';
-            var typeDisplay = residence.typeName || residence.typeId || 'Unknown';
+        return handle;
+    }
 
-            // Build members HTML (household members)
-            var membersHtml = '';
-            var household = residence.householdId ? _getHousehold(residence.householdId) : null;
-            var householdMembers = [];
+    function _buildDetailsContent(residence, unitStats, units, recommendations,
+                                   associationHistory, residenceId) {
+        var isVacant = residence.isVacant === true;
+        var isDemolished = residence.isDemolished === true;
 
-            if (household && household.members) {
-                var characters = _getCharacters();
-                var charMap = {};
-                for (var i = 0; i < characters.length; i++) {
-                    charMap[characters[i].id] = characters[i];
-                }
+        var statusText = isDemolished ? 'Demolished' : (isVacant ? 'Vacant' : 'Occupied');
+        var statusColor = isDemolished ? '#8a2020' : (isVacant ? '#c87040' : '#4a9e6a');
 
-                for (var i = 0; i < household.members.length; i++) {
-                    var member = household.members[i];
-                    var char = charMap[member.characterId];
-                    if (char) {
-                        var age = _calculateAge(char.birthYear, char.isDeceased, char.deathYear);
-                        var genderText = char.gender === 'male' ? 'Male' : (char.gender === 'female' ? 'Female' : 'Unknown');
-                        var headText = member.isHead ? ' (Head)' : '';
+        var html = '<div style="margin-bottom:16px;">';
 
-                        householdMembers.push({
-                            character: char,
-                            member: member,
-                            age: age,
-                            genderText: genderText,
-                            headText: headText
-                        });
-                    }
-                }
+        // Header
+        html += '<div style="background:var(--bg2);border-radius:8px;padding:12px;margin-bottom:12px;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">';
+        html += '<div>';
+        html += '<div style="font-size:1.1rem;font-weight:bold;">' +
+            _escapeHtml(residence.name) + '</div>';
+        html += '<div style="font-size:0.65rem;color:var(--dim);margin-top:2px;">' +
+            _escapeHtml(residence.typeName || residence.typeId || 'Unknown') +
+            ' · ' + _escapeHtml(residence.locationName || 'Unknown') +
+            ' · Built ' + (residence.builtYear !== null ? residence.builtYear : 'Unknown') +
+            ' · Condition: ' + _escapeHtml(residence.condition || 'unknown') +
+            (residence.isMultiUnit ? ' · Multi-unit' : '') +
+        '</div></div>';
+        html += '<div><span style="background:' + statusColor +
+            ';padding:4px 10px;border-radius:16px;font-size:0.6rem;color:white;">' +
+            statusText + '</span></div>';
+        html += '</div>';
+        if (residence.description) {
+            html += '<div style="margin-top:8px;font-size:0.6rem;color:var(--dim);">' +
+                _escapeHtml(residence.description) + '</div>';
+        }
+        html += '</div>';
 
-                householdMembers.sort(function(a, b) {
-                    if (a.member.isHead && !b.member.isHead) return -1;
-                    if (!a.member.isHead && b.member.isHead) return 1;
-                    return (a.member.joinedYear || 0) - (b.member.joinedYear || 0);
-                });
+        // Stats grid
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;font-size:0.6rem;">';
+        html += _detailCell('Value', (residence.estimatedValue || 0) + ' gold');
+        html += _detailCell('Built', residence.builtYear || 'Unknown');
+        html += _detailCell('Condition', residence.condition || 'unknown');
+        html += '</div>';
 
-                membersHtml = '<div style="background: var(--bg3); padding: 10px; border-radius: 8px; margin-bottom: 12px;">' +
-                    '<div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 4px;">Household: ' + _escapeHtml(household.name) + ' (' + householdMembers.length + ' members)</div>';
+        // Units
+        if (residence.isMultiUnit && units.length > 0) {
+            html += _buildUnitsSection(residenceId, units, unitStats);
+        } else if (residence.isMultiUnit) {
+            html += '<div style="background:var(--bg3);padding:10px;border-radius:8px;margin-bottom:12px;">' +
+                '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">Units</div>' +
+                '<div style="color:var(--dim);font-size:0.55rem;text-align:center;padding:12px;">No units created yet</div>' +
+                '<div style="margin-top:6px;text-align:center;">' +
+                    '<button data-action="add-unit" style="padding:3px 10px;font-size:0.5rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">Add Unit</button>' +
+                '</div>' +
+            '</div>';
+        }
 
-                for (var i = 0; i < Math.min(householdMembers.length, 10); i++) {
-                    var m = householdMembers[i];
-                    membersHtml +=
-                        '<div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border-light); font-size: 0.55rem;">' +
-                        '<span>' + _escapeHtml(m.character.name) + ' ' + _escapeHtml(m.character.surname || '') + m.headText + '</span>' +
-                        '<span style="color: var(--dim);">' + m.age + 'y · ' + (m.member.role || 'Member') + '</span>' +
-                        '</div>';
-                }
-                if (householdMembers.length > 10) {
-                    membersHtml += '<div style="font-size: 0.5rem; color: var(--dim); text-align: center; padding-top: 4px;">... and ' + (householdMembers.length - 10) + ' more</div>';
-                }
-                membersHtml += '</div>';
-            } else if (isVacant && !isDemolished) {
-                membersHtml =
-                    '<div style="background: var(--bg3); padding: 10px; border-radius: 8px; margin-bottom: 12px;">' +
-                    '<div style="font-size: 0.6rem; color: #c87040;">Vacant</div>' +
-                    '<div style="font-size: 0.55rem; color: var(--dim);">This residence is currently vacant. ' +
-                    (residence.vacantYear ? 'Vacant since ' + residence.vacantYear + '.' : '') +
-                    (residence.vacantReason ? ' Reason: ' + residence.vacantReason : '') +
-                    '</div>' +
-                    '</div>';
-            } else if (isDemolished) {
-                membersHtml =
-                    '<div style="background: var(--bg3); padding: 10px; border-radius: 8px; margin-bottom: 12px;">' +
-                    '<div style="font-size: 0.6rem; color: #8a2020;">Demolished</div>' +
-                    '<div style="font-size: 0.55rem; color: var(--dim);">This residence was demolished in ' + (residence.demolishedYear || 'Unknown') +
-                    (residence.demolishedReason ? '. Reason: ' + residence.demolishedReason : '') +
-                    '</div>' +
-                    '</div>';
-            }
+        // Association history
+        if (associationHistory.length > 0) {
+            html += _buildAssociationSection(associationHistory);
+        }
 
-            // Build units HTML
-            var unitsHtml = '';
-            if (isMultiUnit && units.length > 0) {
-                unitsHtml =
-                    '<div style="background: var(--bg3); padding: 10px; border-radius: 8px; margin-bottom: 12px;">' +
-                    '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">' +
-                    '<div style="font-size: 0.6rem; color: var(--accent);">Units (' + units.length + ' of ' + (residence.maxUnits || units.length) + ')</div>' +
-                    '<span style="font-size: 0.5rem; color: var(--dim);">' + unitStats.occupied + ' occupied · ' + unitStats.vacant + ' vacant</span>' +
-                    '</div>' +
-                    '<div style="max-height: 200px; overflow-y: auto;">';
+        // Recommendations
+        if (recommendations && recommendations.length > 0 && !isDemolished) {
+            html += _buildRecommendationsSection(recommendations);
+        }
 
-                for (var i = 0; i < units.length; i++) {
-                    var u = units[i];
-                    var unitStatus = u.isDemolished ? 'Demolished' : (u.isVacant ? 'Vacant' : 'Occupied');
-                    var unitColor = u.isDemolished ? '#8a2020' : (u.isVacant ? '#c87040' : '#4a9e6a');
-                    var unitHousehold = u.householdName || 'Unassigned';
+        // Actions
+        html += _buildActionButtons(residence, isVacant, isDemolished);
 
-                    unitsHtml +=
-                        '<div class="unit-item" data-unit-number="' + u.unitNumber + '" style="' +
-                        'display: flex; ' +
-                        'justify-content: space-between; ' +
-                        'align-items: center; ' +
-                        'padding: 6px 8px; ' +
-                        'border-bottom: 1px solid var(--border-light); ' +
-                        'cursor: pointer; ' +
-                        'border-left: 3px solid ' + unitColor + '; ' +
-                        'margin-bottom: 2px; ' +
-                        'background: var(--bg2); ' +
-                        'border-radius: 4px;' +
-                        '">' +
-                        '<div>' +
-                        '<span style="font-weight: bold; font-size: 0.6rem;">Unit ' + u.unitNumber + '</span>' +
-                        '<span style="font-size: 0.5rem; color: ' + unitColor + '; margin-left: 6px;">' + unitStatus + '</span>' +
-                        '<span style="font-size: 0.5rem; color: var(--dim); margin-left: 6px;">' + _escapeHtml(unitHousehold) + '</span>' +
-                        '</div>' +
-                        '<div style="display: flex; gap: 4px;">' +
-                        '<button class="unit-details-btn btn small" data-unit-number="' + u.unitNumber + '" style="padding: 2px 6px; font-size: 0.45rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 3px; cursor: pointer;">View</button>' +
-                        (u.isVacant && !u.isDemolished ?
-                            '<button class="unit-assign-btn btn small" data-unit-number="' + u.unitNumber + '" style="padding: 2px 6px; font-size: 0.45rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 3px; cursor: pointer;">Assign</button>' :
-                            (!u.isDemolished ?
-                                '<button class="unit-mark-vacant-btn btn small" data-unit-number="' + u.unitNumber + '" style="padding: 2px 6px; font-size: 0.45rem; background: #8a5a20; border: none; color: white; border-radius: 3px; cursor: pointer;">Vacant</button>' :
-                                ''
-                            )
-                        ) +
-                        (!u.isDemolished ?
-                            '<button class="unit-remove-btn btn small" data-unit-number="' + u.unitNumber + '" style="padding: 2px 6px; font-size: 0.45rem; background: #8a3020; border: none; color: white; border-radius: 3px; cursor: pointer;">✗</button>' :
-                            ''
-                        ) +
-                        '</div>' +
-                        '</div>';
-                }
+        html += '</div>';
+        return html;
+    }
 
-                unitsHtml += '</div>' +
-                    '<div style="margin-top: 6px; text-align: center;">' +
-                    '<button id="addUnitBtn" class="btn small" style="padding: 3px 10px; font-size: 0.5rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer;">Add Unit</button>' +
-                    '</div>' +
-                    '</div>';
-            } else if (isMultiUnit && units.length === 0) {
-                unitsHtml =
-                    '<div style="background: var(--bg3); padding: 10px; border-radius: 8px; margin-bottom: 12px;">' +
-                    '<div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 4px;">Units</div>' +
-                    '<div style="color: var(--dim); font-size: 0.55rem; text-align: center; padding: 12px;">No units created yet</div>' +
-                    '<div style="margin-top: 6px; text-align: center;">' +
-                    '<button id="addUnitBtn" class="btn small" style="padding: 3px 10px; font-size: 0.5rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer;">Add Unit</button>' +
-                    '</div>' +
-                    '</div>';
-            }
+    function _detailCell(label, value) {
+        return '<div style="background:var(--bg3);padding:8px;border-radius:6px;text-align:center;">' +
+            '<div style="color:var(--dim);font-size:0.55rem;">' + _escapeHtml(label) + '</div>' +
+            '<div style="font-size:0.75rem;">' + _escapeHtml(String(value)) + '</div>' +
+        '</div>';
+    }
 
-            // Build features HTML
-            var featuresHtml = '';
-            if (residence.features && residence.features.length > 0) {
-                var allFeatures = [
-                    { id: 'garden', name: 'Garden' },
-                    { id: 'wall', name: 'Wall' },
-                    { id: 'gate', name: 'Gate' },
-                    { id: 'stable', name: 'Stable' },
-                    { id: 'kitchen', name: 'Kitchen' },
-                    { id: 'library', name: 'Library' },
-                    { id: 'forge', name: 'Forge' },
-                    { id: 'chapel', name: 'Chapel' },
-                    { id: 'well', name: 'Well' },
-                    { id: 'courtyard', name: 'Courtyard' },
-                    { id: 'tower', name: 'Tower' },
-                    { id: 'cellar', name: 'Cellar' },
-                    { id: 'study', name: 'Study' },
-                    { id: 'great_hall', name: 'Great Hall' }
-                ];
-                var featureNames = [];
-                for (var i = 0; i < residence.features.length; i++) {
-                    var found = allFeatures.find(function(f) { return f.id === residence.features[i]; });
-                    if (found) featureNames.push(found.name);
-                    else featureNames.push(residence.features[i]);
-                }
-                featuresHtml = featureNames.map(function(f) {
-                    return '<span style="background: var(--bg3); padding: 2px 8px; border-radius: 12px; font-size: 0.55rem; margin: 2px;">' + _escapeHtml(f) + '</span>';
-                }).join(' ');
+    function _buildUnitsSection(residenceId, units, unitStats) {
+        var html = '<div style="background:var(--bg3);padding:10px;border-radius:8px;margin-bottom:12px;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">';
+        html += '<div style="font-size:0.6rem;color:var(--accent);">Units (' + units.length + ')</div>';
+        html += '<span style="font-size:0.5rem;color:var(--dim);">' + unitStats.occupied +
+            ' occupied · ' + unitStats.vacant + ' vacant' +
+            (unitStats.demolished > 0 ? ' · ' + unitStats.demolished + ' demolished' : '') +
+        '</span></div>';
+        html += '<div style="max-height:200px;overflow-y:auto;">';
+
+        for (var i = 0; i < units.length; i++) {
+            var u = units[i];
+            var unitStatus;
+            var unitColor;
+            if (u.isDemolished) {
+                unitStatus = 'Demolished';
+                unitColor = '#8a2020';
+            } else if (u.isVacant) {
+                unitStatus = 'Vacant';
+                unitColor = '#c87040';
             } else {
-                featuresHtml = '<span style="color: var(--dim); font-size: 0.55rem;">No features</span>';
+                unitStatus = 'Occupied';
+                unitColor = '#4a9e6a';
             }
 
-            // Build association history HTML
-            var associationsHtml = '';
-            if (associationHistory.length > 0) {
-                associationsHtml =
-                    '<div style="background: var(--bg3); padding: 10px; border-radius: 8px; margin-bottom: 12px;">' +
-                    '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">' +
-                    '<div style="font-size: 0.6rem; color: var(--accent);">Historical Households</div>' +
-                    '<span style="font-size: 0.5rem; color: var(--dim);">' + associationHistory.length + ' records</span>' +
-                    '</div>' +
-                    '<div style="max-height: 150px; overflow-y: auto; font-size: 0.55rem;">';
+            var householdName = u.householdName || 'Unassigned';
 
-                var displayAssociations = associationHistory.slice(-10).reverse();
-                for (var i = 0; i < displayAssociations.length; i++) {
-                    var a = displayAssociations[i];
-                    var isCurrent = !a.endedYear;
-                    var isCurrentHousehold = a.householdId === residence.householdId;
-                    var statusText = isCurrent ? '(Current)' : '(Ended ' + a.endedYear + ')';
-                    var statusColor = isCurrent ? '#4a9e6a' : '#8a8a8a';
-
-                    associationsHtml +=
-                        '<div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border-light);' + (isCurrentHousehold ? 'background: rgba(74,158,106,0.1);' : '') + '">' +
-                        '<div>' +
-                        '<strong>' + _escapeHtml(a.householdName) + '</strong>' +
-                        '<span style="color: ' + statusColor + '; font-size: 0.5rem; margin-left: 6px;">' + statusText + '</span>' +
-                        (a.reason ? '<div style="font-size: 0.5rem; color: var(--dim);">' + _escapeHtml(a.reason) + '</div>' : '') +
-                        '</div>' +
-                        '<div style="text-align: right; font-size: 0.5rem; color: var(--dim);">' +
-                        a.year + (a.endedYear ? ' - ' + a.endedYear : '') +
-                        (a.unitNumber ? ' · Unit ' + a.unitNumber : '') +
-                        '</div>' +
-                        '</div>';
-                }
-                if (associationHistory.length > 10) {
-                    associationsHtml += '<div style="font-size: 0.5rem; color: var(--dim); text-align: center; padding-top: 4px;">... and ' + (associationHistory.length - 10) + ' more</div>';
-                }
-
-                associationsHtml +=
-                    '</div>' +
-                    (associationHistory.some(function(a) { return !a.endedYear; }) && household ?
-                        '<div style="margin-top: 6px; text-align: center;">' +
-                        '<button id="endAssociationBtn" class="btn small" style="padding: 3px 10px; font-size: 0.5rem; background: #8a5a20; border: none; color: white; border-radius: 4px; cursor: pointer;">End Current Association</button>' +
-                        '</div>' :
-                        ''
-                    ) +
-                    '</div>';
+            html += '<div class="unit-item" data-unit-number="' + u.unitNumber + '"' +
+                ' style="display:flex;justify-content:space-between;align-items:center;padding:6px 8px;' +
+                'border-bottom:1px solid var(--border-light);cursor:pointer;border-left:3px solid ' +
+                unitColor + ';margin-bottom:2px;background:var(--bg2);border-radius:4px;">';
+            html += '<div>';
+            html += '<span style="font-weight:bold;font-size:0.6rem;">Unit ' + u.unitNumber + '</span>';
+            html += '<span style="font-size:0.5rem;color:' + unitColor + ';margin-left:6px;">' + unitStatus + '</span>';
+            html += '<span style="font-size:0.5rem;color:var(--dim);margin-left:6px;">' +
+                _escapeHtml(householdName) + '</span>';
+            html += '</div>';
+            html += '<div style="display:flex;gap:4px;">';
+            html += '<button data-action="view-unit" data-unit-number="' + u.unitNumber +
+                '" style="padding:2px 6px;font-size:0.45rem;background:var(--bg3);border:1px solid var(--border);border-radius:3px;cursor:pointer;">View</button>';
+            if (u.isVacant && !u.isDemolished) {
+                html += '<button data-action="assign-unit" data-unit-number="' + u.unitNumber +
+                    '" style="padding:2px 6px;font-size:0.45rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:3px;cursor:pointer;">Assign</button>';
+            } else if (!u.isDemolished) {
+                html += '<button data-action="vacate-unit" data-unit-number="' + u.unitNumber +
+                    '" style="padding:2px 6px;font-size:0.45rem;background:#8a5a20;border:none;color:white;border-radius:3px;cursor:pointer;">Vacate</button>';
             }
-
-            // Build recommendations HTML
-            var recommendationsHtml = '';
-            if (recommendations && recommendations.length > 0 && !isDemolished) {
-                recommendationsHtml =
-                    '<div style="margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px;">' +
-                    '<div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 6px;">Recommendations</div>';
-                for (var i = 0; i < recommendations.length; i++) {
-                    var r = recommendations[i];
-                    var priorityColor = r.priority === 'high' ? '#c87040' : (r.priority === 'medium' ? '#c8a844' : '#4a9e6a');
-                    recommendationsHtml +=
-                        '<div style="font-size: 0.55rem; padding: 4px 0; border-bottom: 1px solid var(--border-light);">' +
-                        '<span style="color: ' + priorityColor + ';">' + r.priority + ':</span> ' + _escapeHtml(r.message) +
-                        (r.estimatedCost ? ' (Cost: ' + r.estimatedCost + ' gold)' : '') +
-                        '</div>';
-                }
-                recommendationsHtml += '</div>';
+            if (!u.isDemolished) {
+                html += '<button data-action="remove-unit" data-unit-number="' + u.unitNumber +
+                    '" style="padding:2px 6px;font-size:0.45rem;background:#8a3020;border:none;color:white;border-radius:3px;cursor:pointer;">Remove</button>';
             }
+            html += '</div></div>';
+        }
 
-            var statusText = isDemolished ? 'Demolished' : (isVacant ? 'Vacant' : 'Occupied');
-            var statusColor = isDemolished ? '#8a2020' : (isVacant ? '#c87040' : '#4a9e6a');
+        html += '</div>';
+        html += '<div style="margin-top:6px;text-align:center;">';
+        html += '<button data-action="add-unit" style="padding:3px 10px;font-size:0.5rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">Add Unit</button>';
+        html += '</div></div>';
+        return html;
+    }
 
-            var canDemolish = !isDemolished && (unitStats.occupied === 0);
+    function _buildAssociationSection(associationHistory) {
+        var html = '<div style="background:var(--bg3);padding:10px;border-radius:8px;margin-bottom:12px;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">';
+        html += '<div style="font-size:0.6rem;color:var(--accent);">Historical Associations</div>';
+        html += '<span style="font-size:0.5rem;color:var(--dim);">' +
+            associationHistory.length + ' records</span>';
+        html += '</div>';
+        html += '<div style="max-height:150px;overflow-y:auto;font-size:0.55rem;">';
 
-            // Build action buttons - NO ICONS
-            var actionButtonsHtml =
-                '<div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);">' +
-                '<div style="display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px;">' +
-                '<button id="resDetailsEditBtn" class="btn small" style="padding: 3px 10px; font-size: 0.55rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 3px; cursor: pointer;">Edit</button>' +
-                '<button id="resDetailsRenameBtn" class="btn small" style="padding: 3px 10px; font-size: 0.55rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 3px; cursor: pointer;">Rename</button>' +
-                '<button id="resDetailsHistoryBtn" class="btn small" style="padding: 3px 10px; font-size: 0.55rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 3px; cursor: pointer;">History</button>' +
-                '</div>' +
-                (!isVacant && !isDemolished ?
-                    '<div style="display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px;">' +
-                    '<button id="resDetailsVacateBtn" class="btn small" style="padding: 3px 10px; font-size: 0.55rem; background: #8a5a20; border: none; color: white; border-radius: 3px; cursor: pointer;">Mark Vacant</button>' +
-                    '</div>' :
-                    ''
-                ) +
-                (isVacant && !isDemolished ?
-                    '<div style="display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px;">' +
-                    '<button id="resDetailsAssignBtn" class="btn small" style="padding: 3px 10px; font-size: 0.55rem; background: var(--accent); border: none; color: white; border-radius: 3px; cursor: pointer;">Assign Household</button>' +
-                    '<button id="resDetailsHeirsBtn" class="btn small" style="padding: 3px 10px; font-size: 0.55rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 3px; cursor: pointer;">Find Heirs</button>' +
-                    '</div>' :
-                    ''
-                ) +
-                (residence.condition !== 'pristine' && !isDemolished ?
-                    '<div style="display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px;">' +
-                    '<button id="resDetailsRehabBtn" class="btn small" style="padding: 3px 10px; font-size: 0.55rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 3px; cursor: pointer;">Rehabilitate</button>' +
-                    '</div>' :
-                    ''
-                ) +
-                (canDemolish ?
-                    '<div style="display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px;">' +
-                    '<button id="resDetailsDemolishBtn" class="btn small" style="padding: 3px 10px; font-size: 0.55rem; background: #8a3020; border: none; color: white; border-radius: 3px; cursor: pointer;">Demolish</button>' +
-                    '</div>' :
-                    ''
-                ) +
-                '<div style="display: flex; gap: 4px; flex-wrap: wrap;">' +
-                '<button id="resDetailsDeleteBtn" class="btn danger small" style="padding: 3px 10px; font-size: 0.55rem; background: #8a3020; border: none; color: white; border-radius: 3px; cursor: pointer;">Delete</button>' +
-                '</div></div>';
+        var sorted = associationHistory.slice().sort(function(a, b) {
+            return (a.year || 0) - (b.year || 0);
+        });
+        var display = sorted.slice(-10).reverse();
 
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg2); border-radius: 8px; padding: 12px; margin-bottom: 12px;">' +
-                '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">' +
-                '<div>' +
-                '<div style="font-size: 1.1rem; font-weight: bold;">' + _escapeHtml(residence.name) + '</div>' +
-                '<div style="font-size: 0.65rem; color: var(--dim); margin-top: 2px;">' +
-                _escapeHtml(typeDisplay) + ' · ' + _escapeHtml(locationDisplay) +
-                ' · Built ' + (residence.builtYear || 'Unknown') +
-                ' · Condition: ' + _escapeHtml(residence.condition || 'good') +
-                (isMultiUnit ? ' · Multi-unit' : '') +
-                '</div>' +
-                '</div>' +
-                '<div><span style="background: ' + statusColor + '; padding: 4px 10px; border-radius: 16px; font-size: 0.6rem; color: white;">' + statusText + '</span></div>' +
-                '</div>' +
-                (residence.description ? '<div style="margin-top: 8px; font-size: 0.6rem; color: var(--dim);">' + _escapeHtml(residence.description) + '</div>' : '') +
-                '</div>' +
-                membersHtml +
-                unitsHtml +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px; font-size: 0.6rem;">' +
-                '<div style="background: var(--bg3); padding: 8px; border-radius: 6px; text-align: center;"><span style="color: var(--dim);">Value</span><br>' + (residence.estimatedValue || 0).toLocaleString() + ' gold</div>' +
-                '<div style="background: var(--bg3); padding: 8px; border-radius: 6px; text-align: center;"><span style="color: var(--dim);">Built</span><br>' + (residence.builtYear || 'Unknown') + '</div>' +
-                '<div style="background: var(--bg3); padding: 8px; border-radius: 6px; text-align: center;"><span style="color: var(--dim);">Condition</span><br>' + _escapeHtml(residence.condition || 'good') + '</div>' +
-                (residence.lastRenovated ? '<div style="background: var(--bg3); padding: 8px; border-radius: 6px; text-align: center;"><span style="color: var(--dim);">Last Renovated</span><br>' + residence.lastRenovated + '</div>' : '') +
-                (residence.isFortified ? '<div style="background: var(--bg3); padding: 8px; border-radius: 6px; text-align: center;"><span style="color: var(--dim);">Fortified</span><br>Yes</div>' : '') +
-                (residence.defenseValue ? '<div style="background: var(--bg3); padding: 8px; border-radius: 6px; text-align: center;"><span style="color: var(--dim);">Defense</span><br>' + residence.defenseValue + '</div>' : '') +
-                '</div>' +
-                '<div style="background: var(--bg3); padding: 10px; border-radius: 8px; margin-bottom: 12px;">' +
-                '<div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 4px;">Features</div>' +
-                '<div style="display: flex; flex-wrap: wrap; gap: 4px;">' + featuresHtml + '</div>' +
-                '</div>' +
-                associationsHtml +
-                recommendationsHtml +
-                actionButtonsHtml +
-                '<div style="margin-top: 12px; text-align: center;">' +
-                '<button id="closeResDetailsBtn" class="btn" style="padding: 6px 20px; font-size: 0.6rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Close</button>' +
-                '</div>' +
-                '</div>';
+        for (var i = 0; i < display.length; i++) {
+            var a = display[i];
+            var isCurrent = !a.endedYear;
+            var statusText = isCurrent ? '(Current)' : '(Ended ' + a.endedYear + ')';
+            var statusColor = isCurrent ? '#4a9e6a' : '#8a8a8a';
 
-            _openModal({
-                title: 'Residence Details: ' + residence.name,
-                content: modalContent,
-                confirmText: '',
-                cancelText: '',
-                onConfirm: function() {
-                    _closeTopModal();
-                    _processingResidenceModal = false;
-                    if (onRefresh) {
-                        onRefresh();
-                    }
-                }
-            });
+            html += '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border-light);">';
+            html += '<div>';
+            html += '<strong>' + _escapeHtml(a.householdName || 'Unknown') + '</strong>';
+            html += '<span style="color:' + statusColor + ';font-size:0.5rem;margin-left:6px;">' +
+                statusText + '</span>';
+            if (a.unitNumber) {
+                html += '<span style="color:var(--dim);font-size:0.5rem;margin-left:6px;">Unit ' +
+                    a.unitNumber + '</span>';
+            }
+            if (a.reason) {
+                html += '<div style="font-size:0.5rem;color:var(--dim);">' +
+                    _escapeHtml(a.reason) + '</div>';
+            }
+            html += '</div>';
+            html += '<div style="text-align:right;font-size:0.5rem;color:var(--dim);">' +
+                a.year + (a.endedYear ? ' - ' + a.endedYear : '') +
+            '</div></div>';
+        }
 
-            // Attach event handlers
+        html += '</div></div>';
+        return html;
+    }
+
+    function _buildRecommendationsSection(recommendations) {
+        var html = '<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">';
+        html += '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:6px;">Recommendations</div>';
+        for (var i = 0; i < recommendations.length; i++) {
+            var r = recommendations[i];
+            var priorityColor = r.priority === 'high'
+                ? '#c87040'
+                : (r.priority === 'medium' ? '#c8a844' : '#4a9e6a');
+            html += '<div style="font-size:0.55rem;padding:4px 0;border-bottom:1px solid var(--border-light);">' +
+                '<span style="color:' + priorityColor + ';">' + r.priority + ':</span> ' +
+                _escapeHtml(r.message) +
+                (r.estimatedCost
+                    ? ' (Cost: ' + r.estimatedCost + ' gold)' : '') +
+            '</div>';
+        }
+        html += '</div>';
+        return html;
+    }
+
+    function _buildActionButtons(residence, isVacant, isDemolished) {
+        var html = '<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);">';
+
+        if (!isDemolished) {
+            html += '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px;">';
+            html += '<button data-action="edit" style="padding:3px 10px;font-size:0.55rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:3px;cursor:pointer;">Edit</button>';
+            html += '<button data-action="rename" style="padding:3px 10px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:3px;cursor:pointer;">Rename</button>';
+            html += '<button data-action="history" style="padding:3px 10px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:3px;cursor:pointer;">History</button>';
+            html += '</div>';
+        }
+
+        if (!isVacant && !isDemolished) {
+            html += '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px;">';
+            html += '<button data-action="vacate" style="padding:3px 10px;font-size:0.55rem;background:#8a5a20;border:none;color:white;border-radius:3px;cursor:pointer;">Mark Vacant</button>';
+            html += '</div>';
+        }
+
+        if (isVacant && !isDemolished) {
+            html += '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px;">';
+            html += '<button data-action="assign" style="padding:3px 10px;font-size:0.55rem;background:var(--accent);border:none;color:white;border-radius:3px;cursor:pointer;">Assign Household</button>';
+            html += '<button data-action="find-heirs" style="padding:3px 10px;font-size:0.55rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:3px;cursor:pointer;">Find Heirs</button>';
+            html += '</div>';
+        }
+
+        if (!isDemolished && residence.condition !== 'pristine') {
+            html += '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px;">';
+            html += '<button data-action="rehabilitate" style="padding:3px 10px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:3px;cursor:pointer;">Rehabilitate</button>';
+            html += '</div>';
+        }
+
+        if (!isDemolished) {
+            html += '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px;">';
+            html += '<button data-action="demolish" style="padding:3px 10px;font-size:0.55rem;background:#8a3020;border:none;color:white;border-radius:3px;cursor:pointer;">Demolish</button>';
+            html += '</div>';
+        }
+
+        html += '<div style="display:flex;gap:4px;flex-wrap:wrap;">';
+        html += '<button data-action="delete" style="padding:3px 10px;font-size:0.55rem;background:#8a3020;border:none;color:white;border-radius:3px;cursor:pointer;">Delete</button>';
+        html += '</div>';
+
+        html += '</div>';
+        return html;
+    }
+
+    function _wireDetailsActions(root, residenceId, residence, onRefresh) {
+        function _reopen() {
+            if (typeof onRefresh === 'function') onRefresh();
             setTimeout(function() {
-                var isProcessing = false;
+                openResidenceDetailsModal(residenceId, onRefresh);
+            }, 0);
+        }
 
-                function closeAndReopen(callback) {
-                    if (isProcessing) return;
-                    isProcessing = true;
-                    _closeTopModal();
-                    setTimeout(function() {
-                        callback();
-                        isProcessing = false;
-                    }, 50);
-                }
+        function _closeThen(fn) {
+            _closeTopModal();
+            setTimeout(fn, 0);
+        }
 
-                var editBtn = document.getElementById('resDetailsEditBtn');
-                if (editBtn) {
-                    editBtn.onclick = function() {
-                        closeAndReopen(function() {
-                            openEditResidenceModal(residenceId, function() {
-                                openResidenceDetailsModal(residenceId, onRefresh);
-                            });
-                        });
-                    };
-                }
+        var handlers = {
+            'edit': function() { _closeThen(function() {
+                openEditResidenceModal(residenceId, _reopen);
+            }); },
+            'rename': function() { _closeThen(function() {
+                openRenameResidenceModal(residenceId, _reopen);
+            }); },
+            'history': function() { _closeThen(function() {
+                openResidenceHistoryModal(residenceId);
+            }); },
+            'vacate': function() { _closeThen(function() {
+                openVacateResidenceModal(residenceId, _reopen);
+            }); },
+            'assign': function() { _closeThen(function() {
+                openAssignResidenceModal(residenceId, _reopen);
+            }); },
+            'find-heirs': function() { _closeThen(function() {
+                openResidenceHeirFinderModal(residenceId);
+            }); },
+            'rehabilitate': function() { _closeThen(function() {
+                openRehabilitateResidenceModal(residenceId, _reopen);
+            }); },
+            'demolish': function() { _closeThen(function() {
+                openDemolishResidenceModal(residenceId, _reopen);
+            }); },
+            'delete': function() { _closeThen(function() {
+                openDeleteResidenceModal(residenceId, _reopen);
+            }); },
+            'add-unit': function() { _closeThen(function() {
+                openAddUnitModal(residenceId, _reopen);
+            }); }
+        };
 
-                var renameBtn = document.getElementById('resDetailsRenameBtn');
-                if (renameBtn) {
-                    renameBtn.onclick = function() {
-                        closeAndReopen(function() {
-                            openRenameResidenceModal(residenceId, function() {
-                                openResidenceDetailsModal(residenceId, onRefresh);
-                            });
-                        });
-                    };
-                }
+        var actionKeys = Object.keys(handlers);
+        for (var a = 0; a < actionKeys.length; a++) {
+            (function(action) {
+                var btn = root.querySelector('[data-action="' + action + '"]');
+                if (btn) btn.onclick = handlers[action];
+            })(actionKeys[a]);
+        }
 
-                var historyBtn = document.getElementById('resDetailsHistoryBtn');
-                if (historyBtn) {
-                    historyBtn.onclick = function() {
-                        closeAndReopen(function() {
-                            openResidenceNameHistoryModal(residenceId);
-                        });
-                    };
-                }
-
-                var vacateBtn = document.getElementById('resDetailsVacateBtn');
-                if (vacateBtn) {
-                    vacateBtn.onclick = function() {
-                        closeAndReopen(function() {
-                            openVacateResidenceModal(residenceId, function() {
-                                openResidenceDetailsModal(residenceId, onRefresh);
-                            });
-                        });
-                    };
-                }
-
-                var assignBtn = document.getElementById('resDetailsAssignBtn');
-                if (assignBtn) {
-                    assignBtn.onclick = function() {
-                        closeAndReopen(function() {
-                            openAssignResidenceModal(residenceId, function() {
-                                openResidenceDetailsModal(residenceId, onRefresh);
-                            });
-                        });
-                    };
-                }
-
-                var heirsBtn = document.getElementById('resDetailsHeirsBtn');
-                if (heirsBtn) {
-                    heirsBtn.onclick = function() {
-                        closeAndReopen(function() {
-                            openResidenceHeirFinderModal(residenceId);
-                        });
-                    };
-                }
-
-                var rehabBtn = document.getElementById('resDetailsRehabBtn');
-                if (rehabBtn) {
-                    rehabBtn.onclick = function() {
-                        closeAndReopen(function() {
-                            openRehabilitateResidenceModal(residenceId, function() {
-                                openResidenceDetailsModal(residenceId, onRefresh);
-                            });
-                        });
-                    };
-                }
-
-                var demolishBtn = document.getElementById('resDetailsDemolishBtn');
-                if (demolishBtn) {
-                    demolishBtn.onclick = function() {
-                        closeAndReopen(function() {
-                            openDemolishResidenceModal(residenceId, function() {
-                                _processingResidenceModal = false;
-                                if (onRefresh) {
-                                    onRefresh();
-                                }
-                            });
-                        });
-                    };
-                }
-
-                var deleteBtn = document.getElementById('resDetailsDeleteBtn');
-                if (deleteBtn) {
-                    deleteBtn.onclick = function() {
-                        closeAndReopen(function() {
-                            openDeleteResidenceModal(residenceId, function() {
-                                _processingResidenceModal = false;
-                                if (onRefresh) {
-                                    onRefresh();
-                                }
-                            });
-                        });
-                    };
-                }
-
-                var endAssocBtn = document.getElementById('endAssociationBtn');
-                if (endAssocBtn) {
-                    endAssocBtn.onclick = function() {
-                        if (isProcessing) return;
-                        isProcessing = true;
-                        _closeTopModal();
-                        setTimeout(function() {
-                            openEndResidenceAssociationModal(residenceId, function() {
-                                isProcessing = false;
-                                openResidenceDetailsModal(residenceId, onRefresh);
-                            });
-                        }, 50);
-                    };
-                }
-
-                var addUnitBtn = document.getElementById('addUnitBtn');
-                if (addUnitBtn) {
-                    addUnitBtn.onclick = function() {
-                        closeAndReopen(function() {
-                            openAddUnitModal(residenceId, function() {
-                                openResidenceDetailsModal(residenceId, onRefresh);
-                            });
-                        });
-                    };
-                }
-
-                // Unit buttons
-                var unitItems = document.querySelectorAll('.unit-item');
-                unitItems.forEach(function(item) {
-                    var newItem = item.cloneNode(true);
-                    if (item.parentNode) {
-                        item.parentNode.replaceChild(newItem, item);
-                    }
-
-                    newItem.onclick = function(e) {
-                        if (e.target.closest('button')) return;
-                        var unitNumber = parseInt(this.dataset.unitNumber);
-                        if (!isProcessing) {
-                            isProcessing = true;
-                            _closeTopModal();
-                            setTimeout(function() {
-                                openUnitDetailsModal(residenceId, unitNumber);
-                                isProcessing = false;
-                            }, 50);
-                        }
-                    };
+        // Unit rows (delegated buttons)
+        var unitActions = {
+            'view-unit': function(unitNumber) {
+                _closeThen(function() {
+                    openUnitDetailsModal(residenceId, unitNumber);
                 });
-
-                var unitDetailsBtns = document.querySelectorAll('.unit-details-btn');
-                unitDetailsBtns.forEach(function(btn) {
-                    var newBtn = btn.cloneNode(true);
-                    if (btn.parentNode) {
-                        btn.parentNode.replaceChild(newBtn, btn);
-                    }
-
-                    newBtn.onclick = function(e) {
-                        e.stopPropagation();
-                        var unitNumber = parseInt(this.dataset.unitNumber);
-                        if (!isProcessing) {
-                            isProcessing = true;
-                            _closeTopModal();
-                            setTimeout(function() {
-                                openUnitDetailsModal(residenceId, unitNumber);
-                                isProcessing = false;
-                            }, 50);
-                        }
-                    };
+            },
+            'assign-unit': function(unitNumber) {
+                _closeThen(function() {
+                    openAssignUnitModal(residenceId, unitNumber, _reopen);
                 });
-
-                var unitAssignBtns = document.querySelectorAll('.unit-assign-btn');
-                unitAssignBtns.forEach(function(btn) {
-                    var newBtn = btn.cloneNode(true);
-                    if (btn.parentNode) {
-                        btn.parentNode.replaceChild(newBtn, btn);
-                    }
-
-                    newBtn.onclick = function(e) {
-                        e.stopPropagation();
-                        var unitNumber = parseInt(this.dataset.unitNumber);
-                        closeAndReopen(function() {
-                            openAssignUnitModal(residenceId, unitNumber, function() {
-                                openResidenceDetailsModal(residenceId, onRefresh);
-                            });
-                        });
-                    };
+            },
+            'vacate-unit': function(unitNumber) {
+                _closeThen(function() {
+                    openMarkUnitVacantModal(residenceId, unitNumber, _reopen);
                 });
-
-                var unitMarkVacantBtns = document.querySelectorAll('.unit-mark-vacant-btn');
-                unitMarkVacantBtns.forEach(function(btn) {
-                    var newBtn = btn.cloneNode(true);
-                    if (btn.parentNode) {
-                        btn.parentNode.replaceChild(newBtn, btn);
-                    }
-
-                    newBtn.onclick = function(e) {
-                        e.stopPropagation();
-                        var unitNumber = parseInt(this.dataset.unitNumber);
-                        closeAndReopen(function() {
-                            openMarkUnitVacantModal(residenceId, unitNumber, function() {
-                                openResidenceDetailsModal(residenceId, onRefresh);
-                            });
-                        });
-                    };
+            },
+            'remove-unit': function(unitNumber) {
+                _closeThen(function() {
+                    openRemoveUnitModal(residenceId, unitNumber, _reopen);
                 });
+            }
+        };
 
-                var unitRemoveBtns = document.querySelectorAll('.unit-remove-btn');
-                unitRemoveBtns.forEach(function(btn) {
-                    var newBtn = btn.cloneNode(true);
-                    if (btn.parentNode) {
-                        btn.parentNode.replaceChild(newBtn, btn);
-                    }
-
-                    newBtn.onclick = function(e) {
-                        e.stopPropagation();
-                        var unitNumber = parseInt(this.dataset.unitNumber);
-                        closeAndReopen(function() {
-                            openRemoveUnitModal(residenceId, unitNumber, function() {
-                                openResidenceDetailsModal(residenceId, onRefresh);
-                            });
-                        });
-                    };
-                });
-
-                var closeBtn = document.getElementById('closeResDetailsBtn');
-                if (closeBtn) {
-                    closeBtn.onclick = function() {
-                        _closeTopModal();
-                        _processingResidenceModal = false;
-                        if (onRefresh) {
-                            onRefresh();
-                        }
-                    };
+        var unitActionKeys = Object.keys(unitActions);
+        for (var ua = 0; ua < unitActionKeys.length; ua++) {
+            (function(action) {
+                var btns = root.querySelectorAll('[data-action="' + action + '"]');
+                for (var b = 0; b < btns.length; b++) {
+                    (function(btn) {
+                        btn.onclick = function(e) {
+                            e.stopPropagation();
+                            var unitNumber = _parseIntOrNull(btn.dataset.unitNumber);
+                            if (unitNumber === null) return;
+                            unitActions[action](unitNumber);
+                        };
+                    })(btns[b]);
                 }
+            })(unitActionKeys[ua]);
+        }
 
-            }, 100);
-
-        } catch (e) {
-            _processingResidenceModal = false;
-            _showToast('Error opening residence details', 'error');
+        // Unit row click → open unit details
+        var unitItems = root.querySelectorAll('.unit-item');
+        for (var ui = 0; ui < unitItems.length; ui++) {
+            (function(el) {
+                el.onclick = function(e) {
+                    if (e.target.closest && e.target.closest('button')) return;
+                    var unitNumber = _parseIntOrNull(el.dataset.unitNumber);
+                    if (unitNumber === null) return;
+                    _closeThen(function() {
+                        openUnitDetailsModal(residenceId, unitNumber);
+                    });
+                };
+            })(unitItems[ui]);
         }
     }
 
     // =========================================================================
-    // 11. VACATE RESIDENCE MODAL
-    // =========================================================================
-
-    function openVacateResidenceModal(residenceId, onSuccess) {
-        if (_processingResidenceModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingResidenceModal = true;
-
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
-
-            if (residence.isVacant) {
-                _showToast('Residence is already vacant', 'warning');
-                _processingResidenceModal = false;
-                if (onSuccess) {
-                    onSuccess();
-                }
-                return;
-            }
-
-            if (residence.isDemolished) {
-                _showToast('Residence has been demolished', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
-
-            var currentYear = _getCurrentYear();
-            var householdName = residence.householdName || 'Unknown';
-
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">' +
-                '<div style="font-size: 0.7rem;"><strong>' + _escapeHtml(residence.name) + '</strong></div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">Current Household: ' + _escapeHtml(householdName) + '</div>' +
-                (residence.assignedYear ? '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 2px;">Assigned: ' + residence.assignedYear + '</div>' : '') +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Vacancy Year</label>' +
-                '<input type="number" id="vacateYear" value="' + currentYear + '" min="1" max="' + (currentYear + 5) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Reason</label>' +
-                '<select id="vacateReason" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                '<option value="household_moved">Household moved out</option>' +
-                '<option value="household_disassociated">Household disassociated</option>' +
-                '<option value="manual">Manual (admin)</option>' +
-                '<option value="sold">Sold</option>' +
-                '<option value="destroyed">Destroyed</option>' +
-                '</select>' +
-                '</div>' +
-                '<div style="font-size: 0.55rem; color: var(--warn);">This will make the residence available for assignment to another household.</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Vacate Residence: ' + residence.name,
-                content: modalContent,
-                confirmText: 'Mark Vacant',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var year = parseInt(document.getElementById('vacateYear').value);
-                    var reason = document.getElementById('vacateReason').value;
-
-                    if (isNaN(year) || year < 1) {
-                        _showToast('Please enter a valid year', 'error');
-                        return false;
-                    }
-
-                    var result = _markResidenceVacant(residenceId, reason, year);
-
-                    if (result && result.success) {
-                        _showToast('Residence "' + residence.name + '" marked vacant' + (reason ? ' (' + reason + ')' : ''), 'success');
-                        _closeTopModal();
-                        _processingResidenceModal = false;
-                        if (onSuccess) {
-                            onSuccess();
-                        }
-                    } else {
-                        _showToast(result ? result.reason : 'Failed to mark vacant', 'error');
-                    }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingResidenceModal = false;
-                }
-            });
-
-        } catch (e) {
-            _processingResidenceModal = false;
-            _showToast('Error opening vacate residence modal', 'error');
-        }
-    }
-
-    // =========================================================================
-    // 12. ASSIGN RESIDENCE MODAL
+    // 7. ASSIGN RESIDENCE TO HOUSEHOLD
     // =========================================================================
 
     function openAssignResidenceModal(residenceId, onSuccess) {
-        if (_processingResidenceModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var res = _residence();
+
+        var residence = res.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
         }
-        _processingResidenceModal = true;
 
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
+        if (!residence.isVacant) {
+            _showToast('Residence is not vacant', 'error');
+            return null;
+        }
 
-            if (!residence.isVacant) {
-                _showToast('Residence is not vacant', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
+        if (residence.isDemolished) {
+            _showToast('Residence has been demolished', 'error');
+            return null;
+        }
 
-            if (residence.isDemolished) {
-                _showToast('Residence has been demolished', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
+        if (typeof window.openHouseholdSelector !== 'function') {
+            _showToast('Household selector not available', 'error');
+            return null;
+        }
 
-            var currentYear = _getCurrentYear();
+        window.openHouseholdSelector({
+            title: 'Select Household to Assign to ' + residence.name,
+            filterConfig: {
+                showActive: true,
+                showVacant: false,
+                showEmpty: false,
+                showDeprecated: false
+            },
+            onSelect: function(household) {
+                if (!household) return;
 
-            _openHouseholdSelector({
-                title: 'Select Household to Assign to ' + residence.name,
-                targetCharacterId: null,
-                filterConfig: {
-                    showActive: true,
-                    showVacant: false,
-                    showEmpty: false,
-                    showDeprecated: false
-                },
-                onSelect: function(household) {
-                    if (!household) {
-                        _showToast('Selection cancelled', 'info');
-                        _processingResidenceModal = false;
-                        return;
-                    }
-
-                    // Check if household already has a residence
-                    var householdUnits = _getHouseholdUnits(household.id);
-                    if (householdUnits.length > 0) {
-                        _confirmDialog(
-                            household.name + ' already occupies ' + householdUnits.length + ' unit(s). Assign them to this residence anyway?',
-                            'Existing Residence',
-                            function() {
-                                _proceedWithResidenceAssignment(residence, household, currentYear, onSuccess);
-                            },
-                            function() {
-                                _processingResidenceModal = false;
-                            }
-                        );
-                    } else {
-                        _proceedWithResidenceAssignment(residence, household, currentYear, onSuccess);
-                    }
-                },
-                onCancel: function() {
-                    _showToast('Assignment cancelled', 'info');
-                    _processingResidenceModal = false;
+                // Warn if household already has a residence
+                var existing = res.getResidencesByHousehold(household.id);
+                if (existing.length > 0) {
+                    _confirmDialog(
+                        household.name + ' already occupies ' + existing.length +
+                        ' residence(s). Assign them to "' + residence.name + '" anyway?',
+                        'Existing Residence',
+                        function() {
+                            _doResidenceAssignment(res, residence, household, onSuccess);
+                        },
+                        function() { /* cancelled */ }
+                    );
+                } else {
+                    _doResidenceAssignment(res, residence, household, onSuccess);
                 }
-            });
+            }
+        });
 
-        } catch (e) {
-            _processingResidenceModal = false;
-            _showToast('Error opening assign residence modal', 'error');
-        }
+        return null;
     }
 
-    function _proceedWithResidenceAssignment(residence, household, year, onSuccess) {
-        var unitCount = residence.units ? residence.units.length : 1;
-        var unitNumber = 1;
-
-        // Find first vacant unit
-        if (residence.units) {
-            for (var i = 0; i < residence.units.length; i++) {
-                if (residence.units[i].isVacant && !residence.units[i].isDemolished) {
-                    unitNumber = residence.units[i].unitNumber;
-                    break;
-                }
-            }
-        }
-
-        var result = _assignHouseholdToVacantResidence(
+    function _doResidenceAssignment(res, residence, household, onSuccess) {
+        var year = _currentYear();
+        var result = res.assignHouseholdToVacantResidence(
             residence.id,
             household.id,
             household.name,
-            year,
-            {
-                renameOnAssign: false,
-                notes: 'Assigned via residence modal',
-                reason: 'Assigned'
-            }
+            year
         );
 
-        if (result && result.success) {
-            _showToast(household.name + ' assigned to "' + residence.name + '"' + (result.unitNumber ? ' (Unit ' + result.unitNumber + ')' : ''), 'success');
-            _closeTopModal();
-            _processingResidenceModal = false;
-            if (onSuccess) {
-                onSuccess();
-            }
-        } else {
-            _showToast(result ? result.reason : 'Failed to assign household', 'error');
-            _processingResidenceModal = false;
-        }
-    }
-
-    // =========================================================================
-    // 13. REHABILITATE RESIDENCE MODAL
-    // =========================================================================
-
-    function openRehabilitateResidenceModal(residenceId, onSuccess) {
-        if (_processingResidenceModal) {
-            _showToast('Already processing a modal action', 'warning');
+        if (!result.success) {
+            _showToast(result.reason || 'Failed to assign household', 'error');
             return;
         }
-        _processingResidenceModal = true;
 
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
-
-            if (residence.isDemolished) {
-                _showToast('Residence has been demolished', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
-
-            var conditions = _getAllResidenceConditions();
-            var currentYear = _getCurrentYear();
-            var currentCost = _calculateRepairCost(residence, 'good');
-
-            var conditionOptions = conditions.map(function(c) {
-                var label = c.name;
-                var modifier = c.modifier ? ' (' + (c.modifier * 100) + '% value)' : '';
-                return '<option value="' + c.id + '" ' + (c.id === 'good' ? 'selected' : '') + '>' + _escapeHtml(c.name) + modifier + '</option>';
-            }).join('');
-
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">' +
-                '<div style="font-size: 0.7rem;"><strong>' + _escapeHtml(residence.name) + '</strong></div>' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; margin-top: 8px; font-size: 0.6rem;">' +
-                '<div><span style="color: var(--dim);">Current Condition:</span> ' + _escapeHtml(residence.condition || 'good') + '</div>' +
-                '<div><span style="color: var(--dim);">Estimated Value:</span> ' + (residence.estimatedValue || 0).toLocaleString() + ' gold</div>' +
-                '<div><span style="color: var(--dim);">Last Renovated:</span> ' + (residence.lastRenovated || 'Never') + '</div>' +
-                '</div>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Target Condition</label>' +
-                '<select id="rehabTargetCondition" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                conditionOptions +
-                '</select>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Year of Renovation</label>' +
-                '<input type="number" id="rehabYear" value="' + currentYear + '" min="1" max="' + (currentYear + 5) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem;">' +
-                'Estimated cost: <strong id="rehabCostDisplay">' + currentCost + '</strong> gold' +
-                '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Rehabilitate Residence: ' + residence.name,
-                content: modalContent,
-                confirmText: 'Rehabilitate',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var targetCondition = document.getElementById('rehabTargetCondition').value;
-                    var year = parseInt(document.getElementById('rehabYear').value);
-
-                    if (isNaN(year) || year < 1) {
-                        _showToast('Please enter a valid year', 'error');
-                        return false;
-                    }
-
-                    var result = _rehabilitateResidence(residenceId, targetCondition, year);
-
-                    if (result && result.success) {
-                        _showToast('Residence rehabilitated from "' + result.oldCondition + '" to "' + result.newCondition + '" (' + year + ')', 'success');
-                        _closeTopModal();
-                        _processingResidenceModal = false;
-                        if (onSuccess) {
-                            onSuccess();
-                        }
-                    } else {
-                        _showToast(result ? result.reason : 'Failed to rehabilitate residence', 'error');
-                    }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingResidenceModal = false;
-                }
-            });
-
-            setTimeout(function() {
-                var targetSelect = document.getElementById('rehabTargetCondition');
-                var costDisplay = document.getElementById('rehabCostDisplay');
-
-                if (targetSelect) {
-                    targetSelect.onchange = function() {
-                        var cost = _calculateRepairCost(residence, targetSelect.value);
-                        if (costDisplay) {
-                            costDisplay.textContent = cost;
-                        }
-                    };
-                }
-            }, 100);
-
-        } catch (e) {
-            _processingResidenceModal = false;
-            _showToast('Error opening rehabilitate residence modal', 'error');
+        var msg = household.name + ' assigned to "' + residence.name + '"';
+        if (result.data.unitNumber !== undefined && result.data.unitNumber !== null) {
+            msg += ' (Unit ' + result.data.unitNumber + ')';
         }
+        _showToast(msg, 'success');
+        if (typeof onSuccess === 'function') onSuccess(result.data);
     }
 
     // =========================================================================
-    // 14. DEMOLISH RESIDENCE MODAL
+    // 8. VACATE RESIDENCE MODAL
     // =========================================================================
 
-    function openDemolishResidenceModal(residenceId, onSuccess) {
-        if (_processingResidenceModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+    function openVacateResidenceModal(residenceId, onSuccess) {
+        var res = _residence();
+
+        var residence = res.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
         }
-        _processingResidenceModal = true;
 
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
-
-            if (residence.isDemolished) {
-                _showToast('Residence has already been demolished', 'warning');
-                _processingResidenceModal = false;
-                if (onSuccess) {
-                    onSuccess();
-                }
-                return;
-            }
-
-            var unitStats = _getUnitStats(residenceId);
-            if (unitStats.occupied > 0) {
-                _showToast('Cannot demolish residence with occupied units. Vacate all units first.', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
-
-            var currentYear = _getCurrentYear();
-
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: rgba(200, 68, 68, 0.15); border: 1px solid var(--warn); border-radius: 8px; padding: 12px; margin-bottom: 16px;">' +
-                '<strong>Demolish Residence: ' + _escapeHtml(residence.name) + '</strong>' +
-                '<div style="margin-top: 8px; font-size: 0.65rem;">' +
-                'Demolishing this residence will destroy the building but keep its history.' +
-                ' The residence will be marked as "Demolished" and cannot be assigned to any household.' +
-                '</div>' +
-                '<div style="margin-top: 8px; font-size: 0.6rem; color: var(--warn);">' +
-                'Warning: This action cannot be undone.' +
-                '</div>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Year of Demolition</label>' +
-                '<input type="number" id="demolishYear" value="' + currentYear + '" min="1" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Reason for Demolition</label>' +
-                '<select id="demolishReason" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                '<option value="condemned">Condemned / Unsafe</option>' +
-                '<option value="fire">Destroyed by fire</option>' +
-                '<option value="war">Destroyed in war</option>' +
-                '<option value="renovation">Renovation / Rebuilding</option>' +
-                '<option value="decay">Decay / Abandonment</option>' +
-                '<option value="manual">Manual decision</option>' +
-                '</select>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes (optional)</label>' +
-                '<textarea id="demolishNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;" placeholder="Additional details..."></textarea>' +
-                '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Demolish Residence: ' + residence.name,
-                content: modalContent,
-                confirmText: 'Demolish',
-                cancelText: 'Cancel',
-                confirmStyle: 'danger',
-                onConfirm: function() {
-                    var year = parseInt(document.getElementById('demolishYear').value);
-                    var reason = document.getElementById('demolishReason').value;
-                    var notes = document.getElementById('demolishNotes').value;
-
-                    if (isNaN(year) || year < 1) {
-                        _showToast('Please enter a valid year', 'error');
-                        return false;
-                    }
-
-                    // Update residence to demolished
-                    var result = _updateResidence(residenceId, {
-                        isDemolished: true,
-                        demolishedYear: year,
-                        demolishedReason: reason,
-                        demolishedNotes: notes || null,
-                        isVacant: true,
-                        vacantYear: year,
-                        vacantReason: 'Demolished: ' + reason,
-                        householdId: null,
-                        householdName: null,
-                        status: RESIDENCE_STATUS.DEMOLISHED
-                    });
-
-                    if (result) {
-                        // Add timeline event
-                        _residence.addResidenceTimelineEvent(residenceId, {
-                            year: year,
-                            type: 'demolished',
-                            details: 'Demolished: ' + reason + (notes ? ' (' + notes + ')' : ''),
-                            reason: reason,
-                            notes: notes
-                        });
-
-                        // Update any associated household
-                        if (residence.householdId && _state && typeof _state.updateHousehold === 'function') {
-                            _state.updateHousehold(residence.householdId, {
-                                residenceId: null,
-                                residenceName: null,
-                                residenceType: null,
-                                associatedYear: null,
-                                residenceUnitNumber: null,
-                                residenceNotes: null
-                            }, { recordHistory: false });
-                        }
-
-                        _showToast('Residence "' + residence.name + '" demolished in ' + year, 'info');
-                        _closeTopModal();
-                        _processingResidenceModal = false;
-                        if (onSuccess) {
-                            onSuccess();
-                        }
-                    } else {
-                        _showToast('Failed to demolish residence', 'error');
-                    }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingResidenceModal = false;
-                }
-            });
-
-        } catch (e) {
-            _processingResidenceModal = false;
-            _showToast('Error opening demolish residence modal', 'error');
+        if (residence.isVacant) {
+            _showToast('Residence is already vacant', 'warning');
+            if (typeof onSuccess === 'function') onSuccess();
+            return null;
         }
+
+        if (residence.isDemolished) {
+            _showToast('Residence has been demolished', 'error');
+            return null;
+        }
+
+        var year = _currentYear();
+
+        var content =
+            '<div style="margin-bottom:16px;">' +
+                '<div style="background:var(--bg3);border-radius:6px;padding:12px;margin-bottom:12px;">' +
+                    '<div style="font-size:0.7rem;"><strong>' + _escapeHtml(residence.name) + '</strong></div>' +
+                    '<div style="font-size:0.55rem;color:var(--dim);margin-top:4px;">' +
+                        'This will vacate all occupied units and disassociate every household currently living here.' +
+                    '</div>' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Vacancy Year</label>' +
+                    '<input type="number" data-field="year" value="' +
+                        (year !== null ? year : '') +
+                        '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason</label>' +
+                    '<select data-field="reason" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                        '<option value="household_moved">Household moved out</option>' +
+                        '<option value="household_disassociated">Household disassociated</option>' +
+                        '<option value="manual">Manual (admin)</option>' +
+                        '<option value="sold">Sold</option>' +
+                        '<option value="destroyed">Destroyed</option>' +
+                    '</select>' +
+                '</div>' +
+            '</div>';
+
+        return _openModal({
+            title: 'Vacate Residence: ' + residence.name,
+            content: content,
+            confirmText: 'Mark Vacant',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var root = _resolveModalRoot();
+                if (!root) return false;
+
+                var vYear = _parseIntOrNull((root.querySelector('[data-field="year"]') || {}).value);
+                if (vYear === null || vYear < 1) {
+                    _showToast('Please enter a valid year', 'error');
+                    return false;
+                }
+                var reason = (root.querySelector('[data-field="reason"]') || {}).value || 'manual';
+
+                var result = res.markResidenceVacant(residenceId, reason, vYear);
+                if (!result.success) {
+                    _showToast(result.reason || 'Failed to mark vacant', 'error');
+                    return false;
+                }
+
+                var affected = result.data.affectedHouseholds || [];
+                _showToast('Residence marked vacant (' +
+                    affected.length + ' households affected)', 'success');
+                if (typeof onSuccess === 'function') onSuccess(result.data);
+                return true;
+            }
+        });
     }
 
     // =========================================================================
-    // 15. RESIDENCE HEIR FINDER MODAL (Placeholder - calls vacancy module)
-    // =========================================================================
-
-    function openResidenceHeirFinderModal(residenceId) {
-        if (_processingResidenceModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingResidenceModal = true;
-
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
-
-            // Check if vacancy module has heir finder
-            if (typeof window.openResidenceHeirFinderModal === 'function' &&
-                window.openResidenceHeirFinderModal !== openResidenceHeirFinderModal) {
-                _closeTopModal();
-                window.openResidenceHeirFinderModal(residenceId);
-                _processingResidenceModal = false;
-                return;
-            }
-
-            // Fallback: show vacancy details
-            var vacancyDetails = _getResidenceVacancyDetails(residenceId);
-            if (!vacancyDetails || !vacancyDetails.isVacant) {
-                _showToast('Residence is not vacant. Heirs are only relevant for vacant properties.', 'warning');
-                _processingResidenceModal = false;
-                return;
-            }
-
-            _showToast('Heir finder will be available in the vacancy management module.', 'info');
-            _processingResidenceModal = false;
-
-        } catch (e) {
-            _processingResidenceModal = false;
-            _showToast('Error opening heir finder', 'error');
-        }
-    }
-
-    // =========================================================================
-    // 16. UNIT MODALS (Stubs - will be expanded)
-    // =========================================================================
-
-    function openAddUnitModal(residenceId, onSuccess) {
-        if (_processingResidenceModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingResidenceModal = true;
-
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
-
-            if (!residence.isMultiUnit) {
-                _showToast('Cannot add units to a non-multi-unit residence', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
-
-            var currentUnits = residence.units || [];
-            var maxUnits = residence.maxUnits || 20;
-            var unitCount = currentUnits.length;
-
-            if (unitCount >= maxUnits) {
-                _showToast('Maximum units reached (' + maxUnits + ')', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
-
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.6rem; color: var(--dim);">' +
-                'Adding a new unit to <strong>' + _escapeHtml(residence.name) + '</strong>' +
-                '<div style="margin-top: 4px;">' + unitCount + ' of ' + maxUnits + ' units currently exist</div>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Unit Number (auto-assigned if not specified)</label>' +
-                '<input type="number" id="unitNumberInput" placeholder="Leave blank for auto-assign" min="1" max="' + maxUnits + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '<small style="font-size: 0.55rem; color: var(--dim);">Numbers must be unique within the residence</small>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Notes (optional)</label>' +
-                '<textarea id="unitNotes" rows="2" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;" placeholder="e.g., Ground floor unit, South wing..."></textarea>' +
-                '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Add Unit to ' + residence.name,
-                content: modalContent,
-                confirmText: 'Add Unit',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var unitNumberInput = document.getElementById('unitNumberInput').value;
-                    var notes = document.getElementById('unitNotes').value;
-
-                    var options = {
-                        notes: notes || null
-                    };
-
-                    if (unitNumberInput) {
-                        var num = parseInt(unitNumberInput);
-                        if (!isNaN(num) && num > 0 && num <= maxUnits) {
-                            options.unitNumber = num;
-                        }
-                    }
-
-                    var result = _addResidenceUnit(residenceId, options);
-
-                    if (result && result.success) {
-                        _showToast('Unit ' + result.unitNumber + ' added to ' + residence.name, 'success');
-                        _closeTopModal();
-                        _processingResidenceModal = false;
-                        if (onSuccess) {
-                            onSuccess(result);
-                        }
-                    } else {
-                        _showToast(result ? result.reason : 'Failed to add unit', 'error');
-                    }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingResidenceModal = false;
-                }
-            });
-
-        } catch (e) {
-            _processingResidenceModal = false;
-            _showToast('Error opening add unit modal', 'error');
-        }
-    }
-
-    function openRemoveUnitModal(residenceId, unitNumber, onSuccess) {
-        if (_processingResidenceModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingResidenceModal = true;
-
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
-
-            var unit = _getResidenceUnit(residenceId, unitNumber);
-            if (!unit) {
-                _showToast('Unit ' + unitNumber + ' not found', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
-
-            var isOccupied = !unit.isVacant && !unit.isDemolished;
-            var householdName = unit.householdName || 'Unknown';
-
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: rgba(200, 68, 68, 0.15); border: 1px solid var(--warn); border-radius: 8px; padding: 12px; margin-bottom: 16px;">' +
-                '<strong>Remove Unit ' + unitNumber + ' from ' + _escapeHtml(residence.name) + '</strong>' +
-                (isOccupied ? '<div style="margin-top: 8px; color: #c87040;">Warning: This unit is currently occupied by ' + _escapeHtml(householdName) + '.</div>' : '') +
-                '<div style="margin-top: 4px; font-size: 0.65rem;">' + (isOccupied ? 'The household will need to be reassigned.' : 'The unit will be permanently removed.') + '</div>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Reason (optional)</label>' +
-                '<input type="text" id="removeUnitReason" placeholder="e.g., Renovation, Condemned..." style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div style="font-size: 0.55rem; color: var(--warn);">This action cannot be undone. The unit will be permanently removed from the residence.</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Remove Unit ' + unitNumber,
-                content: modalContent,
-                confirmText: 'Remove Unit',
-                cancelText: 'Cancel',
-                confirmStyle: 'danger',
-                onConfirm: function() {
-                    var reason = document.getElementById('removeUnitReason').value;
-
-                    var result = _removeResidenceUnit(residenceId, unitNumber, {
-                        force: true,
-                        reason: reason || 'Removed'
-                    });
-
-                    if (result && result.success) {
-                        _showToast('Unit ' + unitNumber + ' removed from ' + residence.name, 'success');
-                        _closeTopModal();
-                        _processingResidenceModal = false;
-                        if (onSuccess) {
-                            onSuccess(result);
-                        }
-                    } else {
-                        _showToast(result ? result.reason : 'Failed to remove unit', 'error');
-                    }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingResidenceModal = false;
-                }
-            });
-
-        } catch (e) {
-            _processingResidenceModal = false;
-            _showToast('Error opening remove unit modal', 'error');
-        }
-    }
-
-    function openAssignUnitModal(residenceId, unitNumber, onSuccess) {
-        if (_processingResidenceModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingResidenceModal = true;
-
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
-
-            var unit = _getResidenceUnit(residenceId, unitNumber);
-            if (!unit) {
-                _showToast('Unit ' + unitNumber + ' not found', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
-
-            if (!unit.isVacant) {
-                _showToast('Unit ' + unitNumber + ' is already occupied', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
-
-            if (unit.isDemolished) {
-                _showToast('Unit ' + unitNumber + ' has been demolished', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
-
-            var currentYear = _getCurrentYear();
-
-            _openHouseholdSelector({
-                title: 'Assign Household to Unit ' + unitNumber + ' of ' + residence.name,
-                targetCharacterId: null,
-                filterConfig: {
-                    showActive: true,
-                    showVacant: false,
-                    showEmpty: false,
-                    showDeprecated: false
-                },
-                onSelect: function(household) {
-                    if (!household) {
-                        _showToast('Selection cancelled', 'info');
-                        _processingResidenceModal = false;
-                        return;
-                    }
-
-                    var result = _assignHouseholdToUnit(
-                        residenceId,
-                        unitNumber,
-                        household.id,
-                        household.name,
-                        currentYear,
-                        {
-                            notes: 'Assigned to Unit ' + unitNumber + ' via modal',
-                            reason: 'unit_assignment'
-                        }
-                    );
-
-                    if (result && result.success) {
-                        _showToast(household.name + ' assigned to Unit ' + unitNumber + ' of ' + residence.name, 'success');
-                        _closeTopModal();
-                        _processingResidenceModal = false;
-                        if (onSuccess) {
-                            onSuccess(result);
-                        }
-                    } else {
-                        _showToast(result ? result.reason : 'Failed to assign household', 'error');
-                        _processingResidenceModal = false;
-                    }
-                },
-                onCancel: function() {
-                    _showToast('Assignment cancelled', 'info');
-                    _processingResidenceModal = false;
-                }
-            });
-
-        } catch (e) {
-            _processingResidenceModal = false;
-            _showToast('Error opening assign unit modal', 'error');
-        }
-    }
-
-    function openMarkUnitVacantModal(residenceId, unitNumber, onSuccess) {
-        if (_processingResidenceModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingResidenceModal = true;
-
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
-
-            var unit = _getResidenceUnit(residenceId, unitNumber);
-            if (!unit) {
-                _showToast('Unit ' + unitNumber + ' not found', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
-
-            if (unit.isVacant) {
-                _showToast('Unit ' + unitNumber + ' is already vacant', 'info');
-                _processingResidenceModal = false;
-                if (onSuccess) {
-                    onSuccess();
-                }
-                return;
-            }
-
-            if (unit.isDemolished) {
-                _showToast('Unit ' + unitNumber + ' has been demolished', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
-
-            var currentYear = _getCurrentYear();
-            var householdName = unit.householdName || 'Unknown';
-
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: rgba(200, 112, 64, 0.15); border: 1px solid var(--warn); border-radius: 8px; padding: 12px; margin-bottom: 16px;">' +
-                '<div style="font-size: 0.7rem;"><strong>Unit ' + unitNumber + ' of ' + _escapeHtml(residence.name) + '</strong></div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">Current Household: ' + _escapeHtml(householdName) + '</div>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Vacancy Year</label>' +
-                '<input type="number" id="unitVacantYear" value="' + currentYear + '" min="1" max="' + (currentYear + 5) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Reason</label>' +
-                '<select id="unitVacantReason" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                '<option value="household_moved">Household moved out</option>' +
-                '<option value="household_disassociated">Household disassociated</option>' +
-                '<option value="manual">Manual (admin)</option>' +
-                '</select>' +
-                '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Mark Unit ' + unitNumber + ' Vacant',
-                content: modalContent,
-                confirmText: 'Mark Vacant',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var year = parseInt(document.getElementById('unitVacantYear').value);
-                    var reason = document.getElementById('unitVacantReason').value;
-
-                    if (isNaN(year) || year < 1) {
-                        _showToast('Please enter a valid year', 'error');
-                        return false;
-                    }
-
-                    var result = _markUnitVacant(residenceId, unitNumber, reason, year);
-
-                    if (result && result.success) {
-                        _showToast('Unit ' + unitNumber + ' marked vacant', 'success');
-                        _closeTopModal();
-                        _processingResidenceModal = false;
-                        if (onSuccess) {
-                            onSuccess();
-                        }
-                    } else {
-                        _showToast(result ? result.reason : 'Failed to mark unit vacant', 'error');
-                    }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingResidenceModal = false;
-                }
-            });
-
-        } catch (e) {
-            _processingResidenceModal = false;
-            _showToast('Error opening mark unit vacant modal', 'error');
-        }
-    }
-
-    function openUnitDetailsModal(residenceId, unitNumber) {
-        if (_processingResidenceModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingResidenceModal = true;
-
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
-
-            var unit = _getResidenceUnit(residenceId, unitNumber);
-            if (!unit) {
-                _showToast('Unit ' + unitNumber + ' not found', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
-
-            var currentYear = _getCurrentYear();
-            var isVacant = unit.isVacant === true;
-            var isDemolished = unit.isDemolished === true;
-            var householdName = unit.householdName || 'Vacant';
-            var assignedYear = unit.assignedYear || 'N/A';
-            var vacantYear = unit.vacantYear || 'N/A';
-            var vacantDuration = unit.vacantYear ? currentYear - unit.vacantYear : 0;
-
-            var associationHistory = unit.associationHistory || [];
-
-            var associationHtml = '';
-            if (associationHistory.length > 0) {
-                associationHtml =
-                    '<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border);">' +
-                    '<div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 6px;">Association History</div>';
-                for (var i = 0; i < Math.min(associationHistory.length, 5); i++) {
-                    var a = associationHistory[i];
-                    var isCurrent = !a.endedYear && a.householdId === unit.householdId;
-                    associationHtml +=
-                        '<div style="font-size: 0.55rem; padding: 4px 0; border-bottom: 1px solid var(--border-light);">' +
-                        '<span>' + _escapeHtml(a.householdName) + '</span>' +
-                        (isCurrent ? ' <span style="color: var(--accent); font-size: 0.5rem;">(Current)</span>' : '') +
-                        '<span style="float: right; color: var(--dim);">' + a.year + (a.endedYear ? ' - ' + a.endedYear : '') + '</span>' +
-                        '</div>';
-                }
-                if (associationHistory.length > 5) {
-                    associationHtml += '<div style="font-size: 0.5rem; color: var(--dim); text-align: center; padding-top: 4px;">... and ' + (associationHistory.length - 5) + ' more</div>';
-                }
-                associationHtml += '</div>';
-            }
-
-            var statusColor = isDemolished ? '#8a2020' : (isVacant ? '#c87040' : '#4a9e6a');
-            var statusText = isDemolished ? 'Demolished' : (isVacant ? 'Vacant' : 'Occupied');
-
-            var modalContent =
-                '<div style="max-width: 500px;">' +
-                '<div style="margin-bottom: 16px; padding: 12px; background: var(--bg2); border-radius: 8px; border-left: 3px solid ' + statusColor + ';">' +
-                '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">' +
-                '<div>' +
-                '<div style="font-size: 1rem; font-weight: bold;">Unit ' + unitNumber + '</div>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">' + _escapeHtml(residence.name) + '</div>' +
-                '</div>' +
-                '<span style="background: ' + statusColor + '; padding: 4px 10px; border-radius: 12px; font-size: 0.6rem; color: white;">' + statusText + '</span>' +
-                '</div>' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.6rem; margin-top: 8px;">' +
-                '<div><span style="color: var(--dim);">Household:</span> ' + _escapeHtml(householdName) + '</div>' +
-                '<div><span style="color: var(--dim);">Assigned:</span> ' + assignedYear + '</div>' +
-                (isVacant ? '<div><span style="color: var(--dim);">Vacant since:</span> ' + vacantYear + ' (' + vacantDuration + ' years)</div>' : '') +
-                (unit.notes ? '<div style="grid-column: span 2;"><span style="color: var(--dim);">Notes:</span> ' + _escapeHtml(unit.notes) + '</div>' : '') +
-                '</div>' +
-                '</div>' +
-                associationHtml +
-                '<div style="margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; border-top: 1px solid var(--border); padding-top: 16px;">' +
-                (isVacant && !isDemolished ?
-                    '<button id="unitAssignBtn" class="btn primary" style="background: var(--accent); border: none; color: white; padding: 6px 14px; border-radius: 6px; cursor: pointer;">Assign Household</button>' :
-                    (!isDemolished ?
-                        '<button id="unitMarkVacantBtn" class="btn" style="background: var(--bg3); border: 1px solid var(--border); padding: 6px 14px; border-radius: 6px; cursor: pointer;">Mark Vacant</button>' :
-                        ''
-                    )
-                ) +
-                (!isDemolished ?
-                    '<button id="unitRemoveBtn" class="btn danger" style="background: #8a3020; border: none; color: white; padding: 6px 14px; border-radius: 6px; cursor: pointer;">Remove Unit</button>' :
-                    ''
-                ) +
-                '<button id="unitCloseBtn" class="btn" style="background: var(--bg3); border: 1px solid var(--border); padding: 6px 14px; border-radius: 6px; cursor: pointer;">Close</button>' +
-                '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Unit ' + unitNumber + ' Details',
-                content: modalContent,
-                confirmText: '',
-                cancelText: '',
-                onConfirm: function() {
-                    _closeTopModal();
-                    _processingResidenceModal = false;
-                }
-            });
-
-            setTimeout(function() {
-                var assignBtn = document.getElementById('unitAssignBtn');
-                if (assignBtn) {
-                    assignBtn.onclick = function() {
-                        _closeTopModal();
-                        openAssignUnitModal(residenceId, unitNumber, function() {
-                            _processingResidenceModal = false;
-                        });
-                    };
-                }
-
-                var markVacantBtn = document.getElementById('unitMarkVacantBtn');
-                if (markVacantBtn) {
-                    markVacantBtn.onclick = function() {
-                        _closeTopModal();
-                        openMarkUnitVacantModal(residenceId, unitNumber, function() {
-                            _processingResidenceModal = false;
-                        });
-                    };
-                }
-
-                var removeBtn = document.getElementById('unitRemoveBtn');
-                if (removeBtn) {
-                    removeBtn.onclick = function() {
-                        _closeTopModal();
-                        openRemoveUnitModal(residenceId, unitNumber, function() {
-                            _processingResidenceModal = false;
-                        });
-                    };
-                }
-
-                var closeBtn = document.getElementById('unitCloseBtn');
-                if (closeBtn) {
-                    closeBtn.onclick = function() {
-                        _closeTopModal();
-                        _processingResidenceModal = false;
-                    };
-                }
-            }, 100);
-
-        } catch (e) {
-            _processingResidenceModal = false;
-            _showToast('Error opening unit details', 'error');
-        }
-    }
-
-    // =========================================================================
-    // 17. END RESIDENCE ASSOCIATION MODAL
+    // 9. END ASSOCIATION MODAL
     // =========================================================================
 
     function openEndResidenceAssociationModal(residenceId, onSuccess) {
-        if (_processingResidenceModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
+        var res = _residence();
+
+        var residence = res.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
         }
-        _processingResidenceModal = true;
 
-        try {
-            var residence = _getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
-                _processingResidenceModal = false;
-                return;
+        // Find the current association for this residence
+        var associationHistory = res.getResidenceAssociationHistory(residenceId);
+        var current = null;
+        for (var i = associationHistory.length - 1; i >= 0; i--) {
+            if (!associationHistory[i].endedYear) {
+                current = associationHistory[i];
+                break;
             }
-
-            var householdId = residence.householdId;
-            if (!householdId) {
-                _showToast('Residence is not currently associated with a household', 'warning');
-                _processingResidenceModal = false;
-                if (onSuccess) {
-                    onSuccess();
-                }
-                return;
-            }
-
-            var household = _getHousehold(householdId);
-            if (!household) {
-                _showToast('Associated household not found', 'error');
-                _processingResidenceModal = false;
-                return;
-            }
-
-            var currentYear = _getCurrentYear();
-
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">' +
-                '<div style="font-size: 0.7rem;"><strong>Residence:</strong> ' + _escapeHtml(residence.name) + '</div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;"><strong>Household:</strong> ' + _escapeHtml(household.name) + '</div>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Year Association Ended</label>' +
-                '<input type="number" id="endAssocYear" value="' + currentYear + '" min="1" max="' + (currentYear + 5) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Reason</label>' +
-                '<select id="endAssocReason" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">' +
-                '<option value="household_moved">Household moved out</option>' +
-                '<option value="residence_sold">Residence sold</option>' +
-                '<option value="inheritance">Inheritance / Transfer</option>' +
-                '<option value="destruction">Residence destroyed</option>' +
-                '<option value="disassociation">Voluntary disassociation</option>' +
-                '<option value="custom">Custom reason</option>' +
-                '</select>' +
-                '</div>' +
-                '<div id="customEndReasonGroup" style="display: none; margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Custom Reason</label>' +
-                '<input type="text" id="customEndReason" placeholder="Enter custom reason..." style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '</div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">This will mark the association as ended but keep it in the historical record.</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'End Association: ' + household.name + ' & ' + residence.name,
-                content: modalContent,
-                confirmText: 'End Association',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var endedYear = parseInt(document.getElementById('endAssocYear').value);
-                    var reasonSelect = document.getElementById('endAssocReason').value;
-                    var customReason = document.getElementById('customEndReason') ? document.getElementById('customEndReason').value : '';
-
-                    var reason = reasonSelect === 'custom' ? (customReason || 'Ended') : reasonSelect;
-
-                    if (isNaN(endedYear) || endedYear < 1) {
-                        _showToast('Please enter a valid year', 'error');
-                        return false;
-                    }
-
-                    var result = _residence.endResidenceAssociation(residenceId, householdId, endedYear, reason);
-
-                    if (result) {
-                        _showToast('Association ended between ' + household.name + ' and ' + residence.name, 'success');
-                        _closeTopModal();
-                        _processingResidenceModal = false;
-                        if (onSuccess) {
-                            onSuccess();
-                        }
-                    } else {
-                        _showToast('Failed to end association', 'error');
-                    }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingResidenceModal = false;
-                }
-            });
-
-            setTimeout(function() {
-                var reasonSelect = document.getElementById('endAssocReason');
-                var customGroup = document.getElementById('customEndReasonGroup');
-                if (reasonSelect) {
-                    reasonSelect.onchange = function() {
-                        if (customGroup) {
-                            customGroup.style.display = reasonSelect.value === 'custom' ? 'block' : 'none';
-                        }
-                    };
-                }
-            }, 100);
-
-        } catch (e) {
-            _processingResidenceModal = false;
-            _showToast('Error opening end association modal', 'error');
         }
+
+        if (!current) {
+            _showToast('Residence has no active association', 'warning');
+            if (typeof onSuccess === 'function') onSuccess();
+            return null;
+        }
+
+        var year = _currentYear();
+
+        var content =
+            '<div style="margin-bottom:16px;">' +
+                '<div style="background:var(--bg3);border-radius:6px;padding:12px;margin-bottom:12px;">' +
+                    '<div style="font-size:0.7rem;"><strong>Residence:</strong> ' +
+                        _escapeHtml(residence.name) + '</div>' +
+                    '<div style="font-size:0.55rem;color:var(--dim);margin-top:4px;">' +
+                        '<strong>Household:</strong> ' +
+                        _escapeHtml(current.householdName || 'Unknown') +
+                        (current.unitNumber
+                            ? ' (Unit ' + current.unitNumber + ')' : '') +
+                    '</div>' +
+                    '<div style="font-size:0.55rem;color:var(--dim);margin-top:2px;">' +
+                        'Since ' + current.year +
+                    '</div>' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">End Year</label>' +
+                    '<input type="number" data-field="year" value="' +
+                        (year !== null ? year : '') +
+                        '" min="' + current.year +
+                        '" style="width:100px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason</label>' +
+                    '<input type="text" data-field="reason" placeholder="e.g., Moved out, Eviction..." ' +
+                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                '</div>' +
+            '</div>';
+
+        return _openModal({
+            title: 'End Association',
+            content: content,
+            confirmText: 'End Association',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var root = _resolveModalRoot();
+                if (!root) return false;
+
+                var endYear = _parseIntOrNull((root.querySelector('[data-field="year"]') || {}).value);
+                if (endYear === null || endYear < current.year) {
+                    _showToast('End year must be at or after association start', 'error');
+                    return false;
+                }
+                var reason = ((root.querySelector('[data-field="reason"]') || {}).value || '').trim() ||
+                    'Ended';
+
+                // Use the unit-level vacancy if a unit number is known,
+                // otherwise the residence-level vacancy.
+                var result;
+                if (current.unitNumber !== undefined && current.unitNumber !== null) {
+                    result = res.markUnitVacant(
+                        residenceId, current.unitNumber, reason, endYear
+                    );
+                } else {
+                    result = res.markResidenceVacant(residenceId, reason, endYear);
+                }
+
+                if (!result.success) {
+                    _showToast(result.reason || 'Failed to end association', 'error');
+                    return false;
+                }
+
+                _showToast('Association ended', 'success');
+                if (typeof onSuccess === 'function') onSuccess(result.data);
+                return true;
+            }
+        });
     }
 
     // =========================================================================
-    // 18. RESIDENCE SELECTOR
+    // 10. UNIT MODALS
+    // =========================================================================
+
+    function openAddUnitModal(residenceId, onSuccess) {
+        var res = _residence();
+
+        var residence = res.getResidence(residenceId);
+        if (!residence) { _showToast('Residence not found', 'error'); return null; }
+        if (!residence.isMultiUnit) {
+            _showToast('Cannot add units to a non-multi-unit residence', 'error');
+            return null;
+        }
+
+        var maxUnits = residence.maxUnits !== undefined ? residence.maxUnits : 20;
+        if (residence.unitCount >= maxUnits) {
+            _showToast('Maximum units reached (' + maxUnits + ')', 'error');
+            return null;
+        }
+
+        var content =
+            '<div style="margin-bottom:16px;">' +
+                '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
+                    'Adding a unit to <strong>' + _escapeHtml(residence.name) + '</strong>' +
+                    '<div style="margin-top:4px;">' + residence.unitCount + ' of ' +
+                    maxUnits + ' units currently exist</div>' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Unit Number (auto if blank)</label>' +
+                    '<input type="number" data-field="unitNumber" min="1" max="' + maxUnits +
+                        '" placeholder="Leave blank for auto-assign" ' +
+                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes (optional)</label>' +
+                    '<textarea data-field="notes" rows="2" placeholder="e.g., Ground floor unit..." ' +
+                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;"></textarea>' +
+                '</div>' +
+            '</div>';
+
+        return _openModal({
+            title: 'Add Unit to ' + residence.name,
+            content: content,
+            confirmText: 'Add Unit',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var root = _resolveModalRoot();
+                if (!root) return false;
+
+                var unitNumberRaw = (root.querySelector('[data-field="unitNumber"]') || {}).value;
+                var notes = ((root.querySelector('[data-field="notes"]') || {}).value || '').trim();
+
+                var options = { notes: notes || null };
+
+                if (unitNumberRaw !== '' && unitNumberRaw !== undefined) {
+                    var num = _parseIntOrNull(unitNumberRaw);
+                    if (num === null || num < 1 || num > maxUnits) {
+                        _showToast('Invalid unit number', 'error');
+                        return false;
+                    }
+                    options.unitNumber = num;
+                }
+
+                var result = res.addUnit(residenceId, options);
+                if (!result.success) {
+                    _showToast(result.reason || 'Failed to add unit', 'error');
+                    return false;
+                }
+
+                _showToast('Unit ' + result.data.unitNumber + ' added', 'success');
+                if (typeof onSuccess === 'function') onSuccess(result.data);
+                return true;
+            }
+        });
+    }
+
+    function openRemoveUnitModal(residenceId, unitNumber, onSuccess) {
+        var res = _residence();
+
+        var residence = res.getResidence(residenceId);
+        if (!residence) { _showToast('Residence not found', 'error'); return null; }
+
+        var unit = res.getUnit(residenceId, unitNumber);
+        if (!unit) { _showToast('Unit not found', 'error'); return null; }
+
+        var isOccupied = !unit.isVacant && !unit.isDemolished;
+
+        var content =
+            '<div style="margin-bottom:16px;">' +
+                '<div style="background:rgba(200,68,68,0.15);border:1px solid var(--warn);border-radius:8px;padding:12px;margin-bottom:16px;">' +
+                    '<strong>Remove Unit ' + unitNumber + '</strong>' +
+                    (isOccupied
+                        ? '<div style="margin-top:8px;color:#c87040;">Warning: This unit is currently occupied by ' +
+                            _escapeHtml(unit.householdName || 'Unknown') + '.</div>'
+                        : '') +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason (optional)</label>' +
+                    '<input type="text" data-field="reason" placeholder="e.g., Renovation, Condemned..." ' +
+                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                '</div>' +
+            '</div>';
+
+        return _openModal({
+            title: 'Remove Unit ' + unitNumber,
+            content: content,
+            confirmText: 'Remove Unit',
+            cancelText: 'Cancel',
+            confirmStyle: 'danger',
+            onConfirm: function() {
+                var root = _resolveModalRoot();
+                var reason = ((root.querySelector('[data-field="reason"]') || {}).value || '').trim();
+
+                var result = res.removeUnit(residenceId, unitNumber, {
+                    force: true,
+                    reason: reason || 'Removed'
+                });
+
+                if (!result.success) {
+                    _showToast(result.reason || 'Failed to remove unit', 'error');
+                    return false;
+                }
+
+                _showToast('Unit ' + unitNumber + ' removed', 'success');
+                if (typeof onSuccess === 'function') onSuccess(result.data);
+                return true;
+            }
+        });
+    }
+
+    function openAssignUnitModal(residenceId, unitNumber, onSuccess) {
+        var res = _residence();
+
+        var residence = res.getResidence(residenceId);
+        if (!residence) { _showToast('Residence not found', 'error'); return null; }
+
+        var unit = res.getUnit(residenceId, unitNumber);
+        if (!unit) { _showToast('Unit not found', 'error'); return null; }
+        if (!unit.isVacant) { _showToast('Unit is occupied', 'error'); return null; }
+        if (unit.isDemolished) { _showToast('Unit is demolished', 'error'); return null; }
+
+        if (typeof window.openHouseholdSelector !== 'function') {
+            _showToast('Household selector not available', 'error');
+            return null;
+        }
+
+        window.openHouseholdSelector({
+            title: 'Select Household for Unit ' + unitNumber,
+            filterConfig: {
+                showActive: true,
+                showVacant: false,
+                showEmpty: false,
+                showDeprecated: false
+            },
+            onSelect: function(household) {
+                if (!household) return;
+                var year = _currentYear();
+                var result = res.assignHouseholdToUnit(
+                    residenceId, unitNumber,
+                    household.id, household.name, year
+                );
+                if (!result.success) {
+                    _showToast(result.reason || 'Failed to assign household', 'error');
+                    return;
+                }
+                _showToast(household.name + ' assigned to Unit ' + unitNumber, 'success');
+                if (typeof onSuccess === 'function') onSuccess(result.data);
+            }
+        });
+
+        return null;
+    }
+
+    function openMarkUnitVacantModal(residenceId, unitNumber, onSuccess) {
+        var res = _residence();
+
+        var residence = res.getResidence(residenceId);
+        if (!residence) { _showToast('Residence not found', 'error'); return null; }
+
+        var unit = res.getUnit(residenceId, unitNumber);
+        if (!unit) { _showToast('Unit not found', 'error'); return null; }
+        if (unit.isVacant) {
+            _showToast('Unit is already vacant', 'info');
+            if (typeof onSuccess === 'function') onSuccess();
+            return null;
+        }
+
+        var year = _currentYear();
+
+        var content =
+            '<div style="margin-bottom:16px;">' +
+                '<div style="background:rgba(200,112,64,0.15);border:1px solid var(--warn);border-radius:8px;padding:12px;margin-bottom:16px;">' +
+                    '<div style="font-size:0.7rem;"><strong>Unit ' + unitNumber + ' of ' +
+                        _escapeHtml(residence.name) + '</strong></div>' +
+                    '<div style="font-size:0.55rem;color:var(--dim);margin-top:4px;">' +
+                        'Current Household: ' +
+                        _escapeHtml(unit.householdName || 'Unknown') +
+                    '</div>' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Vacancy Year</label>' +
+                    '<input type="number" data-field="year" value="' +
+                        (year !== null ? year : '') +
+                        '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason</label>' +
+                    '<select data-field="reason" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                        '<option value="household_moved">Household moved out</option>' +
+                        '<option value="household_disassociated">Household disassociated</option>' +
+                        '<option value="manual">Manual (admin)</option>' +
+                    '</select>' +
+                '</div>' +
+            '</div>';
+
+        return _openModal({
+            title: 'Mark Unit ' + unitNumber + ' Vacant',
+            content: content,
+            confirmText: 'Mark Vacant',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var root = _resolveModalRoot();
+                var vYear = _parseIntOrNull((root.querySelector('[data-field="year"]') || {}).value);
+                if (vYear === null || vYear < 1) {
+                    _showToast('Please enter a valid year', 'error');
+                    return false;
+                }
+                var reason = (root.querySelector('[data-field="reason"]') || {}).value || 'manual';
+
+                var result = res.markUnitVacant(residenceId, unitNumber, reason, vYear);
+                if (!result.success) {
+                    _showToast(result.reason || 'Failed to mark vacant', 'error');
+                    return false;
+                }
+                _showToast('Unit ' + unitNumber + ' marked vacant', 'success');
+                if (typeof onSuccess === 'function') onSuccess(result.data);
+                return true;
+            }
+        });
+    }
+
+    function openUnitDetailsModal(residenceId, unitNumber) {
+        var res = _residence();
+
+        var residence = res.getResidence(residenceId);
+        if (!residence) { _showToast('Residence not found', 'error'); return null; }
+
+        var unit = res.getUnit(residenceId, unitNumber);
+        if (!unit) { _showToast('Unit not found', 'error'); return null; }
+
+        var currentYear = _currentYear();
+
+        var isVacant = unit.isVacant === true;
+        var isDemolished = unit.isDemolished === true;
+        var statusColor = isDemolished ? '#8a2020' : (isVacant ? '#c87040' : '#4a9e6a');
+        var statusText = isDemolished ? 'Demolished' : (isVacant ? 'Vacant' : 'Occupied');
+
+        var vacantDuration = (unit.vacantYear !== null && unit.vacantYear !== undefined &&
+            currentYear !== null)
+            ? currentYear - unit.vacantYear
+            : 0;
+
+        var associationHtml = '';
+        if (unit.associationHistory && unit.associationHistory.length > 0) {
+            associationHtml = '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">';
+            associationHtml += '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:6px;">Association History</div>';
+            var sorted = unit.associationHistory.slice().sort(function(a, b) {
+                return (a.year || 0) - (b.year || 0);
+            });
+            var limit = Math.min(sorted.length, 5);
+            for (var i = limit - 1; i >= 0; i--) {
+                var a = sorted[i];
+                var isCurrentAssoc = !a.endedYear;
+                associationHtml += '<div style="font-size:0.55rem;padding:4px 0;border-bottom:1px solid var(--border-light);">' +
+                    '<span>' + _escapeHtml(a.householdName || 'Unknown') + '</span>' +
+                    (isCurrentAssoc
+                        ? ' <span style="color:var(--accent);font-size:0.5rem;">(Current)</span>'
+                        : '') +
+                    '<span style="float:right;color:var(--dim);">' +
+                        a.year + (a.endedYear ? ' - ' + a.endedYear : '') +
+                    '</span>' +
+                '</div>';
+            }
+            associationHtml += '</div>';
+        }
+
+        var content =
+            '<div style="max-width:500px;">' +
+                '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;border-left:3px solid ' + statusColor + ';">' +
+                    '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;">' +
+                        '<div>' +
+                            '<div style="font-size:1rem;font-weight:bold;">Unit ' + unitNumber + '</div>' +
+                            '<div style="font-size:0.65rem;color:var(--dim);">' +
+                                _escapeHtml(residence.name) + '</div>' +
+                        '</div>' +
+                        '<span style="background:' + statusColor +
+                            ';padding:4px 10px;border-radius:12px;font-size:0.6rem;color:white;">' +
+                            statusText + '</span>' +
+                    '</div>' +
+                    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:0.6rem;margin-top:8px;">' +
+                        '<div><span style="color:var(--dim);">Household:</span> ' +
+                            _escapeHtml(unit.householdName || 'Vacant') + '</div>' +
+                        '<div><span style="color:var(--dim);">Assigned:</span> ' +
+                            (unit.assignedYear !== null ? unit.assignedYear : 'N/A') + '</div>' +
+                        (isVacant && unit.vacantYear
+                            ? '<div><span style="color:var(--dim);">Vacant since:</span> ' +
+                                unit.vacantYear + ' (' + vacantDuration + 'y)</div>'
+                            : '') +
+                        (unit.notes
+                            ? '<div style="grid-column:span 2;"><span style="color:var(--dim);">Notes:</span> ' +
+                                _escapeHtml(unit.notes) + '</div>'
+                            : '') +
+                    '</div>' +
+                '</div>' +
+                associationHtml +
+                '<div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;border-top:1px solid var(--border);padding-top:16px;">' +
+                    (isVacant && !isDemolished
+                        ? '<button data-action="unit-assign" style="background:var(--accent);border:none;color:white;padding:6px 14px;border-radius:6px;cursor:pointer;">Assign Household</button>'
+                        : (!isDemolished
+                            ? '<button data-action="unit-vacate" style="background:var(--bg3);border:1px solid var(--border);padding:6px 14px;border-radius:6px;cursor:pointer;">Mark Vacant</button>'
+                            : '')) +
+                    (!isDemolished
+                        ? '<button data-action="unit-remove" style="background:#8a3020;border:none;color:white;padding:6px 14px;border-radius:6px;cursor:pointer;">Remove Unit</button>'
+                        : '') +
+                    '<button data-action="unit-close" style="background:var(--bg3);border:1px solid var(--border);padding:6px 14px;border-radius:6px;cursor:pointer;">Close</button>' +
+                '</div>' +
+            '</div>';
+
+        var handle = _openModal({
+            title: 'Unit ' + unitNumber + ' Details',
+            content: content,
+            confirmText: '',
+            cancelText: '',
+            onConfirm: function() { /* close only */ }
+        });
+
+        setTimeout(_attachOnOpen(function(root) {
+            var closeBtn = root.querySelector('[data-action="unit-close"]');
+            if (closeBtn) closeBtn.onclick = function() { _closeTopModal(); };
+
+            var assignBtn = root.querySelector('[data-action="unit-assign"]');
+            if (assignBtn) assignBtn.onclick = function() {
+                _closeTopModal();
+                setTimeout(function() {
+                    openAssignUnitModal(residenceId, unitNumber, function() {
+                        openUnitDetailsModal(residenceId, unitNumber);
+                    });
+                }, 0);
+            };
+
+            var vacateBtn = root.querySelector('[data-action="unit-vacate"]');
+            if (vacateBtn) vacateBtn.onclick = function() {
+                _closeTopModal();
+                setTimeout(function() {
+                    openMarkUnitVacantModal(residenceId, unitNumber, function() {
+                        openUnitDetailsModal(residenceId, unitNumber);
+                    });
+                }, 0);
+            };
+
+            var removeBtn = root.querySelector('[data-action="unit-remove"]');
+            if (removeBtn) removeBtn.onclick = function() {
+                _closeTopModal();
+                setTimeout(function() {
+                    openRemoveUnitModal(residenceId, unitNumber, function() {
+                        openUnitDetailsModal(residenceId, unitNumber);
+                    });
+                }, 0);
+            };
+        }), 0);
+
+        return handle;
+    }
+
+    // =========================================================================
+    // 11. REHABILITATE MODAL
+    // =========================================================================
+
+    function openRehabilitateResidenceModal(residenceId, onSuccess) {
+        var res = _residence();
+
+        var residence = res.getResidence(residenceId);
+        if (!residence) { _showToast('Residence not found', 'error'); return null; }
+        if (residence.isDemolished) { _showToast('Residence is demolished', 'error'); return null; }
+
+        var conditions = res.getResidenceConditions();
+        var year = _currentYear();
+        var currentCost = res.calculateRepairCost(residenceId, 'good');
+
+        var conditionOptions = '';
+        for (var i = 0; i < conditions.length; i++) {
+            var c = conditions[i];
+            conditionOptions += '<option value="' + _escapeHtml(c.id) + '"' +
+                (c.id === 'good' ? ' selected' : '') + '>' +
+                _escapeHtml(c.name) + '</option>';
+        }
+
+        var content =
+            '<div style="margin-bottom:16px;">' +
+                '<div style="background:var(--bg3);border-radius:6px;padding:12px;margin-bottom:12px;">' +
+                    '<div style="font-size:0.7rem;"><strong>' + _escapeHtml(residence.name) + '</strong></div>' +
+                    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-top:8px;font-size:0.6rem;">' +
+                        '<div><span style="color:var(--dim);">Current Condition:</span> ' +
+                            _escapeHtml(residence.condition || 'unknown') + '</div>' +
+                        '<div><span style="color:var(--dim);">Estimated Value:</span> ' +
+                            (residence.estimatedValue || 0) + ' gold</div>' +
+                        '<div><span style="color:var(--dim);">Last Renovated:</span> ' +
+                            (residence.lastRenovated || 'Never') + '</div>' +
+                    '</div>' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Target Condition</label>' +
+                    '<select data-field="targetCondition" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                        conditionOptions +
+                    '</select>' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Year of Renovation</label>' +
+                    '<input type="number" data-field="year" value="' +
+                        (year !== null ? year : '') +
+                        '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                '</div>' +
+                '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;">' +
+                    'Estimated cost: <strong data-role="cost-display">' + currentCost + '</strong> gold' +
+                '</div>' +
+            '</div>';
+
+        var handle = _openModal({
+            title: 'Rehabilitate: ' + residence.name,
+            content: content,
+            confirmText: 'Rehabilitate',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var root = _resolveModalRoot();
+                if (!root) return false;
+
+                var targetCondition = (root.querySelector('[data-field="targetCondition"]') || {}).value;
+                var rYear = _parseIntOrNull((root.querySelector('[data-field="year"]') || {}).value);
+                if (rYear === null || rYear < 1) {
+                    _showToast('Please enter a valid year', 'error');
+                    return false;
+                }
+
+                var result = res.rehabilitateResidence(residenceId, targetCondition, rYear);
+                if (!result.success) {
+                    _showToast(result.reason || 'Failed to rehabilitate', 'error');
+                    return false;
+                }
+
+                _showToast('Rehabilitated from "' + result.data.oldCondition +
+                    '" to "' + result.data.newCondition + '" (' + result.data.cost + 'g)',
+                    'success');
+                if (typeof onSuccess === 'function') onSuccess(result.data);
+                return true;
+            }
+        });
+
+        setTimeout(_attachOnOpen(function(root) {
+            var select = root.querySelector('[data-field="targetCondition"]');
+            var costDisplay = root.querySelector('[data-role="cost-display"]');
+            if (select && costDisplay) {
+                select.onchange = function() {
+                    var cost = res.calculateRepairCost(residenceId, select.value);
+                    costDisplay.textContent = cost;
+                };
+            }
+        }), 0);
+
+        return handle;
+    }
+
+    // =========================================================================
+    // 12. DEMOLISH MODAL
+    // =========================================================================
+
+    function openDemolishResidenceModal(residenceId, onSuccess) {
+        var res = _residence();
+
+        var residence = res.getResidence(residenceId);
+        if (!residence) { _showToast('Residence not found', 'error'); return null; }
+        if (residence.isDemolished) {
+            _showToast('Residence is already demolished', 'warning');
+            if (typeof onSuccess === 'function') onSuccess();
+            return null;
+        }
+
+        var unitStats = res.getUnitStats(residenceId);
+        var year = _currentYear();
+
+        var content =
+            '<div style="margin-bottom:16px;">' +
+                '<div style="background:rgba(200,68,68,0.15);border:1px solid var(--warn);border-radius:8px;padding:12px;margin-bottom:16px;">' +
+                    '<strong>Demolish Residence: ' + _escapeHtml(residence.name) + '</strong>' +
+                    '<div style="margin-top:8px;font-size:0.65rem;">' +
+                        'Demolishing this residence will destroy the building but keep its history. ' +
+                        'All occupied units will be vacated and disassociated.' +
+                    '</div>' +
+                    '<div style="margin-top:8px;font-size:0.6rem;color:var(--warn);">' +
+                        'Warning: This action cannot be undone.' +
+                    '</div>' +
+                '</div>' +
+                '<div style="background:var(--bg3);border-radius:6px;padding:12px;margin-bottom:12px;">' +
+                    '<div style="display:flex;justify-content:space-between;font-size:0.7rem;">' +
+                        '<span>Occupied units:</span>' +
+                        '<span>' + unitStats.occupied + ' of ' + unitStats.usable + '</span>' +
+                    '</div>' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Year of Demolition</label>' +
+                    '<input type="number" data-field="year" value="' +
+                        (year !== null ? year : '') +
+                        '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason</label>' +
+                    '<select data-field="reason" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                        '<option value="condemned">Condemned / Unsafe</option>' +
+                        '<option value="fire">Destroyed by fire</option>' +
+                        '<option value="war">Destroyed in war</option>' +
+                        '<option value="renovation">Renovation / Rebuilding</option>' +
+                        '<option value="decay">Decay / Abandonment</option>' +
+                        '<option value="manual">Manual decision</option>' +
+                    '</select>' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes (optional)</label>' +
+                    '<textarea data-field="notes" rows="2" placeholder="Additional details..." ' +
+                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;"></textarea>' +
+                '</div>' +
+            '</div>';
+
+        return _openModal({
+            title: 'Demolish Residence: ' + residence.name,
+            content: content,
+            confirmText: 'Demolish',
+            cancelText: 'Cancel',
+            confirmStyle: 'danger',
+            onConfirm: function() {
+                var root = _resolveModalRoot();
+                if (!root) return false;
+
+                var dYear = _parseIntOrNull((root.querySelector('[data-field="year"]') || {}).value);
+                if (dYear === null || dYear < 1) {
+                    _showToast('Please enter a valid year', 'error');
+                    return false;
+                }
+                var reason = (root.querySelector('[data-field="reason"]') || {}).value || 'Demolished';
+                var notes = ((root.querySelector('[data-field="notes"]') || {}).value || '').trim();
+
+                var result = res.demolishResidence(residenceId, reason, dYear, {
+                    force: true,
+                    destroyedBy: 'manual',
+                    disasterId: null
+                });
+
+                if (!result.success) {
+                    _showToast(result.reason || 'Failed to demolish', 'error');
+                    return false;
+                }
+
+                _showToast('Residence demolished (' +
+                    (result.data.affectedHouseholds || []).length +
+                    ' households affected)', 'info');
+                if (typeof onSuccess === 'function') onSuccess(result.data);
+                return true;
+            }
+        });
+    }
+
+    // =========================================================================
+    // 13. HISTORY MODALS
+    // =========================================================================
+
+    function openResidenceHistoryModal(residenceId) {
+        var res = _residence();
+        var residence = res.getResidence(residenceId);
+        if (!residence) { _showToast('Residence not found', 'error'); return null; }
+
+        var nameHistory = res.getResidenceNameHistory(residenceId);
+        var timeline = res.getResidenceTimeline(residenceId, 100);
+        var associations = res.getResidenceAssociationHistory(residenceId);
+
+        var content = _buildHistoryContent(residence, nameHistory, timeline, associations);
+
+        return _openModal({
+            title: 'History: ' + residence.name,
+            content: content,
+            confirmText: 'Close',
+            cancelText: '',
+            onConfirm: function() { /* close only */ }
+        });
+    }
+
+    function _buildHistoryContent(residence, nameHistory, timeline, associations) {
+        var html = '<div style="margin-bottom:16px;">';
+
+        html += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px;">';
+        html += '<div><strong>' + _escapeHtml(residence.name) + '</strong></div>';
+        html += '<div style="font-size:0.65rem;color:var(--dim);">Name changes: ' +
+            nameHistory.length + ' · Timeline events: ' + timeline.length +
+            ' · Associations: ' + associations.length + '</div>';
+        html += '</div>';
+
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">';
+
+        // Name history column
+        html += '<div>';
+        html += '<div style="font-size:0.7rem;color:var(--accent);margin-bottom:8px;">Name History</div>';
+        if (nameHistory.length === 0) {
+            html += '<div style="color:var(--dim);font-size:0.55rem;padding:8px;">No name changes</div>';
+        } else {
+            var sortedNames = nameHistory.slice().sort(function(a, b) {
+                return (a.year || 0) - (b.year || 0);
+            });
+            html += '<div style="display:flex;flex-direction:column;gap:6px;">';
+            for (var i = 0; i < sortedNames.length; i++) {
+                var h = sortedNames[i];
+                var isCurrentName = i === sortedNames.length - 1;
+                html += _historyEntry(h.year, (h.oldName || '—') + ' → ' + h.newName,
+                    h.reason, isCurrentName);
+            }
+            html += '</div>';
+        }
+        html += '</div>';
+
+        // Timeline column
+        html += '<div>';
+        html += '<div style="font-size:0.7rem;color:var(--accent);margin-bottom:8px;">Timeline</div>';
+        if (timeline.length === 0) {
+            html += '<div style="color:var(--dim);font-size:0.55rem;padding:8px;">No events</div>';
+        } else {
+            var sortedT = timeline.slice().sort(function(a, b) {
+                return (a.year || 0) - (b.year || 0);
+            });
+            html += '<div style="display:flex;flex-direction:column;gap:6px;max-height:300px;overflow-y:auto;">';
+            for (var j = 0; j < sortedT.length; j++) {
+                var e = sortedT[j];
+                html += _historyEntry(e.year, e.details || e.type, null, false,
+                    e.householdName || null);
+            }
+            html += '</div>';
+        }
+        html += '</div>';
+
+        html += '</div>';
+
+        // Associations
+        if (associations.length > 0) {
+            html += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">';
+            html += '<div style="font-size:0.7rem;color:var(--accent);margin-bottom:8px;">' +
+                'Household Associations (' + associations.length + ')</div>';
+            var sortedA = associations.slice().sort(function(a, b) {
+                return (a.year || 0) - (b.year || 0);
+            });
+            var recentA = sortedA.slice(-10).reverse();
+            for (var k = 0; k < recentA.length; k++) {
+                var a = recentA[k];
+                var isCurrent = !a.endedYear;
+                html += '<div style="font-size:0.55rem;padding:4px 0;border-bottom:1px solid var(--border-light);">' +
+                    '<strong>' + _escapeHtml(a.householdName || 'Unknown') + '</strong>' +
+                    (a.unitNumber ? ' (Unit ' + a.unitNumber + ')' : '') +
+                    '<span style="float:right;color:' +
+                        (isCurrent ? 'var(--success)' : 'var(--dim)') + ';">' +
+                        a.year + (a.endedYear ? ' - ' + a.endedYear : '') +
+                        (isCurrent ? ' (Current)' : '') +
+                    '</span>' +
+                '</div>';
+            }
+            html += '</div>';
+        }
+
+        html += '</div>';
+        return html;
+    }
+
+    function _historyEntry(year, text, reason, isCurrent, contextNote) {
+        return '<div style="background:var(--bg3);border-radius:6px;padding:8px 10px;' +
+            'border-left:3px solid ' + (isCurrent ? 'var(--accent)' : 'var(--border)') + ';">' +
+            '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;">' +
+                '<div style="font-size:0.6rem;">' +
+                    '<strong>' + year + '</strong> — ' + _escapeHtml(text) +
+                '</div>' +
+                (isCurrent
+                    ? '<span style="font-size:0.5rem;color:var(--accent);">Current</span>'
+                    : '') +
+            '</div>' +
+            (contextNote
+                ? '<div style="font-size:0.5rem;color:var(--dim);margin-top:2px;">' +
+                    _escapeHtml(contextNote) + '</div>'
+                : '') +
+            (reason
+                ? '<div style="font-size:0.5rem;color:var(--dim);margin-top:2px;">Reason: ' +
+                    _escapeHtml(reason) + '</div>'
+                : '') +
+        '</div>';
+    }
+
+    function openResidenceNameHistoryModal(residenceId) {
+        var res = _residence();
+        var residence = res.getResidence(residenceId);
+        if (!residence) { _showToast('Residence not found', 'error'); return null; }
+
+        var nameHistory = res.getResidenceNameHistory(residenceId);
+
+        var content = '<div style="margin-bottom:16px;">';
+
+        content += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px;">';
+        content += '<div><strong>' + _escapeHtml(residence.name) + '</strong></div>';
+        content += '<div style="font-size:0.65rem;color:var(--dim);">Total name changes: ' +
+            nameHistory.length + '</div>';
+        content += '</div>';
+
+        if (nameHistory.length === 0) {
+            content += '<div style="color:var(--dim);text-align:center;padding:20px;font-size:0.6rem;">No name change history</div>';
+        } else {
+            var sorted = nameHistory.slice().sort(function(a, b) {
+                return (a.year || 0) - (b.year || 0);
+            });
+            for (var i = 0; i < sorted.length; i++) {
+                var h = sorted[i];
+                var isCurrent = i === sorted.length - 1;
+                content += _historyEntry(h.year,
+                    (h.oldName || '—') + ' → ' + h.newName,
+                    h.reason, isCurrent, h.changedBy ? 'By ' + h.changedBy : null);
+            }
+        }
+
+        content += '</div>';
+
+        return _openModal({
+            title: 'Name History: ' + residence.name,
+            content: content,
+            confirmText: 'Close',
+            cancelText: '',
+            onConfirm: function() { /* close only */ }
+        });
+    }
+
+    function openResidenceTimelineModal(residenceId) {
+        var res = _residence();
+        var residence = res.getResidence(residenceId);
+        if (!residence) { _showToast('Residence not found', 'error'); return null; }
+
+        var timeline = res.getResidenceTimeline(residenceId, 200);
+
+        var content = '<div style="margin-bottom:16px;">';
+        content += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px;">';
+        content += '<div><strong>' + _escapeHtml(residence.name) + '</strong></div>';
+        content += '<div style="font-size:0.65rem;color:var(--dim);">Total events: ' +
+            timeline.length + '</div>';
+        content += '</div>';
+
+        if (timeline.length === 0) {
+            content += '<div style="color:var(--dim);text-align:center;padding:20px;font-size:0.6rem;">No timeline events</div>';
+        } else {
+            var sorted = timeline.slice().sort(function(a, b) {
+                return (a.year || 0) - (b.year || 0);
+            });
+            content += '<div style="max-height:400px;overflow-y:auto;">';
+            for (var i = 0; i < sorted.length; i++) {
+                var e = sorted[i];
+                content += _historyEntry(e.year, e.details || e.type, null, false,
+                    e.householdName || (e.unitNumber !== null && e.unitNumber !== undefined
+                        ? 'Unit ' + e.unitNumber : null));
+            }
+            content += '</div>';
+        }
+
+        content += '</div>';
+
+        return _openModal({
+            title: 'Timeline: ' + residence.name,
+            content: content,
+            confirmText: 'Close',
+            cancelText: '',
+            onConfirm: function() { /* close only */ }
+        });
+    }
+
+    function openResidenceAssociationHistoryModal(residenceId) {
+        var res = _residence();
+        var residence = res.getResidence(residenceId);
+        if (!residence) { _showToast('Residence not found', 'error'); return null; }
+
+        var associations = res.getResidenceAssociationHistory(residenceId);
+
+        var content = '<div style="margin-bottom:16px;">';
+        content += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px;">';
+        content += '<div><strong>' + _escapeHtml(residence.name) + '</strong></div>';
+        content += '<div style="font-size:0.65rem;color:var(--dim);">Total associations: ' +
+            associations.length + '</div>';
+        content += '</div>';
+
+        if (associations.length === 0) {
+            content += '<div style="color:var(--dim);text-align:center;padding:20px;font-size:0.6rem;">No associations</div>';
+        } else {
+            var sorted = associations.slice().sort(function(a, b) {
+                return (a.year || 0) - (b.year || 0);
+            });
+            for (var i = 0; i < sorted.length; i++) {
+                var a = sorted[i];
+                var isCurrent = !a.endedYear;
+                content += '<div style="background:var(--bg3);border-radius:6px;padding:8px 10px;' +
+                    'margin-bottom:4px;border-left:3px solid ' +
+                    (isCurrent ? 'var(--accent)' : 'var(--border)') + ';">' +
+                    '<div style="display:flex;justify-content:space-between;">' +
+                        '<div style="font-size:0.6rem;">' +
+                            '<strong>' + _escapeHtml(a.householdName || 'Unknown') + '</strong>' +
+                            (a.unitNumber ? ' (Unit ' + a.unitNumber + ')' : '') +
+                        '</div>' +
+                        '<span style="font-size:0.5rem;color:' +
+                            (isCurrent ? 'var(--success)' : 'var(--dim)') + ';">' +
+                            (isCurrent ? 'Current' : 'Ended') +
+                        '</span>' +
+                    '</div>' +
+                    '<div style="font-size:0.55rem;color:var(--dim);">' +
+                        a.year + (a.endedYear ? ' - ' + a.endedYear : ' - present') +
+                        (a.reason ? ' · ' + _escapeHtml(a.reason) : '') +
+                    '</div>' +
+                '</div>';
+            }
+        }
+
+        content += '</div>';
+
+        return _openModal({
+            title: 'Association History: ' + residence.name,
+            content: content,
+            confirmText: 'Close',
+            cancelText: '',
+            onConfirm: function() { /* close only */ }
+        });
+    }
+
+    // =========================================================================
+    // 14. HEIR FINDER (placeholder)
+    // =========================================================================
+
+    function openResidenceHeirFinderModal(residenceId) {
+        var res = _residence();
+        var residence = res.getResidence(residenceId);
+        if (!residence) { _showToast('Residence not found', 'error'); return null; }
+
+        if (!residence.isVacant) {
+            _showToast('Heirs are only relevant for vacant properties', 'warning');
+            return null;
+        }
+
+        _showToast('Heir finder is not available in this build.', 'info');
+        return null;
+    }
+
+    // =========================================================================
+    // 15. RESIDENCE SELECTOR
     // =========================================================================
 
     function openResidenceSelector(options) {
-        if (_processingResidenceModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingResidenceModal = true;
+        options = options || {};
 
-        try {
-            options = options || {};
+        var res = _residence();
+        var title = options.title || 'Select Residence';
+        var locationId = options.locationId || null;
+        var vacantOnly = options.vacantOnly === true;
+        var onSelect = options.onSelect || function() {};
+        var onCancel = options.onCancel || function() {};
 
-            var title = options.title || 'Select Residence';
-            var locationId = options.locationId || null;
-            var vacantOnly = options.vacantOnly || false;
-            var onSelect = options.onSelect || function() {};
-            var onCancel = options.onCancel || function() {};
+        var residences = locationId
+            ? res.getResidencesByLocation(locationId)
+            : res.getAllResidences();
 
-            var residences = locationId ? _getResidencesByLocation(locationId) : _getResidences();
-
-            if (vacantOnly) {
-                residences = residences.filter(function(r) { return r.isVacant && !r.isDemolished; });
-            } else {
-                residences = residences.filter(function(r) { return !r.isDemolished; });
-            }
-
-            if (residences.length === 0) {
-                _showToast('No residences available', 'error');
-                _processingResidenceModal = false;
-                if (onCancel) onCancel();
-                return;
-            }
-
-            var optionsHtml = residences.map(function(r) {
-                var status = r.isVacant ? 'Vacant' : 'Occupied';
-                var statusColor = r.isVacant ? '#c87040' : '#4a9e6a';
-                var unitCount = r.units ? r.units.length : 1;
-                var locationName = r.locationName || 'Unknown';
-                return '<option value="' + r.id + '">' +
-                    _escapeHtml(r.name) + ' (' + _escapeHtml(locationName) + ') - ' + status +
-                    (r.isMultiUnit ? ' - ' + unitCount + ' units' : '') +
-                    '</option>';
-            }).join('');
-
-            var modalContent =
-                '<div style="margin-bottom: 16px;">' +
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Select Residence</label>' +
-                '<select id="residenceSelectorSelect" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">' +
-                '<option value="">— Select a residence —</option>' +
-                optionsHtml +
-                '</select>' +
-                '</div>' +
-                '</div>';
-
-            _openModal({
-                title: title,
-                content: modalContent,
-                confirmText: 'Select',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var select = document.getElementById('residenceSelectorSelect');
-                    if (select && select.value) {
-                        var residence = _getResidenceById(select.value);
-                        if (residence) {
-                            _closeTopModal();
-                            _processingResidenceModal = false;
-                            onSelect(residence);
-                        } else {
-                            _showToast('Residence not found', 'error');
-                            return false;
-                        }
-                    } else {
-                        _showToast('Please select a residence', 'error');
-                        return false;
-                    }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingResidenceModal = false;
-                    if (onCancel) onCancel();
-                }
+        if (vacantOnly) {
+            residences = residences.filter(function(r) {
+                return r.isVacant && !r.isDemolished;
             });
-
-        } catch (e) {
-            _processingResidenceModal = false;
-            _showToast('Error opening residence selector', 'error');
+        } else {
+            residences = residences.filter(function(r) {
+                return !r.isDemolished;
+            });
         }
+
+        if (residences.length === 0) {
+            _showToast('No residences available', 'error');
+            if (onCancel) onCancel();
+            return null;
+        }
+
+        var optionsHtml = '';
+        for (var i = 0; i < residences.length; i++) {
+            var r = residences[i];
+            var status = r.isVacant ? 'Vacant' : 'Occupied';
+            optionsHtml += '<option value="' + _escapeHtml(r.id) + '">' +
+                _escapeHtml(r.name) + ' (' +
+                _escapeHtml(r.locationName || 'Unknown') + ') - ' + status +
+                (r.isMultiUnit ? ' - ' + r.unitCount + ' units' : '') +
+            '</option>';
+        }
+
+        var content =
+            '<div style="margin-bottom:16px;">' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Select Residence</label>' +
+                    '<select data-field="residenceId" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                        '<option value="">— Select a residence —</option>' +
+                        optionsHtml +
+                    '</select>' +
+                '</div>' +
+            '</div>';
+
+        return _openModal({
+            title: title,
+            content: content,
+            confirmText: 'Select',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var root = _resolveModalRoot();
+                var id = (root.querySelector('[data-field="residenceId"]') || {}).value;
+                if (!id) {
+                    _showToast('Please select a residence', 'error');
+                    return false;
+                }
+                var residence = res.getResidence(id);
+                if (!residence) {
+                    _showToast('Residence not found', 'error');
+                    return false;
+                }
+                if (typeof onSelect === 'function') onSelect(residence);
+                return true;
+            }
+        });
     }
 
     // =========================================================================
-    // 19. EXPORTS
+    // 16. EXPORTS
     // =========================================================================
 
+    // CRUD
     window.openNewResidenceModal = openNewResidenceModal;
     window.openEditResidenceModal = openEditResidenceModal;
     window.openDeleteResidenceModal = openDeleteResidenceModal;
-    window.openResidenceDetailsModal = openResidenceDetailsModal;
     window.openRenameResidenceModal = openRenameResidenceModal;
-    window.openResidenceNameHistoryModal = openResidenceNameHistoryModal;
+    window.openResidenceDetailsModal = openResidenceDetailsModal;
+
+    // Assignment / vacancy
     window.openAssignResidenceModal = openAssignResidenceModal;
     window.openVacateResidenceModal = openVacateResidenceModal;
-    window.openRehabilitateResidenceModal = openRehabilitateResidenceModal;
-    window.openDemolishResidenceModal = openDemolishResidenceModal;
-    window.openResidenceHeirFinderModal = openResidenceHeirFinderModal;
+    window.openEndResidenceAssociationModal = openEndResidenceAssociationModal;
+    window.openMarkResidenceVacantModal = openVacateResidenceModal;         // legacy alias
+    window.openResidenceVacancyDetailsModal = openResidenceDetailsModal;     // legacy alias
+    window.openAssignResidenceToHouseholdModal = openAssignResidenceModal;   // legacy alias
+
+    // Units
     window.openAddUnitModal = openAddUnitModal;
     window.openRemoveUnitModal = openRemoveUnitModal;
     window.openAssignUnitModal = openAssignUnitModal;
     window.openMarkUnitVacantModal = openMarkUnitVacantModal;
     window.openUnitDetailsModal = openUnitDetailsModal;
-    window.openResidenceSelector = openResidenceSelector;
-    window.openEndResidenceAssociationModal = openEndResidenceAssociationModal;
 
-    // ES Module exports
+    // Rehabilitation / demolition
+    window.openRehabilitateResidenceModal = openRehabilitateResidenceModal;
+    window.openDemolishResidenceModal = openDemolishResidenceModal;
+
+    // History
+    window.openResidenceHistoryModal = openResidenceHistoryModal;
+    window.openResidenceNameHistoryModal = openResidenceNameHistoryModal;
+    window.openResidenceTimelineModal = openResidenceTimelineModal;
+    window.openResidenceAssociationHistoryModal = openResidenceAssociationHistoryModal;
+
+    // Heir finder (placeholder)
+    window.openResidenceHeirFinderModal = openResidenceHeirFinderModal;
+
+    // Selector
+    window.openResidenceSelector = openResidenceSelector;
+
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
             openNewResidenceModal: openNewResidenceModal,
             openEditResidenceModal: openEditResidenceModal,
             openDeleteResidenceModal: openDeleteResidenceModal,
-            openResidenceDetailsModal: openResidenceDetailsModal,
             openRenameResidenceModal: openRenameResidenceModal,
-            openResidenceNameHistoryModal: openResidenceNameHistoryModal,
+            openResidenceDetailsModal: openResidenceDetailsModal,
             openAssignResidenceModal: openAssignResidenceModal,
             openVacateResidenceModal: openVacateResidenceModal,
-            openRehabilitateResidenceModal: openRehabilitateResidenceModal,
-            openDemolishResidenceModal: openDemolishResidenceModal,
-            openResidenceHeirFinderModal: openResidenceHeirFinderModal,
+            openEndResidenceAssociationModal: openEndResidenceAssociationModal,
             openAddUnitModal: openAddUnitModal,
             openRemoveUnitModal: openRemoveUnitModal,
             openAssignUnitModal: openAssignUnitModal,
             openMarkUnitVacantModal: openMarkUnitVacantModal,
             openUnitDetailsModal: openUnitDetailsModal,
-            openResidenceSelector: openResidenceSelector,
-            openEndResidenceAssociationModal: openEndResidenceAssociationModal
+            openRehabilitateResidenceModal: openRehabilitateResidenceModal,
+            openDemolishResidenceModal: openDemolishResidenceModal,
+            openResidenceHistoryModal: openResidenceHistoryModal,
+            openResidenceNameHistoryModal: openResidenceNameHistoryModal,
+            openResidenceTimelineModal: openResidenceTimelineModal,
+            openResidenceAssociationHistoryModal: openResidenceAssociationHistoryModal,
+            openResidenceHeirFinderModal: openResidenceHeirFinderModal,
+            openResidenceSelector: openResidenceSelector
         };
     }
 
