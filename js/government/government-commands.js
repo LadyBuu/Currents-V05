@@ -1,1453 +1,642 @@
 /**
- * =============================================================================
- * GOVERNMENT COMMANDS (js/government/government-commands.js)
- * =============================================================================
- * 
- * PURPOSE: All write operations for government system.
- * 
- * UPDATED: Removed self-budget calculation (now uses settlement allocation)
- *          Salary payment now checks settlement allocation
- *          Added checkSalaryBudgetSufficiency()
- *          Kept assignment, position, department, leader, and justice management
- * 
- * FIXED: createGovernmentType now forces immediate save
- * FIXED: updateGovernmentType now forces immediate save
- * FIXED: deleteGovernmentType now forces immediate save
- * FIXED: Removed double toasts (toasts now only shown by commands)
- * 
- * DEPENDENCIES:
- *   - government-state.js (GovernmentState)
- *   - accessors.js (getCharacterById, getPlaceById, getCurrentYear)
- *   - eventLogger.js (logEvent)
- *   - storage.js (saveMasterData)
- *   - location-state.js (LocationState - for place data)
- *   - settlement-state.js (SettlementState) - for salary allocation
- *   - settlement-commands.js (SettlementCommands) - for allocation queries
- * 
- * =============================================================================
+ * government-commands.js
+ * Write layer. Single transaction boundary per command. No toasts. No cross-domain mutation.
+ * Result contract: { success: true, data } | { success: false, reason, code? }
  */
-
 (function() {
     'use strict';
 
-    // =========================================================================
-    // 1. RECURSION GUARD
-    // =========================================================================
+    var _CharacterCommands = window.CharacterCommands;
+    var _CharacterQueries  = window.CharacterQueries;
+    var _LocationQueries   = window.LocationQueries;
+    var _HouseholdCommands = window.HouseholdCommands;
+    var _HouseholdQueries  = window.HouseholdQueries;
+    var _SettlementQueries = window.SettlementQueries;
+    var _Rules             = window.GovernmentRules;
 
-    var _processingCommand = false;
+    if (!_CharacterQueries) throw new Error('government-commands.js requires CharacterQueries');
+    if (!_LocationQueries)  throw new Error('government-commands.js requires LocationQueries');
+    if (!_SettlementQueries) throw new Error('government-commands.js requires SettlementQueries');
+    if (!window.GovernmentQueries) throw new Error('government-commands.js requires GovernmentQueries');
+    if (!window.GovernmentState)   throw new Error('government-commands.js requires GovernmentState');
 
-    // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
-    // =========================================================================
+    var State = window.GovernmentState;
+    var Queries = window.GovernmentQueries;
 
-    function _getCharacterById(id) {
-        return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    function _now() { return window.getCurrentYearSafe(); }
+
+    function _ok(data) { return { success: true, data: data }; }
+    function _fail(reason, code) { return { success: false, reason: reason, code: code || null }; }
+
+    // ---- Transaction boundary ------------------------------------------------
+
+    function _commit() {
+        if (typeof window.saveMasterData === 'function') window.saveMasterData(true);
+        State.invalidateCache();
+        if (typeof window.invalidateAccessorCaches === 'function') window.invalidateAccessorCaches();
     }
 
-    function _getCharacters() {
-        return typeof window.getCharacters === 'function' ? window.getCharacters() : [];
+    function _log(category, type, message, subjects) {
+        if (typeof window.logEvent === 'function') window.logEvent(category, type, message, subjects || []);
     }
 
-    function _getPlaceById(id) {
-        return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
-    }
-
-    function _getPlaces() {
-        return typeof window.getPlaces === 'function' ? window.getPlaces() : [];
-    }
-
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
-    function _saveMasterData() {
-        if (typeof window.saveMasterData === 'function') window.saveMasterData();
-    }
-
-    function _logEvent(category, type, message, subjects) {
-        if (typeof window.logEvent === 'function') {
-            window.logEvent(category, type, message, subjects);
-        }
-    }
-
-    function _showToast(message, type) {
-        var plainMessage = message;
-        if (typeof message === 'string') {
-            plainMessage = message.replace(/<[^>]*>/g, '');
-        }
-        if (typeof window.showToast === 'function') {
-            window.showToast(plainMessage, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(plainMessage, type);
-        } else if (typeof window._showToast === 'function') {
-            window._showToast(plainMessage, type);
-        }
-    }
-
-    function _generateId(prefix) {
-        if (typeof window.generateId === 'function') return window.generateId(prefix);
-        return prefix + '_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
-    }
-
-    function _getRoleById(id) {
-        if (typeof window.getRoleById === 'function') {
-            return window.getRoleById(id);
-        }
-        return null;
-    }
-
-    function _addProfession(characterId, roleId, options) {
-        if (typeof window.addProfession === 'function') {
-            return window.addProfession(characterId, roleId, options);
-        }
-        return { success: false };
-    }
-
-    function _getSettlementData(locationId) {
-        if (typeof window.getSettlementData === 'function') {
-            return window.getSettlementData(locationId);
-        }
-        if (typeof window.getOrCreateSettlementData === 'function') {
-            return window.getOrCreateSettlementData(locationId);
-        }
-        return null;
-    }
-
-    function _getHouseholdForCharacter(characterId) {
-        if (typeof window.HouseholdState !== 'undefined' && 
-            typeof window.HouseholdState.getCharacterHousehold === 'function') {
-            return window.HouseholdState.getCharacterHousehold(characterId);
-        }
-        return null;
-    }
-
-    function _updateHouseholdWealth(householdId, delta, reason) {
-        if (typeof window.HouseholdEconomy !== 'undefined' && 
-            typeof window.HouseholdEconomy.updateHouseholdWealth === 'function') {
-            return window.HouseholdEconomy.updateHouseholdWealth(householdId, delta, reason);
-        }
-        if (typeof window.HouseholdState !== 'undefined' && 
-            typeof window.HouseholdState.updateHousehold === 'function') {
-            var household = window.HouseholdState.getHousehold(householdId);
-            if (household && household.economy) {
-                household.economy.wealth = Math.max(0, (household.economy.wealth || 0) + delta);
-                window.HouseholdState.updateHousehold(householdId, { 
-                    economy: household.economy 
-                }, { recordHistory: false });
-                return household.economy.wealth;
-            }
-        }
-        return 0;
-    }
-
-    function _getHouseholdWealth(householdId) {
-        if (typeof window.HouseholdEconomy !== 'undefined' && 
-            typeof window.HouseholdEconomy.getHouseholdWealth === 'function') {
-            return window.HouseholdEconomy.getHouseholdWealth(householdId);
-        }
-        var household = window.HouseholdState ? window.HouseholdState.getHousehold(householdId) : null;
-        return household && household.economy ? household.economy.wealth || 0 : 0;
-    }
-
-    // =========================================================================
-    // 3. VALIDATION HELPERS
-    // =========================================================================
-
-    function _validateDepartment(data, isUpdate) {
-        isUpdate = isUpdate || false;
-
-        if (!isUpdate) {
-            if (!data.name || data.name.trim() === '') {
-                return { valid: false, reason: 'Department name is required' };
-            }
-            if (!data.locationId) {
-                return { valid: false, reason: 'Location is required' };
-            }
-        }
-
-        if (data.name) {
-            var trimmed = data.name.trim();
-            if (trimmed.length < 2) {
-                return { valid: false, reason: 'Department name must be at least 2 characters' };
-            }
-        }
-
-        if (data.locationId) {
-            var place = _getPlaceById(data.locationId);
-            if (!place) {
-                return { valid: false, reason: 'Location not found' };
-            }
-        }
-
-        if (data.parentDepartmentId) {
-            var parent = GovernmentState.getDepartment(data.parentDepartmentId);
-            if (!parent) {
-                return { valid: false, reason: 'Parent department not found' };
-            }
-            if (!isUpdate && data.parentDepartmentId === data.id) {
-                return { valid: false, reason: 'Department cannot be its own parent' };
-            }
-        }
-
-        return { valid: true };
-    }
-
-    function _validatePosition(data, isUpdate) {
-        isUpdate = isUpdate || false;
-
-        if (!isUpdate) {
-            if (!data.name || data.name.trim() === '') {
-                return { valid: false, reason: 'Position name is required' };
-            }
-        }
-
-        if (data.name) {
-            var trimmed = data.name.trim();
-            if (trimmed.length < 2) {
-                return { valid: false, reason: 'Position name must be at least 2 characters' };
-            }
-        }
-
-        if (data.priority !== undefined) {
-            if (typeof data.priority !== 'number' || data.priority < 1 || data.priority > 100) {
-                return { valid: false, reason: 'Priority must be between 1 and 100' };
-            }
-        }
-
-        if (data.requiredRoleId !== undefined && data.requiredRoleId !== null) {
-            var role = _getRoleById(data.requiredRoleId);
-            if (!role) {
-                return { valid: false, reason: 'Required role not found' };
-            }
-        }
-
-        if (data.minSkillLevel !== undefined && data.minSkillLevel < 0) {
-            return { valid: false, reason: 'Minimum skill level cannot be negative' };
-        }
-
-        return { valid: true };
-    }
-
-    function _validateAssignment(data) {
-        if (!data.departmentId) {
-            return { valid: false, reason: 'Department is required' };
-        }
-        if (!data.positionId) {
-            return { valid: false, reason: 'Position is required' };
-        }
-        if (!data.characterId) {
-            return { valid: false, reason: 'Character is required' };
-        }
-
-        var dept = GovernmentState.getDepartment(data.departmentId);
-        if (!dept) {
-            return { valid: false, reason: 'Department not found' };
-        }
-
-        var position = GovernmentState.getPositionById(data.departmentId, data.positionId);
-        if (!position) {
-            return { valid: false, reason: 'Position not found' };
-        }
-
-        var character = _getCharacterById(data.characterId);
-        if (!character) {
-            return { valid: false, reason: 'Character not found' };
-        }
-        if (character.isDeceased) {
-            return { valid: false, reason: 'Character is deceased' };
-        }
-
-        if (position.genderRestriction && position.genderRestriction !== 'either') {
-            if (character.gender !== position.genderRestriction) {
-                return { valid: false, reason: 'Character gender does not meet position requirement' };
-            }
-        }
-
-        var existing = GovernmentState.getAssignmentsForPosition(data.departmentId, data.positionId, true);
-        for (var i = 0; i < existing.length; i++) {
-            if (existing[i].characterId === data.characterId) {
-                return { valid: false, reason: 'Character already assigned to this position' };
-            }
-        }
-
-        if (position.requiredRoleId) {
-            var hasRole = false;
-            var skillLevel = 0;
-            if (character.professions) {
-                for (var i = 0; i < character.professions.length; i++) {
-                    if (character.professions[i].id === position.requiredRoleId) {
-                        hasRole = true;
-                        skillLevel = character.professions[i].skillLevel || 0;
-                        break;
-                    }
-                }
-            }
-
-            if (!hasRole && !data.addRoleIfMissing) {
-                return { valid: false, reason: 'Character does not have the required role' };
-            }
-
-            if (hasRole && position.minSkillLevel && skillLevel < position.minSkillLevel) {
-                return { valid: false, reason: 'Character skill level (' + skillLevel + ') is below requirement (' + position.minSkillLevel + ')' };
-            }
-        }
-
-        if (data.startYear && data.endYear) {
-            if (data.endYear <= data.startYear) {
-                return { valid: false, reason: 'End year must be after start year' };
-            }
-        }
-
-        return { valid: true };
-    }
-
-    function _validateGovernmentType(data, isUpdate) {
-        isUpdate = isUpdate || false;
-
-        if (!isUpdate) {
-            if (!data.name || data.name.trim() === '') {
-                return { valid: false, reason: 'Government type name is required' };
-            }
-        }
-
-        if (data.name) {
-            var trimmed = data.name.trim();
-            if (trimmed.length < 2) {
-                return { valid: false, reason: 'Government type name must be at least 2 characters' };
-            }
-        }
-
-        return { valid: true };
-    }
-
-    function _validateLeaderAssignment(placeId, characterId, startYear) {
-        var place = _getPlaceById(placeId);
-        if (!place) {
-            return { valid: false, reason: 'Place not found' };
-        }
-
-        var character = _getCharacterById(characterId);
-        if (!character) {
-            return { valid: false, reason: 'Character not found' };
-        }
-
-        if (character.isDeceased) {
-            return { valid: false, reason: 'Character is deceased' };
-        }
-
-        if (!startYear || typeof startYear !== 'number') {
-            return { valid: false, reason: 'Valid start year is required' };
-        }
-
-        var currentYear = _getCurrentYear();
-        if (startYear > currentYear + 10) {
-            return { valid: false, reason: 'Start year cannot be more than 10 years in the future' };
-        }
-
-        if (character.birthYear && startYear < character.birthYear) {
-            return { valid: false, reason: 'Start year cannot be before character birth' };
-        }
-
-        return { valid: true };
-    }
-
-    // =========================================================================
-    // 4. SALARY PAYMENT HELPER
-    // =========================================================================
-
-    function _payGovernmentSalary(characterId, salary, positionName, departmentName, locationId) {
-        if (salary <= 0) {
-            return { success: false, reason: 'Salary is zero or negative' };
-        }
-
-        if (locationId && typeof window.SettlementState !== 'undefined') {
-            var allocated = window.SettlementState.getGovernmentSalaryBudget(locationId) || 0;
-            if (allocated < salary) {
-                _logEvent('budget', 'salary_budget_shortfall',
-                    'Insufficient settlement allocation for salary: ' + salary + ' gold (allocated: ' + allocated + ') for ' + positionName,
-                    []);
-                return { success: false, reason: 'Insufficient settlement salary budget' };
-            }
-        }
-
-        var household = _getHouseholdForCharacter(characterId);
-        if (!household) {
-            return { success: false, reason: 'Character has no household' };
-        }
-
-        var character = _getCharacterById(characterId);
-        var oldWealth = _getHouseholdWealth(household.id);
-        var reason = 'Government salary: ' + positionName + ' (' + (departmentName || 'Unknown Department') + ')';
-        var newWealth = _updateHouseholdWealth(household.id, salary, reason);
-
-        _logEvent('economy', 'government_salary_paid',
-            (character ? character.name : 'Unknown') + ' received ' + salary + ' gold as ' + positionName + ' (household: ' + household.name + ')',
-            character ? [character] : []);
-
-        return {
-            success: true,
-            characterId: characterId,
-            characterName: character ? character.name : 'Unknown',
-            householdId: household.id,
-            householdName: household.name,
-            salary: salary,
-            oldWealth: oldWealth,
-            newWealth: newWealth,
-            positionName: positionName,
-            departmentName: departmentName
-        };
-    }
-
-    // =========================================================================
-    // 5. DEPARTMENT COMMANDS
-    // =========================================================================
+    // ---- Department commands -------------------------------------------------
 
     function createDepartment(data) {
-        if (_processingCommand) {
-            return null;
-        }
-        _processingCommand = true;
+        var v = _Rules.validateDepartment(data, false);
+        if (!v.valid) return _fail(v.reason, 'VALIDATION');
 
-        try {
-            var validation = _validateDepartment(data, false);
-            if (!validation.valid) {
-                _showToast(validation.reason, 'error');
-                return null;
-            }
+        var dept = {
+            id: window.generateId('govdept'),
+            name: data.name.trim(),
+            description: data.description || '',
+            locationId: data.locationId,
+            parentDepartmentId: data.parentDepartmentId || null,
+            positions: [],
+            assignments: [],
+            isDeprecated: false,
+            createdAt: _now(),
+            updatedAt: _now()
+        };
 
-            var dept = {
-                id: _generateId('govdept'),
-                name: data.name.trim(),
-                description: data.description || '',
-                locationId: data.locationId,
-                parentDepartmentId: data.parentDepartmentId || null,
-                positions: [],
-                assignments: [],
-                isDeprecated: false,
-                createdAt: _getCurrentYear(),
-                updatedAt: _getCurrentYear()
-            };
+        State._addDepartmentRecord(dept);
+        _commit();
 
-            GovernmentState._addDepartment(dept);
-            _saveMasterData();
+        var loc = _LocationQueries.getPlaceSummary(dept.locationId);
+        _log('government', 'department_created',
+            'Department "' + dept.name + '" created at ' + (loc ? loc.displayName : dept.locationId), []);
 
-            _logEvent('government', 'department_created',
-                'Department "' + dept.name + '" created at ' + (_getPlaceById(dept.locationId)?.displayName || 'Unknown'),
-                []);
-
-            _showToast('Department "' + dept.name + '" created', 'success');
-            return dept;
-
-        } finally {
-            _processingCommand = false;
-        }
+        return _ok({ id: dept.id, departmentId: dept.id });
     }
 
     function updateDepartment(departmentId, updates) {
-        if (_processingCommand) {
-            return null;
-        }
-        _processingCommand = true;
+        var dept = State._getDepartmentRecord(departmentId);
+        if (!dept) return _fail('Department not found', 'NOT_FOUND');
 
-        try {
-            var dept = GovernmentState.getDepartment(departmentId);
-            if (!dept) {
-                _showToast('Department not found', 'error');
-                return null;
-            }
+        var v = _Rules.validateDepartment(updates, true, departmentId);
+        if (!v.valid) return _fail(v.reason, 'VALIDATION');
 
-            var validation = _validateDepartment(updates, true);
-            if (!validation.valid) {
-                _showToast(validation.reason, 'error');
-                return null;
-            }
+        State._updateDepartmentRecord(departmentId, updates);
+        _commit();
 
-            var result = GovernmentState._updateDepartment(departmentId, updates);
-            _saveMasterData();
-
-            _logEvent('government', 'department_updated',
-                'Department "' + dept.name + '" updated',
-                []);
-
-            _showToast('Department updated', 'success');
-            return result;
-
-        } finally {
-            _processingCommand = false;
-        }
+        _log('government', 'department_updated', 'Department "' + dept.name + '" updated', []);
+        return _ok({ id: departmentId, departmentId: departmentId });
     }
 
     function deleteDepartment(departmentId, options) {
-        if (_processingCommand) {
-            return false;
+        options = options || {};
+        var dept = State._getDepartmentRecord(departmentId);
+        if (!dept) return _fail('Department not found', 'NOT_FOUND');
+
+        var cascade = !!options.cascade;
+        var impact = Queries.getDepartmentDeletionImpact(departmentId);
+
+        if (!cascade) {
+            if (impact.hasChildren) {
+                return _fail('Department has ' + impact.childDepartmentCount +
+                    ' child departments. Use cascade to delete them.', 'HAS_CHILDREN');
+            }
+            if (impact.hasActiveAssignments) {
+                return _fail('Department has ' + impact.activeAssignmentCount +
+                    ' active assignments. Use cascade to remove them.', 'HAS_ASSIGNMENTS');
+            }
         }
-        _processingCommand = true;
 
-        try {
-            var dept = GovernmentState.getDepartment(departmentId);
-            if (!dept) {
-                _showToast('Department not found', 'error');
-                return false;
-            }
+        var name = dept.name;
+        _deleteDepartmentCascadeInternal(departmentId);
+        _commit();
 
-            options = options || {};
-            var cascade = options.cascade || false;
+        _log('government', 'department_deleted',
+            'Department "' + name + '" deleted' + (cascade ? ' (cascade)' : ''), []);
 
-            var children = GovernmentState.getDepartmentsByParent(departmentId);
-            if (children.length > 0 && !cascade) {
-                _showToast('Department has ' + children.length + ' child departments. Use cascade to delete them.', 'warning');
-                return false;
-            }
-
-            var assignments = GovernmentState.getAssignmentsForDepartment(departmentId, true);
-            if (assignments.length > 0 && !cascade) {
-                _showToast('Department has ' + assignments.length + ' active assignments. Use cascade to remove them.', 'warning');
-                return false;
-            }
-
-            if (cascade) {
-                for (var i = 0; i < children.length; i++) {
-                    deleteDepartment(children[i].id, { cascade: true });
-                }
-            }
-
-            var result = GovernmentState._deleteDepartment(departmentId);
-            _saveMasterData();
-
-            _logEvent('government', 'department_deleted',
-                'Department "' + dept.name + '" deleted' + (cascade ? ' (cascade)' : ''),
-                []);
-
-            _showToast('Department deleted', 'info');
-            return result;
-
-        } finally {
-            _processingCommand = false;
-        }
+        return _ok({ id: departmentId });
     }
 
-    // =========================================================================
-    // 6. POSITION COMMANDS
-    // =========================================================================
+    function _deleteDepartmentCascadeInternal(departmentId) {
+        var children = State._getDepartmentRecordsByParent(departmentId);
+        for (var i = 0; i < children.length; i++) {
+            _deleteDepartmentCascadeInternal(children[i].id);
+        }
+        State._deleteDepartmentRecord(departmentId);
+    }
+
+    // ---- Position commands ---------------------------------------------------
 
     function addPosition(departmentId, data) {
-        if (_processingCommand) {
-            return null;
-        }
-        _processingCommand = true;
+        var dept = State._getDepartmentRecord(departmentId);
+        if (!dept) return _fail('Department not found', 'NOT_FOUND');
 
-        try {
-            var dept = GovernmentState.getDepartment(departmentId);
-            if (!dept) {
-                _showToast('Department not found', 'error');
-                return null;
-            }
+        var v = _Rules.validatePosition(data, false);
+        if (!v.valid) return _fail(v.reason, 'VALIDATION');
 
-            var validation = _validatePosition(data, false);
-            if (!validation.valid) {
-                _showToast(validation.reason, 'error');
-                return null;
-            }
+        var position = {
+            id: window.generateId('govpos'),
+            name: data.name.trim(),
+            description: data.description || '',
+            priority: data.priority != null ? data.priority : _Rules.DEFAULT_POSITION_PRIORITY,
+            parentPositionId: data.parentPositionId || null,
+            requiredRoleId: data.requiredRoleId || null,
+            minSkillLevel: data.minSkillLevel != null ? data.minSkillLevel : _Rules.DEFAULT_MIN_SKILL_LEVEL,
+            genderRestriction: data.genderRestriction || 'either',
+            requiredRankId: data.requiredRankId || null,
+            minExperience: data.minExperience != null ? data.minExperience : 0,
+            salaryOverrides: []
+        };
 
-            var position = {
-                id: _generateId('govpos'),
-                name: data.name.trim(),
-                description: data.description || '',
-                priority: data.priority || 10,
-                parentPositionId: data.parentPositionId || null,
-                requiredRoleId: data.requiredRoleId || null,
-                minSkillLevel: data.minSkillLevel || 0,
-                genderRestriction: data.genderRestriction || 'either',
-                requiredRankId: data.requiredRankId || null,
-                minExperience: data.minExperience || 0
-            };
+        State._addPositionRecord(departmentId, position);
+        _commit();
 
-            var result = GovernmentState._addPosition(departmentId, position);
-            _saveMasterData();
+        _log('government', 'position_added',
+            'Position "' + position.name + '" added to "' + dept.name + '"', []);
 
-            var roleName = data.requiredRoleId ? (_getRoleById(data.requiredRoleId)?.name || 'None') : 'None';
-            _logEvent('government', 'position_added',
-                'Position "' + position.name + '" added to department "' + dept.name + '" (Role: ' + roleName + ')',
-                []);
-
-            _showToast('Position "' + position.name + '" added', 'success');
-            return position;
-
-        } finally {
-            _processingCommand = false;
-        }
+        return _ok({ id: position.id, positionId: position.id, departmentId: departmentId });
     }
 
     function updatePosition(departmentId, positionId, updates) {
-        if (_processingCommand) {
-            return false;
+        var dept = State._getDepartmentRecord(departmentId);
+        if (!dept) return _fail('Department not found', 'NOT_FOUND');
+
+        var pos = State._getPositionRecord(departmentId, positionId);
+        if (!pos) return _fail('Position not found', 'NOT_FOUND');
+
+        var v = _Rules.validatePosition(updates, true);
+        if (!v.valid) return _fail(v.reason, 'VALIDATION');
+
+        if (updates.parentPositionId !== undefined && updates.parentPositionId) {
+            var hier = _Rules.validatePositionHierarchy(departmentId, positionId, updates.parentPositionId);
+            if (!hier.valid) return _fail(hier.reason, 'CYCLE');
         }
-        _processingCommand = true;
 
-        try {
-            var dept = GovernmentState.getDepartment(departmentId);
-            if (!dept) {
-                _showToast('Department not found', 'error');
-                return false;
-            }
+        State._updatePositionRecord(departmentId, positionId, updates);
+        _commit();
 
-            var position = GovernmentState.getPositionById(departmentId, positionId);
-            if (!position) {
-                _showToast('Position not found', 'error');
-                return false;
-            }
+        _log('government', 'position_updated',
+            'Position "' + pos.name + '" updated in "' + dept.name + '"', []);
 
-            var validation = _validatePosition(updates, true);
-            if (!validation.valid) {
-                _showToast(validation.reason, 'error');
-                return false;
-            }
-
-            var result = GovernmentState._updatePosition(departmentId, positionId, updates);
-            _saveMasterData();
-
-            _logEvent('government', 'position_updated',
-                'Position "' + position.name + '" updated in department "' + dept.name + '"',
-                []);
-
-            _showToast('Position updated', 'success');
-            return result;
-
-        } finally {
-            _processingCommand = false;
-        }
+        return _ok({ id: positionId, positionId: positionId, departmentId: departmentId });
     }
 
     function deletePosition(departmentId, positionId) {
-        if (_processingCommand) {
-            return false;
+        var dept = State._getDepartmentRecord(departmentId);
+        if (!dept) return _fail('Department not found', 'NOT_FOUND');
+
+        var pos = State._getPositionRecord(departmentId, positionId);
+        if (!pos) return _fail('Position not found', 'NOT_FOUND');
+
+        var active = State._getAssignmentRecordsForPosition(departmentId, positionId, true);
+        if (active.length > 0) {
+            return _fail('Position has ' + active.length + ' active assignment(s). Remove them first.', 'HAS_ASSIGNMENTS');
         }
-        _processingCommand = true;
 
-        try {
-            var dept = GovernmentState.getDepartment(departmentId);
-            if (!dept) {
-                _showToast('Department not found', 'error');
-                return false;
-            }
+        State._deletePositionRecord(departmentId, positionId);
+        _commit();
 
-            var position = GovernmentState.getPositionById(departmentId, positionId);
-            if (!position) {
-                _showToast('Position not found', 'error');
-                return false;
-            }
+        _log('government', 'position_deleted',
+            'Position "' + pos.name + '" deleted from "' + dept.name + '"', []);
 
-            var assignments = GovernmentState.getAssignmentsForPosition(departmentId, positionId, true);
-            if (assignments.length > 0) {
-                _showToast('Position has ' + assignments.length + ' active assignments. Remove them first.', 'warning');
-                return false;
-            }
-
-            var result = GovernmentState._deletePosition(departmentId, positionId);
-            _saveMasterData();
-
-            _logEvent('government', 'position_deleted',
-                'Position "' + position.name + '" deleted from department "' + dept.name + '"',
-                []);
-
-            _showToast('Position deleted', 'info');
-            return result;
-
-        } finally {
-            _processingCommand = false;
-        }
+        return _ok({ id: positionId });
     }
 
-    // =========================================================================
-    // 7. ASSIGNMENT COMMANDS
-    // =========================================================================
+    // ---- Assignment commands -------------------------------------------------
 
     function assignCharacterToPosition(departmentId, positionId, characterId, options) {
-        if (_processingCommand) {
-            return null;
+        var result = _assignInternal(departmentId, positionId, characterId, options || {});
+        if (!result.success) return result;
+
+        _commit();
+        _emitAssignmentEvent(result.data);
+        _maybeScheduleSalaryPayment(result.data);
+
+        return result;
+    }
+
+    function _assignInternal(departmentId, positionId, characterId, options) {
+        var dept = State._getDepartmentRecord(departmentId);
+        if (!dept) return _fail('Department not found', 'NOT_FOUND');
+
+        var pos = State._getPositionRecord(departmentId, positionId);
+        if (!pos) return _fail('Position not found', 'NOT_FOUND');
+
+        var charFacts = _CharacterQueries.getCharacterFacts(characterId);
+        if (!charFacts) return _fail('Character not found', 'NOT_FOUND');
+        if (charFacts.isDeceased) return _fail('Character is deceased', 'DECEASED');
+
+        var existing = State._getAssignmentRecordsForPosition(departmentId, positionId, true);
+        for (var i = 0; i < existing.length; i++) {
+            if (existing[i].characterId === characterId) {
+                return _fail('Character already assigned to this position', 'ALREADY_ASSIGNED');
+            }
         }
-        _processingCommand = true;
 
-        try {
-            options = options || {};
-
-            var dept = GovernmentState.getDepartment(departmentId);
-            if (!dept) {
-                _showToast('Department not found', 'error');
-                return null;
-            }
-
-            var position = GovernmentState.getPositionById(departmentId, positionId);
-            if (!position) {
-                _showToast('Position not found', 'error');
-                return null;
-            }
-
-            var character = _getCharacterById(characterId);
-            if (!character) {
-                _showToast('Character not found', 'error');
-                return null;
-            }
-
-            var roleId = position.requiredRoleId;
-            var skillLevel = 0;
-            var hasRole = false;
-
-            if (roleId) {
-                if (character.professions) {
-                    for (var i = 0; i < character.professions.length; i++) {
-                        if (character.professions[i].id === roleId) {
-                            hasRole = true;
-                            skillLevel = character.professions[i].skillLevel || 0;
-                            break;
-                        }
-                    }
-                }
-
-                if (!hasRole) {
-                    if (options.addRoleIfMissing !== false) {
-                        var defaultSkill = options.defaultSkillLevel || 10;
-                        var role = _getRoleById(roleId);
-                        var result = _addProfession(characterId, roleId, {
-                            skillLevel: defaultSkill,
-                            startYear: options.startYear || _getCurrentYear()
-                        });
-                        if (result && result.success) {
-                            hasRole = true;
-                            skillLevel = defaultSkill;
-                        } else {
-                            _showToast('Failed to add required role to character', 'error');
-                            return null;
-                        }
-                    } else {
-                        _showToast('Character does not have required role: ' + (_getRoleById(roleId)?.name || roleId), 'error');
-                        return null;
-                    }
-                }
-
-                if (position.minSkillLevel && skillLevel < position.minSkillLevel) {
-                    _showToast('Character skill level (' + skillLevel + ') is below requirement (' + position.minSkillLevel + ')', 'error');
-                    return null;
-                }
-            }
-
-            var validation = _validateAssignment({
-                departmentId: departmentId,
-                positionId: positionId,
-                characterId: characterId,
-                startYear: options.startYear,
-                endYear: options.endYear,
+        var plan = _Rules.planAssignment({
+            position: {
+                requiredRoleId: pos.requiredRoleId,
+                minSkillLevel: pos.minSkillLevel,
+                genderRestriction: pos.genderRestriction,
+                requiredRankId: pos.requiredRankId,
+                minExperience: pos.minExperience
+            },
+            character: charFacts,
+            options: {
+                startYear: options.startYear != null ? options.startYear : _now(),
+                defaultSkillLevel: options.defaultSkillLevel != null ? options.defaultSkillLevel : _Rules.DEFAULT_SKILL_LEVEL,
                 addRoleIfMissing: options.addRoleIfMissing !== false
+            }
+        });
+
+        if (!plan.valid) return _fail(plan.reason, plan.code || 'INELIGIBLE');
+
+        // Cross-domain: add profession if the plan requires it. This is part of the
+        // assignment operation and must succeed for the assignment to be valid.
+        if (plan.roleToAdd && _CharacterCommands) {
+            var addResult = _CharacterCommands.addProfession(characterId, plan.roleToAdd.roleId, {
+                skillLevel: plan.roleToAdd.skillLevel,
+                startYear: plan.startYear
             });
-
-            if (!validation.valid) {
-                _showToast(validation.reason, 'error');
-                return null;
+            if (!addResult || !addResult.success) {
+                return _fail('Failed to add required profession', 'PROFESSION_FAILED');
             }
-
-            var startYear = options.startYear || _getCurrentYear();
-
-            var assignment = {
-                id: _generateId('govassign'),
-                positionId: positionId,
-                characterId: characterId,
-                characterName: character.name + (character.surname ? ' ' + character.surname : ''),
-                startYear: startYear,
-                endYear: options.endYear || null,
-                endReason: null,
-                title: options.title || position.name,
-                notes: options.notes || '',
-                roleIdAtAssignment: roleId,
-                skillLevelAtAssignment: skillLevel
-            };
-
-            var result = GovernmentState._addAssignment(departmentId, assignment);
-            _saveMasterData();
-
-            var roleName = roleId ? (_getRoleById(roleId)?.name || 'None') : 'None';
-            _logEvent('government', 'character_assigned',
-                character.name + ' assigned to "' + position.name + '" in department "' + dept.name + '" (Role: ' + roleName + ')',
-                [character]);
-
-            var endMsg = options.endYear ? ' until ' + options.endYear : '';
-
-            var salaryResult = null;
-            if (typeof window.GovernmentEconomy !== 'undefined' && 
-                typeof window.GovernmentEconomy.calculatePositionSalary === 'function') {
-                var salary = window.GovernmentEconomy.calculatePositionSalary(positionId, dept);
-                if (salary > 0) {
-                    var allocationCheck = checkSalaryBudgetSufficiency(departmentId, _getCurrentYear());
-                    if (allocationCheck && !allocationCheck.sufficient) {
-                        _showToast('Warning: Insufficient settlement salary budget for this position', 'warning');
-                    }
-                    salaryResult = _payGovernmentSalary(characterId, salary, position.name, dept.name, dept.locationId);
-                    if (salaryResult && salaryResult.success) {
-                        _showToast(character.name + ' assigned to ' + position.name + endMsg + ' (Salary: ' + salary + ' gold/year)', 'success');
-                    } else {
-                        _showToast(character.name + ' assigned to ' + position.name + endMsg, 'success');
-                    }
-                } else {
-                    _showToast(character.name + ' assigned to ' + position.name + endMsg, 'success');
-                }
-            } else {
-                _showToast(character.name + ' assigned to ' + position.name + endMsg, 'success');
-            }
-
-            return assignment;
-
-        } finally {
-            _processingCommand = false;
         }
+
+        var assignment = {
+            id: window.generateId('govassign'),
+            positionId: positionId,
+            characterId: characterId,
+            characterName: charFacts.fullName,
+            startYear: plan.startYear,
+            endYear: options.endYear != null ? options.endYear : null,
+            endReason: null,
+            title: options.title || pos.name,
+            notes: options.notes || '',
+            roleIdAtAssignment: pos.requiredRoleId || null,
+            skillLevelAtAssignment: plan.skillLevel != null ? plan.skillLevel : null
+        };
+
+        State._addAssignmentRecord(departmentId, assignment);
+        return _ok({ assignmentId: assignment.id, departmentId: departmentId, characterId: characterId });
+    }
+
+    function _emitAssignmentEvent(data) {
+        var dept = State._getDepartmentRecord(data.departmentId);
+        var pos = State._getPositionRecord(data.departmentId, State._getAssignmentRecord(data.departmentId, data.assignmentId).positionId);
+        var charFacts = _CharacterQueries.getCharacterFacts(data.characterId);
+        _log('government', 'character_assigned',
+            (charFacts ? charFacts.fullName : data.characterId) +
+            ' assigned to "' + (pos ? pos.name : '?') + '" in "' + (dept ? dept.name : '?') + '"', []);
+    }
+
+    function _maybeScheduleSalaryPayment(data) {
+        // Salary is a separate cross-domain operation owned by the salary scheduler,
+        // not a side effect of assignment. Do not pay here.
     }
 
     function endAssignment(departmentId, assignmentId, endYear, reason) {
-        if (_processingCommand) {
-            return false;
+        var dept = State._getDepartmentRecord(departmentId);
+        if (!dept) return _fail('Department not found', 'NOT_FOUND');
+
+        var a = State._getAssignmentRecord(departmentId, assignmentId);
+        if (!a) return _fail('Assignment not found', 'NOT_FOUND');
+        if (a.endYear !== null && a.endYear !== undefined) return _fail('Assignment already ended', 'ALREADY_ENDED');
+
+        var endYearValue = endYear != null ? endYear : _now();
+        if (endYearValue <= a.startYear) {
+            return _fail('End year must be after start year (' + a.startYear + ')', 'VALIDATION');
         }
-        _processingCommand = true;
 
-        try {
-            var dept = GovernmentState.getDepartment(departmentId);
-            if (!dept) {
-                _showToast('Department not found', 'error');
-                return false;
-            }
+        State._updateAssignmentRecord(departmentId, assignmentId, {
+            endYear: endYearValue,
+            endReason: reason || 'Term ended'
+        });
+        _commit();
 
-            var assignment = GovernmentState.getAssignmentById(departmentId, assignmentId);
-            if (!assignment) {
-                _showToast('Assignment not found', 'error');
-                return false;
-            }
+        var charFacts = _CharacterQueries.getCharacterFacts(a.characterId);
+        _log('government', 'assignment_ended',
+            (charFacts ? charFacts.fullName : a.characterId) + ' ended assignment at "' + dept.name + '"' +
+            (reason ? ' (' + reason + ')' : ''), []);
 
-            if (assignment.endYear) {
-                _showToast('Assignment already ended', 'info');
-                return false;
-            }
-
-            var endYearValue = endYear || _getCurrentYear();
-            if (endYearValue <= assignment.startYear) {
-                _showToast('End year must be after start year (' + assignment.startYear + ')', 'error');
-                return false;
-            }
-
-            var result = GovernmentState._updateAssignment(departmentId, assignmentId, {
-                endYear: endYearValue,
-                endReason: reason || 'Term ended'
-            });
-            _saveMasterData();
-
-            var character = _getCharacterById(assignment.characterId);
-
-            var position = GovernmentState.getPositionById(departmentId, assignment.positionId);
-            if (position && character) {
-                _logEvent('economy', 'government_salary_ended',
-                    character.name + ' ended ' + position.name + ' salary (ended ' + endYearValue + ')',
-                    [character]);
-            }
-
-            _logEvent('government', 'assignment_ended',
-                (character ? character.name : 'Character') + ' ended assignment at "' + dept.name + '"' +
-                (reason ? ' (' + reason + ')' : ''),
-                character ? [character] : []);
-
-            _showToast('Assignment ended in ' + endYearValue, 'info');
-            return result;
-
-        } finally {
-            _processingCommand = false;
-        }
+        return _ok({ id: assignmentId });
     }
 
     function removeAssignment(departmentId, assignmentId) {
-        if (_processingCommand) {
-            return false;
-        }
-        _processingCommand = true;
+        var dept = State._getDepartmentRecord(departmentId);
+        if (!dept) return _fail('Department not found', 'NOT_FOUND');
 
-        try {
-            var dept = GovernmentState.getDepartment(departmentId);
-            if (!dept) {
-                _showToast('Department not found', 'error');
-                return false;
-            }
+        var a = State._getAssignmentRecord(departmentId, assignmentId);
+        if (!a) return _fail('Assignment not found', 'NOT_FOUND');
 
-            var assignment = GovernmentState.getAssignmentById(departmentId, assignmentId);
-            if (!assignment) {
-                _showToast('Assignment not found', 'error');
-                return false;
-            }
+        State._deleteAssignmentRecord(departmentId, assignmentId);
+        _commit();
 
-            var result = GovernmentState._deleteAssignment(departmentId, assignmentId);
-            _saveMasterData();
+        var charFacts = _CharacterQueries.getCharacterFacts(a.characterId);
+        _log('government', 'assignment_removed',
+            (charFacts ? charFacts.fullName : a.characterId) + ' removed from assignment at "' + dept.name + '"', []);
 
-            var character = _getCharacterById(assignment.characterId);
-
-            _logEvent('government', 'assignment_removed',
-                (character ? character.name : 'Character') + ' removed from assignment at "' + dept.name + '"',
-                character ? [character] : []);
-
-            _showToast('Assignment removed', 'info');
-            return result;
-
-        } finally {
-            _processingCommand = false;
-        }
+        return _ok({ id: assignmentId });
     }
 
-    // =========================================================================
-    // 8. SALARY BUDGET SUFFICIENCY CHECK
-    // =========================================================================
+    function bulkAssignCharacters(departmentId, positionId, assignments, options) {
+        options = options || {};
+        var mode = options.mode === 'atomic' ? 'atomic' : 'best-effort';
+        var applied = [];
+        var failures = [];
 
-    function checkSalaryBudgetSufficiency(departmentId, year) {
-        if (_processingCommand) {
-            return { sufficient: false, reason: 'Command already processing' };
+        // Phase 1: plan all
+        var plans = [];
+        for (var i = 0; i < assignments.length; i++) {
+            var input = assignments[i];
+            var plan = _planAssignmentStandalone(departmentId, positionId, input.characterId, input);
+            if (plan.success) plans.push({ input: input, data: plan.data });
+            else failures.push({ input: input, reason: plan.reason, code: plan.code });
         }
-        _processingCommand = true;
 
-        try {
-            var dept = GovernmentState.getDepartment(departmentId);
-            if (!dept) {
-                return { sufficient: false, reason: 'Department not found' };
-            }
-
-            var requirements = 0;
-            if (typeof window.SettlementCommands !== 'undefined' &&
-                typeof window.SettlementCommands.getGovernmentSalaryRequirements === 'function') {
-                var req = window.SettlementCommands.getGovernmentSalaryRequirements(dept.locationId);
-                requirements = req.total || 0;
-            }
-
-            var allocated = 0;
-            if (typeof window.SettlementState !== 'undefined') {
-                allocated = window.SettlementState.getGovernmentSalaryBudget(dept.locationId) || 0;
-            }
-
-            return {
-                sufficient: allocated >= requirements,
-                allocated: allocated,
-                required: requirements,
-                shortfall: Math.max(0, requirements - allocated),
-                surplus: Math.max(0, allocated - requirements),
-                locationId: dept.locationId,
-                departmentId: departmentId,
-                departmentName: dept.name
-            };
-
-        } finally {
-            _processingCommand = false;
+        if (mode === 'atomic' && failures.length > 0) {
+            return _fail('Bulk assignment aborted: ' + failures.length + ' invalid input(s)', 'ATOMIC_ABORT');
         }
+
+        // Phase 2: apply
+        for (var j = 0; j < plans.length; j++) {
+            var res = _applyAssignmentPlan(departmentId, positionId, plans[j].data);
+            if (res.success) applied.push(res.data);
+            else failures.push({ input: plans[j].input, reason: res.reason, code: res.code });
+        }
+
+        if (applied.length > 0) _commit();
+
+        return _ok({
+            applied: applied.length,
+            failed: failures.length,
+            results: applied,
+            failures: failures
+        });
     }
 
-    // =========================================================================
-    // 9. GOVERNMENT TYPE COMMANDS - FIXED: Force save, NO double toast
-    // =========================================================================
+    function _planAssignmentStandalone(departmentId, positionId, characterId, options) {
+        var dept = State._getDepartmentRecord(departmentId);
+        if (!dept) return _fail('Department not found', 'NOT_FOUND');
+        var pos = State._getPositionRecord(departmentId, positionId);
+        if (!pos) return _fail('Position not found', 'NOT_FOUND');
+        var charFacts = _CharacterQueries.getCharacterFacts(characterId);
+        if (!charFacts) return _fail('Character not found', 'NOT_FOUND');
+        if (charFacts.isDeceased) return _fail('Character is deceased', 'DECEASED');
+
+        var existing = State._getAssignmentRecordsForPosition(departmentId, positionId, true);
+        for (var i = 0; i < existing.length; i++) {
+            if (existing[i].characterId === characterId) return _fail('Already assigned', 'ALREADY_ASSIGNED');
+        }
+
+        var plan = _Rules.planAssignment({
+            position: {
+                requiredRoleId: pos.requiredRoleId,
+                minSkillLevel: pos.minSkillLevel,
+                genderRestriction: pos.genderRestriction,
+                requiredRankId: pos.requiredRankId,
+                minExperience: pos.minExperience
+            },
+            character: charFacts,
+            options: {
+                startYear: options.startYear != null ? options.startYear : _now(),
+                defaultSkillLevel: options.defaultSkillLevel != null ? options.defaultSkillLevel : _Rules.DEFAULT_SKILL_LEVEL,
+                addRoleIfMissing: options.addRoleIfMissing !== false
+            }
+        });
+        if (!plan.valid) return _fail(plan.reason, plan.code || 'INELIGIBLE');
+
+        return _ok({
+            characterId: characterId,
+            pos: pos,
+            charFacts: charFacts,
+            plan: plan,
+            options: options
+        });
+    }
+
+    function _applyAssignmentPlan(departmentId, positionId, planData) {
+        var plan = planData.plan;
+        var pos = planData.pos;
+        var charFacts = planData.charFacts;
+        var options = planData.options;
+
+        if (plan.roleToAdd && _CharacterCommands) {
+            var addResult = _CharacterCommands.addProfession(planData.characterId, plan.roleToAdd.roleId, {
+                skillLevel: plan.roleToAdd.skillLevel,
+                startYear: plan.startYear
+            });
+            if (!addResult || !addResult.success) {
+                return _fail('Failed to add required profession', 'PROFESSION_FAILED');
+            }
+        }
+
+        var assignment = {
+            id: window.generateId('govassign'),
+            positionId: positionId,
+            characterId: planData.characterId,
+            characterName: charFacts.fullName,
+            startYear: plan.startYear,
+            endYear: options.endYear != null ? options.endYear : null,
+            endReason: null,
+            title: options.title || pos.name,
+            notes: options.notes || '',
+            roleIdAtAssignment: pos.requiredRoleId || null,
+            skillLevelAtAssignment: plan.skillLevel != null ? plan.skillLevel : null
+        };
+        State._addAssignmentRecord(departmentId, assignment);
+        _log('government', 'character_assigned',
+            charFacts.fullName + ' assigned to "' + pos.name + '" (bulk)', []);
+        return _ok({ assignmentId: assignment.id, characterId: planData.characterId });
+    }
+
+    // ---- Salary override (position) ------------------------------------------
+
+    function updatePositionSalary(departmentId, positionId, newSalary, options) {
+        options = options || {};
+        var dept = State._getDepartmentRecord(departmentId);
+        if (!dept) return _fail('Department not found', 'NOT_FOUND');
+
+        var pos = State._getPositionRecord(departmentId, positionId);
+        if (!pos) return _fail('Position not found', 'NOT_FOUND');
+
+        var v = _Rules.validateSalaryUpdate(positionId, newSalary);
+        if (!v.valid) return _fail(v.reason, 'VALIDATION');
+
+        State._appendSalaryOverrideRecord(departmentId, positionId, {
+            salary: newSalary,
+            year: options.year != null ? options.year : _now(),
+            reason: options.reason || 'Manual adjustment'
+        });
+        _commit();
+
+        _log('economy', 'salary_overridden',
+            'Salary for "' + pos.name + '" in "' + dept.name + '" set to ' + newSalary, []);
+
+        return _ok({ positionId: positionId, salary: newSalary });
+    }
+
+    // ---- Government type commands --------------------------------------------
 
     function createGovernmentType(data) {
-        if (_processingCommand) {
-            return null;
-        }
-        _processingCommand = true;
+        var v = _Rules.validateGovernmentType(data, false);
+        if (!v.valid) return _fail(v.reason, 'VALIDATION');
 
-        try {
-            var validation = _validateGovernmentType(data, false);
-            if (!validation.valid) {
-                _showToast(validation.reason, 'error');
-                return null;
-            }
+        var type = {
+            id: window.generateId('govtype'),
+            name: data.name.trim(),
+            description: data.description || '',
+            allowedRankIds: (data.allowedRankIds || []).slice(),
+            icon: data.icon || ''
+        };
 
-            var type = {
-                id: _generateId('govtype'),
-                name: data.name.trim(),
-                description: data.description || '',
-                allowedRankIds: data.allowedRankIds || [],
-                icon: data.icon || ''
-            };
+        State._addGovernmentTypeRecord(type);
+        _commit();
 
-            GovernmentState._addGovernmentType(type);
-            
-            // FORCE SAVE IMMEDIATELY
-            if (typeof window.saveMasterData === 'function') {
-                window.saveMasterData(true);
-            }
-            if (typeof window.invalidateAccessorCaches === 'function') {
-                window.invalidateAccessorCaches();
-            }
-            if (typeof window.GovernmentState !== 'undefined' && 
-                typeof window.GovernmentState.invalidateCache === 'function') {
-                window.GovernmentState.invalidateCache();
-            }
-
-            _logEvent('government', 'type_created',
-                'Government type "' + type.name + '" created',
-                []);
-
-            // SHOW TOAST HERE (single source)
-            _showToast('Government type "' + type.name + '" created', 'success');
-            return type;
-
-        } finally {
-            _processingCommand = false;
-        }
+        _log('government', 'type_created', 'Government type "' + type.name + '" created', []);
+        return _ok({ id: type.id, governmentTypeId: type.id });
     }
 
     function updateGovernmentType(typeId, updates) {
-        if (_processingCommand) {
-            return null;
-        }
-        _processingCommand = true;
+        var type = State._getGovernmentTypeRecord(typeId);
+        if (!type) return _fail('Government type not found', 'NOT_FOUND');
 
-        try {
-            var type = GovernmentState.getGovernmentTypeById(typeId);
-            if (!type) {
-                _showToast('Government type not found', 'error');
-                return null;
-            }
+        var v = _Rules.validateGovernmentType(updates, true);
+        if (!v.valid) return _fail(v.reason, 'VALIDATION');
 
-            var validation = _validateGovernmentType(updates, true);
-            if (!validation.valid) {
-                _showToast(validation.reason, 'error');
-                return null;
-            }
+        State._updateGovernmentTypeRecord(typeId, {
+            name: updates.name !== undefined ? updates.name : undefined,
+            description: updates.description,
+            allowedRankIds: updates.allowedRankIds,
+            icon: updates.icon
+        });
+        _commit();
 
-            var result = GovernmentState._updateGovernmentType(typeId, {
-                name: updates.name,
-                description: updates.description,
-                allowedRankIds: updates.allowedRankIds,
-                icon: updates.icon
-            });
-            
-            // FORCE SAVE IMMEDIATELY
-            if (typeof window.saveMasterData === 'function') {
-                window.saveMasterData(true);
-            }
-            if (typeof window.invalidateAccessorCaches === 'function') {
-                window.invalidateAccessorCaches();
-            }
-            if (typeof window.GovernmentState !== 'undefined' && 
-                typeof window.GovernmentState.invalidateCache === 'function') {
-                window.GovernmentState.invalidateCache();
-            }
-
-            _logEvent('government', 'type_updated',
-                'Government type "' + type.name + '" updated',
-                []);
-
-            // SHOW TOAST HERE (single source)
-            _showToast('Government type updated', 'success');
-            return result;
-
-        } finally {
-            _processingCommand = false;
-        }
+        _log('government', 'type_updated', 'Government type "' + type.name + '" updated', []);
+        return _ok({ id: typeId, governmentTypeId: typeId });
     }
 
     function deleteGovernmentType(typeId) {
-        if (_processingCommand) {
-            return false;
+        var type = State._getGovernmentTypeRecord(typeId);
+        if (!type) return _fail('Government type not found', 'NOT_FOUND');
+
+        var usage = _LocationQueries.getPlacesUsingGovernmentType
+            ? _LocationQueries.getPlacesUsingGovernmentType(typeId)
+            : [];
+        if (usage && usage.length > 0) {
+            return _fail('Cannot delete: used by ' + usage.length + ' location(s)', 'IN_USE');
         }
-        _processingCommand = true;
 
-        try {
-            var type = GovernmentState.getGovernmentTypeById(typeId);
-            if (!type) {
-                _showToast('Government type not found', 'error');
-                return false;
-            }
+        var name = type.name;
+        State._deleteGovernmentTypeRecord(typeId);
+        _commit();
 
-            var places = _getPlaces();
-            var usedBy = places.filter(function(p) { return p.governmentTypeId === typeId; });
-            if (usedBy.length > 0) {
-                _showToast('Cannot delete: Used by ' + usedBy.length + ' location(s)', 'warning');
-                return false;
-            }
-
-            var result = GovernmentState._deleteGovernmentType(typeId);
-            
-            // FORCE SAVE IMMEDIATELY
-            if (typeof window.saveMasterData === 'function') {
-                window.saveMasterData(true);
-            }
-            if (typeof window.invalidateAccessorCaches === 'function') {
-                window.invalidateAccessorCaches();
-            }
-            if (typeof window.GovernmentState !== 'undefined' && 
-                typeof window.GovernmentState.invalidateCache === 'function') {
-                window.GovernmentState.invalidateCache();
-            }
-
-            _logEvent('government', 'type_deleted',
-                'Government type "' + type.name + '" deleted',
-                []);
-
-            // SHOW TOAST HERE (single source)
-            _showToast('Government type deleted', 'info');
-            return result;
-
-        } finally {
-            _processingCommand = false;
-        }
+        _log('government', 'type_deleted', 'Government type "' + name + '" deleted', []);
+        return _ok({ id: typeId });
     }
 
-    // =========================================================================
-    // 10. BULK OPERATIONS
-    // =========================================================================
-
-    function bulkAssignCharacters(departmentId, positionId, assignments) {
-        if (_processingCommand) {
-            return null;
-        }
-        _processingCommand = true;
-
-        try {
-            var results = {
-                success: [],
-                failed: [],
-                total: assignments.length
-            };
-
-            for (var i = 0; i < assignments.length; i++) {
-                var data = assignments[i];
-                var result = assignCharacterToPosition(
-                    departmentId,
-                    positionId,
-                    data.characterId,
-                    {
-                        startYear: data.startYear,
-                        endYear: data.endYear,
-                        title: data.title,
-                        notes: data.notes,
-                        addRoleIfMissing: data.addRoleIfMissing !== false,
-                        defaultSkillLevel: data.defaultSkillLevel || 10
-                    }
-                );
-
-                if (result) {
-                    results.success.push(result);
-                } else {
-                    results.failed.push(data);
-                }
-            }
-
-            _showToast('Assigned ' + results.success.length + ' of ' + results.total + ' characters', 'success');
-            return results;
-
-        } finally {
-            _processingCommand = false;
-        }
-    }
-
-    // =========================================================================
-    // 11. LEADER COMMANDS
-    // =========================================================================
+    // ---- Leader / government placement (delegated to Location) ---------------
 
     function assignLeader(placeId, characterId, startYear, title) {
-        if (_processingCommand) {
-            return null;
+        if (typeof window.LocationCommands === 'undefined' ||
+            typeof window.LocationCommands.assignLeader !== 'function') {
+            return _fail('LocationCommands.assignLeader unavailable', 'DEPENDENCY');
         }
-        _processingCommand = true;
-
-        try {
-            var validation = _validateLeaderAssignment(placeId, characterId, startYear);
-            if (!validation.valid) {
-                _showToast(validation.reason, 'error');
-                return null;
-            }
-
-            var place = _getPlaceById(placeId);
-            var character = _getCharacterById(characterId);
-
-            if (!place.leaderAssignments) place.leaderAssignments = [];
-
-            for (var i = 0; i < place.leaderAssignments.length; i++) {
-                if (place.leaderAssignments[i].isActive && !place.leaderAssignments[i].endYear) {
-                    place.leaderAssignments[i].isActive = false;
-                    place.leaderAssignments[i].endYear = startYear - 1;
-                }
-            }
-
-            var assignment = {
-                id: _generateId('leader'),
-                characterId: characterId,
-                characterName: character.name + (character.surname ? ' ' + character.surname : ''),
-                startYear: startYear || _getCurrentYear(),
-                endYear: null,
-                title: title || 'Leader',
-                isActive: true,
-                notes: '',
-                timestamp: Date.now()
-            };
-
-            place.leaderAssignments.push(assignment);
-            place.leaderId = characterId;
-            place.updatedAt = Date.now();
-
-            _saveMasterData();
-            if (typeof LocationState !== 'undefined' && LocationState.invalidateCache) {
-                LocationState.invalidateCache();
-            }
-
-            if (typeof SettlementEconomy !== 'undefined' && typeof SettlementState !== 'undefined') {
-                try {
-                    var newProsperity = SettlementEconomy.calculateProsperity(placeId);
-                    SettlementState._updateSettlementData(placeId, { 
-                        prosperity: newProsperity,
-                        lastUpgraded: _getCurrentYear()
-                    });
-                } catch(e) {}
-            }
-
-            _logEvent('leadership', 'assigned',
-                character.name + ' assigned as leader of ' + place.displayName,
-                [character]);
-
-            _showToast(character.name + ' assigned as leader of ' + place.displayName, 'success');
-            return assignment;
-
-        } finally {
-            _processingCommand = false;
+        var result = window.LocationCommands.assignLeader(placeId, characterId, startYear, title);
+        if (result && result.success) {
+            _log('leadership', 'assigned',
+                (window.CharacterQueries.getCharacterFacts(characterId) || {}).fullName +
+                ' assigned as leader of ' + placeId, []);
         }
+        return result;
     }
 
     function endLeaderTerm(placeId, characterId, endYear) {
-        if (_processingCommand) {
-            return false;
+        if (typeof window.LocationCommands === 'undefined' ||
+            typeof window.LocationCommands.endLeaderTerm !== 'function') {
+            return _fail('LocationCommands.endLeaderTerm unavailable', 'DEPENDENCY');
         }
-        _processingCommand = true;
-
-        try {
-            var place = _getPlaceById(placeId);
-            if (!place) {
-                _showToast('Place not found', 'error');
-                return false;
-            }
-
-            if (!place.leaderAssignments) {
-                _showToast('No leader assignments found', 'error');
-                return false;
-            }
-
-            var found = false;
-            var endYearValue = endYear || _getCurrentYear();
-
-            for (var i = 0; i < place.leaderAssignments.length; i++) {
-                var assignment = place.leaderAssignments[i];
-                if (assignment.characterId === characterId && assignment.isActive && !assignment.endYear) {
-                    assignment.isActive = false;
-                    assignment.endYear = endYearValue;
-                    assignment.endReason = 'Term ended';
-                    found = true;
-                    break;
-                }
-            }
-
-            if (!found) {
-                _showToast('Active leader assignment not found for character', 'error');
-                return false;
-            }
-
-            place.updatedAt = Date.now();
-            _saveMasterData();
-            if (typeof LocationState !== 'undefined' && LocationState.invalidateCache) {
-                LocationState.invalidateCache();
-            }
-
-            var character = _getCharacterById(characterId);
-
-            if (typeof SettlementEconomy !== 'undefined' && typeof SettlementState !== 'undefined') {
-                try {
-                    var newProsperity = SettlementEconomy.calculateProsperity(placeId);
-                    SettlementState._updateSettlementData(placeId, { 
-                        prosperity: newProsperity 
-                    });
-                } catch(e) {}
-            }
-
-            _logEvent('leadership', 'term_ended',
-                (character ? character.name : 'Character') + ' ended leadership term at ' + place.displayName,
-                character ? [character] : []);
-
-            _showToast('Leader term ended', 'info');
-            return true;
-
-        } finally {
-            _processingCommand = false;
+        var result = window.LocationCommands.endLeaderTerm(placeId, characterId, endYear);
+        if (result && result.success) {
+            _log('leadership', 'term_ended',
+                'Leader term ended at ' + placeId, []);
         }
+        return result;
     }
 
-    // =========================================================================
-    // 12. JUSTICE COMMANDS
-    // =========================================================================
+    function assignGovernmentToPlace(placeId, govTypeId, govStyle) {
+        if (typeof window.LocationCommands === 'undefined' ||
+            typeof window.LocationCommands.setGovernment !== 'function') {
+            return _fail('LocationCommands.setGovernment unavailable', 'DEPENDENCY');
+        }
+        var result = window.LocationCommands.setGovernment(placeId, govTypeId, govStyle);
+        if (result && result.success) {
+            _log('government', 'assigned_to_place',
+                'Government assigned to ' + placeId, []);
+        }
+        return result;
+    }
+
+    // ---- Justice / watch (delegated to Settlement) ---------------------------
 
     function updateJusticeSeverity(locationId, severity) {
-        if (_processingCommand) {
-            return { success: false, reason: 'Command already processing' };
+        if (typeof window.SettlementCommands === 'undefined' ||
+            typeof window.SettlementCommands.updateJusticeSeverity !== 'function') {
+            return _fail('SettlementCommands.updateJusticeSeverity unavailable', 'DEPENDENCY');
         }
-        _processingCommand = true;
-
-        try {
-            var validSeverities = ['lenient', 'medium', 'harsh', 'extreme'];
-            if (validSeverities.indexOf(severity) === -1) {
-                _showToast('Invalid severity. Options: lenient, medium, harsh, extreme', 'error');
-                return { success: false, reason: 'Invalid severity' };
-            }
-
-            var data = _getSettlementData(locationId);
-            if (!data) {
-                return { success: false, reason: 'Settlement data not found' };
-            }
-
-            data.justiceSeverity = severity;
-
-            if (typeof SettlementState !== 'undefined' && SettlementState._updateSettlementData) {
-                SettlementState._updateSettlementData(locationId, { justiceSeverity: severity });
-            }
-
-            if (typeof SettlementEconomy !== 'undefined') {
-                try {
-                    var newCrimeRate = SettlementEconomy.calculateCrimeRate(locationId);
-                    if (typeof SettlementState !== 'undefined' && SettlementState._updateSettlementData) {
-                        SettlementState._updateSettlementData(locationId, { 
-                            crimeRate: newCrimeRate 
-                        });
-                    }
-                    
-                    _logEvent('justice', 'crime_rate_updated',
-                        'Crime rate updated to ' + Math.round(newCrimeRate * 100) + '% after justice severity change at ' + 
-                        (_getPlaceById(locationId)?.displayName || 'Unknown'),
-                        []);
-                } catch(e) {}
-            }
-
-            _showToast('Justice severity updated to ' + severity, 'success');
-            return { success: true, data: { justiceSeverity: severity } };
-
-        } finally {
-            _processingCommand = false;
+        var result = window.SettlementCommands.updateJusticeSeverity(locationId, severity);
+        if (result && result.success) {
+            _log('justice', 'severity_updated', 'Justice severity at ' + locationId + ' set to ' + severity, []);
         }
+        return result;
     }
 
     function updateWatch(locationId, hasWatch, size) {
-        if (_processingCommand) {
-            return { success: false, reason: 'Command already processing' };
+        if (typeof window.SettlementCommands === 'undefined' ||
+            typeof window.SettlementCommands.updateWatch !== 'function') {
+            return _fail('SettlementCommands.updateWatch unavailable', 'DEPENDENCY');
         }
-        _processingCommand = true;
-
-        try {
-            if (hasWatch && (!size || size < 1)) {
-                _showToast('Watch size must be at least 1', 'error');
-                return { success: false, reason: 'Invalid watch size' };
-            }
-
-            var data = _getSettlementData(locationId);
-            if (!data) {
-                return { success: false, reason: 'Settlement data not found' };
-            }
-
-            data.hasWatch = !!hasWatch;
-            data.watchSize = hasWatch ? (size || 0) : 0;
-
-            if (typeof SettlementState !== 'undefined' && SettlementState._updateSettlementData) {
-                SettlementState._updateSettlementData(locationId, {
-                    hasWatch: data.hasWatch,
-                    watchSize: data.watchSize
-                });
-            }
-
-            if (typeof SettlementEconomy !== 'undefined') {
-                try {
-                    var newCrimeRate = SettlementEconomy.calculateCrimeRate(locationId);
-                    if (typeof SettlementState !== 'undefined' && SettlementState._updateSettlementData) {
-                        SettlementState._updateSettlementData(locationId, { 
-                            crimeRate: newCrimeRate 
-                        });
-                    }
-                } catch(e) {}
-            }
-
-            _showToast(hasWatch ? 'Watch established with ' + size + ' members' : 'Watch disbanded', 'success');
-            return { success: true, data: { hasWatch: data.hasWatch, watchSize: data.watchSize } };
-
-        } finally {
-            _processingCommand = false;
+        var result = window.SettlementCommands.updateWatch(locationId, hasWatch, size);
+        if (result && result.success) {
+            _log('justice', 'watch_updated', 'Watch at ' + locationId + ' updated', []);
         }
+        return result;
     }
 
-    // =========================================================================
-    // 13. EXPORTS
-    // =========================================================================
+    // ---- Export --------------------------------------------------------------
 
     window.GovernmentCommands = {
+        // Departments
         createDepartment: createDepartment,
         updateDepartment: updateDepartment,
         deleteDepartment: deleteDepartment,
 
+        // Positions
         addPosition: addPosition,
         updatePosition: updatePosition,
         deletePosition: deletePosition,
+        updatePositionSalary: updatePositionSalary,
 
+        // Assignments
         assignCharacterToPosition: assignCharacterToPosition,
         endAssignment: endAssignment,
         removeAssignment: removeAssignment,
+        bulkAssignCharacters: bulkAssignCharacters,
 
+        // Government types
         createGovernmentType: createGovernmentType,
         updateGovernmentType: updateGovernmentType,
         deleteGovernmentType: deleteGovernmentType,
 
-        bulkAssignCharacters: bulkAssignCharacters,
-
+        // Leader / place assignment (delegated)
         assignLeader: assignLeader,
         endLeaderTerm: endLeaderTerm,
+        assignGovernmentToPlace: assignGovernmentToPlace,
 
+        // Justice (delegated)
         updateJusticeSeverity: updateJusticeSeverity,
         updateWatch: updateWatch,
 
-        checkSalaryBudgetSufficiency: checkSalaryBudgetSufficiency,
-
-        _payGovernmentSalary: _payGovernmentSalary,
-
-        validateDepartment: _validateDepartment,
-        validatePosition: _validatePosition,
-        validateAssignment: _validateAssignment,
-        validateGovernmentType: _validateGovernmentType,
-        validateLeaderAssignment: _validateLeaderAssignment
+        // Transaction helper for compound commands (internal use)
+        _commit: _commit
     };
 
-    // Legacy aliases
-    window.assignGovernment = function(placeId, govTypeId, govStyle) {
-        var place = _getPlaceById(placeId);
-        if (!place) {
-            _showToast('Place not found', 'error');
-            return false;
-        }
-        place.governmentTypeId = govTypeId || null;
-        place.governmentStyle = govStyle || null;
-        place.updatedAt = Date.now();
-        _saveMasterData();
-        if (typeof LocationState !== 'undefined' && LocationState.invalidateCache) {
-            LocationState.invalidateCache();
-        }
-        _showToast('Government updated for ' + place.displayName, 'success');
-        return true;
-    };
-
-    window.createGovernmentDepartment = createDepartment;
-    window.updateGovernmentDepartment = updateDepartment;
-    window.deleteGovernmentDepartment = deleteDepartment;
-    window.addPositionToDepartment = addPosition;
-    window.updatePosition = updatePosition;
-    window.removePositionFromDepartment = deletePosition;
-    window.assignCharacterToPosition = assignCharacterToPosition;
-    window.removeCharacterFromPosition = function(departmentId, assignmentId, endYear) {
-        if (endYear) {
-            return endAssignment(departmentId, assignmentId, endYear);
-        }
-        return removeAssignment(departmentId, assignmentId);
-    };
-    window.bulkAssignCharacters = bulkAssignCharacters;
-    window.assignLeader = assignLeader;
-    window.endLeaderTerm = endLeaderTerm;
-
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.GovernmentCommands;
+    }
 })();
