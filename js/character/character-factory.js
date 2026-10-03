@@ -10,48 +10,77 @@
  * any future creation path funnel through buildCharacter().
  *
  * SCOPE:
- *   - Validating input data against the canonical character schema
- *   - Applying canonical defaults for missing optional fields
+ *   - Validating character-owned input data against the character schema
+ *   - Applying canonical defaults for missing character-owned fields
  *   - Generating the character ID
  *   - Assembling the complete character object
  *
  * OUT OF SCOPE:
- *   - Mutation of the canonical collection → CharacterCommands
- *   - Family graph mutations → FamilyCommands
+ *   - Mutation of the canonical collection → character-state.js
+ *   - Family graph mutations → family-commands.js
  *   - Random value generation → character-generator.js
  *   - Persistence → storage.js
- *   - Derived queries → CharacterQueries
- *   - Presentation → CharacterUI
+ *   - Derived queries → character-queries.js
+ *   - Presentation → character-ui-list.js
  *
  * SEMANTIC RULES:
  *   - Missing (undefined/null) optional fields receive canonical defaults.
  *   - Invalid explicit values are REJECTED, not silently coerced.
  *   - Year 0 is preserved. It is a valid world year.
- *   - Unknown input fields are ignored, not copied through. The factory
- *     defines the schema; the caller does not.
+ *   - Unknown input fields are ignored, not copied through.
  *   - Array fields are validated as arrays. Object fields are validated
  *     as plain objects.
  *   - The returned character object is deeply owned by the factory. No
  *     references to caller-supplied arrays or objects are retained.
  *   - IDs are generated via ids.js. No fallbacks.
+ *   - `birthYear` omitted → the factory REQUIRES an explicit birthYear
+ *     or an explicit `currentYear` option from the caller. It does not
+ *     invent "current year minus 25". Generation policy lives in
+ *     character-generator.js; the modal's form default lives in the modal.
+ *   - Nested schema objects (surnameHistory, appearance, surnameRules,
+ *     friendshipDetails, apprenticeshipDetails, activeRankNumber) have
+ *     shape validation in the factory. Invalid nested shape is rejected,
+ *     not repaired.
+ *   - Cyclic input objects are rejected.
  *
- * SCHEMA:
- *   Required fields:  name
- *   Optional fields:  all others below
+ * SCHEMA OWNERSHIP:
+ *   The factory constructs Character-owned fields only.
  *
- *   See _applyDefaults() for the canonical field list and default values.
+ *   The following fields are physically present on every character because
+ *   the current persistence schema requires them, but they are DOMAIN-OWNED
+ *   by other modules and always constructed in their neutral empty state
+ *   here:
+ *
+ *       motherId, fatherId                      → family-commands.js
+ *       children, adoptedParents, adoptedChildren → family-commands.js
+ *       professions                             → character-commands.js
+ *       rankAssignments, activeRankId,
+ *         activeRankNumber                      → rank-commands.js
+ *       relationships, friends,
+ *         friendshipDetails                     → relationship-commands.js
+ *       apprentices, masterId, isMaster,
+ *         masterProfessionId,
+ *         apprenticeshipDetails                 → apprenticeship-commands.js
+ *       religionHistory                         → religion commands
+ *
+ *   The factory MUST NOT accept these fields from the caller. If a caller
+ *   needs to establish a domain edge, they call the owning domain command
+ *   AFTER the character exists.
  *
  * DEPENDENCIES (REQUIRED):
  *   - ids.js:   generateId
- *   - time.js:  getCurrentYear, isValidYear
- *   - accessors.js: getCharacterById
+ *
+ * DEPENDENCIES (OPTIONAL):
+ *   - time.js:  isValidYear — used if present to validate year fields.
+ *               If absent, the factory validates year fields itself
+ *               (finite integer).
  *
  * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
@@ -59,22 +88,9 @@
     // =========================================================================
 
     function _requireDependencies() {
-        var required = [
-            'generateId',
-            'getCurrentYear',
-            'isValidYear',
-            'getCharacterById'
-        ];
-        var missing = [];
-        for (var i = 0; i < required.length; i++) {
-            if (typeof window[required[i]] === 'undefined') {
-                missing.push(required[i]);
-            }
-        }
-        if (missing.length > 0) {
+        if (typeof window.generateId !== 'function') {
             throw new Error(
-                'character-factory.js: missing required dependencies: ' +
-                missing.join(', ')
+                'character-factory.js: ids.js must load first (generateId missing).'
             );
         }
     }
@@ -85,9 +101,11 @@
     // 1. CONSTANTS
     // =========================================================================
 
-    var VALID_GENDERS = ['male', 'female', 'unknown', 'other'];
+    var VALID_GENDERS = ['male', 'female', 'unknown'];
     var VALID_ATTRACTIONS = ['both', 'men', 'women', 'neither', 'unknown'];
     var VALID_SURNAME_SOURCES = ['country', 'cultural', 'inherited', 'custom', 'none'];
+
+    var NAME_MAX_LENGTH = 100;
 
     // =========================================================================
     // 2. INTERNAL HELPERS
@@ -107,55 +125,16 @@
         return proto === Object.prototype || proto === null;
     }
 
-    /**
-     * Validates a year value. Returns { ok, value?, reason? }.
-     * Missing is allowed when the field is optional; the caller decides.
-     */
-    function _validateYearOrMissing(value, name) {
-        if (_isMissing(value)) return { ok: true, value: null };
-        if (!window.isValidYear(value)) {
-            return { ok: false, reason: name + ' must be a valid world year' };
+    function _isValidYear(value) {
+        if (typeof value !== 'number') return false;
+        if (!Number.isFinite(value)) return false;
+        if (!Number.isInteger(value)) return false;
+        if (typeof window.isValidYear === 'function') {
+            return window.isValidYear(value) === true;
         }
-        return { ok: true, value: value };
+        return true;
     }
 
-    /**
-     * Validates a non-empty string ID field (optional).
-     * Returns { ok, value?, reason? }.
-     */
-    function _validateOptionalId(value, name) {
-        if (_isMissing(value)) return { ok: true, value: null };
-        if (!_hasId(value)) {
-            return { ok: false, reason: name + ' must be a non-empty string when provided' };
-        }
-        return { ok: true, value: value };
-    }
-
-    /**
-     * Validates that a field is an array. Missing is allowed.
-     */
-    function _validateOptionalArray(value, name) {
-        if (_isMissing(value)) return { ok: true, value: null };
-        if (!Array.isArray(value)) {
-            return { ok: false, reason: name + ' must be an array when provided' };
-        }
-        return { ok: true, value: value };
-    }
-
-    /**
-     * Validates that a field is a plain object. Missing is allowed.
-     */
-    function _validateOptionalObject(value, name) {
-        if (_isMissing(value)) return { ok: true, value: null };
-        if (!_isPlainObject(value)) {
-            return { ok: false, reason: name + ' must be a plain object when provided' };
-        }
-        return { ok: true, value: value };
-    }
-
-    /**
-     * Validates that a field is a string. Missing is allowed.
-     */
     function _validateOptionalString(value, name) {
         if (_isMissing(value)) return { ok: true, value: null };
         if (typeof value !== 'string') {
@@ -164,9 +143,6 @@
         return { ok: true, value: value };
     }
 
-    /**
-     * Validates that a field is a boolean. Missing is allowed.
-     */
     function _validateOptionalBoolean(value, name) {
         if (_isMissing(value)) return { ok: true, value: null };
         if (typeof value !== 'boolean') {
@@ -175,38 +151,212 @@
         return { ok: true, value: value };
     }
 
-    /**
-     * Deep-clones a value that has been validated as belonging to the
-     * canonical schema. Arrays and plain objects are cloned. Scalars pass
-     * through.
-     *
-     * Uses a plain recursive walk; the factory does not accept arbitrary
-     * data structures, so no cycle handling is required.
-     */
-    function _cloneSchemaValue(value) {
+    function _validateOptionalId(value, name) {
+        if (_isMissing(value)) return { ok: true, value: null };
+        if (!_hasId(value)) {
+            return { ok: false, reason: name + ' must be a non-empty string when provided' };
+        }
+        return { ok: true, value: value };
+    }
+
+    function _validateOptionalArray(value, name) {
+        if (_isMissing(value)) return { ok: true, value: null };
+        if (!Array.isArray(value)) {
+            return { ok: false, reason: name + ' must be an array when provided' };
+        }
+        return { ok: true, value: value };
+    }
+
+    function _validateOptionalObject(value, name) {
+        if (_isMissing(value)) return { ok: true, value: null };
+        if (!_isPlainObject(value)) {
+            return { ok: false, reason: name + ' must be a plain object when provided' };
+        }
+        return { ok: true, value: value };
+    }
+
+    function _validateOptionalYear(value, name) {
+        if (_isMissing(value)) return { ok: true, value: null };
+        if (!_isValidYear(value)) {
+            return { ok: false, reason: name + ' must be a valid world year' };
+        }
+        return { ok: true, value: value };
+    }
+
+    // =========================================================================
+    // 3. CYCLE-SAFE DEEP CLONE
+    // =========================================================================
+    //
+    // Callers may pass nested plain objects (appearance, surnameRules,
+    // surnameHistory, friendshipDetails, apprenticeshipDetails). We clone
+    // deeply so the factory fully owns the returned record. Cyclic input is
+    // rejected — the factory does not accept recursive structures.
+
+    function _cloneSchemaValue(value, seen) {
         if (value === null || typeof value !== 'object') return value;
+
         if (Array.isArray(value)) {
+            if (seen.has(value)) return null; // signal via sentinel checked by caller
+            seen.add(value);
             var arr = [];
             for (var i = 0; i < value.length; i++) {
-                arr.push(_cloneSchemaValue(value[i]));
+                var clonedItem = _cloneSchemaValue(value[i], seen);
+                if (clonedItem === null && value[i] !== null) {
+                    // The item was a cycle; abort.
+                    return null;
+                }
+                arr.push(clonedItem);
             }
+            seen.delete(value);
             return arr;
         }
+
         if (_isPlainObject(value)) {
+            if (seen.has(value)) return null;
+            seen.add(value);
             var obj = {};
             var keys = Object.keys(value);
             for (var j = 0; j < keys.length; j++) {
                 var k = keys[j];
                 if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
-                obj[k] = _cloneSchemaValue(value[k]);
+                var clonedValue = _cloneSchemaValue(value[k], seen);
+                if (clonedValue === null && value[k] !== null) {
+                    return null;
+                }
+                obj[k] = clonedValue;
             }
+            seen.delete(value);
             return obj;
         }
+
+        // Unsupported nested types (Date, Map, Set, class instances) are
+        // rejected by returning the raw value; the caller validates type.
         return value;
     }
 
+    function _safeClone(value) {
+        var seen = new Set();
+        var cloned = _cloneSchemaValue(value, seen);
+        return cloned;
+    }
+
     // =========================================================================
-    // 3. NAME VALIDATION
+    // 4. NESTED SCHEMA VALIDATORS
+    // =========================================================================
+    //
+    // Each function receives a plain object and returns
+    // { ok: true, value: normalised } or { ok: false, reason }.
+    //
+    // These normalise to the canonical empty shape and reject invalid nested
+    // fields. They do not silently coerce wrong types.
+
+    function _validateSurnameHistory(input) {
+        if (_isMissing(input)) {
+            return { ok: true, value: null };
+        }
+        if (!_isPlainObject(input)) {
+            return { ok: false, reason: 'surnameHistory must be a plain object when provided' };
+        }
+
+        var entries = input.entries;
+        if (entries === undefined) entries = [];
+        if (!Array.isArray(entries)) {
+            return { ok: false, reason: 'surnameHistory.entries must be an array' };
+        }
+
+        var birthSurname = input.birthSurname;
+        if (birthSurname === undefined) birthSurname = '';
+        if (typeof birthSurname !== 'string') {
+            return { ok: false, reason: 'surnameHistory.birthSurname must be a string' };
+        }
+
+        var lastUpdated = input.lastUpdated;
+        if (lastUpdated === undefined) lastUpdated = null;
+        if (lastUpdated !== null && !_isValidYear(lastUpdated)) {
+            return { ok: false, reason: 'surnameHistory.lastUpdated must be a valid year or null' };
+        }
+
+        // Entries are cloned as-is but must be plain objects.
+        var clonedEntries = [];
+        for (var i = 0; i < entries.length; i++) {
+            if (!_isPlainObject(entries[i])) {
+                return { ok: false, reason: 'surnameHistory.entries[' + i + '] must be a plain object' };
+            }
+            var cloned = _safeClone(entries[i]);
+            if (cloned === null) {
+                return { ok: false, reason: 'surnameHistory.entries[' + i + '] contains a cyclic structure' };
+            }
+            clonedEntries.push(cloned);
+        }
+
+        return {
+            ok: true,
+            value: {
+                birthSurname: birthSurname,
+                entries: clonedEntries,
+                lastUpdated: lastUpdated
+            }
+        };
+    }
+
+    function _validateSurnameRules(input) {
+        if (_isMissing(input)) return { ok: true, value: null };
+        if (!_isPlainObject(input)) {
+            return { ok: false, reason: 'surnameRules must be a plain object when provided' };
+        }
+        var cloned = _safeClone(input);
+        if (cloned === null) {
+            return { ok: false, reason: 'surnameRules contains a cyclic structure' };
+        }
+        return { ok: true, value: cloned };
+    }
+
+    function _validateAppearance(input) {
+        if (_isMissing(input)) return { ok: true, value: null };
+        if (!_isPlainObject(input)) {
+            return { ok: false, reason: 'appearance must be a plain object when provided' };
+        }
+        var cloned = _safeClone(input);
+        if (cloned === null) {
+            return { ok: false, reason: 'appearance contains a cyclic structure' };
+        }
+        return { ok: true, value: cloned };
+    }
+
+    function _validateFriendshipDetails(input) {
+        if (_isMissing(input)) return { ok: true, value: null };
+        if (!_isPlainObject(input)) {
+            return { ok: false, reason: 'friendshipDetails must be a plain object when provided' };
+        }
+        var cloned = _safeClone(input);
+        if (cloned === null) {
+            return { ok: false, reason: 'friendshipDetails contains a cyclic structure' };
+        }
+        return { ok: true, value: cloned };
+    }
+
+    function _validateApprenticeshipDetails(input) {
+        if (_isMissing(input)) return { ok: true, value: null };
+        if (!_isPlainObject(input)) {
+            return { ok: false, reason: 'apprenticeshipDetails must be a plain object when provided' };
+        }
+        var cloned = _safeClone(input);
+        if (cloned === null) {
+            return { ok: false, reason: 'apprenticeshipDetails contains a cyclic structure' };
+        }
+        return { ok: true, value: cloned };
+    }
+
+    function _validateActiveRankNumber(input) {
+        if (_isMissing(input)) return { ok: true, value: null };
+        if (typeof input !== 'number' || !Number.isInteger(input) || input < 1) {
+            return { ok: false, reason: 'activeRankNumber must be a positive integer when provided' };
+        }
+        return { ok: true, value: input };
+    }
+
+    // =========================================================================
+    // 5. NAME VALIDATION
     // =========================================================================
 
     function _validateName(data) {
@@ -220,52 +370,138 @@
         if (trimmed.length === 0) {
             return { ok: false, reason: 'Character name must not be empty' };
         }
-        if (trimmed.length > 100) {
-            return { ok: false, reason: 'Character name exceeds 100 characters' };
+        if (trimmed.length > NAME_MAX_LENGTH) {
+            return { ok: false, reason: 'Character name exceeds ' + NAME_MAX_LENGTH + ' characters' };
         }
         return { ok: true, value: trimmed };
     }
 
     // =========================================================================
-    // 4. SCHEMA APPLICATION
+    // 6. FIELD VALIDATION TABLE
     // =========================================================================
     //
-    // _applyDefaults runs after validation. It receives a `validated`
-    // object containing only fields that passed validation, plus the
-    // generated ID and current year. It returns the fully-formed character.
+    // Every entry validates and (where appropriate) normalises a
+    // character-owned field from caller input.
+    //
+    // Fields NOT in this table are ignored. Domain-owned fields (motherId,
+    // fatherId, professions, children, relationships, apprentices, etc.)
+    // are deliberately absent: the factory will not accept them.
+
+    var FIELD_VALIDATORS = {
+        // Identity
+        'name': function (v) { return _validateOptionalString(v, 'name'); },
+        'surname': function (v) { return _validateOptionalString(v, 'surname'); },
+        'surnameSource': function (v) {
+            if (_isMissing(v)) return { ok: true, value: null };
+            if (typeof v !== 'string') {
+                return { ok: false, reason: 'surnameSource must be a string' };
+            }
+            if (VALID_SURNAME_SOURCES.indexOf(v) === -1) {
+                return {
+                    ok: false,
+                    reason: 'surnameSource must be one of: ' + VALID_SURNAME_SOURCES.join(', ')
+                };
+            }
+            return { ok: true, value: v };
+        },
+        'surnameRules': function (v) { return _validateSurnameRules(v); },
+        'surnameHistory': function (v) { return _validateSurnameHistory(v); },
+
+        // Demographics
+        'gender': function (v) {
+            if (_isMissing(v)) return { ok: true, value: null };
+            if (typeof v !== 'string') {
+                return { ok: false, reason: 'gender must be a string' };
+            }
+            if (VALID_GENDERS.indexOf(v) === -1) {
+                return { ok: false, reason: 'gender must be one of: ' + VALID_GENDERS.join(', ') };
+            }
+            return { ok: true, value: v };
+        },
+        'attraction': function (v) {
+            if (_isMissing(v)) return { ok: true, value: null };
+            if (typeof v !== 'string') {
+                return { ok: false, reason: 'attraction must be a string' };
+            }
+            if (VALID_ATTRACTIONS.indexOf(v) === -1) {
+                return {
+                    ok: false,
+                    reason: 'attraction must be one of: ' + VALID_ATTRACTIONS.join(', ')
+                };
+            }
+            return { ok: true, value: v };
+        },
+        'birthYear': function (v) { return _validateOptionalYear(v, 'birthYear'); },
+        'isLegitimate': function (v) { return _validateOptionalBoolean(v, 'isLegitimate'); },
+
+        // Life / death
+        'isDeceased': function (v) { return _validateOptionalBoolean(v, 'isDeceased'); },
+        'deathYear': function (v) { return _validateOptionalYear(v, 'deathYear'); },
+        'deathCause': function (v) { return _validateOptionalString(v, 'deathCause'); },
+
+        // Location and movement
+        'birthplaceId': function (v) { return _validateOptionalId(v, 'birthplaceId'); },
+        'currentLocationId': function (v) { return _validateOptionalId(v, 'currentLocationId'); },
+        'household': function (v) { return _validateOptionalId(v, 'household'); },
+        'householdHistory': function (v) { return _validateOptionalArray(v, 'householdHistory'); },
+        'moves': function (v) { return _validateOptionalArray(v, 'moves'); },
+
+        // Religion / culture
+        'religionId': function (v) { return _validateOptionalId(v, 'religionId'); },
+        'cultureId': function (v) { return _validateOptionalId(v, 'cultureId'); },
+
+        // Presentation
+        'epithet': function (v) { return _validateOptionalString(v, 'epithet'); },
+        'notes': function (v) { return _validateOptionalString(v, 'notes'); },
+        'appearance': function (v) { return _validateAppearance(v); },
+
+        // Rank identity (the id itself is character-owned; the assignment
+        // history is domain-owned and lives in rank-commands.js)
+        'activeRankId': function (v) { return _validateOptionalId(v, 'activeRankId'); },
+        'activeRankNumber': function (v) { return _validateActiveRankNumber(v); },
+
+        // Apprenticeship identity (just the flag/id pointers; the records
+        // themselves are domain-owned)
+        'isMaster': function (v) { return _validateOptionalBoolean(v, 'isMaster'); },
+        'masterId': function (v) { return _validateOptionalId(v, 'masterId'); },
+        'masterProfessionId': function (v) { return _validateOptionalId(v, 'masterProfessionId'); },
+        'apprenticeshipDetails': function (v) { return _validateApprenticeshipDetails(v); },
+
+        // Friendship details (id list is domain-owned; details blob is
+        // character-owned embedded data used by the friendship UI)
+        'friendshipDetails': function (v) { return _validateFriendshipDetails(v); }
+    };
+
+    // =========================================================================
+    // 7. DEFAULT APPLICATION
+    // =========================================================================
 
     function _applyDefaults(validated, id, currentYear) {
         var now = Date.now();
+
         var birthYear = _isMissing(validated.birthYear)
-            ? currentYear - 25
+            ? currentYear
             : validated.birthYear;
 
-        // Surname history — the caller may supply it, otherwise we
-        // construct a canonical default.
+        var surname = typeof validated.surname === 'string' ? validated.surname : '';
+
         var surnameHistory;
         if (_isPlainObject(validated.surnameHistory)) {
             surnameHistory = validated.surnameHistory;
         } else {
             surnameHistory = {
-                birthSurname: typeof validated.surname === 'string' ? validated.surname : '',
+                birthSurname: surname,
                 entries: [],
                 lastUpdated: birthYear
             };
-        }
-        if (!Array.isArray(surnameHistory.entries)) surnameHistory.entries = [];
-        if (_isMissing(surnameHistory.birthSurname)) {
-            surnameHistory.birthSurname = typeof validated.surname === 'string' ? validated.surname : '';
-        }
-        if (_isMissing(surnameHistory.lastUpdated)) {
-            surnameHistory.lastUpdated = birthYear;
         }
 
         return {
             // Identity
             id: id,
             name: validated.name,
-            surname: _isMissing(validated.surname) ? '' : validated.surname,
-            surnameSource: _isMissing(validated.surnameSource) ? 'country' : validated.surnameSource,
+            surname: surname,
+            surnameSource: _isMissing(validated.surnameSource) ? 'custom' : validated.surnameSource,
             surnameRules: _isMissing(validated.surnameRules) ? null : validated.surnameRules,
             surnameHistory: surnameHistory,
 
@@ -279,52 +515,60 @@
             isDeceased: _isMissing(validated.isDeceased) ? false : validated.isDeceased,
             deathYear: _isMissing(validated.deathYear) ? null : validated.deathYear,
             deathCause: _isMissing(validated.deathCause) ? '' : validated.deathCause,
-
-            // Relationships
-            relationships: _isMissing(validated.relationships) ? [] : validated.relationships,
-            friends: _isMissing(validated.friends) ? [] : validated.friends,
-            friendshipDetails: _isMissing(validated.friendshipDetails) ? {} : validated.friendshipDetails,
+            deathNotes: '',
 
             // Location and movement
             birthplaceId: _isMissing(validated.birthplaceId) ? null : validated.birthplaceId,
             currentLocationId: _isMissing(validated.currentLocationId) ? null : validated.currentLocationId,
-            moves: _isMissing(validated.moves) ? [] : validated.moves,
+            moves: _isMissing(validated.moves) ? [] : validated.moves.slice(),
             household: _isMissing(validated.household) ? null : validated.household,
-            householdHistory: _isMissing(validated.householdHistory) ? [] : validated.householdHistory,
+            householdHistory: _isMissing(validated.householdHistory)
+                ? []
+                : validated.householdHistory.slice(),
 
-            // Rank and professions
-            rankAssignments: _isMissing(validated.rankAssignments) ? [] : validated.rankAssignments,
-            activeRankId: _isMissing(validated.activeRankId) ? null : validated.activeRankId,
-            activeRankNumber: _isMissing(validated.activeRankNumber) ? null : validated.activeRankNumber,
-            professions: _isMissing(validated.professions) ? [] : validated.professions,
+            // Religion / culture
+            religionId: _isMissing(validated.religionId) ? null : validated.religionId,
+            religionHistory: [],
+            cultureId: _isMissing(validated.cultureId) ? null : validated.cultureId,
 
-            // Family
-            motherId: _isMissing(validated.motherId) ? null : validated.motherId,
-            fatherId: _isMissing(validated.fatherId) ? null : validated.fatherId,
-            children: _isMissing(validated.children) ? [] : validated.children,
-            adoptedParents: _isMissing(validated.adoptedParents) ? [] : validated.adoptedParents,
-            adoptedChildren: _isMissing(validated.adoptedChildren) ? [] : validated.adoptedChildren,
-
-            // Apprenticeship
-            apprentices: _isMissing(validated.apprentices) ? [] : validated.apprentices,
-            masterId: _isMissing(validated.masterId) ? null : validated.masterId,
-            isMaster: _isMissing(validated.isMaster) ? false : validated.isMaster,
-            masterProfessionId: _isMissing(validated.masterProfessionId) ? null : validated.masterProfessionId,
-            apprenticeshipDetails: _isMissing(validated.apprenticeshipDetails) ? {} : validated.apprenticeshipDetails,
-
-            // Epithet
+            // Presentation
             epithet: _isMissing(validated.epithet) ? '' : validated.epithet,
-
-            // Misc
             notes: _isMissing(validated.notes) ? '' : validated.notes,
             appearance: _isMissing(validated.appearance) ? {} : validated.appearance,
 
-            // Religion
-            religionId: _isMissing(validated.religionId) ? null : validated.religionId,
-            religionHistory: _isMissing(validated.religionHistory) ? [] : validated.religionHistory,
+            // Rank identity (id pointers only; assignments are domain-owned)
+            activeRankId: _isMissing(validated.activeRankId) ? null : validated.activeRankId,
+            activeRankNumber: _isMissing(validated.activeRankNumber)
+                ? null
+                : validated.activeRankNumber,
 
-            // Culture
-            cultureId: _isMissing(validated.cultureId) ? null : validated.cultureId,
+            // Apprenticeship identity (id pointers only; records are domain-owned)
+            isMaster: _isMissing(validated.isMaster) ? false : validated.isMaster,
+            masterId: _isMissing(validated.masterId) ? null : validated.masterId,
+            masterProfessionId: _isMissing(validated.masterProfessionId)
+                ? null
+                : validated.masterProfessionId,
+            apprenticeshipDetails: _isMissing(validated.apprenticeshipDetails)
+                ? {}
+                : validated.apprenticeshipDetails,
+
+            // Friendship details (the id list is domain-owned and starts empty)
+            friendshipDetails: _isMissing(validated.friendshipDetails)
+                ? {}
+                : validated.friendshipDetails,
+
+            // ---- Domain-owned embedded fields, constructed in their
+            // ---- neutral empty state. NEVER accepted from caller input.
+            professions: [],
+            rankAssignments: [],
+            relationships: [],
+            friends: [],
+            motherId: null,
+            fatherId: null,
+            children: [],
+            adoptedParents: [],
+            adoptedChildren: [],
+            apprentices: [],
 
             // Soft delete
             isDeleted: false,
@@ -337,143 +581,49 @@
     }
 
     // =========================================================================
-    // 5. FIELD VALIDATION TABLES
-    // =========================================================================
-    //
-    // Every recognized field has an entry in this table. Fields not listed
-    // here are dropped, not copied. The factory defines the schema; the
-    // caller does not.
-
-    var FIELD_VALIDATORS = {
-        // Identity
-        'name': function(v) { return _validateOptionalString(v, 'name'); },
-        'surname': function(v) { return _validateOptionalString(v, 'surname'); },
-        'surnameSource': function(v) {
-            if (_isMissing(v)) return { ok: true, value: null };
-            if (typeof v !== 'string') return { ok: false, reason: 'surnameSource must be a string' };
-            if (VALID_SURNAME_SOURCES.indexOf(v) === -1) {
-                return { ok: false, reason: 'surnameSource must be one of: ' + VALID_SURNAME_SOURCES.join(', ') };
-            }
-            return { ok: true, value: v };
-        },
-        'surnameRules': function(v) { return _validateOptionalObject(v, 'surnameRules'); },
-        'surnameHistory': function(v) { return _validateOptionalObject(v, 'surnameHistory'); },
-
-        // Demographics
-        'gender': function(v) {
-            if (_isMissing(v)) return { ok: true, value: null };
-            if (typeof v !== 'string') return { ok: false, reason: 'gender must be a string' };
-            if (VALID_GENDERS.indexOf(v) === -1) {
-                return { ok: false, reason: 'gender must be one of: ' + VALID_GENDERS.join(', ') };
-            }
-            return { ok: true, value: v };
-        },
-        'attraction': function(v) {
-            if (_isMissing(v)) return { ok: true, value: null };
-            if (typeof v !== 'string') return { ok: false, reason: 'attraction must be a string' };
-            if (VALID_ATTRACTIONS.indexOf(v) === -1) {
-                return { ok: false, reason: 'attraction must be one of: ' + VALID_ATTRACTIONS.join(', ') };
-            }
-            return { ok: true, value: v };
-        },
-        'birthYear': function(v) { return _validateYearOrMissing(v, 'birthYear'); },
-        'isLegitimate': function(v) { return _validateOptionalBoolean(v, 'isLegitimate'); },
-
-        // Life / death
-        'isDeceased': function(v) { return _validateOptionalBoolean(v, 'isDeceased'); },
-        'deathYear': function(v) { return _validateYearOrMissing(v, 'deathYear'); },
-        'deathCause': function(v) { return _validateOptionalString(v, 'deathCause'); },
-
-        // Relationships
-        'relationships': function(v) { return _validateOptionalArray(v, 'relationships'); },
-        'friends': function(v) { return _validateOptionalArray(v, 'friends'); },
-        'friendshipDetails': function(v) { return _validateOptionalObject(v, 'friendshipDetails'); },
-
-        // Location and movement
-        'birthplaceId': function(v) { return _validateOptionalId(v, 'birthplaceId'); },
-        'currentLocationId': function(v) { return _validateOptionalId(v, 'currentLocationId'); },
-        'moves': function(v) { return _validateOptionalArray(v, 'moves'); },
-        'household': function(v) { return _validateOptionalId(v, 'household'); },
-        'householdHistory': function(v) { return _validateOptionalArray(v, 'householdHistory'); },
-
-        // Rank and professions
-        'rankAssignments': function(v) { return _validateOptionalArray(v, 'rankAssignments'); },
-        'activeRankId': function(v) { return _validateOptionalId(v, 'activeRankId'); },
-        'activeRankNumber': function(v) {
-            if (_isMissing(v)) return { ok: true, value: null };
-            if (typeof v !== 'number' || !Number.isInteger(v) || v < 1) {
-                return { ok: false, reason: 'activeRankNumber must be a positive integer when provided' };
-            }
-            return { ok: true, value: v };
-        },
-        'professions': function(v) { return _validateOptionalArray(v, 'professions'); },
-
-        // Family
-        'motherId': function(v) { return _validateOptionalId(v, 'motherId'); },
-        'fatherId': function(v) { return _validateOptionalId(v, 'fatherId'); },
-        'children': function(v) { return _validateOptionalArray(v, 'children'); },
-        'adoptedParents': function(v) { return _validateOptionalArray(v, 'adoptedParents'); },
-        'adoptedChildren': function(v) { return _validateOptionalArray(v, 'adoptedChildren'); },
-
-        // Apprenticeship
-        'apprentices': function(v) { return _validateOptionalArray(v, 'apprentices'); },
-        'masterId': function(v) { return _validateOptionalId(v, 'masterId'); },
-        'isMaster': function(v) { return _validateOptionalBoolean(v, 'isMaster'); },
-        'masterProfessionId': function(v) { return _validateOptionalId(v, 'masterProfessionId'); },
-        'apprenticeshipDetails': function(v) { return _validateOptionalObject(v, 'apprenticeshipDetails'); },
-
-        // Epithet
-        'epithet': function(v) { return _validateOptionalString(v, 'epithet'); },
-
-        // Misc
-        'notes': function(v) { return _validateOptionalString(v, 'notes'); },
-        'appearance': function(v) { return _validateOptionalObject(v, 'appearance'); },
-
-        // Religion
-        'religionId': function(v) { return _validateOptionalId(v, 'religionId'); },
-        'religionHistory': function(v) { return _validateOptionalArray(v, 'religionHistory'); },
-
-        // Culture
-        'cultureId': function(v) { return _validateOptionalId(v, 'cultureId'); }
-    };
-
-    // =========================================================================
-    // 6. PUBLIC ENTRY POINT
+    // 8. PUBLIC ENTRY POINT
     // =========================================================================
 
     /**
      * Builds a canonical character object from caller-supplied data.
      *
-     * Input validation:
-     *   - `data` must be a plain object.
-     *   - Unknown fields are ignored.
-     *   - Required fields (name) must be present and valid.
-     *   - Optional fields, if present, must match the schema's type and
-     *     enum constraints. Invalid explicit values are rejected.
-     *
-     * Output:
-     *   - A fully-formed character object with every schema field present.
-     *   - Deep-copied arrays and objects; the caller may freely mutate
-     *     their input after this call.
-     *   - A newly generated ID.
-     *   - A single `createdAt`/`updatedAt` timestamp.
-     *
      * @param {Object} data
+     * @param {Object} [options]
+     * @param {number} [options.currentYear] - required if data.birthYear is
+     *   omitted. Callers should pass getCurrentYear() explicitly rather than
+     *   relying on the factory to reach for global time.
+     *
      * @returns {{ success: boolean, data?: Object, reason?: string }}
      */
-    function buildCharacter(data) {
-        if (_isMissing(data)) {
-            data = {};
-        }
+    function buildCharacter(data, options) {
+        if (_isMissing(data)) data = {};
         if (!_isPlainObject(data)) {
             return { success: false, reason: 'Character data must be a plain object' };
         }
+        if (_isMissing(options)) options = {};
+        if (!_isPlainObject(options)) {
+            return { success: false, reason: 'Options must be a plain object' };
+        }
 
-        // Required fields
+        // Required: name
         var nameResult = _validateName(data);
         if (!nameResult.ok) return { success: false, reason: nameResult.reason };
 
-        // Validate every recognized field. Unknown fields are dropped.
+        // Required when birthYear is absent: currentYear
+        var currentYear;
+        if (_isMissing(data.birthYear)) {
+            if (!_isValidYear(options.currentYear)) {
+                return {
+                    success: false,
+                    reason: 'birthYear omitted: options.currentYear must be a valid year.'
+                };
+            }
+            currentYear = options.currentYear;
+        } else {
+            currentYear = options.currentYear;
+        }
+
+        // Validate every recognised field. Unknown fields are ignored.
         var validated = { name: nameResult.value };
         var fieldNames = Object.keys(FIELD_VALIDATORS);
         for (var i = 0; i < fieldNames.length; i++) {
@@ -488,53 +638,48 @@
                 return { success: false, reason: result.reason };
             }
             if (result.value !== null && result.value !== undefined) {
-                validated[fieldName] = _cloneSchemaValue(result.value);
+                validated[fieldName] = result.value;
             }
         }
 
-        // Deceased with a death year must have deathYear >= birthYear
-        if (validated.isDeceased === true
-            && !_isMissing(validated.deathYear)
-            && !_isMissing(validated.birthYear)) {
-            if (validated.deathYear < validated.birthYear) {
-                return {
-                    success: false,
-                    reason: 'deathYear cannot be before birthYear'
-                };
-            }
-        }
+        // Cross-field invariants
 
-        // A living character must not have a death year
-        if (validated.isDeceased === false && !_isMissing(validated.deathYear)) {
-            return {
-                success: false,
-                reason: 'deathYear cannot be set on a living character'
-            };
-        }
-
-        // A deceased character must have a death year
+        // isDeceased === true requires deathYear
         if (validated.isDeceased === true && _isMissing(validated.deathYear)) {
-            return {
-                success: false,
-                reason: 'deathYear is required for a deceased character'
-            };
+            return { success: false, reason: 'deathYear is required for a deceased character' };
+        }
+        // isDeceased === false must not have deathYear
+        if (validated.isDeceased === false && !_isMissing(validated.deathYear)) {
+            return { success: false, reason: 'deathYear cannot be set on a living character' };
+        }
+        // deathYear must not precede birthYear
+        if (!_isMissing(validated.isDeceased) && validated.isDeceased === true
+            && !_isMissing(validated.deathYear) && !_isMissing(validated.birthYear)
+            && validated.deathYear < validated.birthYear) {
+            return { success: false, reason: 'deathYear cannot be before birthYear' };
         }
 
-        var currentYear = window.getCurrentYear();
         var id = window.generateId('char');
+        if (!_hasId(id)) {
+            return { success: false, reason: 'ID generation failed' };
+        }
 
         var character = _applyDefaults(validated, id, currentYear);
         return { success: true, data: character };
     }
 
     // =========================================================================
-    // 7. EXPORTS
+    // 9. EXPORTS
     // =========================================================================
 
     window.buildCharacter = buildCharacter;
 
-    // Expose the schema for callers that want to introspect it (e.g., a
-    // future validation module that audits canonical character shape).
     window.CHARACTER_SCHEMA_FIELDS = Object.keys(FIELD_VALIDATORS);
 
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = {
+            buildCharacter: buildCharacter,
+            CHARACTER_SCHEMA_FIELDS: window.CHARACTER_SCHEMA_FIELDS
+        };
+    }
 })();
