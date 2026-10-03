@@ -66,9 +66,19 @@
         return null;
     }
 
+    /**
+     * Returns the character's skill in the role, or null if the character
+     * does not hold that role. Null and 0 are different: 0 is a real skill
+     * value for a character who holds the role but has no training.
+     */
     function getSkillLevel(characterId, roleId) {
         var profession = getProfessionRecord(characterId, roleId);
-        return profession ? (profession.skillLevel || 0) : 0;
+        if (!profession) return null;
+        return typeof profession.skillLevel === 'number' ? profession.skillLevel : 0;
+    }
+
+    function hasRole(characterId, roleId) {
+        return getProfessionRecord(characterId, roleId) !== null;
     }
 
     // =========================================================================
@@ -147,7 +157,9 @@
 
         // Canonical skill: profession record.
         var profession = roleId ? getProfessionRecord(rel.participantB, roleId) : null;
-        var skillLevel = profession ? (profession.skillLevel || 0) : (meta.skillLevel || 0);
+        var skillLevel = profession
+            ? (typeof profession.skillLevel === 'number' ? profession.skillLevel : 0)
+            : (meta.skillLevel || 0);
 
         var stage = window.ApprenticeshipRules
             ? window.ApprenticeshipRules.getStageForSkill(skillLevel)
@@ -167,9 +179,9 @@
         return {
             id: rel.id,
             masterId: rel.participantA,
-            masterName: master ? (master.name + ' ' + (master.surname || '')).trim() : 'Unknown',
+            masterName: master ? ((master.name || '') + ' ' + (master.surname || '')).trim() : 'Unknown',
             apprenticeId: rel.participantB,
-            apprenticeName: apprentice ? (apprentice.name + ' ' + (apprentice.surname || '')).trim() : 'Unknown',
+            apprenticeName: apprentice ? ((apprentice.name || '') + ' ' + (apprentice.surname || '')).trim() : 'Unknown',
             roleId: roleId,
             roleName: role ? role.name : (meta.roleName || 'Unknown'),
             skillLevel: skillLevel,
@@ -179,7 +191,7 @@
             endYear: endYear,
             durationYears: durationYears,
             notes: meta.notes || '',
-            specializations: profession && profession.specs ? profession.specs.slice() : [],
+            specializations: profession && Array.isArray(profession.specs) ? profession.specs.slice() : [],
             completed: rel.status === STATUS.COMPLETED
         };
     }
@@ -223,8 +235,9 @@
     }
 
     /**
-     * Convenience: the single active master (if only one). Returns null if none.
-     * Throws if more than one active master exists — caller should use getMasters().
+     * Convenience: the single active master (if exactly one). Returns null if
+     * none. Throws if more than one active master exists — callers should use
+     * getMasters() in that case.
      */
     function getMaster(characterId) {
         var masters = getMasters(characterId, true);
@@ -282,6 +295,19 @@
         return getApprenticeshipDetails(masterId, apprenticeId, roleId);
     }
 
+    function getApprenticeshipsByRole(roleId) {
+        var archetypes = _getArchetypes();
+        var rels = _getAllRelationships();
+        var results = [];
+        for (var i = 0; i < rels.length; i++) {
+            var rel = rels[i];
+            if (rel.type !== archetypes.APPRENTICESHIP) continue;
+            if (!rel.metadata || rel.metadata.roleId !== roleId) continue;
+            results.push(projectApprenticeship(rel));
+        }
+        return results;
+    }
+
     // =========================================================================
     // 7. TEACHABILITY / DISCOVERY
     // =========================================================================
@@ -295,7 +321,7 @@
         var results = [];
         for (var i = 0; i < master.professions.length; i++) {
             var prof = master.professions[i];
-            var skill = prof.skillLevel || 0;
+            var skill = typeof prof.skillLevel === 'number' ? prof.skillLevel : 0;
             if (skill < minSkill) continue;
             results.push({
                 id: prof.id,
@@ -322,6 +348,7 @@
         // skill (canonical = profession record)
         getSkillLevel: getSkillLevel,
         getProfessionRecord: getProfessionRecord,
+        hasRole: hasRole,
 
         // relationship lookup
         getApprenticeship: getApprenticeship,
@@ -346,6 +373,7 @@
         getApprenticeshipsByMaster: getApprenticeshipsByMaster,
         getApprenticeshipsByApprentice: getApprenticeshipsByApprentice,
         getApprenticeshipBetween: getApprenticeshipBetween,
+        getApprenticeshipsByRole: getApprenticeshipsByRole,
 
         // discovery
         getTeachableSkills: getTeachableSkills,
