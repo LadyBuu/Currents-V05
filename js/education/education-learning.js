@@ -1,9 +1,25 @@
 /**
  * STILL WATERS - EDUCATION LEARNING
  * Pure learning mechanics: read proficiency, read education level, read
- * literacy, ensure character education record. No commands, no persistence,
- * no demographics, no formatting. Demographics live in education-queries.js.
- * Mutation (advanceLearning) lives in education-commands.js.
+ * literacy, ensure character education record. No commands except the
+ * cross-domain write in ensureCharacterEducationRecord, which routes
+ * through CharacterCommands.
+ *
+ * Demographics live in education-queries.js. Mutation (advanceLearning)
+ * lives in education-commands.js.
+ *
+ * Ownership:
+ *   - character.subjectProgress, character.isLiterate, character.education,
+ *     character.educationHistory are education-owned fields on the character
+ *     record, written only through CharacterCommands.updateEducationRecord.
+ *   - role records are owned by RoleState; this module reads via RoleState.
+ *
+ * DEPENDENCIES (required, checked lazily):
+ *   - education-rules.js    (EducationRules)
+ *   - accessors.js          (getCharacterById)
+ *   - role-state.js         (RoleState)
+ *   - character-commands.js (CharacterCommands) — write path only
+ * =============================================================================
  */
 
 (function() {
@@ -14,7 +30,9 @@
         throw new Error('education-learning.js requires education-rules.js');
     }
 
-    // --- Dependencies: no fallbacks. ---
+    // =========================================================================
+    // 1. DEPENDENCIES (no fallbacks)
+    // =========================================================================
 
     function _getCharacterById(id) {
         if (typeof window.getCharacterById !== 'function') {
@@ -24,34 +42,73 @@
     }
 
     function _getRoleById(id) {
-        if (typeof window.getRoleById === 'function') {
-            return window.getRoleById(id);
+        if (typeof window.RoleState === 'undefined' ||
+            typeof window.RoleState.getRole !== 'function') {
+            throw new Error('education-learning.js requires RoleState.getRole');
         }
-        if (typeof window.RoleState !== 'undefined' && typeof window.RoleState.getRole === 'function') {
-            return window.RoleState.getRole(id);
-        }
-        throw new Error('education-learning.js requires getRoleById');
+        return window.RoleState.getRole(id);
     }
 
-    // --- Hydration (explicit) ---
+    function _characterCommands() {
+        if (typeof window.CharacterCommands === 'undefined' ||
+            typeof window.CharacterCommands.updateEducationRecord !== 'function') {
+            throw new Error(
+                'education-learning.js requires CharacterCommands.updateEducationRecord'
+            );
+        }
+        return window.CharacterCommands;
+    }
 
-    /**
-     * Ensure a character has the canonical education fields.
-     * Mutates the character. Called by hydration / Character Commands.
-     * Reads never call this.
-     */
+    // =========================================================================
+    // 2. HYDRATION (explicit; routed through CharacterCommands)
+    // =========================================================================
+    //
+    // Ensures the character record has the canonical education fields.
+    // Reads never call this. Only hydration / enrolment paths call it, and
+    // it writes through CharacterCommands so the write boundary is uniform.
+    //
+    // The function is idempotent: if the fields already exist, it does
+    // nothing and returns a success result without touching state.
+
     function ensureCharacterEducationRecord(character) {
-        if (!character) return character;
+        if (!character) {
+            return { success: false, reason: 'Character is required.' };
+        }
+        if (typeof character.id !== 'string' || !character.id) {
+            return { success: false, reason: 'Character has no id.' };
+        }
 
-        if (!character.subjectProgress) character.subjectProgress = {};
-        if (character.isLiterate === undefined) character.isLiterate = false;
-        if (!character.education) character.education = {};
-        if (!character.educationHistory) character.educationHistory = [];
+        var needsSubjectProgress = !character.subjectProgress
+            || typeof character.subjectProgress !== 'object';
+        var needsIsLiterate = character.isLiterate === undefined;
+        var needsEducation = !character.education
+            || typeof character.education !== 'object';
+        var needsEducationHistory = !Array.isArray(character.educationHistory);
 
-        return character;
+        if (!needsSubjectProgress && !needsIsLiterate
+            && !needsEducation && !needsEducationHistory) {
+            return { success: true, initialized: false };
+        }
+
+        var patch = {};
+        if (needsSubjectProgress) patch.subjectProgress = {};
+        if (needsIsLiterate) patch.isLiterate = false;
+        if (needsEducation) patch.education = {};
+        if (needsEducationHistory) patch.educationHistory = [];
+
+        var result = _characterCommands().updateEducationRecord(character.id, patch);
+        if (!result || !result.success) {
+            return {
+                success: false,
+                reason: (result && result.reason) || 'Failed to initialise education record.'
+            };
+        }
+        return { success: true, initialized: true };
     }
 
-    // --- Proficiency reads ---
+    // =========================================================================
+    // 3. PROFICIENCY READS
+    // =========================================================================
 
     /**
      * Get proficiency level for a curriculum item.
@@ -110,7 +167,9 @@
         return out;
     }
 
-    // --- Classification reads ---
+    // =========================================================================
+    // 4. CLASSIFICATION READS
+    // =========================================================================
 
     /**
      * Get the education level for a character. Returns null if the character
@@ -132,8 +191,8 @@
     }
 
     /**
-     * Canonical literacy predicate. Literacy subject level is the source of truth.
-     * `character.isLiterate` is a materialized milestone maintained by
+     * Canonical literacy predicate. Literacy subject level is the source of
+     * truth. `character.isLiterate` is a materialized milestone maintained by
      * EducationCommands.advanceLearning and is not consulted here — otherwise
      * the two can drift.
      */
@@ -150,7 +209,9 @@
         return RULES.isLiterateAtLevel(literacy);
     }
 
-    // --- Exports ---
+    // =========================================================================
+    // 5. EXPORTS
+    // =========================================================================
 
     window.EducationLearning = {
         ensureCharacterEducationRecord: ensureCharacterEducationRecord,
