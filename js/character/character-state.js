@@ -20,21 +20,40 @@
  *
  *   CharacterState does NOT own:
  *     - family semantics            -> family-rules.js / family-queries.js
+ *     - mortality policy            -> mortality-rules.js
+ *     - lifecycle orchestration     -> character-lifecycle.js
  *     - professional semantics      -> future professional-* domain
  *     - relationship semantics      -> future relationship-* domain
  *     - location movement history   -> location-*
  *     - rank semantics              -> rank-*
- *     - lifecycle policy            -> mortality-rules.js
  *     - domain rule validation      -> each domain's own rules module
  *
- *   CharacterState indexes embedded fields because they live on the
- *   character record. Indexing a field does not mean owning its meaning.
+ * DEATH FIELDS:
+ *   The character record carries the canonical death information:
+ *
+ *       isDeceased            boolean
+ *       deathYear             number | null
+ *       deathCause            string  (stable id: natural | disease |
+ *                                      accident | murder | execution |
+ *                                      childbed_fever | unknown)
+ *       deathCauseDetail      string  (free text: 'Pneumonia', 'Treason')
+ *       deathNotes            string
+ *       isMurder              boolean
+ *       killerId              string | null
+ *       murderMotive          string | null
+ *       murderMethod          string | null
+ *       isExecution           boolean
+ *       executionReason       string | null
+ *       executionMethod       string | null
+ *       executionLocation     string | null
+ *
+ *   These fields are character-owned. They are written only through
+ *   CharacterCommands.markDeceased. They are read through MortalityQueries.
  *
  * REMOVED FIELDS:
  *   The parent-child compatibility mirrors (motherId, fatherId, children,
  *   adoptedParents, adoptedChildren) are no longer part of the character
  *   record. Family relationships live in FamilyState (family-state.js).
- *   The fields are neither indexed nor accepted by any write primitive.
  *
  * MUTATION PRIMITIVES:
  *   - updateCharacter(id, patch)          character-owned field patch
@@ -44,13 +63,6 @@
  *   - addCharacters(characters)           append many fully-built characters
  *   - removeCharacter(id)                 delete from collection
  *   - removeCharacters(ids)               delete many from collection
- *
- *   All primitives:
- *     - reject unknown or wrong-owner fields where applicable
- *     - call window.markDataDirty() exactly once
- *     - rebuild caches
- *     - dispatch exactly one characterChanged event
- *     - never call saveMasterData directly
  *
  * READ CONTRACT:
  *   Public reads return defensive projections or IDs. No public read
@@ -66,16 +78,9 @@
  *   - gender is normalized to 'male' | 'female' | 'unknown'.
  *   - A field is indexed only if present and non-empty.
  *
- * RECURSION POLICY:
- *   Reads are reentrant. There is no _processing flag for reads.
- *   Writes are synchronous. No public write calls another public write.
- *
  * DEPENDENCIES (REQUIRED):
  *   - storage.js:   masterData, markDataDirty
  *   - accessors.js: getCharacters (initial load only)
- *
- * DEPENDENCIES (OPTIONAL):
- *   - None.
  *
  * ICON POLICY: No emojis. No icons.
  *
@@ -112,39 +117,69 @@
     // =========================================================================
 
     var _CHARACTER_OWNED_FIELDS = {
+        // Identity
         name: true,
         surname: true,
         surnameSource: true,
         surnameRules: true,
         surnameHistory: true,
+
+        // Demographics
         gender: true,
         attraction: true,
         birthYear: true,
         isLegitimate: true,
+
+        // Life / death
         isDeceased: true,
         deathYear: true,
         deathCause: true,
+        deathCauseDetail: true,
         deathNotes: true,
+        isMurder: true,
+        killerId: true,
+        murderMotive: true,
+        murderMethod: true,
+        isExecution: true,
+        executionReason: true,
+        executionMethod: true,
+        executionLocation: true,
+
+        // Location and movement
         birthplaceId: true,
         currentLocationId: true,
+        moves: true,
         household: true,
         householdHistory: true,
-        moves: true,
-        notes: true,
-        epithet: true,
-        appearance: true,
+
+        // Religion / culture
         religionId: true,
         religionHistory: true,
         cultureId: true,
+
+        // Presentation
+        epithet: true,
+        notes: true,
+        appearance: true,
+
+        // Rank identity pointer
         activeRankId: true,
         activeRankNumber: true,
+
+        // Apprenticeship identity pointer
         isMaster: true,
         masterId: true,
         masterProfessionId: true,
         apprenticeshipDetails: true,
+
+        // Friendship details blob
         friendshipDetails: true,
+
+        // Soft delete
         isDeleted: true,
         deletedAt: true,
+
+        // Metadata
         createdAt: true,
         updatedAt: true
     };
@@ -424,6 +459,16 @@
             isDeceased: c.isDeceased === true,
             deathYear: _isMissing(c.deathYear) ? null : c.deathYear,
             deathCause: _isMissing(c.deathCause) ? null : c.deathCause,
+            deathCauseDetail: _isMissing(c.deathCauseDetail) ? null : c.deathCauseDetail,
+            deathNotes: _isMissing(c.deathNotes) ? null : c.deathNotes,
+            isMurder: c.isMurder === true,
+            killerId: _isMissing(c.killerId) ? null : c.killerId,
+            murderMotive: _isMissing(c.murderMotive) ? null : c.murderMotive,
+            murderMethod: _isMissing(c.murderMethod) ? null : c.murderMethod,
+            isExecution: c.isExecution === true,
+            executionReason: _isMissing(c.executionReason) ? null : c.executionReason,
+            executionMethod: _isMissing(c.executionMethod) ? null : c.executionMethod,
+            executionLocation: _isMissing(c.executionLocation) ? null : c.executionLocation,
             birthplaceId: _isMissing(c.birthplaceId) ? null : c.birthplaceId,
             currentLocationId: _isMissing(c.currentLocationId) ? null : c.currentLocationId,
             household: _isMissing(c.household) ? null : c.household,
