@@ -1,7 +1,8 @@
 /**
  * STILL WATERS - EDUCATION UI LIST
- * Renders institution lists, cards, tables, and summaries.
- * Reads through EducationQueries only. No state, no commands, no policy.
+ * Renders institution lists, cards, tables, summaries, and history timelines.
+ * Reads through EducationQueries and EducationHistory only.
+ * No state, no commands, no policy.
  */
 
 (function() {
@@ -14,6 +15,13 @@
             throw new Error('education-ui-list.js requires EducationQueries');
         }
         return window.EducationQueries;
+    }
+
+    function _history() {
+        if (typeof window.EducationHistory === 'undefined') {
+            throw new Error('education-ui-list.js requires EducationHistory');
+        }
+        return window.EducationHistory;
     }
 
     function _escapeHtml(str) {
@@ -44,8 +52,11 @@
         else if (typeof window.showToast === 'function') window.showToast(message, type);
     }
 
+    function _eventTypes() {
+        return window.HISTORY_EVENT_TYPES || {};
+    }
+
     // --- Summary normalization ---
-    // Accepts an id (resolves via Queries) or a summary projection.
 
     function _resolveSummary(instOrId) {
         if (instOrId === null || instOrId === undefined) return null;
@@ -88,7 +99,7 @@
         return '#b54a4a';
     }
 
-    // --- Presentation sorting (semantic filtering already applied by Queries) ---
+    // --- Presentation sorting ---
 
     function _sortInstitutions(list, sortBy) {
         var copy = list.slice();
@@ -115,7 +126,6 @@
         if (options.institutions) {
             institutions = options.institutions;
         } else {
-            // Semantic filter via Queries. Presentation sorting below.
             institutions = _queries().getInstitutions(options.filters || {});
         }
 
@@ -151,7 +161,6 @@
                 'cursor:' + (onSelect ? 'pointer' : 'default') + ';transition:all 0.2s;' +
                 borderStyle + background + opacity + '">';
 
-            // Left: icon, name, details
             html += '<div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;">';
             html += '<span style="font-size:1rem;' + (isDemolished ? 'opacity:0.5;' : '') + '">' +
                 _getIconOr('HOME', 'CIRCLE_DOT') + '</span>';
@@ -178,7 +187,6 @@
 
             html += '</div></div>';
 
-            // Right: stats and actions
             html += '<div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">';
 
             if (showStats) {
@@ -283,7 +291,6 @@
             'display:flex;flex-direction:column;gap:' + (compact ? '6px' : '10px') + ';' +
             (isDemolished ? 'opacity:0.6;' : '') + '">';
 
-        // Header
         html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;">';
         html += '<div style="display:flex;align-items:center;gap:8px;">';
         html += '<span style="font-size:' + (compact ? '1.2rem' : '1.5rem') + ';">' + _getIconOr('HOME', 'CIRCLE_DOT') + '</span>';
@@ -303,12 +310,10 @@
         html += '</div>';
         html += '</div>';
 
-        // Description
         if (inst.description && !compact) {
             html += '<div style="font-size:0.65rem;color:var(--dim);">' + _escapeHtml(inst.description) + '</div>';
         }
 
-        // Stats
         html += '<div style="display:flex;flex-wrap:wrap;gap:' + (compact ? '6px' : '10px') + ';font-size:0.6rem;' +
             'border-top:1px solid var(--border-light);padding-top:' + (compact ? '6px' : '8px') + ';">';
         html += '<span>' + _getIcon('PERSON') + ' ' + inst.currentStudentCount + ' students</span>';
@@ -379,9 +384,8 @@
         html += '<tr style="text-align:left;">';
 
         for (var i = 0; i < columns.length; i++) {
-            var col = columns[i];
-            var label = _columnLabel(col);
-            html += '<th style="padding:6px 8px;font-weight:600;color:var(--dim);font-size:0.6rem;">' + _escapeHtml(label) + '</th>';
+            html += '<th style="padding:6px 8px;font-weight:600;color:var(--dim);font-size:0.6rem;">' +
+                _escapeHtml(_columnLabel(columns[i])) + '</th>';
         }
 
         if (showActions) {
@@ -489,7 +493,6 @@
 
         var html = '<div class="education-summary" style="display:flex;flex-direction:column;gap:8px;">';
 
-        // Stats grid
         html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;padding:10px;background:var(--bg);border-radius:6px;">';
         html += _statCell('Institutions', summary.institutionCount);
         html += _statCell('Students', summary.currentStudents);
@@ -631,7 +634,258 @@
     }
 
     // =====================================================================
-    // Refresh scheduling (per container)
+    // History rendering
+    // =====================================================================
+    // Renders event timelines produced by EducationHistory. The domain
+    // module returns structured events; these functions produce the markup.
+
+    // Per-type label and color. Keyed by HISTORY_EVENT_TYPES values.
+    function _eventStyle(type) {
+        var T = _eventTypes();
+        switch (type) {
+            case T.TEACHER_HIRED:
+                return { label: 'Teacher hired', color: '#4a9e6a', icon: _getIcon('PERSON') };
+            case T.TEACHER_DEPARTED:
+                return { label: 'Teacher departed', color: '#c84444', icon: _getIcon('PERSON') };
+            case T.STUDENT_ENROLLED:
+                return { label: 'Student enrolled', color: '#4a7db5', icon: _getIcon('PERSON') };
+            case T.STUDENT_GRADUATED:
+                return { label: 'Student graduated', color: '#c8a844', icon: _getIconOr('GRADUATE', 'CHECK_SIMPLE') };
+            case T.STUDENT_WITHDREW:
+                return { label: 'Student withdrew', color: '#c87040', icon: _getIcon('PERSON') };
+            case T.STUDENT_BECAME_LITERATE:
+                return { label: 'Became literate', color: '#6a9e6a', icon: _getIcon('PERSON') };
+            case T.HEADMASTER_APPOINTED:
+                return { label: 'Headmaster appointed', color: '#6a9ecf', icon: _getIcon('CROWN') };
+            case T.HEADMASTER_ENDED:
+                return { label: 'Headmaster term ended', color: '#8a5a20', icon: _getIcon('CROWN') };
+            case T.INSTITUTION_RENAMED:
+                return { label: 'Renamed', color: '#6a7a8a', icon: _getIcon('EDIT') };
+            case T.INSTITUTION_MOVED:
+                return { label: 'Relocated', color: '#6a7a8a', icon: _getIcon('LOCATION') };
+            case T.INSTITUTION_DEMOLISHED:
+                return { label: 'Demolished', color: '#b54a4a', icon: _getIcon('WARNING') };
+            case T.INSTITUTION_REBUILT:
+                return { label: 'Rebuilt', color: '#4a9e6a', icon: _getIconOr('HOME', 'CIRCLE_DOT') };
+            case T.REPUTATION_CHANGED:
+                return { label: 'Reputation changed', color: '#8a7a5a', icon: _getIcon('STAR_4') };
+            default:
+                return { label: type || 'Event', color: 'var(--border)', icon: _getIcon('CIRCLE_DOT') };
+        }
+    }
+
+    // Renders one event row.
+    function _eventRow(e) {
+        var style = _eventStyle(e.type);
+        var entityDisplay = e.entityName
+            ? ' <strong>' + _escapeHtml(e.entityName) + '</strong>'
+            : '';
+        var details = e.details ? ' <span style="color:var(--dim);">— ' + _escapeHtml(e.details) + '</span>' : '';
+        var reason = e.reason && e.reason !== e.details
+            ? ' <span style="color:var(--dim);font-size:0.5rem;">(' + _escapeHtml(e.reason) + ')</span>'
+            : '';
+
+        var metaLine = '';
+        if (e.metadata && typeof e.metadata === 'object') {
+            var parts = [];
+            for (var k in e.metadata) {
+                if (!e.metadata.hasOwnProperty(k)) continue;
+                var v = e.metadata[k];
+                if (v === null || v === undefined || v === '') continue;
+                parts.push(_escapeHtml(k) + ': ' + _escapeHtml(String(v)));
+            }
+            if (parts.length) {
+                metaLine = '<div style="font-size:0.5rem;color:var(--dim);margin-top:2px;">' +
+                    parts.join(' · ') + '</div>';
+            }
+        }
+
+        var valueLine = '';
+        if (e.previousValue !== null && e.previousValue !== undefined &&
+            e.newValue !== null && e.newValue !== undefined) {
+            valueLine = ' <span style="color:var(--dim);font-size:0.55rem;">' +
+                _escapeHtml(String(e.previousValue)) + ' → ' + _escapeHtml(String(e.newValue)) +
+                '</span>';
+        }
+
+        return '<div class="education-history-event" style="' +
+            'display:flex;align-items:flex-start;gap:8px;padding:6px 10px;' +
+            'background:var(--bg3);border-left:3px solid ' + style.color + ';border-radius:4px;font-size:0.55rem;">' +
+            '<span style="min-width:40px;color:var(--dim);font-weight:bold;">' + _escapeHtml(String(e.year)) + '</span>' +
+            '<span style="color:' + style.color + ';">' + style.icon + '</span>' +
+            '<span style="flex:1;">' +
+            '<span style="color:var(--accent);">' + _escapeHtml(style.label) + '</span>' +
+            entityDisplay + details + valueLine + reason +
+            metaLine +
+            '</span></div>';
+    }
+
+    // Renders a list of events, optionally grouped by year.
+    function _renderEventList(events, options) {
+        options = options || {};
+        var emptyMessage = options.emptyMessage || 'No recorded events';
+
+        if (!events || events.length === 0) {
+            return '<div style="color:var(--dim);font-size:0.55rem;padding:8px;text-align:center;">' +
+                _escapeHtml(emptyMessage) + '</div>';
+        }
+
+        if (options.groupByYear === false) {
+            var flat = '<div style="display:flex;flex-direction:column;gap:4px;">';
+            for (var i = 0; i < events.length; i++) {
+                flat += _eventRow(events[i]);
+            }
+            flat += '</div>';
+            return flat;
+        }
+
+        // Group by year, preserving sort order (events already sorted).
+        var byYear = {};
+        var yearOrder = [];
+        for (var i = 0; i < events.length; i++) {
+            var y = events[i].year;
+            if (!byYear[y]) { byYear[y] = []; yearOrder.push(y); }
+            byYear[y].push(events[i]);
+        }
+
+        var html = '<div style="display:flex;flex-direction:column;gap:12px;">';
+        for (var yi = 0; yi < yearOrder.length; yi++) {
+            var year = yearOrder[yi];
+            html += '<div>';
+            html += '<div style="font-size:0.6rem;font-weight:bold;color:var(--accent);margin-bottom:4px;">' +
+                _escapeHtml(String(year)) + '</div>';
+            html += '<div style="display:flex;flex-direction:column;gap:4px;">';
+            for (var i = 0; i < byYear[year].length; i++) {
+                html += _eventRow(byYear[year][i]);
+            }
+            html += '</div></div>';
+        }
+        html += '</div>';
+        return html;
+    }
+
+    /**
+     * Render institution history timeline into a container.
+     *
+     * Options:
+     *   maxEvents    Max events to display. Default 50.
+     *   type         Filter by event type.
+     *   groupByYear  Group events under year headers. Default true.
+     *   emptyMessage Message when no events.
+     */
+    function renderInstitutionHistory(containerId, institutionId, options) {
+        options = options || {};
+        var container = document.getElementById(containerId);
+        if (!container) return false;
+
+        var limit = options.maxEvents || 50;
+        var events = _history().getInstitutionHistory(institutionId, {
+            type: options.type,
+            limit: limit
+        });
+
+        container.innerHTML = _renderEventList(events, {
+            groupByYear: options.groupByYear !== false,
+            emptyMessage: options.emptyMessage || 'No recorded events'
+        });
+        return true;
+    }
+
+    /**
+     * Render a character's teaching employment history.
+     *
+     * Options:
+     *   maxEvents    Max events. Default 50.
+     *   groupByYear  Default false (typically short).
+     */
+    function renderTeacherHistory(containerId, characterId, options) {
+        options = options || {};
+        var container = document.getElementById(containerId);
+        if (!container) return false;
+
+        var events = _history().getTeacherEmploymentHistory(characterId);
+        if (options.maxEvents && events.length > options.maxEvents) {
+            events = events.slice(0, options.maxEvents);
+        }
+
+        // Attach institution context for the row renderer.
+        container.innerHTML = _renderEventList(events, {
+            groupByYear: options.groupByYear === true,
+            emptyMessage: options.emptyMessage || 'No teaching history'
+        });
+        return true;
+    }
+
+    /**
+     * Render a character's education history as a student.
+     *
+     * Options:
+     *   maxEvents    Max events. Default 50.
+     *   groupByYear  Default true.
+     */
+    function renderStudentHistory(containerId, characterId, options) {
+        options = options || {};
+        var container = document.getElementById(containerId);
+        if (!container) return false;
+
+        var events = _history().getStudentEducationHistory(characterId);
+        if (options.maxEvents && events.length > options.maxEvents) {
+            events = events.slice(0, options.maxEvents);
+        }
+
+        container.innerHTML = _renderEventList(events, {
+            groupByYear: options.groupByYear !== false,
+            emptyMessage: options.emptyMessage || 'No education history'
+        });
+        return true;
+    }
+
+    /**
+     * Render a character's combined education history:
+     * as student, as teacher, and as headmaster.
+     *
+     * Options:
+     *   maxEvents    Max events. Default 50.
+     *   groupByYear  Default true.
+     */
+    function renderCharacterHistory(containerId, characterId, options) {
+        options = options || {};
+        var container = document.getElementById(containerId);
+        if (!container) return false;
+
+        var combined = _history().getCharacterEducationHistory(characterId);
+
+        // Merge all three streams into one chronological list.
+        var merged = [];
+        for (var i = 0; i < combined.asStudent.length; i++) merged.push(combined.asStudent[i]);
+        for (var i = 0; i < combined.asTeacher.length; i++) merged.push(combined.asTeacher[i]);
+        for (var i = 0; i < combined.asHeadmaster.length; i++) merged.push(combined.asHeadmaster[i]);
+
+        merged.sort(function(a, b) {
+            if (a.year !== b.year) return b.year - a.year;
+            if (a.timestamp !== b.timestamp) return b.timestamp - a.timestamp;
+            return a.id < b.id ? 1 : (a.id > b.id ? -1 : 0);
+        });
+
+        if (options.maxEvents && merged.length > options.maxEvents) {
+            merged = merged.slice(0, options.maxEvents);
+        }
+
+        if (merged.length === 0) {
+            container.innerHTML = '<div style="color:var(--dim);font-size:0.55rem;padding:8px;text-align:center;">' +
+                _escapeHtml(options.emptyMessage || 'No education history') + '</div>';
+            return true;
+        }
+
+        container.innerHTML = _renderEventList(merged, {
+            groupByYear: options.groupByYear !== false,
+            emptyMessage: options.emptyMessage || 'No education history'
+        });
+        return true;
+    }
+
+    // =====================================================================
+    // Refresh scheduling
     // =====================================================================
 
     var _refreshTimeouts = {};
@@ -653,14 +907,24 @@
     // =====================================================================
 
     window.EducationUI = {
+        // Institution views
         renderInstitutionList: renderInstitutionList,
         renderInstitutionCard: renderInstitutionCard,
         renderInstitutionTable: renderInstitutionTable,
         renderEducationSummary: renderEducationSummary,
         renderReligiousSchoolsList: renderReligiousSchoolsList,
+
+        // History views
+        renderInstitutionHistory: renderInstitutionHistory,
+        renderTeacherHistory: renderTeacherHistory,
+        renderStudentHistory: renderStudentHistory,
+        renderCharacterHistory: renderCharacterHistory,
+
+        // Refresh
         refreshEducationList: refreshEducationList,
         debouncedRefresh: debouncedRefresh,
 
+        // Helpers
         getStatusBadge: _getStatusBadge,
         getOwnershipBadge: _getOwnershipBadge,
         getReputationColor: _getReputationColor
