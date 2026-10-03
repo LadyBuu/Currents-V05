@@ -9,13 +9,14 @@
  *   - Validates its inputs and returns structured results.
  *   - Delegates role-record mutation to RoleState.
  *   - Delegates character profession mutation to CharacterCommands.
- *   - Emits domain events via RoleEvents (see below), never directly.
- *   - Contains NO UI concerns: no toasts, no DOM, no browser events.
+ *   - Dispatches domain events via window.dispatchEvent for cross-domain
+ *     subscribers (e.g. the apprenticeship domain listens for roleDeleted).
+ *   - Contains NO UI concerns: no toasts, no DOM, no browser-specific events
+ *     beyond a single CustomEvent dispatch.
  *
  * Reentrancy:
  *   There is no module-wide guard. Commands may call other commands freely
- *   because every operation is synchronous and side-effect explicit. A guard
- *   that suppressed composition is what broke bulkAssignRole in the old code.
+ *   because every operation is synchronous and side-effect explicit.
  *
  * Ownership:
  *   Roles belong to RoleState.
@@ -29,6 +30,7 @@
  *   - role-state.js
  *   - role-queries.js
  *   - character-commands.js  (CharacterCommands) — profession API only
+ *   - accessors.js           (getCharacterById)
  *
  * =============================================================================
  */
@@ -52,6 +54,11 @@
     if (!window.CharacterCommands) {
         throw new Error(
             'role-commands.js requires character-commands.js (CharacterCommands) first.'
+        );
+    }
+    if (typeof window.getCharacterById !== 'function') {
+        throw new Error(
+            'role-commands.js requires accessors.js (getCharacterById).'
         );
     }
 
@@ -99,7 +106,27 @@
     }
 
     // =========================================================================
-    // 3. INPUT VALIDATION
+    // 3. NOTIFICATION
+    // =========================================================================
+    //
+    // A single CustomEvent dispatch per command that changes observable
+    // state. Subscribers (apprenticeship, households, etc.) listen on the
+    // window. No browser-specific events (no click, no input, etc.).
+
+    function _notify(eventName, detail) {
+        if (typeof window.dispatchEvent !== 'function') return;
+        if (typeof window.CustomEvent !== 'function') return;
+        try {
+            window.dispatchEvent(new CustomEvent(eventName, { detail: detail || {} }));
+        } catch (err) {
+            if (window.console && typeof window.console.error === 'function') {
+                window.console.error('role-commands: event "' + eventName + '" dispatch failed:', err);
+            }
+        }
+    }
+
+    // =========================================================================
+    // 4. INPUT VALIDATION
     // =========================================================================
 
     function _validString(v) {
@@ -133,7 +160,7 @@
     }
 
     // =========================================================================
-    // 4. ROLE CRUD
+    // 5. ROLE CRUD
     // =========================================================================
 
     function createRole(data) {
@@ -200,6 +227,7 @@
             literacyLevel: literacyLevel
         });
 
+        _notify('roleCreated', { roleId: role.id, roleName: role.name });
         return _ok({ role: role });
     }
 
@@ -298,6 +326,8 @@
         if (!updated) {
             return _fail('Failed to update role.');
         }
+
+        _notify('roleUpdated', { roleId: roleId, roleName: updated.name });
         return _ok({ role: updated });
     }
 
@@ -329,11 +359,49 @@
             return _fail('Failed to delete role from state.');
         }
 
+        // Notify subscribers (e.g. apprenticeship domain) so they can
+        // terminate any relationships pointing at this role.
+        _notify('roleDeleted', { roleId: roleId, roleName: role.name });
+
         return _ok({ roleName: role.name, removedFromCharacters: reassignedCount });
     }
 
+    function setRoles(roles) {
+        if (!Array.isArray(roles)) {
+            return _fail('Roles must be an array.');
+        }
+
+        // Validate every entry first; commit only if all are valid.
+        var validated = [];
+        for (var i = 0; i < roles.length; i++) {
+            var r = roles[i];
+            if (!r || typeof r !== 'object') {
+                return _fail('Role at index ' + i + ' is not an object.');
+            }
+            if (!_validString(r.id)) {
+                return _fail('Role at index ' + i + ' is missing an id.');
+            }
+            if (!_validString(r.name)) {
+                return _fail('Role at index ' + i + ' is missing a name.');
+            }
+            if (r.category !== undefined && !_validCategory(r.category)) {
+                return _fail('Role at index ' + i + ' has invalid category: ' + r.category);
+            }
+            validated.push(r);
+        }
+
+        try {
+            RS.setRoles(validated);
+        } catch (err) {
+            return _fail(err.message);
+        }
+
+        _notify('rolesSet', { count: validated.length });
+        return _ok({ count: validated.length });
+    }
+
     // =========================================================================
-    // 5. CATEGORY MANAGEMENT
+    // 6. CATEGORY MANAGEMENT
     // =========================================================================
 
     function addCategory(id, name) {
@@ -349,6 +417,8 @@
         } catch (err) {
             return _fail(err.message);
         }
+
+        _notify('categoryAdded', { id: id, name: name.trim() });
         return _ok({ id: id, name: name.trim() });
     }
 
@@ -366,6 +436,8 @@
 
         var ok = RS.updateCategory(id, patch);
         if (!ok) return _fail('Category not found.');
+
+        _notify('categoryUpdated', { id: id });
         return _ok({ id: id });
     }
 
@@ -380,16 +452,18 @@
         } catch (err) {
             return _fail(err.message);
         }
+
+        _notify('categoryDeleted', { id: id });
         return _ok({ id: id });
     }
 
     // =========================================================================
-    // 6. SPECIALIZATION MANAGEMENT
+    // 7. SPECIALIZATION MANAGEMENT (role-level catalogue)
     // =========================================================================
     //
-    // Specializations are role-level metadata. They live on the role record in
-    // RoleState. Character professions carry their own per-character `specs`
-    // array and are managed by the character domain.
+    // These mutate the role's catalogue of allowed specializations. They do
+    // NOT touch any character's profession record. Per-character specs are
+    // the character domain's responsibility.
 
     function addRoleSpecialization(roleId, specialization) {
         if (!_validString(roleId)) return _fail('Role id is required.');
@@ -411,6 +485,7 @@
         var updated = RS.updateRole(roleId, { specializations: existing });
         if (!updated) return _fail('Failed to add specialization.');
 
+        _notify('roleSpecializationAdded', { roleId: roleId, specialization: spec });
         return _ok({ role: updated, specialization: spec });
     }
 
@@ -432,11 +507,12 @@
         var updated = RS.updateRole(roleId, { specializations: existing });
         if (!updated) return _fail('Failed to remove specialization.');
 
+        _notify('roleSpecializationRemoved', { roleId: roleId, specialization: specialization });
         return _ok({ role: updated });
     }
 
     // =========================================================================
-    // 7. ROLE ASSIGNMENT
+    // 8. ROLE ASSIGNMENT
     // =========================================================================
 
     /**
@@ -529,7 +605,15 @@
         var role = RS.getRole(roleId);
         if (!role) return _fail('Role not found.');
 
-        return _assignRoleInternal(characterId, role, options);
+        var result = _assignRoleInternal(characterId, role, options);
+        if (result.success) {
+            _notify('roleAssigned', {
+                characterId: characterId,
+                roleId: roleId,
+                wasUpdate: result.wasUpdate
+            });
+        }
+        return result;
     }
 
     function removeRoleFromCharacter(characterId, roleId) {
@@ -543,6 +627,8 @@
         if (!result || result.success !== true) {
             return _fail(result && result.reason ? result.reason : 'Failed to remove role.');
         }
+
+        _notify('roleRemoved', { characterId: characterId, roleId: roleId });
         return _ok({ characterId: characterId, roleId: roleId });
     }
 
@@ -560,15 +646,20 @@
         if (!result || result.success !== true) {
             return _fail(result && result.reason ? result.reason : 'Failed to update skill.');
         }
+
+        _notify('characterSkillUpdated', {
+            characterId: characterId,
+            roleId: roleId,
+            skillLevel: skillLevel
+        });
         return _ok({ characterId: characterId, roleId: roleId, skillLevel: skillLevel });
     }
 
     /**
      * Assigns a role to many characters.
      *
-     * This is the exact call that broke in the old implementation because a
-     * module-wide reentrancy guard blocked the nested calls. Here the loop
-     * calls _assignRoleInternal directly, so composition works.
+     * Calls _assignRoleInternal directly so composition works without a
+     * module-wide reentrancy guard.
      */
     function bulkAssignRole(characterIds, roleId, options) {
         if (!Array.isArray(characterIds)) {
@@ -598,11 +689,19 @@
             }
         }
 
+        if (successCount > 0) {
+            _notify('rolesBulkAssigned', {
+                roleId: roleId,
+                assignedCount: successCount,
+                failedCount: failedCount
+            });
+        }
+
         return { success: successCount, failed: failedCount, errors: errors };
     }
 
     // =========================================================================
-    // 8. SALARY MANAGEMENT
+    // 9. SALARY MANAGEMENT
     // =========================================================================
 
     function updateRoleSalary(roleId, newSalary, reason) {
@@ -621,6 +720,12 @@
 
         var updated = RS.updateRole(roleId, { baseSalary: newSalary });
         if (!updated) return _fail('Failed to update salary.');
+
+        _notify('roleSalaryUpdated', {
+            roleId: roleId,
+            previousSalary: role.baseSalary,
+            newSalary: newSalary
+        });
 
         return _ok({
             role: updated,
@@ -654,48 +759,18 @@
         });
         if (!updated) return _fail('Failed to update literacy requirement.');
 
+        _notify('roleLiteracyUpdated', {
+            roleId: roleId,
+            requiresLiteracy: requires,
+            literacyLevel: level
+        });
+
         return _ok({
             role: updated,
             previousRequiresLiteracy: role.requiresLiteracy,
             previousLiteracyLevel: role.literacyLevel,
             reason: reason || null
         });
-    }
-
-    // =========================================================================
-    // 9. BULK / SET ROLES
-    // =========================================================================
-
-    function setRoles(roles) {
-        if (!Array.isArray(roles)) {
-            return _fail('Roles must be an array.');
-        }
-
-        // Validate every entry first; commit only if all are valid.
-        var validated = [];
-        for (var i = 0; i < roles.length; i++) {
-            var r = roles[i];
-            if (!r || typeof r !== 'object') {
-                return _fail('Role at index ' + i + ' is not an object.');
-            }
-            if (!_validString(r.id)) {
-                return _fail('Role at index ' + i + ' is missing an id.');
-            }
-            if (!_validString(r.name)) {
-                return _fail('Role at index ' + i + ' is missing a name.');
-            }
-            if (r.category !== undefined && !_validCategory(r.category)) {
-                return _fail('Role at index ' + i + ' has invalid category: ' + r.category);
-            }
-            validated.push(r);
-        }
-
-        try {
-            RS.setRoles(validated);
-        } catch (err) {
-            return _fail(err.message);
-        }
-        return _ok({ count: validated.length });
     }
 
     // =========================================================================
@@ -714,7 +789,7 @@
         updateCategory: updateCategory,
         deleteCategory: deleteCategory,
 
-        // Specializations
+        // Specializations (role catalogue)
         addRoleSpecialization: addRoleSpecialization,
         removeRoleSpecialization: removeRoleSpecialization,
 
