@@ -192,7 +192,6 @@
     };
 
     // Exclusive reputation bands. Boundaries are half-open [min, max).
-    // Reputation 40 is 'lower_middle', not 'poor'.
     var SCHOOL_TIERS = {
         DIRT_POOR:    { id: 'dirt_poor',    label: 'Dirt Poor',    minReputation: 0,  maxReputation: 20,  baseTuitionRange: '0-5' },
         POOR:         { id: 'poor',         label: 'Poor',         minReputation: 20, maxReputation: 35,  baseTuitionRange: '5-15' },
@@ -238,8 +237,6 @@
         reputationNeutral: 50
     };
 
-    // Per-type tuition multiplier applied on top of baseTuition and
-    // reputation modifier. Values >1 represent premium institutions.
     var TUITION_TYPE_MULTIPLIERS = {
         hut_school:       0.5,
         small_school:     0.7,
@@ -252,17 +249,19 @@
 
     // Event vocabulary for education history. Append-only; unknown types are rejected.
     var HISTORY_EVENT_TYPES = {
-        TEACHER_HIRED:           'teacher_hired',
-        TEACHER_DEPARTED:        'teacher_departed',
-        STUDENT_ENROLLED:        'student_enrolled',
-        STUDENT_GRADUATED:       'student_graduated',
-        STUDENT_WITHDREW:        'student_withdrew',
-        STUDENT_BECAME_LITERATE: 'student_became_literate',
-        HEADMASTER_APPOINTED:    'headmaster_appointed',
-        HEADMASTER_ENDED:        'headmaster_ended',
-        INSTITUTION_RENAMED:     'institution_renamed',
-        INSTITUTION_MOVED:       'institution_moved',
-        REPUTATION_CHANGED:      'reputation_changed'
+        TEACHER_HIRED:            'teacher_hired',
+        TEACHER_DEPARTED:         'teacher_departed',
+        STUDENT_ENROLLED:         'student_enrolled',
+        STUDENT_GRADUATED:        'student_graduated',
+        STUDENT_WITHDREW:         'student_withdrew',
+        STUDENT_BECAME_LITERATE:  'student_became_literate',
+        HEADMASTER_APPOINTED:     'headmaster_appointed',
+        HEADMASTER_ENDED:         'headmaster_ended',
+        INSTITUTION_RENAMED:      'institution_renamed',
+        INSTITUTION_MOVED:        'institution_moved',
+        INSTITUTION_DEMOLISHED:   'institution_demolished',
+        INSTITUTION_REBUILT:      'institution_rebuilt',
+        REPUTATION_CHANGED:       'reputation_changed'
     };
 
     window.EDUCATION_LEVELS = EDUCATION_LEVELS;
