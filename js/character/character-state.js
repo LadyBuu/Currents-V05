@@ -3,80 +3,84 @@
  * STILL WATERS - CHARACTER STATE (js/character/character-state.js)
  * =============================================================================
  *
- * Runtime projection of the canonical character collection, plus the
- * low-level write primitives that CharacterCommands builds on.
+ * Canonical runtime owner of character data, plus low-level character-owned
+ * write primitives that CharacterCommands builds on.
  *
  * SCOPE:
- *   - In-memory reference to the canonical character collection
- *   - Derived indexes for fast lookup by ID, name, location, household,
- *     status, gender, profession, rank, birth decade, religion, culture
+ *   - Canonical runtime reference to the character collection
+ *   - Derived indexes over character-owned fields
  *   - Subscription mechanism for change notifications
  *   - Reactive rebuild in response to canonical mutation events
- *   - Low-level write primitives: updateCharacter, updateCharacters
+ *   - Low-level character-owned write primitives
+ *   - Internal live-reference access for authorized mutation code
+ *
+ * OWNERSHIP:
+ *   CharacterState owns the runtime representation of canonical character
+ *   data. storage.js persists it. accessors.js is a legacy compatibility
+ *   facade and is not consulted by this module except at initial load.
+ *
+ *   CharacterState does NOT own:
+ *     - family semantics (FamilyQueries / FamilyRules)
+ *     - professional semantics (ProfessionalQueries / ProfessionalRules)
+ *     - relationship semantics (RelationshipState / RelationshipQueries)
+ *     - location movement history (LocationQueries)
+ *     - rank semantics (RankQueries)
+ *     - domain rule validation (each domain's Rules module)
+ *
+ *   CharacterState indexes embedded fields because they live on the
+ *   character record. Indexing a field does not mean owning its meaning.
  *
  * WRITE PRIMITIVES vs. COMMANDS:
- *   updateCharacter / updateCharacters are persistence primitives. They
- *   merge a partial update into the canonical record, save masterData,
- *   and dispatch characterChanged so caches rebuild.
+ *   updateCharacter / updateCharacters are low-level character-owned
+ *   persistence primitives. They merge a partial update into the canonical
+ *   record, mark the store dirty, rebuild caches, and dispatch
+ *   characterChanged.
  *
- *   They do NOT validate domain rules. Skill-level bounds, salary policy,
- *   literacy invariants, gender restrictions, and profession field shape
- *   are validated by CharacterCommands (and, for role-specific rules,
- *   RoleCommands) before calling here.
+ *   They validate CHARACTER-OWNED structural shape only. Domain rules —
+ *   skill bounds, family cycle policy, adoption legality, profession
+ *   eligibility, gender restrictions — are validated by the domain owning
+ *   the rule before this primitive is called.
  *
- *   Callers other than CharacterCommands should not call these directly.
- *   They are exposed because CharacterCommands is loaded separately and
- *   cannot reach private functions.
+ *   This module will REJECT updates to fields that are not character-owned
+ *   or that are owned by another domain. The character-owned field list is
+ *   defined in _CHARACTER_OWNED_FIELDS below.
  *
- * OUT OF SCOPE:
- *   - Domain validation of writes → CharacterCommands
- *   - Mutating family graph → FamilyCommands
- *   - Querying derived facts → CharacterQueries
- *   - Aggregating families → FamilyStatistics
- *   - Lifecycle semantics → CharacterLifecycle
+ * READ CONTRACT:
+ *   Public reads return defensive projections or IDs. No public read
+ *   returns a live canonical character object.
+ *
+ *   Authorized mutation code (CharacterCommands, domain Commands that own
+ *   an embedded character field) uses _getLiveCharacterForMutation(id),
+ *   which is exposed on the module for that purpose only.
+ *
+ * PERSISTENCE CONTRACT:
+ *   updateCharacter(s) calls window.markDataDirty() exactly once per call.
+ *   It does NOT call saveMasterData. Storage decides when to flush. This
+ *   matches the CharacterCommands model and avoids double-commit.
+ *
+ *   If a caller requires a durable commit, they call saveMasterData()
+ *   themselves after this returns.
  *
  * SEMANTIC RULES:
- *   - Canonical data lives in masterData.data.characters, accessed
- *     through accessors.js. This module does NOT own that data.
- *   - This module maintains DERIVED caches. It never writes back to the
- *     canonical collection except through updateCharacter(s).
- *   - Caches are rebuilt by subscribing to characterChanged and
- *     masterDataUpdated events. This module does not poll.
- *   - Collection accessors return copies (slices). Individual character
- *     accessors return live canonical references. Mutating a returned
- *     character object is NOT permitted and will corrupt the caches.
- *   - Missing data is not fabricated. Missing character → null. Missing
- *     collection → [].
- *   - No recursive guards on reads. Reads are reentrant.
- *
- * CACHE OWNERSHIP:
- *   The byId cache is redundant with accessors.js's internal ID map. This
- *   module keeps it for a single reason: the characterChanged event
- *   carries only IDs, and other caches need the character objects to
- *   rebuild. byId is the primary lookup for those rebuilds. When
- *   accessors.js invalidates its own caches, this module's byId becomes
- *   stale until the next characterChanged event arrives. CharacterCommands
- *   emits that event on every mutation, so the sync window is zero in
- *   practice.
- *
- *   getCharacter(id) reads the local byId cache. Callers who need a live
- *   canonical object guaranteed to reflect the latest write should call
- *   getCharacterById(id) directly from accessors.js.
+ *   - Missing data is not fabricated. Missing character → null.
+ *     Missing collection → [].
+ *   - Year 0 is preserved.
+ *   - isDeceased === undefined means living. Any other non-boolean value
+ *     is treated as malformed and excluded from the byStatus index.
+ *   - gender is normalized to 'male' | 'female' | 'unknown'. Any other
+ *     value is indexed as 'unknown'.
+ *   - A field is indexed only if it is present and non-empty.
  *
  * RECURSION POLICY:
- *   This module contains no _processing flag for reads. Queries are
- *   reentrant. If a subscriber calls back into CharacterState during
- *   notification, they see the new state (caches already rebuilt) — that
- *   is intentional.
+ *   Reads are reentrant. There is no _processing flag for reads.
  *
  *   The write primitives are synchronous. updateCharacters applies all
- *   changes before persisting once and dispatching one event. There is
- *   no reentrancy hazard because no public write calls another public
- *   write.
+ *   changes before one markDataDirty and one event. No public write calls
+ *   another public write.
  *
  * DEPENDENCIES (REQUIRED):
- *   - storage.js:   masterData, saveMasterData
- *   - accessors.js: getCharacters, getCharacterById
+ *   - storage.js:   masterData, markDataDirty
+ *   - accessors.js: getCharacters (initial load only)
  *
  * DEPENDENCIES (OPTIONAL):
  *   - None. This module subscribes to events but does not depend on any
@@ -97,9 +101,8 @@
     function _requireDependencies() {
         var required = [
             'getCharacters',
-            'getCharacterById',
-            'saveMasterData',
-            'masterData'
+            'masterData',
+            'markDataDirty'
         ];
         var missing = [];
         for (var i = 0; i < required.length; i++) {
@@ -118,16 +121,54 @@
     _requireDependencies();
 
     // =========================================================================
-    // 1. INTERNAL STATE
+    // 1. CHARACTER-OWNED FIELDS
+    // =========================================================================
+    //
+    // The set of fields this module will accept through updateCharacter(s).
+    // Domain-owned embedded fields (professions, rank assignments, etc.)
+    // are NOT writable through this primitive; their domains own mutation.
+    //
+    // This list is the gate against accidental cross-domain writes.
+
+    var _CHARACTER_OWNED_FIELDS = {
+        name: true,
+        surname: true,
+        surnameSource: true,
+        surnameRules: true,
+        surnameHistory: true,
+        gender: true,
+        attraction: true,
+        birthYear: true,
+        isLegitimate: true,
+        isDeceased: true,
+        deathYear: true,
+        deathCause: true,
+        deathNotes: true,
+        birthplaceId: true,
+        currentLocationId: true,
+        household: true,
+        notes: true,
+        epithet: true,
+        appearance: true,
+        religionId: true,
+        cultureId: true,
+        isDeleted: true,
+        deletedAt: true,
+        updatedAt: true
+    };
+
+    // Domain-owned embedded fields. These are indexed but never written
+    // through this primitive. Kept here as documentation; enforcement is
+    // by absence from _CHARACTER_OWNED_FIELDS.
+
+    // =========================================================================
+    // 2. INTERNAL STATE
     // =========================================================================
 
-    // The character collection. This is a mirror of
-    // window.getCharacters(); it is refreshed on every rebuild.
     var _characters = [];
+    var _byId = new Map();
 
-    // Derived indexes.
     var _cache = {
-        byId: new Map(),
         byName: new Map(),
         byCurrentLocation: new Map(),
         byBirthplace: new Map(),
@@ -141,17 +182,15 @@
         byCulture: new Map()
     };
 
-    // Subscribers. Each entry is a callback receiving an event object.
     var _subscribers = [];
 
-    // True while a rebuild is in progress. Used to suppress redundant
-    // rebuilds when multiple events arrive in quick succession, NOT as a
-    // guard against reentrant reads.
+    // True while a rebuild is in progress. Prevents redundant rebuilds
+    // when multiple events arrive in quick succession.
     var _rebuilding = false;
     var _rebuildPending = false;
 
     // =========================================================================
-    // 2. INTERNAL HELPERS
+    // 3. INTERNAL HELPERS
     // =========================================================================
 
     function _hasId(v) {
@@ -162,9 +201,6 @@
         return v === undefined || v === null;
     }
 
-    /**
-     * Pushes a value into a Map-of-arrays, creating the array if needed.
-     */
     function _pushToIndex(map, key, value) {
         var bucket = map.get(key);
         if (!bucket) {
@@ -174,11 +210,6 @@
         bucket.push(value);
     }
 
-    /**
-     * Computes the birth decade key for a birth year. Missing or invalid
-     * birth years produce no entry; year 0 is a valid birth year and
-     * produces 'decade_0'.
-     */
     function _birthDecadeKey(birthYear) {
         if (typeof birthYear !== 'number'
             || !Number.isFinite(birthYear)
@@ -189,11 +220,23 @@
         return 'decade_' + decade;
     }
 
+    function _normalizeGender(gender) {
+        if (gender === 'male' || gender === 'female') return gender;
+        return 'unknown';
+    }
+
+    function _normalizeStatus(isDeceased) {
+        if (isDeceased === true) return 'deceased';
+        if (isDeceased === false || isDeceased === undefined) return 'living';
+        return null; // malformed
+    }
+
     // =========================================================================
-    // 3. CACHE REBUILD
+    // 4. CACHE REBUILD
     // =========================================================================
 
     function _clearCaches() {
+        _byId.clear();
         var keys = Object.keys(_cache);
         for (var i = 0; i < keys.length; i++) {
             _cache[keys[i]].clear();
@@ -206,7 +249,6 @@
             return;
         }
         _rebuilding = true;
-
         try {
             do {
                 _rebuildPending = false;
@@ -226,10 +268,9 @@
             var c = characters[i];
             if (!c || !_hasId(c.id)) continue;
 
-            // byId
-            _cache.byId.set(c.id, c);
+            _byId.set(c.id, c);
 
-            // byName
+            // byName — full name, lowercased, trimmed
             var fullName = (typeof c.name === 'string' ? c.name : '')
                 + ' '
                 + (typeof c.surname === 'string' ? c.surname : '');
@@ -238,8 +279,7 @@
                 _pushToIndex(_cache.byName, nameKey, c);
             }
 
-            // byCurrentLocation — explicit only; missing means absent from
-            // this index, not bucketed under a synthetic 'none'.
+            // byCurrentLocation — canonical character field
             if (_hasId(c.currentLocationId)) {
                 _pushToIndex(_cache.byCurrentLocation, c.currentLocationId, c);
             }
@@ -254,25 +294,16 @@
                 _pushToIndex(_cache.byHousehold, c.household, c);
             }
 
-            // byStatus — explicit boolean required. Malformed isDeceased is
-            // skipped (integrity/validation owns flagging it).
-            if (c.isDeceased === true) {
-                _pushToIndex(_cache.byStatus, 'deceased', c);
-            } else if (c.isDeceased === false || c.isDeceased === undefined) {
-                _pushToIndex(_cache.byStatus, 'living', c);
+            // byStatus — strict boolean
+            var status = _normalizeStatus(c.isDeceased);
+            if (status !== null) {
+                _pushToIndex(_cache.byStatus, status, c);
             }
-            // Any other value → not indexed.
 
-            // byGender — strict enum check. Unknown/missing → 'unknown'.
-            var genderKey;
-            if (c.gender === 'male' || c.gender === 'female') {
-                genderKey = c.gender;
-            } else {
-                genderKey = 'unknown';
-            }
-            _pushToIndex(_cache.byGender, genderKey, c);
+            // byGender — strict enum, unknown bucket for everything else
+            _pushToIndex(_cache.byGender, _normalizeGender(c.gender), c);
 
-            // byProfession — deduplicated per character per role.
+            // byProfession — index embedded professions array (deduped)
             if (Array.isArray(c.professions)) {
                 var seenProf = new Set();
                 for (var j = 0; j < c.professions.length; j++) {
@@ -284,14 +315,12 @@
                 }
             }
 
-            // byRank — strictly by activeRankId. Historical rank
-            // assignments do NOT appear here. See the header for the
-            // reasoning.
+            // byRank — strictly activeRankId
             if (_hasId(c.activeRankId)) {
                 _pushToIndex(_cache.byRank, c.activeRankId, c);
             }
 
-            // byBirthDecade — year 0 is valid and produces 'decade_0'.
+            // byBirthDecade
             var decadeKey = _birthDecadeKey(c.birthYear);
             if (decadeKey) {
                 _pushToIndex(_cache.byBirthDecade, decadeKey, c);
@@ -310,19 +339,15 @@
     }
 
     // =========================================================================
-    // 4. NOTIFICATIONS
+    // 5. NOTIFICATIONS
     // =========================================================================
 
     function _notifySubscribers(event) {
-        // Snapshot the subscriber list so that unsubscribe during
-        // notification does not disturb iteration.
         var snapshot = _subscribers.slice();
         for (var i = 0; i < snapshot.length; i++) {
             try {
                 snapshot[i](event);
             } catch (e) {
-                // Log but do not rethrow. A misbehaving subscriber must not
-                // prevent other subscribers from receiving the event.
                 if (typeof console !== 'undefined' && console.error) {
                     console.error('character-state.js: subscriber threw:', e);
                 }
@@ -331,7 +356,7 @@
     }
 
     // =========================================================================
-    // 5. EVENT SUBSCRIPTIONS (STATE REFRESH)
+    // 6. EVENT SUBSCRIPTIONS (STATE REFRESH)
     // =========================================================================
 
     function _handleCharacterChanged(event) {
@@ -346,27 +371,21 @@
     }
 
     function _handleMasterDataUpdated() {
-        // The canonical collection may have been replaced entirely. Rebuild
-        // and notify. We cannot describe the action more specifically
-        // because the event carries no such detail.
         _rebuildCaches();
-        _notifySubscribers({ type: 'charactersChanged', action: 'reload', characterIds: [] });
+        _notifySubscribers({
+            type: 'charactersChanged',
+            action: 'reload',
+            characterIds: []
+        });
     }
 
     window.addEventListener('characterChanged', _handleCharacterChanged);
     window.addEventListener('masterDataUpdated', _handleMasterDataUpdated);
 
     // =========================================================================
-    // 6. SUBSCRIPTION MANAGEMENT
+    // 7. SUBSCRIPTION MANAGEMENT
     // =========================================================================
 
-    /**
-     * Subscribes to character collection changes.
-     *
-     * @param {Function} callback - receives an event object with `type`,
-     *   `action`, and `characterIds`.
-     * @returns {Function} unsubscribe function
-     */
     function subscribe(callback) {
         if (typeof callback !== 'function') {
             throw new Error('CharacterState.subscribe: callback must be a function');
@@ -379,95 +398,140 @@
     }
 
     // =========================================================================
-    // 7. PUBLIC API — COLLECTION READ
+    // 8. INTERNAL LIVE-REFERENCE ACCESS (FOR AUTHORIZED MUTATION ONLY)
     // =========================================================================
+    //
+    // This is the ONLY public surface of CharacterState that returns a live
+    // canonical character object. It is reserved for:
+    //   - CharacterCommands (character-owned mutation)
+    //   - FamilyCommands (motherId / fatherId / adoptedParents mutation)
+    //   - Domain Commands that own an embedded character field
+    //
+    // Callers MUST NOT mutate fields owned by another domain. The
+    // authoritative list of character-owned fields is in
+    // CharacterCommands._ALLOWED_UPDATE_FIELDS.
 
-    /**
-     * Returns a copy of the canonical character collection.
-     * Mutating the returned array does not affect stored data.
-     */
-    function getAllCharacters() {
-        return _characters.slice();
+    function _getLiveCharacterForMutation(id) {
+        if (!_hasId(id)) return null;
+        return _byId.get(id) || null;
     }
 
-    /**
-     * Returns the total character count.
-     */
+    // =========================================================================
+    // 9. PUBLIC API — PROJECTIONS
+    // =========================================================================
+    //
+    // Public reads return projections, not live objects. A projection
+    // contains only character-owned structural fields and never an embedded
+    // domain-owned array (professions, rankAssignments, relationships, etc.).
+    // Domain consumers compose their own projections from their own modules.
+
+    function _project(c) {
+        if (!c || !_hasId(c.id)) return null;
+        return {
+            id: c.id,
+            name: typeof c.name === 'string' ? c.name : '',
+            surname: typeof c.surname === 'string' ? c.surname : '',
+            gender: _isMissing(c.gender) ? 'unknown' : c.gender,
+            birthYear: _isMissing(c.birthYear) ? null : c.birthYear,
+            isDeceased: c.isDeceased === true,
+            deathYear: _isMissing(c.deathYear) ? null : c.deathYear,
+            deathCause: _isMissing(c.deathCause) ? null : c.deathCause,
+            birthplaceId: _isMissing(c.birthplaceId) ? null : c.birthplaceId,
+            currentLocationId: _isMissing(c.currentLocationId) ? null : c.currentLocationId,
+            household: _isMissing(c.household) ? null : c.household,
+            religionId: _isMissing(c.religionId) ? null : c.religionId,
+            cultureId: _isMissing(c.cultureId) ? null : c.cultureId,
+            epithet: _isMissing(c.epithet) ? '' : c.epithet,
+            notes: _isMissing(c.notes) ? '' : c.notes,
+            appearance: c.appearance && typeof c.appearance === 'object'
+                ? Object.assign({}, c.appearance)
+                : {},
+            isDeleted: c.isDeleted === true,
+            createdAt: _isMissing(c.createdAt) ? null : c.createdAt,
+            updatedAt: _isMissing(c.updatedAt) ? null : c.updatedAt
+        };
+    }
+
+    function _projectArray(list) {
+        var out = [];
+        for (var i = 0; i < list.length; i++) {
+            var p = _project(list[i]);
+            if (p) out.push(p);
+        }
+        return out;
+    }
+
+    // =========================================================================
+    // 10. PUBLIC API — COLLECTION READ
+    // =========================================================================
+
+    function getAllCharacters() {
+        return _projectArray(_characters);
+    }
+
     function getTotalCharacterCount() {
         return _characters.length;
     }
 
     /**
-     * Returns the character with the given ID, or null.
-     *
-     * This reads the local byId cache. After any successful write via
-     * updateCharacter(s), the cache is rebuilt synchronously, so this
-     * reflects the latest write. If a mutation happened through some
-     * other path without dispatching characterChanged, use
-     * getCharacterById(id) from accessors.js instead.
+     * Returns a projection of the character with the given ID, or null.
      */
     function getCharacter(id) {
         if (!_hasId(id)) return null;
-        return _cache.byId.get(id) || null;
+        var c = _byId.get(id);
+        return c ? _project(c) : null;
+    }
+
+    /**
+     * Returns only the ID, or null.
+     */
+    function getCharacterId(id) {
+        if (!_hasId(id)) return null;
+        return _byId.has(id) ? id : null;
     }
 
     // =========================================================================
-    // 8. PUBLIC API — INDEX QUERIES
+    // 11. PUBLIC API — INDEX QUERIES (PROJECTIONS)
     // =========================================================================
 
-    /**
-     * Returns all characters whose currentLocationId matches.
-     */
     function getCharactersByCurrentLocation(locationId) {
         if (!_hasId(locationId)) return [];
         var bucket = _cache.byCurrentLocation.get(locationId);
-        return bucket ? bucket.slice() : [];
+        return bucket ? _projectArray(bucket) : [];
     }
 
-    /**
-     * Returns all characters whose birthplaceId matches.
-     */
     function getCharactersByBirthplace(locationId) {
         if (!_hasId(locationId)) return [];
         var bucket = _cache.byBirthplace.get(locationId);
-        return bucket ? bucket.slice() : [];
+        return bucket ? _projectArray(bucket) : [];
     }
 
-    /**
-     * Returns all characters in a household.
-     */
     function getCharactersByHousehold(householdId) {
         if (!_hasId(householdId)) return [];
         var bucket = _cache.byHousehold.get(householdId);
-        return bucket ? bucket.slice() : [];
+        return bucket ? _projectArray(bucket) : [];
     }
 
-    /**
-     * Returns all characters with the given status.
-     * @param {string} status - 'living' | 'deceased'
-     */
     function getCharactersByStatus(status) {
         if (status !== 'living' && status !== 'deceased') {
-            throw new Error("CharacterState.getCharactersByStatus: status must be 'living' or 'deceased'");
+            throw new Error(
+                "CharacterState.getCharactersByStatus: status must be 'living' or 'deceased'"
+            );
         }
         var bucket = _cache.byStatus.get(status);
-        return bucket ? bucket.slice() : [];
+        return bucket ? _projectArray(bucket) : [];
     }
 
     function getLivingCharacters() {
         var bucket = _cache.byStatus.get('living');
-        return bucket ? bucket.slice() : [];
+        return bucket ? _projectArray(bucket) : [];
     }
 
     function getDeceasedCharacters() {
         var bucket = _cache.byStatus.get('deceased');
-        return bucket ? bucket.slice() : [];
+        return bucket ? _projectArray(bucket) : [];
     }
 
-    /**
-     * Returns all characters with the given gender.
-     * @param {string} gender - 'male' | 'female' | 'unknown'
-     */
     function getCharactersByGender(gender) {
         if (gender !== 'male' && gender !== 'female' && gender !== 'unknown') {
             throw new Error(
@@ -475,156 +539,133 @@
             );
         }
         var bucket = _cache.byGender.get(gender);
-        return bucket ? bucket.slice() : [];
+        return bucket ? _projectArray(bucket) : [];
     }
 
-    /**
-     * Returns all characters with the given profession ID.
-     * Each character appears at most once.
-     */
     function getCharactersByProfession(roleId) {
         if (!_hasId(roleId)) return [];
         var bucket = _cache.byProfession.get(roleId);
-        return bucket ? bucket.slice() : [];
+        return bucket ? _projectArray(bucket) : [];
     }
 
-    /**
-     * Returns all characters whose activeRankId matches.
-     *
-     * Historical rank assignments are not consulted. If you need "who has
-     * ever held this rank", query the rank history layer directly.
-     */
     function getCharactersByRank(rankId) {
         if (!_hasId(rankId)) return [];
         var bucket = _cache.byRank.get(rankId);
-        return bucket ? bucket.slice() : [];
+        return bucket ? _projectArray(bucket) : [];
     }
 
-    /**
-     * Returns all characters born in the given decade.
-     * @param {number} decade - e.g. 1250 for years 1250-1259
-     */
-    function getCharactersByBirthDecade(decade) {
-        if (typeof decade !== 'number' || !Number.isFinite(decade) || !Number.isInteger(decade)) {
-            throw new Error('CharacterState.getCharactersByBirthDecade: decade must be an integer');
+    function getCharactersByBirthDecade(decadeStartYear) {
+        if (typeof decadeStartYear !== 'number'
+            || !Number.isFinite(decadeStartYear)
+            || !Number.isInteger(decadeStartYear)
+            || decadeStartYear % 10 !== 0) {
+            throw new Error(
+                'CharacterState.getCharactersByBirthDecade: decadeStartYear must be an integer divisible by 10'
+            );
         }
-        var key = 'decade_' + decade;
+        var key = 'decade_' + decadeStartYear;
         var bucket = _cache.byBirthDecade.get(key);
-        return bucket ? bucket.slice() : [];
+        return bucket ? _projectArray(bucket) : [];
     }
 
-    /**
-     * Returns all characters with the given religion.
-     */
     function getCharactersByReligion(religionId) {
         if (!_hasId(religionId)) return [];
         var bucket = _cache.byReligion.get(religionId);
-        return bucket ? bucket.slice() : [];
+        return bucket ? _projectArray(bucket) : [];
     }
 
-    /**
-     * Returns all characters with the given culture.
-     */
     function getCharactersByCulture(cultureId) {
         if (!_hasId(cultureId)) return [];
         var bucket = _cache.byCulture.get(cultureId);
-        return bucket ? bucket.slice() : [];
+        return bucket ? _projectArray(bucket) : [];
     }
 
-    /**
-     * Searches characters by name (case-insensitive substring match on
-     * the full name).
-     */
     function searchByName(query) {
-        if (_isMissing(query)) return _characters.slice();
+        if (_isMissing(query)) return getAllCharacters();
         if (typeof query !== 'string') {
             throw new Error('CharacterState.searchByName: query must be a string');
         }
         var lower = query.trim().toLowerCase();
-        if (lower.length === 0) return _characters.slice();
+        if (lower.length === 0) return getAllCharacters();
 
         var result = [];
-        var byName = _cache.byName;
-        byName.forEach(function(chars, key) {
+        _cache.byName.forEach(function(chars, key) {
             if (key.indexOf(lower) !== -1) {
                 for (var i = 0; i < chars.length; i++) result.push(chars[i]);
             }
         });
-        return result;
+        return _projectArray(result);
     }
 
     // =========================================================================
-    // 9. PUBLIC API — WRITE PRIMITIVES
+    // 12. PUBLIC API — WRITE PRIMITIVES
     // =========================================================================
     //
-    // These are the ONLY functions in this module that mutate canonical
-    // character data. They are thin: merge, save, rebuild, notify.
-    //
-    // No domain validation. No invariant enforcement. No role-aware rules.
-    // CharacterCommands validates before calling; RoleCommands delegates
-    // to CharacterCommands for profession changes.
-    //
-    // Exposed publicly because CharacterCommands is a separate script and
-    // cannot reach private functions across an IIFE boundary.
+    // Character-owned mutation only. Rejects fields not in
+    // _CHARACTER_OWNED_FIELDS. Domain Commands that own an embedded field
+    // must call their own primitive.
+
+    function _isCharacterOwnedField(key) {
+        return Object.prototype.hasOwnProperty.call(_CHARACTER_OWNED_FIELDS, key);
+    }
+
+    function _validatePatch(updates) {
+        if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+            return { ok: false, reason: 'Updates object is required.' };
+        }
+        if (Object.prototype.hasOwnProperty.call(updates, 'id')) {
+            return { ok: false, reason: 'Character id cannot be changed.' };
+        }
+        for (var key in updates) {
+            if (!Object.prototype.hasOwnProperty.call(updates, key)) continue;
+            if (!_isCharacterOwnedField(key)) {
+                return {
+                    ok: false,
+                    reason: 'Field "' + key + '" is not character-owned. ' +
+                            'Use the owning domain\'s command.'
+                };
+            }
+        }
+        return { ok: true };
+    }
+
+    function _findCanonical(id) {
+        var collection = window.masterData
+            && window.masterData.data
+            && window.masterData.data.characters;
+        if (!Array.isArray(collection)) return { ok: false, reason: 'Canonical character collection is not an array.' };
+        for (var i = 0; i < collection.length; i++) {
+            if (collection[i] && collection[i].id === id) {
+                return { ok: true, target: collection[i] };
+            }
+        }
+        return { ok: false, reason: 'Character not found in canonical collection.' };
+    }
 
     /**
-     * Merges `updates` into the canonical character record with the given
-     * id, saves masterData, rebuilds caches, and dispatches
-     * characterChanged.
+     * Merges a character-owned patch into the canonical record, marks the
+     * store dirty, rebuilds caches, and dispatches characterChanged.
      *
-     * Idempotent if `updates` matches current values.
-     *
-     * @param {string} characterId
-     * @param {Object} updates - partial record; shallow-merged.
-     * @returns {{ success: boolean, reason?: string }}
+     * Shallow merge. Nested fields are replacement values.
      */
     function updateCharacter(characterId, updates) {
         if (!_hasId(characterId)) {
             return { success: false, reason: 'Character id is required.' };
         }
-        if (!updates || typeof updates !== 'object') {
-            return { success: false, reason: 'Updates object is required.' };
-        }
-        if (Object.prototype.hasOwnProperty.call(updates, 'id')) {
-            // Allow only if identical to the current id; refuse changes.
-            if (updates.id !== characterId) {
-                return { success: false, reason: 'Character id cannot be changed.' };
-            }
-        }
+        var patchCheck = _validatePatch(updates);
+        if (!patchCheck.ok) return { success: false, reason: patchCheck.reason };
 
-        var collection = window.masterData
-            && window.masterData.data
-            && window.masterData.data.characters;
+        var found = _findCanonical(characterId);
+        if (!found.ok) return { success: false, reason: found.reason };
 
-        if (!Array.isArray(collection)) {
-            return {
-                success: false,
-                reason: 'Canonical character collection is not an array.'
-            };
-        }
-
-        var target = null;
-        for (var i = 0; i < collection.length; i++) {
-            if (collection[i] && collection[i].id === characterId) {
-                target = collection[i];
-                break;
-            }
-        }
-
-        if (!target) {
-            return { success: false, reason: 'Character not found in canonical collection.' };
-        }
-
-        // Shallow merge. Callers own deep-copy semantics for nested fields
-        // they pass (e.g. professions array).
+        var target = found.target;
         for (var key in updates) {
             if (!Object.prototype.hasOwnProperty.call(updates, key)) continue;
             if (key === 'id') continue;
             target[key] = updates[key];
         }
 
-        window.saveMasterData();
-
+        window.markDataDirty();
         _rebuildCaches();
         _notifySubscribers({
             type: 'charactersChanged',
@@ -636,10 +677,10 @@
     }
 
     /**
-     * Applies a batch of updates in one save and one notification.
+     * Applies a batch of character-owned patches in one dirty-mark and one
+     * notification. Rejects duplicate IDs and unknown fields.
      *
      * @param {Array<{id: string, updates: Object}>} changes
-     * @returns {{ success: boolean, reason?: string }}
      */
     function updateCharacters(changes) {
         if (!Array.isArray(changes)) {
@@ -652,22 +693,18 @@
         var collection = window.masterData
             && window.masterData.data
             && window.masterData.data.characters;
-
         if (!Array.isArray(collection)) {
-            return {
-                success: false,
-                reason: 'Canonical character collection is not an array.'
-            };
+            return { success: false, reason: 'Canonical character collection is not an array.' };
         }
 
-        // Validate all entries before applying any. Partial application on
-        // mid-batch failure is worse than refusing the whole batch.
         var index = {};
         for (var c = 0; c < collection.length; c++) {
             var ch = collection[c];
             if (ch && _hasId(ch.id)) index[ch.id] = ch;
         }
 
+        var seenIds = {};
+        var validated = [];
         for (var i = 0; i < changes.length; i++) {
             var change = changes[i];
             if (!change || typeof change !== 'object') {
@@ -676,33 +713,34 @@
             if (!_hasId(change.id)) {
                 return { success: false, reason: 'Change at index ' + i + ' has no id.' };
             }
-            if (!change.updates || typeof change.updates !== 'object') {
-                return { success: false, reason: 'Change at index ' + i + ' has no updates object.' };
+            if (seenIds[change.id]) {
+                return { success: false, reason: 'Duplicate character id in batch: ' + change.id };
+            }
+            seenIds[change.id] = true;
+
+            var patchCheck = _validatePatch(change.updates);
+            if (!patchCheck.ok) {
+                return { success: false, reason: 'Change at index ' + i + ': ' + patchCheck.reason };
             }
             if (!index[change.id]) {
                 return { success: false, reason: 'Character "' + change.id + '" not found.' };
             }
-            if (Object.prototype.hasOwnProperty.call(change.updates, 'id')
-                && change.updates.id !== change.id) {
-                return { success: false, reason: 'Change at index ' + i + ' attempts to change id.' };
-            }
+            validated.push({ id: change.id, updates: change.updates });
         }
 
-        // Apply.
         var affectedIds = [];
-        for (var j = 0; j < changes.length; j++) {
-            var target = index[changes[j].id];
-            var patch = changes[j].updates;
+        for (var j = 0; j < validated.length; j++) {
+            var target = index[validated[j].id];
+            var patch = validated[j].updates;
             for (var key in patch) {
                 if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
                 if (key === 'id') continue;
                 target[key] = patch[key];
             }
-            affectedIds.push(changes[j].id);
+            affectedIds.push(validated[j].id);
         }
 
-        window.saveMasterData();
-
+        window.markDataDirty();
         _rebuildCaches();
         _notifySubscribers({
             type: 'charactersChanged',
@@ -713,44 +751,87 @@
         return { success: true };
     }
 
+    /**
+     * Domain-owned embedded field write.
+     *
+     * Reserved for FamilyCommands (motherId / fatherId / adoptedParents)
+     * and any other domain Command that owns an embedded character field.
+     * Bypasses the character-owned field gate. Does NOT validate domain
+     * rules — the calling domain Command is responsible.
+     */
+    function applyDomainFieldPatch(characterId, updates) {
+        if (!_hasId(characterId)) {
+            return { success: false, reason: 'Character id is required.' };
+        }
+        if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+            return { success: false, reason: 'Updates object is required.' };
+        }
+        if (Object.prototype.hasOwnProperty.call(updates, 'id')) {
+            return { success: false, reason: 'Character id cannot be changed.' };
+        }
+
+        var found = _findCanonical(characterId);
+        if (!found.ok) return { success: false, reason: found.reason };
+
+        var target = found.target;
+        for (var key in updates) {
+            if (!Object.prototype.hasOwnProperty.call(updates, key)) continue;
+            if (key === 'id') continue;
+            target[key] = updates[key];
+        }
+
+        window.markDataDirty();
+        _rebuildCaches();
+        _notifySubscribers({
+            type: 'charactersChanged',
+            action: 'domain-updated',
+            characterIds: [characterId]
+        });
+
+        return { success: true };
+    }
+
     // =========================================================================
-    // 10. MANUAL REFRESH
+    // 13. MANUAL REFRESH
     // =========================================================================
 
     /**
      * Forces a synchronous cache rebuild and notifies subscribers.
      *
-     * Normally unnecessary — characterChanged and masterDataUpdated events
-     * drive rebuilds automatically, and updateCharacter(s) dispatch them.
-     * Use this when the caller has mutated canonical data without emitting
-     * an event (a bug, but sometimes necessary during migration), or after
-     * importing a dataset without triggering masterDataUpdated.
+     * Transitional. Use only during migration when canonical data was
+     * mutated without dispatching characterChanged. Normal mutations go
+     * through updateCharacter(s) or applyDomainFieldPatch.
      */
     function refresh() {
         _rebuildCaches();
-        _notifySubscribers({ type: 'charactersChanged', action: 'refresh', characterIds: [] });
+        _notifySubscribers({
+            type: 'charactersChanged',
+            action: 'refresh',
+            characterIds: []
+        });
     }
 
     // =========================================================================
-    // 11. INITIAL REBUILD
+    // 14. INITIAL REBUILD
     // =========================================================================
 
     _rebuildCaches();
 
     // =========================================================================
-    // 12. EXPORTS
+    // 15. EXPORTS
     // =========================================================================
 
     window.CharacterState = {
         // Subscriptions
         subscribe: subscribe,
 
-        // Collection
+        // Collection (projections)
         getAllCharacters: getAllCharacters,
         getTotalCharacterCount: getTotalCharacterCount,
         getCharacter: getCharacter,
+        getCharacterId: getCharacterId,
 
-        // Index queries
+        // Index queries (projections)
         getCharactersByCurrentLocation: getCharactersByCurrentLocation,
         getCharactersByBirthplace: getCharactersByBirthplace,
         getCharactersByHousehold: getCharactersByHousehold,
@@ -765,11 +846,17 @@
         getCharactersByCulture: getCharactersByCulture,
         searchByName: searchByName,
 
-        // Write primitives (CharacterCommands is the intended caller)
+        // Character-owned write primitives
         updateCharacter: updateCharacter,
         updateCharacters: updateCharacters,
 
-        // Refresh
+        // Domain-owned embedded field write (FamilyCommands, etc.)
+        applyDomainFieldPatch: applyDomainFieldPatch,
+
+        // Internal live-reference access (authorized mutation only)
+        _getLiveCharacterForMutation: _getLiveCharacterForMutation,
+
+        // Refresh (transitional)
         refresh: refresh
     };
 
