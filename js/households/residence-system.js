@@ -2,79 +2,40 @@
  * =============================================================================
  * STILL WATERS - RESIDENCE SYSTEM (residence-system.js)
  * =============================================================================
- * 
+ *
  * LOCATION: js/systems/household/residence-system.js
- * 
+ *
  * PURPOSE
  * -------
  * Residence domain: canonical storage, occupancy, units, history, name
  * history, timeline, staff positions, rental contracts, rehabilitation,
  * demolition, and household association.
- * 
+ *
  * OWNERSHIP MODEL (FROZEN)
  * ------------------------
- * The CANONICAL household↔residence association lives on units:
- * 
+ * Canonical household↔residence association lives on units:
+ *
  *     unit.householdId           ← CANONICAL occupancy
  *     residence.units[]          ← CANONICAL collection
  *     residence.isVacant         ← DERIVED
  *     residence.occupiedUnits    ← DERIVED
  *     residence.vacantUnits      ← DERIVED
- *     residence.householdId      ← DERIVED convenience (single-unit only)
- * 
- *     household.residenceId          ← REVERSE INDEX, maintained via
- *                                       HouseholdCommands.associateWithResidence
- *     household.residenceUnitNumber  ← REVERSE INDEX, same path
- * 
- * ResidenceCommands is the SINGLE AUTHORITY that mutates unit occupancy.
- * Whenever it changes a unit's householdId, it also updates the household's
- * reverse index via HouseholdCommands. HouseholdCommands never mutates
- * occupancy; it only stores what ResidenceCommands tells it.
- * 
- * WHAT LIVES HERE
- * ---------------
- *   - Residence canonical storage
- *   - Residence CRUD
- *   - Unit CRUD and occupancy
- *   - Vacancy management
- *   - History / timeline / name history
- *   - Residence staff positions and assignments
- *   - Rental (owner / renter / rent / rent payments)
- *   - Rehabilitation and demolition
- *   - Household association orchestration (delegates to HouseholdCommands)
- * 
- * WHAT DOES NOT LIVE HERE
- * -----------------------
- *   - Toasts / icons / colours      → UI layer
- *   - Confirm dialogs               → UI layer
- *   - Household records             → HouseholdCommands / HouseholdQueries
- *   - Character records             → CharacterQueries
- *   - Role records                  → RoleQueries
- *   - Enterprise ownership          → IndustryCommands
- * 
+ *
+ *     household.residenceId          ← REVERSE INDEX (via HouseholdCommands)
+ *     household.residenceUnitNumber  ← REVERSE INDEX (via HouseholdCommands)
+ *
+ * ResidenceSystem is the SINGLE AUTHORITY that mutates unit occupancy.
+ *
  * CONTRACT
  * --------
  *   - No _processingResidence guard.
- *   - No _processingAssignment guard.
  *   - No 1250 fallback.
  *   - No UI toasts or confirm dialogs.
- *   - No nested save-per-helper.
+ *   - One commit per logical operation.
  *   - Mutations return { success, data } / { success: false, code, reason }.
  *   - Reads return defensive snapshots.
  *   - Required dependencies fail loudly.
- *   - Compound operations perform ONE commit.
- * 
- * KNOWN LIMITATION
- * ----------------
- * This file is intentionally large because Residence is a large domain.
- * It is NOT split into ResidenceState / Queries / Rules / Commands yet,
- * because:
- *   1. Household side just got cleaned up
- *   2. Residence has no second consumer that would force the split
- *   3. The internal structure is already command/query separated by section
- * 
- * If it grows past ~1500 lines or a second consumer appears, split then.
- * 
+ *
  * =============================================================================
  */
 
@@ -169,7 +130,6 @@
         window.saveMasterData();
     }
 
-    // Household commands / queries — used for reverse-index updates only.
     function _householdCommands() {
         return typeof window.HouseholdCommands !== 'undefined'
             ? window.HouseholdCommands
@@ -222,9 +182,6 @@
         return window.masterData.data.residences;
     }
 
-    /**
-     * Ensures structural shape only. Does NOT default domain facts.
-     */
     function _ensureResidenceShape(r) {
         if (!r || typeof r !== 'object') return;
         if (!Array.isArray(r.units))               r.units = [];
@@ -240,9 +197,6 @@
         if (!Array.isArray(r.staffPositions))      r.staffPositions = [];
         if (!Array.isArray(r.staffAssignments))    r.staffAssignments = [];
         if (!Array.isArray(r.features))            r.features = [];
-        // NOTE: we do NOT default status, condition, estimatedValue,
-        // foundedYear, builtYear, capacity, etc. Missing means the record
-        // is incomplete — that is a migration problem, not a runtime one.
     }
 
     function _commit() {
@@ -250,7 +204,7 @@
     }
 
     // =========================================================================
-    // 5. RESIDENCE LOOKUPS (live internal record)
+    // 5. RESIDENCE LOOKUPS
     // =========================================================================
 
     function _getResidenceRecord(residenceId) {
@@ -278,7 +232,7 @@
     }
 
     // =========================================================================
-    // 6. RESIDENCE PROJECTIONS (defensive snapshots)
+    // 6. PROJECTIONS
     // =========================================================================
 
     function _snapshotResidence(r) {
@@ -306,13 +260,11 @@
             demolishedYear: r.demolishedYear !== undefined ? r.demolishedYear : null,
             demolishedReason: r.demolishedReason || null,
 
-            // Derived occupancy
             unitCount: Array.isArray(r.units) ? r.units.length : 0,
             occupiedUnits: _countOccupiedUnits(r),
             vacantUnits: _countVacantUnits(r),
             isVacant: _isResidenceVacant(r),
 
-            // Ownership / rental
             ownerType: r.ownerType || null,
             ownerId: r.ownerId || null,
             ownerName: r.ownerName || null,
@@ -345,7 +297,7 @@
     }
 
     // =========================================================================
-    // 7. DERIVED OCCUPANCY HELPERS (pure)
+    // 7. DERIVED HELPERS
     // =========================================================================
 
     function _countOccupiedUnits(r) {
@@ -387,21 +339,6 @@
             }
         }
         return true;
-    }
-
-    function _getPrimaryOccupantHouseholdId(r) {
-        // Convenience for single-occupant residences. Returns the householdId
-        // of the first occupied unit. Returns null if vacant or multi-occupant.
-        if (!r || !Array.isArray(r.units)) return null;
-        var found = null;
-        for (var i = 0; i < r.units.length; i++) {
-            var u = r.units[i];
-            if (!u.isDemolished && !u.isVacant && u.householdId) {
-                if (found === null) found = u.householdId;
-                else if (found !== u.householdId) return null;
-            }
-        }
-        return found;
     }
 
     // =========================================================================
@@ -465,14 +402,12 @@
             demolishedYear: null,
             demolishedReason: null,
 
-            // Ownership
             ownerType: options.ownerType || null,
             ownerId: options.ownerId || null,
             ownerName: options.ownerName || null,
             ownerSince: options.ownerSince || null,
             ownershipHistory: [],
 
-            // Rental
             renterType: null,
             renterId: null,
             renterName: null,
@@ -491,7 +426,6 @@
             createdAt: Date.now()
         };
 
-        // Units
         if (type.isMultiUnit) {
             var unitCount = _resolveInt(options.unitCount, Math.min(10, Math.max(1,
                 Math.floor(type.capacity / 3))));
@@ -614,7 +548,7 @@
     }
 
     // =========================================================================
-    // 9. TIMELINE / HISTORY (internal helpers)
+    // 9. TIMELINE / HISTORY HELPERS
     // =========================================================================
 
     function _pushTimeline(r, event) {
@@ -675,7 +609,6 @@
         unit.notes = options.notes || '';
         r.units.push(unit);
         r.lastUpdated = _getCurrentYear();
-        _commit();
 
         _pushHistory(r, 'unit_added', 'Added Unit ' + unitNumber);
         _pushTimeline(r, {
@@ -707,7 +640,6 @@
             return _fail('UNIT_OCCUPIED', 'Unit is occupied');
         }
 
-        // If occupied and force, disassociate the household
         if (!unit.isVacant && unit.householdId) {
             _disassociateHouseholdFromUnit(r, unit, _getCurrentYear(),
                 options.reason || 'Unit removed');
@@ -715,7 +647,6 @@
 
         r.units.splice(idx, 1);
         r.lastUpdated = _getCurrentYear();
-        _commit();
 
         _pushHistory(r, 'unit_removed',
             'Removed Unit ' + unitNumber +
@@ -753,8 +684,7 @@
         var y = _resolveYear(year);
         if (y === null) return _fail('INVALID_YEAR', 'Invalid assignment year');
 
-        // If the household is already occupying another unit in this residence,
-        // vacate it first (a household occupies one unit per residence).
+        // If the household occupies another unit in this residence, vacate it.
         for (var j = 0; j < r.units.length; j++) {
             var other = r.units[j];
             if (other.unitNumber === unitNumber) continue;
@@ -764,7 +694,6 @@
             }
         }
 
-        // Assign
         if (!Array.isArray(unit.associationHistory)) unit.associationHistory = [];
         unit.householdId = householdId;
         unit.householdName = householdName || household.name;
@@ -782,7 +711,6 @@
             timestamp: Date.now()
         });
 
-        // Residence-level association history
         if (!Array.isArray(r.associationHistory)) r.associationHistory = [];
         r.associationHistory.push({
             householdId: householdId,
@@ -794,15 +722,13 @@
             timestamp: Date.now()
         });
 
-        // Reverse index on household
         _associateHouseholdReverseIndex(householdId, r, unitNumber, y,
             options.notes || '');
 
         r.lastUpdated = y;
-        _commit();
 
         _pushHistory(r, 'unit_assigned',
-            (unit.householdName) + ' assigned to Unit ' + unitNumber);
+            unit.householdName + ' assigned to Unit ' + unitNumber);
         _pushTimeline(r, {
             year: y,
             type: 'unit_assigned',
@@ -842,7 +768,6 @@
         _disassociateHouseholdFromUnit(r, unit, y, reasonText);
 
         r.lastUpdated = y;
-        _commit();
 
         _pushHistory(r, 'unit_vacated',
             'Vacated Unit ' + unitNumber + ' (' + householdName + '): ' + reasonText);
@@ -864,16 +789,11 @@
         });
     }
 
-    /**
-     * Internal: clear unit occupancy and update reverse index.
-     * Caller is responsible for _commit() and history.
-     */
     function _disassociateHouseholdFromUnit(r, unit, year, reason) {
         var householdId = unit.householdId;
         var householdName = unit.householdName;
 
         if (!Array.isArray(unit.associationHistory)) unit.associationHistory = [];
-        // Close the current open association
         for (var i = unit.associationHistory.length - 1; i >= 0; i--) {
             var a = unit.associationHistory[i];
             if (a.householdId === householdId && !a.endedYear) {
@@ -884,7 +804,6 @@
             }
         }
 
-        // Close residence-level association for this unit
         if (Array.isArray(r.associationHistory)) {
             for (var j = r.associationHistory.length - 1; j >= 0; j--) {
                 var ra = r.associationHistory[j];
@@ -905,7 +824,6 @@
         unit.assignedYear = null;
         unit.vacantYear = year;
 
-        // Reverse index — clear on household if it points at this unit
         _disassociateHouseholdReverseIndex(householdId, r, unit.unitNumber, year, reason);
     }
 
@@ -930,7 +848,6 @@
             'Demolished in ' + y + ': ' + (reason || 'Demolished');
 
         r.lastUpdated = y;
-        _commit();
 
         _pushHistory(r, 'unit_demolished',
             'Demolished Unit ' + unitNumber + ': ' + (reason || 'Demolished'));
@@ -972,10 +889,6 @@
     // 12. RESIDENCE-LEVEL VACANCY
     // =========================================================================
 
-    /**
-     * Marks an entire residence vacant. Vacuates ALL occupied units.
-     * Correctly disassociates EVERY affected household, not just one.
-     */
     function markResidenceVacant(residenceId, reason, year) {
         var r = _getResidenceRecord(residenceId);
         if (!r) return _fail('NOT_FOUND', 'Residence not found');
@@ -988,7 +901,6 @@
 
         var affectedHouseholds = [];
 
-        // Vacate every occupied unit
         for (var i = 0; i < r.units.length; i++) {
             var unit = r.units[i];
             if (!unit.isDemolished && !unit.isVacant && unit.householdId) {
@@ -1012,7 +924,6 @@
         });
 
         r.lastUpdated = y;
-        _commit();
 
         _pushHistory(r, 'marked_vacant',
             'Marked vacant: ' + reasonText +
@@ -1031,10 +942,6 @@
         });
     }
 
-    /**
-     * Assigns a household to a vacant residence. Picks the first vacant
-     * unit. If no unit exists, fails — the caller must add units first.
-     */
     function assignHouseholdToVacantResidence(residenceId, householdId, householdName, year, options) {
         options = options || {};
         var r = _getResidenceRecord(residenceId);
@@ -1049,7 +956,6 @@
         var y = _resolveYear(year);
         if (y === null) return _fail('INVALID_YEAR', 'Invalid year');
 
-        // Find first usable vacant unit
         var assignedUnit = null;
         for (var i = 0; i < r.units.length; i++) {
             if (r.units[i].isVacant && !r.units[i].isDemolished) {
@@ -1063,10 +969,7 @@
                 'No vacant unit available in this residence');
         }
 
-        // If the household already has another residence, that's the
-        // caller's business to disassociate first. We log but proceed —
-        // the reverse index will be overwritten.
-        var result = assignHouseholdToUnit(
+        return assignHouseholdToUnit(
             residenceId,
             assignedUnit.unitNumber,
             householdId,
@@ -1074,8 +977,6 @@
             y,
             options
         );
-
-        return result;
     }
 
     // =========================================================================
@@ -1113,7 +1014,6 @@
         }
 
         r.lastUpdated = year;
-        _commit();
 
         _pushTimeline(r, {
             year: year,
@@ -1197,7 +1097,6 @@
             timestamp: Date.now()
         });
 
-        // Update rental status if no active renter
         if (!r.renterId) {
             r.rentalStatus = RENTAL_STATUS.VACANT;
         }
@@ -1255,7 +1154,6 @@
         var oldRenterName = r.renterName;
         var oldRent = r.rentAmount;
 
-        // Close any open rental
         if (r.renterId && Array.isArray(r.rentalHistory)) {
             for (var i = r.rentalHistory.length - 1; i >= 0; i--) {
                 if (!r.rentalHistory[i].endYear) {
@@ -1345,7 +1243,6 @@
         r.rentalStatus = RENTAL_STATUS.VACANT;
 
         r.lastUpdated = y;
-        _commit();
 
         _pushTimeline(r, {
             year: y,
@@ -1434,7 +1331,7 @@
     }
 
     // =========================================================================
-    // 15. RESIDENCE-LEVEL STAFF
+    // 15. STAFF POSITIONS
     // =========================================================================
 
     function addStaffPosition(residenceId, data) {
@@ -1458,7 +1355,6 @@
         };
         r.staffPositions.push(position);
         r.lastUpdated = _getCurrentYear();
-        _commit();
 
         _pushHistory(r, 'staff_position_added', 'Added staff position: ' + position.name);
         _commit();
@@ -1484,7 +1380,6 @@
         }
         pos.updatedAt = _getCurrentYear();
         r.lastUpdated = _getCurrentYear();
-        _commit();
 
         _pushHistory(r, 'staff_position_updated', 'Updated staff position: ' + pos.name);
         _commit();
@@ -1522,7 +1417,6 @@
         }
 
         r.lastUpdated = _getCurrentYear();
-        _commit();
 
         _pushHistory(r, 'staff_position_removed', 'Removed staff position: ' + pos.name);
         _commit();
@@ -1582,7 +1476,6 @@
 
         r.staffAssignments.push(assignment);
         r.lastUpdated = startYear;
-        _commit();
 
         _pushHistory(r, 'staff_assigned',
             assignment.characterName + ' assigned as ' + assignment.title);
@@ -1643,9 +1536,6 @@
     // 16. REHABILITATION & DEMOLITION
     // =========================================================================
 
-    /**
-     * Deterministic repair cost estimate.
-     */
     function calculateRepairCost(residenceId, targetCondition) {
         var r = _getResidenceRecord(residenceId);
         if (!r) return 0;
@@ -1687,7 +1577,6 @@
         r.lastRenovated = y;
         r.estimatedValue = newValue;
         r.lastUpdated = y;
-        _commit();
 
         _pushHistory(r, 'rehabilitated',
             'Rehabilitated from ' + currentCondition + ' to ' + targetCondition +
@@ -1724,7 +1613,6 @@
                 'Cannot demolish residence with ' + occupied + ' occupied unit(s)');
         }
 
-        // Vacate all occupied units, disassociating every affected household
         var affectedHouseholds = [];
         for (var i = 0; i < r.units.length; i++) {
             var unit = r.units[i];
@@ -1739,7 +1627,6 @@
             }
         }
 
-        // Mark all units demolished
         for (var j = 0; j < r.units.length; j++) {
             r.units[j].isDemolished = true;
             r.units[j].isVacant = true;
@@ -1763,8 +1650,6 @@
             affectedHouseholds: affectedHouseholds.slice(),
             timestamp: Date.now()
         });
-
-        _commit();
 
         _pushHistory(r, 'demolished', r.demolishedReason);
         _pushTimeline(r, {
@@ -1923,7 +1808,7 @@
 
     function getUnitStats(residenceId) {
         var r = _getResidenceRecord(residenceId);
-        if (!r) return { total: 0, occupied: 0, vacant: 0, demolished: 0, occupancyRate: 0 };
+        if (!r) return { total: 0, usable: 0, occupied: 0, vacant: 0, demolished: 0, occupancyRate: 0 };
 
         var total = r.units.length;
         var demolished = _countDemolishedUnits(r);
@@ -2154,12 +2039,6 @@
     // =========================================================================
 
     function getHouseholdUnits(householdId) {
-        var hq = _householdQueries();
-        if (hq) {
-            var h = hq.getHousehold(householdId);
-            // Reverse index reads are authoritative enough here
-            // (updated by _associateHouseholdReverseIndex)
-        }
         var records = _getAllResidenceRecords();
         var result = [];
         for (var i = 0; i < records.length; i++) {
