@@ -9,9 +9,19 @@
  * Rules:
  *   - Never mutate
  *   - Never fall back to legacy globals
+ *   - Never return [] to hide a missing dependency
  *   - Every projection has a documented shape
  *   - skillLevel is READ from the profession record (canonical)
  *   - metadata.skillLevel is only a cache; it is refreshed on read
+ *
+ * DEPENDENCIES (required, checked lazily on first use):
+ *   - getCharacterById / getRoleById
+ *   - getRelationshipsForCharacter / getRelationshipById / getAllRelationships
+ *   - RELATIONSHIP_ARCHETYPES
+ *   - SettlementQueries.getSettlementMastersByRole (used by findPotentialMasters only)
+ *   - getCurrentYearSafe (used by projection duration only)
+ *   - ApprenticeshipRules.getStageForSkill (used by projection stage only)
+ *
  * =============================================================================
  */
 
@@ -332,12 +342,51 @@
         return results;
     }
 
+    /**
+     * Finds characters who could serve as masters for a role at a location.
+     *
+     * @param {string} roleId
+     * @param {string} locationId
+     * @param {number} [minSkillLevel]  Optional minimum skill level. If
+     *                                  omitted, uses TEACHING_CONSTANTS.MIN_MASTER_SKILL.
+     *
+     * @returns {Array} from SettlementQueries, filtered by minSkillLevel when
+     *                  the underlying records expose a skillLevel field.
+     *
+     * Throws if SettlementQueries is unavailable. Silent empty results hide
+     * load-order problems; a missing dependency should be visible.
+     */
     function findPotentialMasters(roleId, locationId, minSkillLevel) {
         if (typeof window.SettlementQueries === 'undefined' ||
             typeof window.SettlementQueries.getSettlementMastersByRole !== 'function') {
-            return [];
+            throw new Error(
+                'ApprenticeshipQueries.findPotentialMasters: ' +
+                'SettlementQueries.getSettlementMastersByRole is required.'
+            );
         }
-        return window.SettlementQueries.getSettlementMastersByRole(locationId, roleId) || [];
+
+        var threshold = (typeof minSkillLevel === 'number')
+            ? minSkillLevel
+            : (window.TEACHING_CONSTANTS
+                ? window.TEACHING_CONSTANTS.MIN_MASTER_SKILL
+                : 51);
+
+        var raw = window.SettlementQueries.getSettlementMastersByRole(locationId, roleId) || [];
+
+        // SettlementQueries does not take a skill threshold. Filter here when
+        // the returned records expose skillLevel; otherwise return them as-is
+        // (the settlement layer has already selected role-holders).
+        var results = [];
+        for (var i = 0; i < raw.length; i++) {
+            var entry = raw[i];
+            if (entry && typeof entry.skillLevel === 'number') {
+                if (entry.skillLevel < threshold) continue;
+                results.push(entry);
+            } else {
+                results.push(entry);
+            }
+        }
+        return results;
     }
 
     // =========================================================================
