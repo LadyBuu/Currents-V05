@@ -6,76 +6,58 @@
  * Mutation boundary for character-owned state.
  *
  * SCOPE:
- *   - Character-owned field updates (name, gender, birthYear, isDeceased,
- *     deathYear, deathCause, birthplaceId, currentLocationId, household,
- *     notes, epithet, appearance, religionId, cultureId, moves,
- *     householdHistory, activeRankId, activeRankNumber, isMaster, masterId,
- *     masterProfessionId, apprenticeshipDetails, friendshipDetails)
+ *   - Character-owned field updates
  *   - Profession array management on the character record
  *   - Surname history mutations
  *   - Religion assignment orchestration (delegates to ReligionCommands)
- *   - Family relationship orchestration (delegates to FamilyCommands)
+ *   - Bulk character-owned field updates
  *
  * OUT OF SCOPE:
- *   - Character creation           → character-creation-commands.js
- *   - Character deletion           → character-deletion-commands.js
- *   - Bulk character updates       → in this file (bulkUpdateCharactersFields)
- *   - Family graph mutations       → family-commands.js (called via wrappers)
- *   - Relationship mutations       → relationship-commands.js
- *   - Rank assignment history      → rank-commands.js
- *   - Apprenticeship records       → apprenticeship-commands.js
- *   - Persistence mechanics        → character-state.js
- *   - Cross-domain events, toasts  → caller
+ *   - Character creation           -> character-creation-commands.js
+ *   - Character deletion           -> character-deletion-commands.js
+ *   - Family mutations             -> family-commands.js
+ *   - Relationship mutations       -> future relationship domain
+ *   - Rank assignment history      -> future rank domain
+ *   - Apprenticeship records       -> future apprenticeship domain
+ *   - Persistence mechanics        -> character-state.js
+ *   - Cross-domain events, toasts  -> caller
  *
  * OWNERSHIP:
  *   CharacterCommands owns `character.professions` as the sole writer.
- *   No other module may push to, splice, or reassign that array. RoleCommands
- *   orchestrates assignment decisions but delegates the array write here.
+ *   No other module may push to, splice, or reassign that array.
  *
  *   CharacterCommands does NOT own the character record's storage. Every
- *   mutation routes through CharacterState, which is the canonical runtime
- *   owner of character data.
+ *   mutation routes through CharacterState.
  *
  * WRITE PATHS:
  *   Character-owned field patch:
  *       CharacterCommands.updateCharacterFields(id, patch)
- *           → CharacterState.updateCharacter(id, patch)
+ *           -> CharacterState.updateCharacter(id, patch)
  *
  *   Profession patch:
  *       CharacterCommands.addProfession(id, data)
- *           → CharacterState.applyDomainFieldPatch(id, { professions })
+ *           -> CharacterState.applyDomainFieldPatch(id, { professions })
  *
  *   Surname history patch:
  *       CharacterCommands.recordCharacterSurnameChange(...)
- *           → CharacterState.updateCharacter(id, { surname, surnameHistory })
+ *           -> CharacterState.updateCharacter(id, { surname, surnameHistory })
  *
  *   Religion orchestration:
  *       CharacterCommands.assignCharacterReligion(id, religionId, options)
- *           → ReligionCommands.convertCharacter / assignReligionToCharacter
- *           → CharacterState.updateCharacter(id, { religionId })
- *
- *   Family orchestration:
- *       CharacterCommands.addChildToParent(childId, parentId, type, options)
- *           → FamilyCommands.setParent(...)
- *           (FamilyCommands writes through CharacterState.applyDomainFieldPatch)
+ *           -> ReligionCommands.convertCharacter / assignReligionToCharacter
  *
  * DEPENDENCIES (REQUIRED):
- *   - character-state.js (window.CharacterState) with methods:
- *       updateCharacter, updateCharacters, applyDomainFieldPatch,
- *       _getLiveCharacterForMutation, getAllCharacters
+ *   - character-state.js (window.CharacterState)
  *   - time.js: getCurrentYear, isValidYear
  *
  * DEPENDENCIES (OPTIONAL, called only when the feature is used):
  *   - religion-commands.js (window.ReligionCommands)
- *   - family-commands.js   (window.FamilyCommands)
  *
  * CONTRACT:
  *   - Every public command returns { success: boolean, reason?: string, ... }.
- *   - Input is validated before any mutation. Partial mutation on failure
- *     is not permitted.
+ *   - Input is validated before any mutation.
  *   - No recursion guards. Commands may call other commands.
- *   - No fallback dependencies. If a required state method is missing at
- *     load, this module throws.
+ *   - No fallback dependencies.
  *   - CharacterCommands NEVER touches window.masterData directly.
  *
  * ICON POLICY: No emojis. No icons.
@@ -85,10 +67,6 @@
 
 (function () {
     'use strict';
-
-    // =========================================================================
-    // 0. HARD DEPENDENCY CHECK
-    // =========================================================================
 
     if (!window.CharacterState) {
         throw new Error(
@@ -110,8 +88,7 @@
         if (typeof CS[_methodName] !== 'function') {
             throw new Error(
                 'character-commands.js: CharacterState.' + _methodName +
-                ' is required. Update character-state.js to expose the ' +
-                'canonical mutation primitives.'
+                ' is required.'
             );
         }
     }
@@ -144,7 +121,7 @@
     }
 
     // =========================================================================
-    // 2. INPUT VALIDATION HELPERS
+    // 2. VALIDATION HELPERS
     // =========================================================================
 
     function _isMissing(v) {
@@ -189,39 +166,14 @@
     // =========================================================================
     // 3. DOMAIN-OWNED FIELD GATE
     // =========================================================================
-    //
-    // The generic character field path refuses fields owned by other domains.
-    // Those go through their own commands (family-commands.js,
-    // relationship-commands.js, rank-commands.js, apprenticeship-commands.js)
-    // or through the profession API in this file.
 
     var _DOMAIN_OWNED_FIELDS = {
-        // Family
-        motherId: true,
-        fatherId: true,
-        adoptedParents: true,
-        adoptedChildren: true,
-        children: true,
-
-        // Relationships / friendship
-        relationships: true,
-        friends: true,
-        friendshipDetails: true,
-
-        // Professions / rank
         professions: true,
         rankAssignments: true,
-        activeRankId: true,
-        activeRankNumber: true,
-
-        // Apprenticeship
-        apprentices: true,
-        masterId: true,
-        isMaster: true,
-        masterProfessionId: true,
+        relationships: true,
+        friends: true,
         apprenticeshipDetails: true,
-
-        // Soft delete (owned by character-deletion-commands.js)
+        apprentices: true,
         isDeleted: true,
         deletedAt: true
     };
@@ -239,16 +191,6 @@
     // 4. CHARACTER-OWNED FIELD UPDATES
     // =========================================================================
 
-    /**
-     * Updates character-owned fields on a character.
-     *
-     * Refuses any field owned by another domain. Use the owning domain's
-     * command for those.
-     *
-     * @param {string} characterId
-     * @param {Object} updates
-     * @returns {{ success: boolean, reason?: string }}
-     */
     function updateCharacterFields(characterId, updates) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
         if (!_isPlainObject(updates)) return _fail('Updates must be a plain object.');
@@ -274,19 +216,10 @@
         return _ok();
     }
 
-    /**
-     * Alias for updateCharacterFields, kept for existing callers that
-     * expect CharacterCommands.updateCharacter(id, patch).
-     */
     function updateCharacter(characterId, updates) {
         return updateCharacterFields(characterId, updates);
     }
 
-    /**
-     * Batch variant of updateCharacterFields.
-     *
-     * @param {Array<{id: string, updates: Object}>} changes
-     */
     function updateCharactersFields(changes) {
         if (!Array.isArray(changes)) return _fail('changes must be an array.');
         if (changes.length === 0) return _ok();
@@ -326,9 +259,6 @@
     // =========================================================================
     // 5. PROFESSION NORMALISATION
     // =========================================================================
-    //
-    // CharacterCommands owns the canonical shape of a profession record.
-    // RoleState produces input facts; this module assembles the record.
 
     function _normaliseNewProfession(data) {
         return {
@@ -376,10 +306,6 @@
     // 6. PROFESSION API
     // =========================================================================
 
-    /**
-     * Returns the character's profession record for a role, or null.
-     * Live reference — callers must not mutate. Use getProfessions for a copy.
-     */
     function getProfession(characterId, professionId) {
         if (!_hasId(characterId)) return null;
         if (!_hasId(professionId)) return null;
@@ -392,9 +318,6 @@
         return character.professions[idx];
     }
 
-    /**
-     * Returns a defensive copy of the character's profession array.
-     */
     function getProfessions(characterId) {
         if (!_hasId(characterId)) return [];
         var character = CS._getLiveCharacterForMutation(characterId);
@@ -426,13 +349,6 @@
         return out;
     }
 
-    /**
-     * Adds a profession to a character.
-     *
-     * Required: id, name, skillLevel.
-     * Optional: startYear, primary, notes, specs, baseSalary, customSalary,
-     *           salaryHistory, salaryLastCalculated, paysSalary.
-     */
     function addProfession(characterId, professionData) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
         if (!_isPlainObject(professionData)) {
@@ -482,9 +398,6 @@
         return _ok({ profession: newProfession });
     }
 
-    /**
-     * Partially updates an existing profession on a character.
-     */
     function updateProfession(characterId, professionId, updates) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
         if (!_hasId(professionId)) return _fail('Profession id is required.');
@@ -572,9 +485,6 @@
         return _ok({ profession: next });
     }
 
-    /**
-     * Removes a single profession from a character.
-     */
     function removeProfession(characterId, professionId) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
         if (!_hasId(professionId)) return _fail('Profession id is required.');
@@ -603,13 +513,6 @@
         });
     }
 
-    /**
-     * Removes a profession from every character that holds it.
-     *
-     * Returns { success: true, removedCount, characterIds }.
-     * Used by RoleCommands.deleteRole to clean up assignments before
-     * deleting a role.
-     */
     function removeProfessionFromAll(professionId) {
         if (!_hasId(professionId)) return _fail('Profession id is required.');
 
@@ -651,10 +554,6 @@
         });
     }
 
-    /**
-     * Replaces the entire profession array. Reserved for import / migration.
-     * Ordinary callers use add / update / remove.
-     */
     function replaceProfessions(characterId, professions) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
         if (!Array.isArray(professions)) {
@@ -755,18 +654,6 @@
     // 8. SURNAME HISTORY
     // =========================================================================
 
-    /**
-     * Records a surname change.
-     *
-     * @param {string} id
-     * @param {string} newSurname
-     * @param {number} [year]
-     * @param {string} [reason]
-     * @param {Object} [options]
-     * @param {string} [options.previousSurname]
-     * @param {string} [options.spouseId]
-     * @param {string} [options.notes]
-     */
     function recordCharacterSurnameChange(id, newSurname, year, reason, options) {
         if (!_hasId(id)) return _fail('Character id is required.');
         if (typeof newSurname !== 'string') {
@@ -788,7 +675,6 @@
         }
         var changeYear = _resolveYear(year);
 
-        // Ensure surname history exists.
         var history;
         if (_isPlainObject(character.surnameHistory)) {
             history = {
@@ -839,9 +725,6 @@
         return _ok({ change: change });
     }
 
-    /**
-     * Reverts the most recent surname change.
-     */
     function revertCharacterSurnameChange(id) {
         if (!_hasId(id)) return _fail('Character id is required.');
 
@@ -889,12 +772,6 @@
     // =========================================================================
     // 9. RELIGION ORCHESTRATION
     // =========================================================================
-    //
-    // Delegates the religion record mutation to ReligionCommands if loaded,
-    // and commits the character-side religionId through CharacterState.
-    // ReligionCommands is expected to update character.religionId as part
-    // of its own transaction; this wrapper is retained so callers who
-    // invoke CharacterCommands.assignCharacterReligion keep working.
 
     function _requireReligionCommands() {
         if (typeof window.ReligionCommands === 'undefined') {
@@ -903,10 +780,6 @@
         return { ok: true };
     }
 
-    /**
-     * Assigns a religion to a character.
-     * If the character already has a different religion, converts instead.
-     */
     function assignCharacterReligion(characterId, religionId, options) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
         if (!_hasId(religionId)) return _fail('Religion id is required.');
@@ -929,8 +802,7 @@
         var deps = _requireReligionCommands();
         if (!deps.ok) return _fail(deps.reason);
 
-        var yearResult = _isValidYearOrMissing(options.year);
-        if (!yearResult) {
+        if (!_isValidYearOrMissing(options.year)) {
             return _fail('year must be a valid world year or omitted.');
         }
 
@@ -959,9 +831,6 @@
         return _ok(result);
     }
 
-    /**
-     * Removes a character's religion.
-     */
     function removeCharacterReligion(characterId) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
 
@@ -988,103 +857,31 @@
     }
 
     // =========================================================================
-    // 10. FAMILY ORCHESTRATION
-    // =========================================================================
-    //
-    // Thin wrappers so existing callers that invoke
-    // CharacterCommands.addChildToParent / removeChildFromParent keep
-    // working. FamilyCommands is the canonical owner of the family graph.
-
-    function _requireFamilyCommands() {
-        if (typeof window.FamilyCommands === 'undefined') {
-            return { ok: false, reason: 'FamilyCommands module is not loaded.' };
-        }
-        return { ok: true };
-    }
-
-    /**
-     * Sets a parent relationship. Delegates to FamilyCommands.setParent.
-     */
-    function addChildToParent(childId, parentId, parentType, options) {
-        if (!_hasId(childId)) return _fail('childId is required.');
-        if (!_hasId(parentId)) return _fail('parentId is required.');
-
-        var deps = _requireFamilyCommands();
-        if (!deps.ok) return _fail(deps.reason);
-
-        if (_isMissing(options)) options = {};
-        if (!_isPlainObject(options)) {
-            return _fail('Options must be a plain object.');
-        }
-
-        var result = window.FamilyCommands.setParent(childId, parentId, parentType, {
-            biological: options.biological !== false,
-            startYear: _resolveYear(options.startYear),
-            notes: _isMissing(options.notes) ? '' : options.notes
-        });
-
-        if (!result || result.success !== true) {
-            return _fail(result && result.reason
-                ? result.reason
-                : 'Family mutation failed.');
-        }
-        return _ok(result);
-    }
-
-    /**
-     * Removes a parent relationship. Delegates to FamilyCommands.removeParent.
-     */
-    function removeChildFromParent(childId, parentType) {
-        if (!_hasId(childId)) return _fail('childId is required.');
-
-        var deps = _requireFamilyCommands();
-        if (!deps.ok) return _fail(deps.reason);
-
-        var result = window.FamilyCommands.removeParent(childId, parentType);
-        if (!result || result.success !== true) {
-            return _fail(result && result.reason
-                ? result.reason
-                : 'Family mutation failed.');
-        }
-        return _ok(result);
-    }
-
-    // =========================================================================
-    // 11. EXPORTS
+    // 10. EXPORTS
     // =========================================================================
 
     window.CharacterCommands = {
-        // Character-owned field updates
         updateCharacterFields: updateCharacterFields,
         updateCharactersFields: updateCharactersFields,
         updateCharacter: updateCharacter,
 
-        // Profession reads
         getProfession: getProfession,
         getProfessions: getProfessions,
 
-        // Profession writes (owned by this module)
         addProfession: addProfession,
         updateProfession: updateProfession,
         removeProfession: removeProfession,
         removeProfessionFromAll: removeProfessionFromAll,
         replaceProfessions: replaceProfessions,
 
-        // Profession primacy
         setPrimaryProfession: setPrimaryProfession,
         clearPrimaryProfession: clearPrimaryProfession,
 
-        // Surname history
         recordCharacterSurnameChange: recordCharacterSurnameChange,
         revertCharacterSurnameChange: revertCharacterSurnameChange,
 
-        // Religion orchestration
         assignCharacterReligion: assignCharacterReligion,
-        removeCharacterReligion: removeCharacterReligion,
-
-        // Family orchestration
-        addChildToParent: addChildToParent,
-        removeChildFromParent: removeChildFromParent
+        removeCharacterReligion: removeCharacterReligion
     };
 
     if (typeof module !== 'undefined' && module.exports) {
