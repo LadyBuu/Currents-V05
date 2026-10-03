@@ -1,65 +1,70 @@
 /**
  * =============================================================================
- * STILL WATERS - APPRENTICESHIP CONSTANTS js/apprenticeship/apprenticeship-constants.js
+ * STILL WATERS - APPRENTICESHIP CONSTANTS
+ * js/apprenticeship/apprenticeship-constants.js
  * =============================================================================
- * 
- * This file contains ALL apprenticeship-related constants.
- * NO TRUST SYSTEM - fully removed
- * 
- * DEPENDENCIES: None (pure constants)
- * 
+ *
+ * Pure apprenticeship vocabulary. No logic. No dependencies.
+ *
+ * SCOPE:
+ *   - APPRENTICESHIP_STAGES: stages of the master/apprentice relationship
+ *   - APPRENTICESHIP_STATUS: status values for the relationship
+ *   - APPRENTICESHIP_ROLES: role of each party
+ *   - TEACHING_CONSTANTS: immutable teaching configuration
+ *
+ * SKILL_LEVELS and SKILL_TRANSFER_METHODS live in the professional domain:
+ *   - js/professional/skill-constants.js
+ *   - js/professional/skill-transfer-constants.js
+ *
+ * APPRENTICESHIP_STAGES vs SKILL_LEVELS:
+ *   These are DELIBERATELY DIFFERENT TAXONOMIES.
+ *   - SKILL_LEVELS describes competence (Untrained → Master, 0-100).
+ *   - APPRENTICESHIP_STAGES describes training relationship stage
+ *     (Novice → Master, 0-100), with requiredYears attached.
+ *   A character at skill 80 is an "Expert" by competence and a "Master"
+ *   by apprenticeship stage. That is intentional.
  * =============================================================================
  */
 
-// =============================================================================
-// 1. APPRENTICESHIP STAGES
-// =============================================================================
-
 const APPRENTICESHIP_STAGES = {
-    NOVICE: { id: 'novice', name: 'Novice', minLevel: 0, maxLevel: 25, icon: '⌇', requiredYears: 2 },
-    APPRENTICE: { id: 'apprentice', name: 'Apprentice', minLevel: 26, maxLevel: 50, icon: '⌇', requiredYears: 3 },
-    JOURNEYMAN: { id: 'journeyman', name: 'Journeyman', minLevel: 51, maxLevel: 75, icon: '⌇', requiredYears: 4 },
-    MASTER: { id: 'master', name: 'Master', minLevel: 76, maxLevel: 100, icon: '◉', requiredYears: 5 }
+    NOVICE:     { id: 'novice',     name: 'Novice',     minLevel: 0,  maxLevel: 25,  requiredYears: 2, icon: '⌇' },
+    APPRENTICE: { id: 'apprentice', name: 'Apprentice', minLevel: 26, maxLevel: 50,  requiredYears: 3, icon: '⌇' },
+    JOURNEYMAN: { id: 'journeyman', name: 'Journeyman', minLevel: 51, maxLevel: 75,  requiredYears: 4, icon: '⌇' },
+    MASTER:     { id: 'master',     name: 'Master',     minLevel: 76, maxLevel: 100, requiredYears: 5, icon: '◉' }
 };
 
-// =============================================================================
-// 2. SKILL LEVELS
-// =============================================================================
-
-const SKILL_LEVELS = {
-    UNTRAINED: { id: 'untrained', name: 'Untrained', min: 0, max: 0, modifier: 0 },
-    NOVICE: { id: 'novice', name: 'Novice', min: 1, max: 25, modifier: 0.5 },
-    APPRENTICE: { id: 'apprentice', name: 'Apprentice', min: 26, max: 50, modifier: 0.7 },
-    JOURNEYMAN: { id: 'journeyman', name: 'Journeyman', min: 51, max: 75, modifier: 0.9 },
-    EXPERT: { id: 'expert', name: 'Expert', min: 76, max: 90, modifier: 1.0 },
-    MASTER: { id: 'master', name: 'Master', min: 91, max: 100, modifier: 1.1 }
+const APPRENTICESHIP_STATUS = {
+    ONGOING:   'ongoing',
+    COMPLETED: 'completed',
+    ENDED:     'ended',
+    CANCELLED: 'cancelled'
 };
 
-// =============================================================================
-// 3. SKILL TRANSFER METHODS (NO TRUST - direct learning)
-// =============================================================================
-
-const SKILL_TRANSFER_METHODS = {
-    INHERITANCE: { id: 'inheritance', name: 'Familial Inheritance', baseSuccess: 0.6, icon: '⌇', gain: 5 },
-    APPRENTICESHIP: { id: 'apprenticeship', name: 'Formal Apprenticeship', baseSuccess: 0.8, icon: '⌇', gain: 8 },
-    MENTORSHIP: { id: 'mentorship', name: 'Mentorship', baseSuccess: 0.7, icon: '◉', gain: 6 },
-    OBSERVATION: { id: 'observation', name: 'Observation', baseSuccess: 0.3, icon: '⌇', gain: 2 },
-    TEACHING: { id: 'teaching', name: 'Direct Teaching', baseSuccess: 0.75, icon: '⌇', gain: 5 },
-    SELF_TAUGHT: { id: 'self_taught', name: 'Self-Taught', baseSuccess: 0.4, icon: '⌇', gain: 3 }
+const APPRENTICESHIP_ROLES = {
+    MASTER:    'master',
+    APPRENTICE: 'apprentice'
 };
 
-// =============================================================================
-// 4. EXPORTS
-// =============================================================================
+const TEACHING_CONSTANTS = {
+    MIN_MASTER_SKILL:       51,   // Journeyman minimum to teach
+    COMPLETION_SKILL:       76,   // Skill threshold for completion eligibility
+    DEFAULT_INITIAL_SKILL:  10,
+    DEFAULT_PROGRESS_GAIN:  5,
+    DEFAULT_TEACHING_HOURS: 1,
+    MAX_SKILL:              100,
+    MIN_SKILL:              0
+};
 
 window.APPRENTICESHIP_STAGES = APPRENTICESHIP_STAGES;
-window.SKILL_LEVELS = SKILL_LEVELS;
-window.SKILL_TRANSFER_METHODS = SKILL_TRANSFER_METHODS;
+window.APPRENTICESHIP_STATUS = APPRENTICESHIP_STATUS;
+window.APPRENTICESHIP_ROLES = APPRENTICESHIP_ROLES;
+window.TEACHING_CONSTANTS = TEACHING_CONSTANTS;
 
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         APPRENTICESHIP_STAGES,
-        SKILL_LEVELS,
-        SKILL_TRANSFER_METHODS
+        APPRENTICESHIP_STATUS,
+        APPRENTICESHIP_ROLES,
+        TEACHING_CONSTANTS
     };
 }
