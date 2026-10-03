@@ -47,13 +47,14 @@
 
     /**
      * Validate that a creation request is permissible.
+     *
      * @param {Object} facts
      * @param {Object} facts.master             { id, name, isDeceased, skillLevel }
-     * @param {Object} facts.apprentice         { id, name, isDeceased }
+     * @param {Object} facts.apprentice         { id, name, isDeceased, existingSkill }
      * @param {Object} facts.role               { id, name }
      * @param {number} facts.initialSkill
      * @param {boolean} facts.existsActiveForRole
-     * @returns {{valid:boolean, code?:string, reason?:string}}
+     * @returns {{valid:boolean, code?:string, reason?:string, resolvedInitialSkill?:number}}
      */
     function validateCreation(facts) {
         if (!facts.master || !facts.apprentice) {
@@ -88,7 +89,17 @@
                 reason: 'An active apprenticeship already exists for this role'
             };
         }
-        return { valid: true };
+
+        // Apprentice may already hold the role at a higher skill. Never
+        // downgrade: the apprenticeship starts from the higher of the two.
+        var existingSkill = Number(facts.apprentice.existingSkill) || 0;
+        var resolvedInitialSkill = Math.max(facts.initialSkill, existingSkill);
+
+        return {
+            valid: true,
+            resolvedInitialSkill: resolvedInitialSkill,
+            existingSkill: existingSkill
+        };
     }
 
     function validateStatusTransition(fromStatus, toStatus) {
@@ -116,12 +127,11 @@
     // =========================================================================
 
     /**
-     * Calculate teaching outcome.
      * @param {Object} facts
      * @param {number} facts.currentSkill
      * @param {Object} facts.method       { id, baseSuccess, gain }
      * @param {number} facts.roll         0..1
-     * @returns {{success:boolean, gain:number, newSkill:number, successChance:number, roll:number}}
+     * @returns {{success:boolean, gain:number, newSkill:number, successChance:number, roll:number, methodId:string}}
      */
     function calculateTeachingOutcome(facts) {
         var method = facts.method || { baseSuccess: 0.75, gain: 5 };
@@ -148,13 +158,6 @@
         };
     }
 
-    /**
-     * Calculate annual progression gain for an apprentice.
-     * @param {Object} facts
-     * @param {number} facts.masterSkill
-     * @param {number} facts.currentSkill
-     * @returns {{gain:number, newSkill:number}}
-     */
     function calculateAnnualProgress(facts) {
         var masterSkill = facts.masterSkill || 0;
         var gain = 2;
@@ -198,7 +201,29 @@
     }
 
     // =========================================================================
-    // 5. EXPORTS
+    // 5. SPECIALIZATION
+    // =========================================================================
+
+    /**
+     * A specialization may only be added if it appears on the role's
+     * catalogue of specializations. The catalogue is the authority.
+     */
+    function validateSpecialization(role, specialization) {
+        if (!role) return { valid: false, code: 'NO_ROLE', reason: 'Role not found' };
+        if (!specialization) return { valid: false, code: 'NO_SPEC', reason: 'Specialization is required' };
+        var catalogue = Array.isArray(role.specializations) ? role.specializations : [];
+        if (catalogue.indexOf(specialization) === -1) {
+            return {
+                valid: false,
+                code: 'UNKNOWN_SPECIALIZATION',
+                reason: 'Specialization "' + specialization + '" is not part of this role'
+            };
+        }
+        return { valid: true };
+    }
+
+    // =========================================================================
+    // 6. EXPORTS
     // =========================================================================
 
     window.ApprenticeshipRules = {
@@ -207,6 +232,7 @@
         isSkillInRange: isSkillInRange,
         validateCreation: validateCreation,
         validateStatusTransition: validateStatusTransition,
+        validateSpecialization: validateSpecialization,
         calculateTeachingOutcome: calculateTeachingOutcome,
         calculateAnnualProgress: calculateAnnualProgress,
         canComplete: canComplete,
