@@ -19,42 +19,35 @@
 
     // Canonical subject registry.
     var SUBJECTS = {
-        // Academic
         LITERACY:            { id: 'literacy',            name: 'Literacy',             icon: '⌇', category: 'academic',     baseLearnRate: 15 },
         BASIC_MATH:          { id: 'basic_math',          name: 'Basic Mathematics',    icon: '⌇', category: 'academic',     baseLearnRate: 10 },
         ADVANCED_MATH:       { id: 'advanced_math',       name: 'Advanced Mathematics', icon: '⌇', category: 'academic',     baseLearnRate: 8 },
         HISTORY:             { id: 'history',             name: 'History',              icon: '⌇', category: 'academic',     baseLearnRate: 12 },
         PHILOSOPHY:          { id: 'philosophy',          name: 'Philosophy',           icon: '⌇', category: 'academic',     baseLearnRate: 10 },
-        // Language
         NATIVE_LANGUAGE:     { id: 'native_language',     name: 'Native Language',      icon: '⌇', category: 'language',     baseLearnRate: 15 },
         FOREIGN_LANGUAGES:   { id: 'foreign_languages',   name: 'Foreign Languages',    icon: '⌇', category: 'language',     baseLearnRate: 8 },
         CLASSICAL_LANGUAGES: { id: 'classical_languages', name: 'Classical Languages',  icon: '⌇', category: 'language',     baseLearnRate: 8 },
-        // Social
         LAW:                 { id: 'law',                 name: 'Law',                  icon: '⌇', category: 'social',       baseLearnRate: 10 },
         POLITICS:            { id: 'politics',            name: 'Political Science',    icon: '⌇', category: 'social',       baseLearnRate: 10 },
         ECONOMICS:           { id: 'economics',           name: 'Economics',            icon: '⌇', category: 'social',       baseLearnRate: 10 },
         DIPLOMACY:           { id: 'diplomacy',           name: 'Diplomacy',            icon: '⌇', category: 'social',       baseLearnRate: 10 },
         ETIQUETTE:           { id: 'etiquette',           name: 'Etiquette',            icon: '⌇', category: 'social',       baseLearnRate: 15 },
-        // Science
         ASTRONOMY:           { id: 'astronomy',           name: 'Astronomy',            icon: '⌇', category: 'science',      baseLearnRate: 8 },
         BIOLOGY:             { id: 'biology',             name: 'Biology',              icon: '⌇', category: 'science',      baseLearnRate: 8 },
         CHEMISTRY:           { id: 'chemistry',           name: 'Chemistry',            icon: '⌇', category: 'science',      baseLearnRate: 8 },
         PHYSICS:             { id: 'physics',             name: 'Physics',              icon: '⌇', category: 'science',      baseLearnRate: 8 },
         MEDICINE:            { id: 'medicine',            name: 'Medicine',             icon: '⌆', category: 'science',      baseLearnRate: 8 },
         GEOGRAPHY:           { id: 'geography',           name: 'Geography',            icon: '⌇', category: 'science',      baseLearnRate: 10 },
-        // Humanities
         LITERATURE:          { id: 'literature',          name: 'Literature',           icon: '⌇', category: 'humanities',   baseLearnRate: 10 },
         RHETORIC:            { id: 'rhetoric',            name: 'Rhetoric',             icon: '⌇', category: 'humanities',   baseLearnRate: 10 },
         LOGIC:               { id: 'logic',               name: 'Logic',                icon: '⌇', category: 'humanities',   baseLearnRate: 10 },
         THEOLOGY:            { id: 'theology',            name: 'Theology',             icon: '⌆', category: 'religious',    baseLearnRate: 12 },
-        // Practical
         AGRICULTURE:         { id: 'agriculture',         name: 'Agriculture',          icon: '⌇', category: 'practical',    baseLearnRate: 12 },
         HORTICULTURE:        { id: 'horticulture',        name: 'Horticulture',         icon: '⌇', category: 'practical',    baseLearnRate: 10 },
         ANIMAL_HUSBANDRY:    { id: 'animal_husbandry',    name: 'Animal Husbandry',     icon: '⌇', category: 'practical',    baseLearnRate: 12 },
         NAVIGATION:          { id: 'navigation',          name: 'Navigation',           icon: '⌇', category: 'practical',    baseLearnRate: 10 },
         SEAMANSHIP:          { id: 'seamanship',          name: 'Seamanship',           icon: '⌇', category: 'practical',    baseLearnRate: 12 },
         FISHING:             { id: 'fishing',             name: 'Fishing',              icon: '⌇', category: 'practical',    baseLearnRate: 12 },
-        // Craft
         WEAVING:             { id: 'weaving',             name: 'Weaving',              icon: '⌇', category: 'craft',        baseLearnRate: 12 },
         CARPENTRY:           { id: 'carpentry',           name: 'Carpentry',            icon: '⌇', category: 'craft',        baseLearnRate: 10 },
         MASONRY:             { id: 'masonry',             name: 'Masonry',              icon: '⌇', category: 'craft',        baseLearnRate: 10 },
@@ -64,17 +57,14 @@
         METALWORK:           { id: 'metalwork',           name: 'Metalwork',            icon: '⌇', category: 'craft',        baseLearnRate: 10 },
         LEATHERWORK:         { id: 'leatherwork',         name: 'Leatherwork',          icon: '⌇', category: 'craft',        baseLearnRate: 12 },
         TEXTILE_WORK:        { id: 'textile_work',        name: 'Textile Work',         icon: '⌇', category: 'craft',        baseLearnRate: 12 },
-        // Professional
         ARCHITECTURE:        { id: 'architecture',        name: 'Architecture',         icon: '⌇', category: 'professional', baseLearnRate: 8 },
         ENGINEERING:         { id: 'engineering',         name: 'Engineering',          icon: '⌇', category: 'professional', baseLearnRate: 8 },
         BUSINESS:            { id: 'business',            name: 'Business',             icon: '⌇', category: 'professional', baseLearnRate: 10 },
         ACCOUNTING:          { id: 'accounting',          name: 'Accounting',           icon: '⌇', category: 'professional', baseLearnRate: 10 },
-        // Military
         TACTICS:             { id: 'tactics',             name: 'Military Tactics',     icon: '⚔', category: 'military',     baseLearnRate: 10 },
         STRATEGY:            { id: 'strategy',            name: 'Strategic Command',    icon: '⚔', category: 'military',     baseLearnRate: 8 },
         COMBAT:              { id: 'combat',              name: 'Combat Training',      icon: '⚔', category: 'military',     baseLearnRate: 12 },
         LEADERSHIP:          { id: 'leadership',          name: 'Leadership',           icon: '⌇', category: 'military',     baseLearnRate: 10 },
-        // Arts
         MUSIC:               { id: 'music',               name: 'Music',                icon: '⌇', category: 'arts',         baseLearnRate: 10 },
         PAINTING:            { id: 'painting',            name: 'Painting',             icon: '⌇', category: 'arts',         baseLearnRate: 10 },
         SCULPTURE:           { id: 'sculpture',           name: 'Sculpture',            icon: '⌇', category: 'arts',         baseLearnRate: 10 },
@@ -83,7 +73,6 @@
 
     // Canonical institution types. Distinguished purely by size, scale, and
     // prestige. Specialization comes from curriculum + taughtRoles, not type.
-    // `baseTuition` is the default tuition for the type.
     var INSTITUTION_TYPES = {
         HUT_SCHOOL: {
             id: 'hut_school',
@@ -202,8 +191,6 @@
         FILTHY_RICH:  { id: 'filthy_rich',  label: 'Filthy Rich',  minReputation: 92, maxReputation: 100, baseTuitionRange: '150-200' }
     };
 
-    // Canonical role categories. Used for institution specialization and
-    // for filtering curriculum roles.
     var ROLE_CATEGORIES = {
         combat:      { id: 'combat',      name: 'Combat & Military',           icon: '⚔' },
         craft:       { id: 'craft',       name: 'Craftsmanship',               icon: '⌇' },
@@ -226,8 +213,6 @@
         other:       { id: 'other',       name: 'Other',                       icon: '⌇' }
     };
 
-    // Tuition tuning. `INSTITUTION_TYPES[*].baseTuition` is the per-type base.
-    // These parameters modify that base at calculation time.
     var TUITION_DEFAULTS = {
         defaultTuition: 10,
         minTuition: 0,
@@ -247,21 +232,20 @@
         grand_university: 2.5
     };
 
-    // Event vocabulary for education history. Append-only; unknown types are rejected.
     var HISTORY_EVENT_TYPES = {
-        TEACHER_HIRED:            'teacher_hired',
-        TEACHER_DEPARTED:         'teacher_departed',
-        STUDENT_ENROLLED:         'student_enrolled',
-        STUDENT_GRADUATED:        'student_graduated',
-        STUDENT_WITHDREW:         'student_withdrew',
-        STUDENT_BECAME_LITERATE:  'student_became_literate',
-        HEADMASTER_APPOINTED:     'headmaster_appointed',
-        HEADMASTER_ENDED:         'headmaster_ended',
-        INSTITUTION_RENAMED:      'institution_renamed',
-        INSTITUTION_MOVED:        'institution_moved',
-        INSTITUTION_DEMOLISHED:   'institution_demolished',
-        INSTITUTION_REBUILT:      'institution_rebuilt',
-        REPUTATION_CHANGED:       'reputation_changed'
+        TEACHER_HIRED:           'teacher_hired',
+        TEACHER_DEPARTED:        'teacher_departed',
+        STUDENT_ENROLLED:        'student_enrolled',
+        STUDENT_GRADUATED:       'student_graduated',
+        STUDENT_WITHDREW:        'student_withdrew',
+        STUDENT_BECAME_LITERATE: 'student_became_literate',
+        HEADMASTER_APPOINTED:    'headmaster_appointed',
+        HEADMASTER_ENDED:        'headmaster_ended',
+        INSTITUTION_RENAMED:     'institution_renamed',
+        INSTITUTION_MOVED:       'institution_moved',
+        INSTITUTION_DEMOLISHED:  'institution_demolished',
+        INSTITUTION_REBUILT:     'institution_rebuilt',
+        REPUTATION_CHANGED:      'reputation_changed'
     };
 
     window.EDUCATION_LEVELS = EDUCATION_LEVELS;
