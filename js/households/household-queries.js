@@ -2,55 +2,10 @@
  * =============================================================================
  * STILL WATERS - HOUSEHOLD QUERIES (household-queries.js)
  * =============================================================================
- * 
- * LOCATION: js/systems/household/household-queries.js
- * 
- * PURPOSE
- * -------
- * Semantic read API for household data. This module owns:
- * 
- *   - Household lookups by id / location / status / member / head
- *   - Household status projections (active/vacant/empty/deprecated/destroyed)
- *   - Member projections (with characters resolved, ages, alive flags)
- *   - Demographic projections
- *   - Enterprise projections (delegating canonical ownership to Industry)
- *   - Position and assignment projections
- *   - Staff projections
- *   - Heir discovery (extracted from household-assignment.js)
- *   - Households-headed-by queries
- *   - Composite detail projections for UI modals
- *   - Statistics
- * 
- * CONTRACT
- * --------
- *   - All public functions return defensive snapshots or new projections.
- *   - No public function returns a live canonical household/position/assignment.
- *   - No public function mutates canonical data.
- *   - No global "processing" guard. Queries must compose.
- *   - Required dependencies fail loudly, not silently as [] / null.
- *   - Historical queries require an explicit reference year.
- * 
- * EXPLICITLY NOT OWNED BY THIS MODULE
- * -----------------------------------
- *   - Canonical storage                       → HouseholdState
- *   - Domain mutations                        → HouseholdCommands
- *   - Domain policy thresholds                → HouseholdRules
- *   - Enterprise canonical ownership          → IndustryCommands
- *   - Residence canonical occupancy           → ResidenceCommands
- *   - Presentation (icons, colours, toasts)   → UI layer
- * 
- * DEPENDENCIES (required)
- * -----------------------
- *   - HouseholdState
- *   - getCharacterById  (CharacterQueries)
- *   - getCharacters     (CharacterQueries)
- *   - getCurrentYearSafe
- * 
- * DEPENDENCIES (optional — used when present)
- * -------------------------------------------
- *   - IndustryQueries  (for enterprise summaries)
- *   - family queries: getChildren / getParents / getSpouses
- * 
+ *
+ * Semantic read API for household data. Returns defensive snapshots.
+ * No mutations. No processing guard. Required dependencies fail loudly.
+ *
  * =============================================================================
  */
 
@@ -101,7 +56,6 @@
         return options.referenceYear;
     }
 
-    // Optional family accessors
     function _getChildren(characterId) {
         if (typeof window.getChildren !== 'function') return null;
         return window.getChildren(characterId);
@@ -111,7 +65,6 @@
         return window.getParents(characterId);
     }
 
-    // Optional Industry accessors
     function _industryQueries() {
         return typeof window.IndustryQueries !== 'undefined' ? window.IndustryQueries : null;
     }
@@ -123,10 +76,6 @@
     // 2. CHARACTER SNAPSHOT HELPERS
     // =========================================================================
 
-    /**
-     * Returns a defensive snapshot of a character suitable for household
-     * projections. Does not leak the canonical character object.
-     */
     function _snapshotCharacter(character) {
         if (!character) return null;
         return {
@@ -151,12 +100,6 @@
         };
     }
 
-    /**
-     * Age at a specific year. If no referenceYear is provided, uses the
-     * current simulation year.
-     *
-     * Returns null if birthYear is unknown.
-     */
     function _ageAt(character, referenceYear) {
         if (!character || character.birthYear === undefined ||
             character.birthYear === null) {
@@ -172,24 +115,6 @@
     // 3. HOUSEHOLD STATUS PROJECTION
     // =========================================================================
 
-    /**
-     * Effective household status.
-     *
-     * Combines:
-     *   - the persisted status field
-     *   - the count of living vs. deceased members
-     *
-     * Returns a projection. Presentation (icon/colour/label) is derived
-     * elsewhere.
-     *
-     * Precedence:
-     *   destroyed  (persisted)
-     *   deprecated (persisted)
-     *   empty      (no members)
-     *   vacant     (all members deceased / missing)
-     *   declining  (few living, most deceased)
-     *   active
-     */
     function getHouseholdStatus(householdId) {
         var household = _internal().getHouseholdRecord(householdId);
         if (!household) {
@@ -204,7 +129,6 @@
         }
 
         var persisted = household.status || null;
-
         var livingCount = 0;
         var deceasedCount = 0;
         var missingCount = 0;
@@ -237,19 +161,12 @@
             (livingCount / totalMembers) <= 0.5;
 
         var status;
-        if (persisted === 'destroyed') {
-            status = 'destroyed';
-        } else if (persisted === 'deprecated') {
-            status = 'deprecated';
-        } else if (isEmpty) {
-            status = 'empty';
-        } else if (isVacant) {
-            status = 'vacant';
-        } else if (isDeclining) {
-            status = 'declining';
-        } else {
-            status = 'active';
-        }
+        if (persisted === 'destroyed') status = 'destroyed';
+        else if (persisted === 'deprecated') status = 'deprecated';
+        else if (isEmpty) status = 'empty';
+        else if (isVacant) status = 'vacant';
+        else if (isDeclining) status = 'declining';
+        else status = 'active';
 
         return {
             exists: true,
@@ -266,14 +183,9 @@
     }
 
     // =========================================================================
-    // 4. HOUSEHOLD LOOKUPS (defensive snapshots)
+    // 4. HOUSEHOLD LOOKUPS
     // =========================================================================
 
-    /**
-     * Returns a defensive snapshot of a household suitable for read-only
-     * consumption. Does NOT include resolved members — use
-     * getHouseholdMembers() for that.
-     */
     function getHousehold(householdId) {
         var household = _internal().getHouseholdRecord(householdId);
         if (!household) return null;
@@ -299,9 +211,6 @@
         };
     }
 
-    /**
-     * Returns defensive snapshots of all households.
-     */
     function getAllHouseholds(options) {
         options = options || {};
         var records = _internal().getAllHouseholdRecords({
@@ -377,10 +286,6 @@
         return result;
     }
 
-    /**
-     * Returns the household that currently lists the character as a member,
-     * or null. Prefers households where the character is not deceased.
-     */
     function getCharacterHousehold(characterId) {
         if (!characterId) return null;
         var candidates = getHouseholdsByMember(characterId);
@@ -392,16 +297,6 @@
     // 5. MEMBER PROJECTIONS
     // =========================================================================
 
-    /**
-     * Returns defensive member projections with resolved character snapshots.
-     *
-     * Age is calculated against current year unless options.referenceYear is
-     * provided.
-     *
-     * @param {string} householdId
-     * @param {object} [options]
-     * @param {number} [options.referenceYear]
-     */
     function getHouseholdMembers(householdId, options) {
         options = options || {};
         var referenceYear = _resolveReferenceYear(options);
@@ -440,9 +335,6 @@
         return result;
     }
 
-    /**
-     * Returns the head of a household as a member projection, or null.
-     */
     function getHouseholdHead(householdId) {
         var members = getHouseholdMembers(householdId);
         for (var i = 0; i < members.length; i++) {
@@ -452,15 +344,67 @@
     }
 
     // =========================================================================
-    // 6. DEMOGRAPHIC PROJECTIONS
+    // 6. DEPARTMENT PROJECTIONS
+    // =========================================================================
+    //
+    // Household departments are stored on the household record as an array.
+    // This is the semantic read for them. Defensive snapshots only.
     // =========================================================================
 
+    function _snapshotDepartment(d) {
+        if (!d) return null;
+        return {
+            id: d.id,
+            name: d.name || '',
+            headId: d.headId || null,
+            headName: d.headName || null,
+            createdAt: d.createdAt !== undefined ? d.createdAt : null
+        };
+    }
+
     /**
-     * Returns a demographic breakdown.
-     *
-     * Historical callers must pass options.referenceYear.
-     * Current-state callers may omit it.
+     * Returns all departments of a household as defensive snapshots.
+     * Returns [] if the household exists but has no departments.
+     * Returns null if the household does not exist.
      */
+    function getHouseholdDepartments(householdId) {
+        var household = _internal().getHouseholdRecord(householdId);
+        if (!household) return null;
+        if (!Array.isArray(household.departments)) return [];
+        var result = [];
+        for (var i = 0; i < household.departments.length; i++) {
+            var s = _snapshotDepartment(household.departments[i]);
+            if (s) result.push(s);
+        }
+        return result;
+    }
+
+    function getHouseholdDepartment(householdId, departmentId) {
+        var household = _internal().getHouseholdRecord(householdId);
+        if (!household || !Array.isArray(household.departments)) return null;
+        for (var i = 0; i < household.departments.length; i++) {
+            if (household.departments[i].id === departmentId) {
+                return _snapshotDepartment(household.departments[i]);
+            }
+        }
+        return null;
+    }
+
+    function getHouseholdMembersByDepartment(householdId, departmentId) {
+        var members = getHouseholdMembers(householdId);
+        var result = [];
+        for (var i = 0; i < members.length; i++) {
+            if (members[i].departmentId === departmentId) {
+                result.push(members[i]);
+            }
+        }
+        return result;
+    }
+
+    // =========================================================================
+    // 7. DEMOGRAPHIC PROJECTIONS
+    // =========================================================================
+
     function getDemographics(householdId, options) {
         options = options || {};
         var referenceYear = _resolveReferenceYear(options);
@@ -469,18 +413,9 @@
         });
 
         var stats = {
-            total: 0,
-            male: 0,
-            female: 0,
-            unknown: 0,
-            children: 0,
-            youth: 0,
-            adults: 0,
-            elders: 0,
-            ageUnknown: 0,
-            living: 0,
-            deceased: 0,
-            missing: 0,
+            total: 0, male: 0, female: 0, unknown: 0,
+            children: 0, youth: 0, adults: 0, elders: 0,
+            ageUnknown: 0, living: 0, deceased: 0, missing: 0,
             byAgeGroup: {}
         };
 
@@ -488,10 +423,7 @@
             var m = members[i];
             stats.total++;
 
-            if (m.isMissing) {
-                stats.missing++;
-                continue;
-            }
+            if (m.isMissing) { stats.missing++; continue; }
 
             var c = m.character;
             if (c.gender === 'male') stats.male++;
@@ -502,10 +434,7 @@
             else stats.living++;
 
             var age = m.age;
-            if (age === null || age === undefined) {
-                stats.ageUnknown++;
-                continue;
-            }
+            if (age === null || age === undefined) { stats.ageUnknown++; continue; }
 
             if (age < 18) stats.children++;
             else if (age < 26) stats.youth++;
@@ -531,7 +460,7 @@
     }
 
     // =========================================================================
-    // 7. POSITION PROJECTIONS
+    // 8. POSITION PROJECTIONS
     // =========================================================================
 
     function _snapshotPosition(position) {
@@ -570,7 +499,7 @@
     }
 
     // =========================================================================
-    // 8. ASSIGNMENT PROJECTIONS
+    // 9. ASSIGNMENT PROJECTIONS
     // =========================================================================
 
     function _snapshotAssignment(a) {
@@ -633,11 +562,7 @@
     }
 
     // =========================================================================
-    // 9. ENTERPRISE PROJECTIONS
-    // =========================================================================
-    //
-    // Canonical enterprise ownership belongs to Industry. Household-side
-    // projection reads enterprise records through IndustryQueries/State.
+    // 10. ENTERPRISE PROJECTIONS
     // =========================================================================
 
     function getHouseholdEnterprises(householdId) {
@@ -681,17 +606,10 @@
     function getHouseholdEnterpriseStats(householdId) {
         var summaries = getHouseholdEnterpriseSummaries(householdId);
         var stats = {
-            total: summaries.length,
-            profitable: 0,
-            unprofitable: 0,
-            totalProfit: 0,
-            totalWealth: 0,
-            totalDebt: 0,
-            totalWorkers: 0,
-            publicCount: 0,
-            privateCount: 0,
-            byStatus: {},
-            byCategory: {}
+            total: summaries.length, profitable: 0, unprofitable: 0,
+            totalProfit: 0, totalWealth: 0, totalDebt: 0, totalWorkers: 0,
+            publicCount: 0, privateCount: 0,
+            byStatus: {}, byCategory: {}
         };
 
         for (var i = 0; i < summaries.length; i++) {
@@ -711,24 +629,14 @@
 
             var status = s.status || 'unknown';
             stats.byStatus[status] = (stats.byStatus[status] || 0) + 1;
-
             var cat = s.category || 'other';
             stats.byCategory[cat] = (stats.byCategory[cat] || 0) + 1;
         }
-
         return stats;
     }
 
     // =========================================================================
-    // 10. HEIR DISCOVERY
-    // =========================================================================
-    //
-    // Extracted from household-assignment.js. This is a pure read projection.
-    //
-    // Reference year is REQUIRED when the caller is processing a historical
-    // event (e.g. inheritance at a death year). If not provided, the current
-    // simulation year is used, which is only correct for present-tense
-    // succession.
+    // 11. HEIR DISCOVERY
     // =========================================================================
 
     function getHouseholdHeirs(householdId, deceasedId, options) {
@@ -744,7 +652,6 @@
         var seen = {};
         var candidates = [];
 
-        // 1. Household members
         if (Array.isArray(household.members)) {
             for (var i = 0; i < household.members.length; i++) {
                 var member = household.members[i];
@@ -782,7 +689,6 @@
             }
         }
 
-        // 2. External descendants (children)
         if (includeExternal) {
             var children = _getChildren(deceasedId);
             if (Array.isArray(children)) {
@@ -819,7 +725,6 @@
                 }
             }
 
-            // 3. Siblings — via either parent, deduped
             var parents = _getParents(deceasedId);
             if (parents && (parents.father || parents.mother)) {
                 var parentIds = [];
@@ -866,12 +771,6 @@
             }
         }
 
-        // Priority:
-        //   1. household member marked head (unusual but possible if the
-        //      deceased wasn't flagged) — highest
-        //   2. household member
-        //   3. external descendant
-        // Then: older first.
         candidates.sort(function(a, b) {
             var priA = a.isHead ? 0 : (a.type === 'family' ? 1 : 2);
             var priB = b.isHead ? 0 : (b.type === 'family' ? 1 : 2);
@@ -883,7 +782,7 @@
     }
 
     // =========================================================================
-    // 11. STAFF PROJECTIONS
+    // 12. STAFF PROJECTIONS
     // =========================================================================
 
     function getHouseholdStaff(householdId, options) {
@@ -895,9 +794,7 @@
             var m = members[i];
             if (m.type !== 'staff') continue;
 
-            if (options.departmentId && m.departmentId !== options.departmentId) {
-                continue;
-            }
+            if (options.departmentId && m.departmentId !== options.departmentId) continue;
 
             var assignments = getAssignmentsForCharacter(
                 m.characterId,
@@ -928,7 +825,6 @@
                 assignments: assignments
             });
         }
-
         return result;
     }
 
@@ -938,10 +834,7 @@
         for (var i = 0; i < staff.length; i++) {
             var hasActive = false;
             for (var j = 0; j < staff[i].assignments.length; j++) {
-                if (staff[i].assignments[j].isActive) {
-                    hasActive = true;
-                    break;
-                }
+                if (staff[i].assignments[j].isActive) { hasActive = true; break; }
             }
             if (!hasActive) result.push(staff[i]);
         }
@@ -949,14 +842,14 @@
     }
 
     // =========================================================================
-    // 12. COMPOSITE PROJECTIONS (for UI)
+    // 13. COMPOSITE PROJECTIONS (for UI)
     // =========================================================================
 
     /**
      * Full detail projection for a household details modal.
      *
-     * Aggregates household + status + members + head + demographics +
-     * enterprise summary + residence info. UI renders the projection as-is.
+     * Includes the raw department array (defensive) so callers that need
+     * the department list do not have to reach into State.
      */
     function getHouseholdDetails(householdId) {
         var household = getHousehold(householdId);
@@ -973,12 +866,21 @@
             enterpriseSummaries = getHouseholdEnterpriseSummaries(householdId);
             enterpriseStats = getHouseholdEnterpriseStats(householdId);
         } catch (e) {
-            // Industry may not be loaded; details should still work.
             enterpriseSummaries = [];
             enterpriseStats = null;
         }
 
         var record = _internal().getHouseholdRecord(householdId);
+
+        // Departments (defensive snapshot)
+        var departments = [];
+        if (record && Array.isArray(record.departments)) {
+            for (var d = 0; d < record.departments.length; d++) {
+                var s = _snapshotDepartment(record.departments[d]);
+                if (s) departments.push(s);
+            }
+        }
+
         var residence = null;
         if (record && record.residenceId) {
             residence = {
@@ -999,6 +901,7 @@
             members: members,
             head: head,
             demographics: demographics,
+            departments: departments,
             residence: residence,
             enterprises: enterpriseSummaries,
             enterpriseStats: enterpriseStats
@@ -1006,7 +909,7 @@
     }
 
     // =========================================================================
-    // 13. STATISTICS
+    // 14. STATISTICS
     // =========================================================================
 
     function getStatistics(options) {
@@ -1031,7 +934,6 @@
             activeAssignments: 0
         };
 
-        var memberCounts = [];
         var totalWealth = 0;
         var wealthCount = 0;
         var totalReputation = 0;
@@ -1040,7 +942,6 @@
         for (var i = 0; i < records.length; i++) {
             var h = records[i];
             var count = Array.isArray(h.members) ? h.members.length : 0;
-            memberCounts.push(count);
             stats.totalMembers += count;
 
             if (Array.isArray(h.departments) && h.departments.length > 0) {
@@ -1072,7 +973,6 @@
             }
         }
 
-        // Positions and assignments
         var positions = _internal().getAllPositionRecords();
         stats.totalPositions = positions.length;
 
@@ -1084,7 +984,6 @@
             }
         }
 
-        // Derived averages (unused in some UIs but cheap)
         stats.averageWealth = wealthCount > 0 ? totalWealth / wealthCount : 0;
         stats.averageReputation = repCount > 0 ? totalReputation / repCount : 0;
 
@@ -1092,7 +991,7 @@
     }
 
     // =========================================================================
-    // 14. EXPORTS
+    // 15. EXPORTS
     // =========================================================================
 
     window.HouseholdQueries = {
@@ -1112,6 +1011,11 @@
         getHouseholdMembers: getHouseholdMembers,
         getHouseholdHead: getHouseholdHead,
         getDemographics: getDemographics,
+
+        // Departments
+        getHouseholdDepartments: getHouseholdDepartments,
+        getHouseholdDepartment: getHouseholdDepartment,
+        getHouseholdMembersByDepartment: getHouseholdMembersByDepartment,
 
         // Positions
         getHouseholdPosition: getHouseholdPosition,
