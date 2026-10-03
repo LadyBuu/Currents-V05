@@ -1,859 +1,452 @@
 /**
- * =============================================================================
- * STILL WATERS - EDUCATION HISTORY (education-history.js)
- * =============================================================================
- * 
- * This file tracks historical events for educational institutions:
- * - Teacher appointments and departures
- * - Student enrollments, graduations, and withdrawals
- * - Headmaster appointments and term endings
- * - Institution name changes, location changes
- * - Reputation changes over time
- * 
- * DEPENDENCIES:
- *   - accessors.js (getCharacterById, getEducationalInstitution)
- *   - storage.js (saveMasterData)
- *   - ids.js (generateId)
- *   - time.js (getCurrentYearSafe)
- * 
- * =============================================================================
+ * STILL WATERS - EDUCATION HISTORY
+ * Append-only event ledger embedded on each institution (`institution.history`).
+ * Structured events only. No persistence, no formatting, no character lookups
+ * beyond snapshotting a name at event time.
  */
 
 (function() {
     'use strict';
 
-    // =========================================================================
-    // 1. RECURSION GUARDS
-    // =========================================================================
+    var HISTORY = window.HISTORY_EVENT_TYPES;
 
-    var _processingHistory = false;
+    if (!HISTORY) {
+        throw new Error('education-history.js requires education-constants.js (HISTORY_EVENT_TYPES)');
+    }
 
-    // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
-    // =========================================================================
+    // --- Dependencies: no fallbacks. Missing dependency = broken load order. ---
 
-    function _getEducationalInstitution(id) {
-        if (typeof window.getEducationalInstitution === 'function') {
-            return window.getEducationalInstitution(id);
+    function _getInstitution(id) {
+        if (typeof window.EducationState === 'undefined' ||
+            typeof window.EducationState.getInstitution !== 'function') {
+            throw new Error('education-history.js requires EducationState.getInstitution');
         }
-        if (typeof window.EducationState !== 'undefined') {
-            return window.EducationState.getInstitution(id);
+        return window.EducationState.getInstitution(id);
+    }
+
+    function _getAllInstitutions() {
+        if (typeof window.EducationState === 'undefined' ||
+            typeof window.EducationState.getAllInstitutions !== 'function') {
+            throw new Error('education-history.js requires EducationState.getAllInstitutions');
         }
-        return null;
+        return window.EducationState.getAllInstitutions();
     }
 
     function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(id);
+        if (typeof window.getCharacterById !== 'function') {
+            throw new Error('education-history.js requires getCharacterById');
         }
-        return null;
-    }
-
-    function _getAllEducationalInstitutions() {
-        if (typeof window.getAllEducationalInstitutions === 'function') {
-            return window.getAllEducationalInstitutions();
-        }
-        if (typeof window.EducationState !== 'undefined') {
-            return window.EducationState.getAllInstitutions();
-        }
-        return [];
+        return window.getCharacterById(id);
     }
 
     function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
-    function _saveMasterData() {
-        if (typeof window.saveMasterData === 'function') {
-            window.saveMasterData();
+        if (typeof window.getCurrentYearSafe !== 'function') {
+            throw new Error('education-history.js requires getCurrentYearSafe');
         }
+        return window.getCurrentYearSafe();
     }
 
     function _generateId(prefix) {
-        if (typeof window.generateId === 'function') {
-            return window.generateId(prefix);
+        if (typeof window.generateId !== 'function') {
+            throw new Error('education-history.js requires generateId');
         }
-        return prefix + '_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+        return window.generateId(prefix);
     }
 
-    function _escapeHtml(str) {
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
+    // --- Event vocabulary validation ---
+
+    var _VALID_TYPES = {};
+    (function() {
+        for (var k in HISTORY) {
+            if (HISTORY.hasOwnProperty(k)) _VALID_TYPES[HISTORY[k]] = true;
         }
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
+    })();
 
-    // =========================================================================
-    // 3. INSTITUTION HISTORY
-    // =========================================================================
-
-    function _initInstitutionHistory(institution) {
-        if (!institution) return institution;
-        if (!institution.history) institution.history = [];
-        if (!institution.historyEvents) institution.historyEvents = [];
-        return institution;
-    }
-
-    function addEducationHistoryEvent(institutionId, event) {
-        if (_processingHistory) {
-            return false;
-        }
-        _processingHistory = true;
-
-        try {
-            var institution = _getEducationalInstitution(institutionId);
-            if (!institution) return false;
-
-            _initInstitutionHistory(institution);
-
-            var eventRecord = {
-                id: _generateId('edu_evt'),
-                type: event.type || 'unknown',
-                year: event.year || _getCurrentYear(),
-                entityId: event.entityId || null,
-                entityName: event.entityName || null,
-                details: event.details || '',
-                reason: event.reason || '',
-                previousValue: event.previousValue !== undefined ? event.previousValue : null,
-                newValue: event.newValue !== undefined ? event.newValue : null,
-                extra: event.extra || null,
-                timestamp: Date.now()
-            };
-
-            institution.history.push(eventRecord);
-            institution.historyEvents.push(eventRecord);
-
-            if (institution.history.length > 1000) {
-                institution.history = institution.history.slice(-1000);
-            }
-            if (institution.historyEvents.length > 1000) {
-                institution.historyEvents = institution.historyEvents.slice(-1000);
-            }
-
-            _saveMasterData();
-            return true;
-
-        } finally {
-            _processingHistory = false;
+    function _validateEventType(type) {
+        if (!type || !_VALID_TYPES[type]) {
+            throw new Error('Invalid education history event type: ' + String(type));
         }
     }
 
-    function getInstitutionHistory(institutionId, type, limit, entityId) {
-        if (_processingHistory) {
-            return [];
-        }
-        _processingHistory = true;
+    // --- Defensive copies ---
 
-        try {
-            var institution = _getEducationalInstitution(institutionId);
-            if (!institution) return [];
-
-            _initInstitutionHistory(institution);
-
-            var events = institution.history || [];
-
-            if (type) {
-                events = events.filter(function(e) { return e.type === type; });
-            }
-
-            if (entityId) {
-                events = events.filter(function(e) { return e.entityId === entityId; });
-            }
-
-            events = events.slice().sort(function(a, b) {
-                return (b.year || 0) - (a.year || 0);
-            });
-
-            if (limit) {
-                events = events.slice(0, limit);
-            }
-
-            return events;
-
-        } finally {
-            _processingHistory = false;
-        }
-    }
-
-    function getFormattedEducationHistory(institutionId, limit, filterType) {
-        if (_processingHistory) {
-            return '';
-        }
-        _processingHistory = true;
-
-        try {
-            var events = getInstitutionHistory(institutionId, filterType, limit || 50);
-            var institution = _getEducationalInstitution(institutionId);
-
-            if (events.length === 0) {
-                return '<div style="color:var(--dim);font-size:0.55rem;padding:8px;">No recorded events</div>';
-            }
-
-            var typeLabels = {
-                'teacher_hired': 'Teacher hired',
-                'teacher_fired': 'Teacher left',
-                'student_enrolled': 'Student enrolled',
-                'student_graduated': 'Student graduated',
-                'student_withdrawn': 'Student withdrew',
-                'headmaster_appointed': 'Headmaster appointed',
-                'headmaster_ended': 'Headmaster term ended',
-                'institution_renamed': 'Institution renamed',
-                'institution_moved': 'Institution moved',
-                'reputation_changed': 'Reputation changed'
-            };
-
-            var typeColors = {
-                'teacher_hired': '#4a9e6a',
-                'teacher_fired': '#c84444',
-                'student_enrolled': '#4a7db5',
-                'student_graduated': '#c8a844',
-                'student_withdrawn': '#c87040',
-                'headmaster_appointed': '#6a9ecf',
-                'headmaster_ended': '#8a5a20',
-                'institution_renamed': '#6a7a8a',
-                'institution_moved': '#6a7a8a',
-                'reputation_changed': '#8a7a5a'
-            };
-
-            var typeIcons = {
-                'teacher_hired': '◉',
-                'teacher_fired': '✗',
-                'student_enrolled': '◉',
-                'student_graduated': '★',
-                'student_withdrawn': '✗',
-                'headmaster_appointed': '◉',
-                'headmaster_ended': '✗',
-                'institution_renamed': '⌇',
-                'institution_moved': '⌇',
-                'reputation_changed': '⌇'
-            };
-
-            var html = '<div style="display:flex;flex-direction:column;gap:4px;">';
-
-            for (var i = 0; i < events.length; i++) {
-                var e = events[i];
-                var label = typeLabels[e.type] || e.type;
-                var color = typeColors[e.type] || 'var(--border)';
-                var icon = typeIcons[e.type] || '⌇';
-                var details = e.details || '';
-                var entityDisplay = e.entityName ? ' <strong>' + _escapeHtml(e.entityName) + '</strong>' : '';
-                var reasonDisplay = e.reason ? ' <span style="color:var(--dim);font-size:0.5rem;">(' + _escapeHtml(e.reason) + ')</span>' : '';
-
-                html += '<div style="display:flex;align-items:flex-start;gap:8px;padding:4px 8px;background:var(--bg3);border-left:3px solid ' + color + ';border-radius:4px;font-size:0.55rem;">' +
-                    '<span style="min-width:40px;color:var(--dim);font-weight:bold;">' + e.year + '</span>' +
-                    '<span style="color:' + color + ';">' + icon + '</span>' +
-                    '<span style="color:var(--accent);">' + label + '</span>' +
-                    entityDisplay +
-                    (details ? '<span style="color:var(--dim);">— ' + _escapeHtml(details) + '</span>' : '') +
-                    reasonDisplay +
-                    '</div>';
-            }
-
-            html += '</div>';
-            return html;
-
-        } finally {
-            _processingHistory = false;
-        }
-    }
-
-    function getInstitutionHistoryStats(institutionId) {
-        if (_processingHistory) {
-            return {};
-        }
-        _processingHistory = true;
-
-        try {
-            var events = getInstitutionHistory(institutionId);
-            var stats = {};
-
-            for (var i = 0; i < events.length; i++) {
-                var e = events[i];
-                if (!stats[e.type]) stats[e.type] = 0;
-                stats[e.type]++;
-            }
-
-            return stats;
-
-        } finally {
-            _processingHistory = false;
-        }
-    }
-
-    // =========================================================================
-    // 4. TEACHER HISTORY
-    // =========================================================================
-
-    function recordTeacherHired(institutionId, teacherId, subjectId, year, skill, notes) {
-        var teacher = _getCharacterById(teacherId);
-        var institution = _getEducationalInstitution(institutionId);
-        if (!institution || !teacher) return false;
-
-        var subjectName = subjectId;
-        var curriculum = institution.curriculum || [];
-        for (var i = 0; i < curriculum.length; i++) {
-            if (curriculum[i].id === subjectId) {
-                subjectName = curriculum[i].name;
-                break;
-            }
-        }
-
-        var details = 'Teaching ' + subjectName + (skill ? ' (Skill: ' + skill + ')' : '');
-
-        return addEducationHistoryEvent(institutionId, {
-            type: 'teacher_hired',
-            year: year || _getCurrentYear(),
-            entityId: teacherId,
-            entityName: teacher.name + (teacher.surname ? ' ' + teacher.surname : ''),
-            details: details,
-            reason: notes || '',
-            extra: JSON.stringify({
-                subjectId: subjectId,
-                subjectName: subjectName,
-                skill: skill || null
-            })
+    function _copyEvent(e) {
+        return Object.freeze({
+            id: e.id,
+            type: e.type,
+            year: e.year,
+            entityId: e.entityId,
+            entityName: e.entityName,
+            details: e.details,
+            reason: e.reason,
+            previousValue: e.previousValue,
+            newValue: e.newValue,
+            metadata: e.metadata ? Object.freeze(Object.assign({}, e.metadata)) : null,
+            timestamp: e.timestamp
         });
     }
 
-    function recordTeacherLeft(institutionId, teacherId, year, reason, notes) {
-        var teacher = _getCharacterById(teacherId);
-        if (!teacher) return false;
+    function _sortEvents(a, b) {
+        if (a.year !== b.year) return b.year - a.year;
+        if (a.timestamp !== b.timestamp) return b.timestamp - a.timestamp;
+        return a.id < b.id ? 1 : (a.id > b.id ? -1 : 0);
+    }
 
-        return addEducationHistoryEvent(institutionId, {
-            type: 'teacher_fired',
-            year: year || _getCurrentYear(),
-            entityId: teacherId,
-            entityName: teacher.name + (teacher.surname ? ' ' + teacher.surname : ''),
-            details: notes || '',
-            reason: reason || 'Left position'
+    // --- Core API ---
+
+    /**
+     * Append an event to an institution's history.
+     * Mutates the canonical institution object. Caller owns persistence.
+     *
+     * @param {Object|string} institutionOrId - Canonical institution object or its id.
+     * @param {Object} event
+     * @param {string} event.type        - Must be in HISTORY_EVENT_TYPES.
+     * @param {number} [event.year]      - Defaults to current year.
+     * @param {string} [event.entityId]  - Character or entity involved.
+     * @param {string} [event.entityName]- Snapshot of the entity's name at event time.
+     * @param {string} [event.details]   - Human-readable description.
+     * @param {string} [event.reason]    - Reason or context.
+     * @param {*}      [event.previousValue]
+     * @param {*}      [event.newValue]
+     * @param {Object} [event.metadata]  - Structured extra data (subject id, etc.).
+     * @returns {Object} The stored event (frozen copy).
+     */
+    function addEvent(institutionOrId, event) {
+        if (!event || typeof event !== 'object') {
+            throw new Error('addEvent: event object is required');
+        }
+
+        _validateEventType(event.type);
+
+        var institution = (typeof institutionOrId === 'string')
+            ? _getInstitution(institutionOrId)
+            : institutionOrId;
+
+        if (!institution) {
+            throw new Error('addEvent: institution not found');
+        }
+
+        if (!institution.history) institution.history = [];
+
+        var record = {
+            id: _generateId('edu_evt'),
+            type: event.type,
+            year: (event.year !== undefined) ? event.year : _getCurrentYear(),
+            entityId: event.entityId || null,
+            entityName: event.entityName || null,
+            details: event.details || '',
+            reason: event.reason || '',
+            previousValue: (event.previousValue !== undefined) ? event.previousValue : null,
+            newValue: (event.newValue !== undefined) ? event.newValue : null,
+            metadata: event.metadata ? Object.assign({}, event.metadata) : null,
+            timestamp: Date.now()
+        };
+
+        institution.history.push(record);
+
+        return _copyEvent(record);
+    }
+
+    /**
+     * Get history events for an institution.
+     * Returns frozen copies. Sorted by (year desc, timestamp desc, id desc).
+     *
+     * @param {string} institutionId
+     * @param {Object} [options]
+     * @param {string} [options.type]      - Filter by event type.
+     * @param {string} [options.entityId]  - Filter by entity id.
+     * @param {number} [options.limit]     - Maximum number of events.
+     * @returns {Array<Object>}
+     */
+    function getInstitutionHistory(institutionId, options) {
+        options = options || {};
+        var institution = _getInstitution(institutionId);
+        if (!institution) return [];
+
+        var events = institution.history ? institution.history.slice() : [];
+
+        if (options.type) {
+            events = events.filter(function(e) { return e.type === options.type; });
+        }
+        if (options.entityId) {
+            events = events.filter(function(e) { return e.entityId === options.entityId; });
+        }
+
+        events.sort(_sortEvents);
+
+        if (options.limit && options.limit > 0) {
+            events = events.slice(0, options.limit);
+        }
+
+        return events.map(_copyEvent);
+    }
+
+    function getInstitutionHistoryStats(institutionId) {
+        var events = getInstitutionHistory(institutionId);
+        var stats = {};
+        for (var i = 0; i < events.length; i++) {
+            var t = events[i].type;
+            stats[t] = (stats[t] || 0) + 1;
+        }
+        return stats;
+    }
+
+    // --- Character-centric queries ---
+
+    function _collectEventsForEntity(entityId, typeFilter) {
+        var institutions = _getAllInstitutions();
+        var collected = [];
+
+        for (var i = 0; i < institutions.length; i++) {
+            var inst = institutions[i];
+            if (!inst.history) continue;
+
+            for (var j = 0; j < inst.history.length; j++) {
+                var e = inst.history[j];
+                if (e.entityId !== entityId) continue;
+                if (typeFilter && typeFilter.indexOf(e.type) === -1) continue;
+
+                collected.push({
+                    event: e,
+                    institutionId: inst.id,
+                    institutionName: inst.name
+                });
+            }
+        }
+
+        collected.sort(function(a, b) { return _sortEvents(a.event, b.event); });
+
+        return collected.map(function(item) {
+            var copy = _copyEvent(item.event);
+            // Institution fields added on top of the frozen event for context.
+            // Object.assign produces a new object; freeze it too.
+            return Object.freeze(Object.assign({}, copy, {
+                institutionId: item.institutionId,
+                institutionName: item.institutionName
+            }));
         });
     }
 
     function getTeacherEmploymentHistory(teacherId) {
-        if (_processingHistory) {
-            return [];
-        }
-        _processingHistory = true;
-
-        try {
-            var institutions = _getAllEducationalInstitutions();
-            var events = [];
-
-            for (var i = 0; i < institutions.length; i++) {
-                var inst = institutions[i];
-                if (!inst.history) continue;
-
-                var teacherEvents = inst.history.filter(function(e) {
-                    return e.entityId === teacherId &&
-                        (e.type === 'teacher_hired' || e.type === 'teacher_fired');
-                });
-
-                for (var j = 0; j < teacherEvents.length; j++) {
-                    var e = teacherEvents[j];
-                    var extra = null;
-                    try {
-                        if (e.extra) extra = JSON.parse(e.extra);
-                    } catch (err) {}
-
-                    events.push({
-                        institutionId: inst.id,
-                        institutionName: inst.name,
-                        type: e.type,
-                        year: e.year,
-                        entityId: e.entityId,
-                        entityName: e.entityName,
-                        details: e.details,
-                        reason: e.reason,
-                        extra: extra
-                    });
-                }
-            }
-
-            events.sort(function(a, b) {
-                return (b.year || 0) - (a.year || 0);
-            });
-
-            return events;
-
-        } finally {
-            _processingHistory = false;
-        }
+        return _collectEventsForEntity(teacherId, [
+            HISTORY.TEACHER_HIRED,
+            HISTORY.TEACHER_DEPARTED
+        ]);
     }
 
-    function getFormattedTeacherEmploymentHistory(teacherId) {
-        if (_processingHistory) {
-            return '';
-        }
-        _processingHistory = true;
-
-        try {
-            var events = getTeacherEmploymentHistory(teacherId);
-
-            if (events.length === 0) {
-                return '<div style="color:var(--dim);font-size:0.55rem;padding:8px;">No teaching history</div>';
-            }
-
-            var html = '<div style="display:flex;flex-direction:column;gap:4px;">';
-
-            for (var i = 0; i < events.length; i++) {
-                var e = events[i];
-                var icon = e.type === 'teacher_hired' ? '◉' : '✗';
-                var color = e.type === 'teacher_hired' ? '#4a9e6a' : '#c84444';
-                var label = e.type === 'teacher_hired' ? 'Hired at' : 'Left';
-                var subjectInfo = e.extra && e.extra.subjectName ? ' (' + _escapeHtml(e.extra.subjectName) + ')' : '';
-
-                html += '<div style="display:flex;align-items:flex-start;gap:8px;padding:4px 8px;background:var(--bg3);border-left:3px solid ' + color + ';border-radius:4px;font-size:0.55rem;">' +
-                    '<span style="min-width:40px;color:var(--dim);font-weight:bold;">' + e.year + '</span>' +
-                    '<span style="color:' + color + ';">' + icon + '</span>' +
-                    '<span style="color:var(--accent);">' + label + '</span>' +
-                    '<strong>' + _escapeHtml(e.institutionName) + '</strong>' +
-                    subjectInfo +
-                    (e.reason ? ' <span style="color:var(--dim);font-size:0.5rem;">(' + _escapeHtml(e.reason) + ')</span>' : '') +
-                    '</div>';
-            }
-
-            html += '</div>';
-            return html;
-
-        } finally {
-            _processingHistory = false;
-        }
+    function getStudentEducationHistory(studentId) {
+        return _collectEventsForEntity(studentId, [
+            HISTORY.STUDENT_ENROLLED,
+            HISTORY.STUDENT_GRADUATED,
+            HISTORY.STUDENT_WITHDREW
+        ]);
     }
 
-    // =========================================================================
-    // 5. STUDENT HISTORY
-    // =========================================================================
+    function getCharacterHeadmasterHistory(characterId) {
+        return _collectEventsForEntity(characterId, [
+            HISTORY.HEADMASTER_APPOINTED,
+            HISTORY.HEADMASTER_ENDED
+        ]);
+    }
+
+    function getCharacterEducationHistory(characterId) {
+        var asStudent = getStudentEducationHistory(characterId);
+        var asTeacher = getTeacherEmploymentHistory(characterId);
+        var asHeadmaster = getCharacterHeadmasterHistory(characterId);
+
+        return {
+            characterId: characterId,
+            asStudent: asStudent,
+            asTeacher: asTeacher,
+            asHeadmaster: asHeadmaster,
+            totalEvents: asStudent.length + asTeacher.length + asHeadmaster.length
+        };
+    }
+
+    // --- Event recorders ---
+    // Commands call these during their mutation. They do not persist.
+
+    function recordTeacherHired(institutionId, teacherId, subjectId, year, skill, notes) {
+        var institution = _getInstitution(institutionId);
+        var teacher = _getCharacterById(teacherId);
+        if (!institution || !teacher) return null;
+
+        var subjectName = subjectId;
+        var curriculum = institution.curriculum || [];
+        for (var i = 0; i < curriculum.length; i++) {
+            if (curriculum[i].id === subjectId) { subjectName = curriculum[i].name; break; }
+        }
+
+        return addEvent(institution, {
+            type: HISTORY.TEACHER_HIRED,
+            year: year,
+            entityId: teacherId,
+            entityName: _formatCharacterName(teacher),
+            details: 'Teaching ' + subjectName,
+            metadata: {
+                subjectId: subjectId,
+                subjectName: subjectName,
+                skill: skill !== undefined ? skill : null
+            }
+        });
+    }
+
+    function recordTeacherDeparted(institutionId, teacherId, year, reason, notes) {
+        var institution = _getInstitution(institutionId);
+        var teacher = _getCharacterById(teacherId);
+        if (!institution || !teacher) return null;
+
+        return addEvent(institution, {
+            type: HISTORY.TEACHER_DEPARTED,
+            year: year,
+            entityId: teacherId,
+            entityName: _formatCharacterName(teacher),
+            details: notes || '',
+            reason: reason || 'Departed'
+        });
+    }
 
     function recordStudentEnrolled(institutionId, studentId, year, notes) {
+        var institution = _getInstitution(institutionId);
         var student = _getCharacterById(studentId);
-        if (!student) return false;
+        if (!institution || !student) return null;
 
-        return addEducationHistoryEvent(institutionId, {
-            type: 'student_enrolled',
-            year: year || _getCurrentYear(),
+        return addEvent(institution, {
+            type: HISTORY.STUDENT_ENROLLED,
+            year: year,
             entityId: studentId,
-            entityName: student.name + (student.surname ? ' ' + student.surname : ''),
+            entityName: _formatCharacterName(student),
             details: notes || 'Enrolled',
             reason: notes || ''
         });
     }
 
     function recordStudentGraduated(institutionId, studentId, year, notes) {
+        var institution = _getInstitution(institutionId);
         var student = _getCharacterById(studentId);
-        if (!student) return false;
+        if (!institution || !student) return null;
 
-        return addEducationHistoryEvent(institutionId, {
-            type: 'student_graduated',
-            year: year || _getCurrentYear(),
+        return addEvent(institution, {
+            type: HISTORY.STUDENT_GRADUATED,
+            year: year,
             entityId: studentId,
-            entityName: student.name + (student.surname ? ' ' + student.surname : ''),
+            entityName: _formatCharacterName(student),
             details: notes || 'Graduated',
             reason: notes || ''
         });
     }
 
     function recordStudentWithdrew(institutionId, studentId, year, reason, notes) {
+        var institution = _getInstitution(institutionId);
         var student = _getCharacterById(studentId);
-        if (!student) return false;
+        if (!institution || !student) return null;
 
-        return addEducationHistoryEvent(institutionId, {
-            type: 'student_withdrawn',
-            year: year || _getCurrentYear(),
+        return addEvent(institution, {
+            type: HISTORY.STUDENT_WITHDREW,
+            year: year,
             entityId: studentId,
-            entityName: student.name + (student.surname ? ' ' + student.surname : ''),
+            entityName: _formatCharacterName(student),
             details: notes || '',
             reason: reason || 'Withdrew'
         });
     }
 
-    function getStudentEducationHistory(studentId) {
-        if (_processingHistory) {
-            return [];
-        }
-        _processingHistory = true;
-
-        try {
-            var institutions = _getAllEducationalInstitutions();
-            var events = [];
-
-            for (var i = 0; i < institutions.length; i++) {
-                var inst = institutions[i];
-                if (!inst.history) continue;
-
-                var studentEvents = inst.history.filter(function(e) {
-                    return e.entityId === studentId &&
-                        (e.type === 'student_enrolled' ||
-                            e.type === 'student_graduated' ||
-                            e.type === 'student_withdrawn');
-                });
-
-                for (var j = 0; j < studentEvents.length; j++) {
-                    var e = studentEvents[j];
-                    events.push({
-                        institutionId: inst.id,
-                        institutionName: inst.name,
-                        type: e.type,
-                        year: e.year,
-                        entityId: e.entityId,
-                        entityName: e.entityName,
-                        details: e.details,
-                        reason: e.reason
-                    });
-                }
-            }
-
-            events.sort(function(a, b) {
-                return (b.year || 0) - (a.year || 0);
-            });
-
-            return events;
-
-        } finally {
-            _processingHistory = false;
-        }
-    }
-
-    function getFormattedStudentEducationHistory(studentId) {
-        if (_processingHistory) {
-            return '';
-        }
-        _processingHistory = true;
-
-        try {
-            var events = getStudentEducationHistory(studentId);
-
-            if (events.length === 0) {
-                return '<div style="color:var(--dim);font-size:0.55rem;padding:8px;">No education history</div>';
-            }
-
-            var typeLabels = {
-                'student_enrolled': 'Enrolled at',
-                'student_graduated': 'Graduated from',
-                'student_withdrawn': 'Withdrew from'
-            };
-
-            var typeColors = {
-                'student_enrolled': '#4a7db5',
-                'student_graduated': '#c8a844',
-                'student_withdrawn': '#c87040'
-            };
-
-            var html = '<div style="display:flex;flex-direction:column;gap:4px;">';
-
-            for (var i = 0; i < events.length; i++) {
-                var e = events[i];
-                var label = typeLabels[e.type] || e.type;
-                var color = typeColors[e.type] || 'var(--border)';
-
-                html += '<div style="display:flex;align-items:flex-start;gap:8px;padding:4px 8px;background:var(--bg3);border-left:3px solid ' + color + ';border-radius:4px;font-size:0.55rem;">' +
-                    '<span style="min-width:40px;color:var(--dim);font-weight:bold;">' + e.year + '</span>' +
-                    '<span style="color:' + color + ';">◉</span>' +
-                    '<span style="color:var(--accent);">' + label + '</span>' +
-                    '<strong>' + _escapeHtml(e.institutionName) + '</strong>' +
-                    (e.reason ? ' <span style="color:var(--dim);font-size:0.5rem;">(' + _escapeHtml(e.reason) + ')</span>' : '') +
-                    '</div>';
-            }
-
-            html += '</div>';
-            return html;
-
-        } finally {
-            _processingHistory = false;
-        }
-    }
-
-    // =========================================================================
-    // 6. HEADMASTER HISTORY
-    // =========================================================================
-
     function recordHeadmasterAppointed(institutionId, characterId, title, year, notes) {
+        var institution = _getInstitution(institutionId);
         var character = _getCharacterById(characterId);
-        if (!character) return false;
+        if (!institution || !character) return null;
 
-        return addEducationHistoryEvent(institutionId, {
-            type: 'headmaster_appointed',
-            year: year || _getCurrentYear(),
+        var displayTitle = title || 'Headmaster';
+        return addEvent(institution, {
+            type: HISTORY.HEADMASTER_APPOINTED,
+            year: year,
             entityId: characterId,
-            entityName: character.name + (character.surname ? ' ' + character.surname : ''),
-            details: 'Appointed as ' + (title || 'Headmaster'),
+            entityName: _formatCharacterName(character),
+            details: 'Appointed as ' + displayTitle,
             reason: notes || '',
-            extra: JSON.stringify({ title: title || 'Headmaster' })
+            metadata: { title: displayTitle }
         });
     }
 
     function recordHeadmasterEnded(institutionId, characterId, year, reason, notes) {
+        var institution = _getInstitution(institutionId);
         var character = _getCharacterById(characterId);
-        if (!character) return false;
+        if (!institution || !character) return null;
 
-        return addEducationHistoryEvent(institutionId, {
-            type: 'headmaster_ended',
-            year: year || _getCurrentYear(),
+        return addEvent(institution, {
+            type: HISTORY.HEADMASTER_ENDED,
+            year: year,
             entityId: characterId,
-            entityName: character.name + (character.surname ? ' ' + character.surname : ''),
+            entityName: _formatCharacterName(character),
             details: notes || '',
             reason: reason || 'Term ended'
         });
     }
 
-    function getCharacterHeadmasterHistory(characterId) {
-        if (_processingHistory) {
-            return [];
-        }
-        _processingHistory = true;
-
-        try {
-            var institutions = _getAllEducationalInstitutions();
-            var events = [];
-
-            for (var i = 0; i < institutions.length; i++) {
-                var inst = institutions[i];
-                if (!inst.history) continue;
-
-                var hmEvents = inst.history.filter(function(e) {
-                    return e.entityId === characterId &&
-                        (e.type === 'headmaster_appointed' || e.type === 'headmaster_ended');
-                });
-
-                for (var j = 0; j < hmEvents.length; j++) {
-                    var e = hmEvents[j];
-                    events.push({
-                        institutionId: inst.id,
-                        institutionName: inst.name,
-                        type: e.type,
-                        year: e.year,
-                        entityId: e.entityId,
-                        entityName: e.entityName,
-                        details: e.details,
-                        reason: e.reason
-                    });
-                }
-            }
-
-            events.sort(function(a, b) {
-                return (b.year || 0) - (a.year || 0);
-            });
-
-            return events;
-
-        } finally {
-            _processingHistory = false;
-        }
-    }
-
-    // =========================================================================
-    // 7. INSTITUTION CHANGE HISTORY
-    // =========================================================================
-
     function recordInstitutionRenamed(institutionId, oldName, newName, year, reason) {
-        return addEducationHistoryEvent(institutionId, {
-            type: 'institution_renamed',
-            year: year || _getCurrentYear(),
-            details: 'Renamed from "' + oldName + '" to "' + newName + '"' + (reason ? ' (' + reason + ')' : ''),
+        return addEvent(institutionId, {
+            type: HISTORY.INSTITUTION_RENAMED,
+            year: year,
+            details: 'Renamed from "' + oldName + '" to "' + newName + '"',
             previousValue: oldName,
             newValue: newName,
             reason: reason || ''
         });
     }
 
-    function recordInstitutionMoved(institutionId, oldLocation, newLocation, year, reason) {
-        return addEducationHistoryEvent(institutionId, {
-            type: 'institution_moved',
-            year: year || _getCurrentYear(),
-            details: 'Moved from "' + oldLocation + '" to "' + newLocation + '"' + (reason ? ' (' + reason + ')' : ''),
-            previousValue: oldLocation,
-            newValue: newLocation,
+    function recordInstitutionMoved(institutionId, oldLocationName, newLocationName, year, reason) {
+        return addEvent(institutionId, {
+            type: HISTORY.INSTITUTION_MOVED,
+            year: year,
+            details: 'Moved from "' + oldLocationName + '" to "' + newLocationName + '"',
+            previousValue: oldLocationName,
+            newValue: newLocationName,
             reason: reason || ''
         });
     }
 
     function recordReputationChanged(institutionId, oldReputation, newReputation, year, reason) {
-        return addEducationHistoryEvent(institutionId, {
-            type: 'reputation_changed',
-            year: year || _getCurrentYear(),
-            details: 'Reputation changed from ' + oldReputation + ' to ' + newReputation + (reason ? ' (' + reason + ')' : ''),
+        return addEvent(institutionId, {
+            type: HISTORY.REPUTATION_CHANGED,
+            year: year,
+            details: 'Reputation changed from ' + oldReputation + ' to ' + newReputation,
             previousValue: oldReputation,
             newValue: newReputation,
             reason: reason || ''
         });
     }
 
-    // =========================================================================
-    // 8. COMBINED HISTORY
-    // =========================================================================
+    // --- Internal ---
 
-    function getCharacterEducationHistory(characterId) {
-        if (_processingHistory) {
-            return { characterId: characterId, asStudent: [], asTeacher: [], asHeadmaster: [], totalEvents: 0 };
-        }
-        _processingHistory = true;
-
-        try {
-            var studentHistory = getStudentEducationHistory(characterId);
-            var teacherHistory = getTeacherEmploymentHistory(characterId);
-            var headmasterHistory = getCharacterHeadmasterHistory(characterId);
-
-            return {
-                characterId: characterId,
-                asStudent: studentHistory,
-                asTeacher: teacherHistory,
-                asHeadmaster: headmasterHistory,
-                totalEvents: studentHistory.length + teacherHistory.length + headmasterHistory.length
-            };
-
-        } finally {
-            _processingHistory = false;
-        }
+    function _formatCharacterName(character) {
+        if (!character) return '';
+        return character.name + (character.surname ? ' ' + character.surname : '');
     }
 
-    function getFormattedCharacterEducationHistory(characterId) {
-        if (_processingHistory) {
-            return '';
-        }
-        _processingHistory = true;
+    // --- Exports ---
 
-        try {
-            var data = getCharacterEducationHistory(characterId);
+    window.EducationHistory = {
+        addEvent: addEvent,
+        getInstitutionHistory: getInstitutionHistory,
+        getInstitutionHistoryStats: getInstitutionHistoryStats,
+        getTeacherEmploymentHistory: getTeacherEmploymentHistory,
+        getStudentEducationHistory: getStudentEducationHistory,
+        getCharacterHeadmasterHistory: getCharacterHeadmasterHistory,
+        getCharacterEducationHistory: getCharacterEducationHistory,
 
-            if (data.totalEvents === 0) {
-                return '<div style="color:var(--dim);font-size:0.55rem;padding:8px;">No education history</div>';
-            }
-
-            var html = '<div style="display:flex;flex-direction:column;gap:4px;">';
-
-            for (var i = 0; i < data.asStudent.length; i++) {
-                var e = data.asStudent[i];
-                var label = e.type === 'student_enrolled' ? 'Enrolled at' :
-                    (e.type === 'student_graduated' ? 'Graduated from' : 'Withdrew from');
-                html += '<div style="display:flex;align-items:flex-start;gap:8px;padding:4px 8px;background:var(--bg3);border-left:3px solid #4a7db5;border-radius:4px;font-size:0.55rem;">' +
-                    '<span style="min-width:40px;color:var(--dim);font-weight:bold;">' + e.year + '</span>' +
-                    '<span style="color:#4a7db5;">◉</span>' +
-                    '<span style="color:var(--accent);">Student</span>' +
-                    '<span>' + label + '</span>' +
-                    '<strong>' + _escapeHtml(e.institutionName) + '</strong>' +
-                    (e.reason ? ' <span style="color:var(--dim);font-size:0.5rem;">(' + _escapeHtml(e.reason) + ')</span>' : '') +
-                    '</div>';
-            }
-
-            for (var i = 0; i < data.asTeacher.length; i++) {
-                var e = data.asTeacher[i];
-                var label = e.type === 'teacher_hired' ? 'Hired at' : 'Left';
-                var color = e.type === 'teacher_hired' ? '#4a9e6a' : '#c84444';
-                var icon = e.type === 'teacher_hired' ? '◉' : '✗';
-                html += '<div style="display:flex;align-items:flex-start;gap:8px;padding:4px 8px;background:var(--bg3);border-left:3px solid ' + color + ';border-radius:4px;font-size:0.55rem;">' +
-                    '<span style="min-width:40px;color:var(--dim);font-weight:bold;">' + e.year + '</span>' +
-                    '<span style="color:' + color + ';">' + icon + '</span>' +
-                    '<span style="color:var(--accent);">Teacher</span>' +
-                    '<span>' + label + '</span>' +
-                    '<strong>' + _escapeHtml(e.institutionName) + '</strong>' +
-                    (e.reason ? ' <span style="color:var(--dim);font-size:0.5rem;">(' + _escapeHtml(e.reason) + ')</span>' : '') +
-                    '</div>';
-            }
-
-            for (var i = 0; i < data.asHeadmaster.length; i++) {
-                var e = data.asHeadmaster[i];
-                var label = e.type === 'headmaster_appointed' ? 'Appointed at' : 'Term ended at';
-                var color = e.type === 'headmaster_appointed' ? '#6a9ecf' : '#8a5a20';
-                var icon = e.type === 'headmaster_appointed' ? '◉' : '✗';
-                html += '<div style="display:flex;align-items:flex-start;gap:8px;padding:4px 8px;background:var(--bg3);border-left:3px solid ' + color + ';border-radius:4px;font-size:0.55rem;">' +
-                    '<span style="min-width:40px;color:var(--dim);font-weight:bold;">' + e.year + '</span>' +
-                    '<span style="color:' + color + ';">' + icon + '</span>' +
-                    '<span style="color:var(--accent);">Headmaster</span>' +
-                    '<span>' + label + '</span>' +
-                    '<strong>' + _escapeHtml(e.institutionName) + '</strong>' +
-                    (e.reason ? ' <span style="color:var(--dim);font-size:0.5rem;">(' + _escapeHtml(e.reason) + ')</span>' : '') +
-                    '</div>';
-            }
-
-            html += '</div>';
-            return html;
-
-        } finally {
-            _processingHistory = false;
-        }
-    }
-
-    // =========================================================================
-    // 9. EXPORTS
-    // =========================================================================
-
-    window.addEducationHistoryEvent = addEducationHistoryEvent;
-    window.getInstitutionHistory = getInstitutionHistory;
-    window.getFormattedEducationHistory = getFormattedEducationHistory;
-    window.getInstitutionHistoryStats = getInstitutionHistoryStats;
-
-    window.recordTeacherHired = recordTeacherHired;
-    window.recordTeacherLeft = recordTeacherLeft;
-    window.getTeacherEmploymentHistory = getTeacherEmploymentHistory;
-    window.getFormattedTeacherEmploymentHistory = getFormattedTeacherEmploymentHistory;
-
-    window.recordStudentEnrolled = recordStudentEnrolled;
-    window.recordStudentGraduated = recordStudentGraduated;
-    window.recordStudentWithdrew = recordStudentWithdrew;
-    window.getStudentEducationHistory = getStudentEducationHistory;
-    window.getFormattedStudentEducationHistory = getFormattedStudentEducationHistory;
-
-    window.recordHeadmasterAppointed = recordHeadmasterAppointed;
-    window.recordHeadmasterEnded = recordHeadmasterEnded;
-    window.getCharacterHeadmasterHistory = getCharacterHeadmasterHistory;
-
-    window.recordInstitutionRenamed = recordInstitutionRenamed;
-    window.recordInstitutionMoved = recordInstitutionMoved;
-    window.recordReputationChanged = recordReputationChanged;
-
-    window.getCharacterEducationHistory = getCharacterEducationHistory;
-    window.getFormattedCharacterEducationHistory = getFormattedCharacterEducationHistory;
-
-    // Legacy aliases
-    window._addEducationHistoryEvent = addEducationHistoryEvent;
-    window._getInstitutionHistory = getInstitutionHistory;
-    window._getFormattedEducationHistory = getFormattedEducationHistory;
-    window._getInstitutionHistoryStats = getInstitutionHistoryStats;
-    window._recordTeacherHired = recordTeacherHired;
-    window._recordTeacherLeft = recordTeacherLeft;
-    window._getTeacherEmploymentHistory = getTeacherEmploymentHistory;
-    window._getFormattedTeacherEmploymentHistory = getFormattedTeacherEmploymentHistory;
-    window._recordStudentEnrolled = recordStudentEnrolled;
-    window._recordStudentGraduated = recordStudentGraduated;
-    window._recordStudentWithdrew = recordStudentWithdrew;
-    window._getStudentEducationHistory = getStudentEducationHistory;
-    window._getFormattedStudentEducationHistory = getFormattedStudentEducationHistory;
-    window._recordHeadmasterAppointed = recordHeadmasterAppointed;
-    window._recordHeadmasterEnded = recordHeadmasterEnded;
-    window._getCharacterHeadmasterHistory = getCharacterHeadmasterHistory;
-    window._recordInstitutionRenamed = recordInstitutionRenamed;
-    window._recordInstitutionMoved = recordInstitutionMoved;
-    window._recordReputationChanged = recordReputationChanged;
-    window._getCharacterEducationHistory = getCharacterEducationHistory;
-    window._getFormattedCharacterEducationHistory = getFormattedCharacterEducationHistory;
+        recordTeacherHired: recordTeacherHired,
+        recordTeacherDeparted: recordTeacherDeparted,
+        recordStudentEnrolled: recordStudentEnrolled,
+        recordStudentGraduated: recordStudentGraduated,
+        recordStudentWithdrew: recordStudentWithdrew,
+        recordHeadmasterAppointed: recordHeadmasterAppointed,
+        recordHeadmasterEnded: recordHeadmasterEnded,
+        recordInstitutionRenamed: recordInstitutionRenamed,
+        recordInstitutionMoved: recordInstitutionMoved,
+        recordReputationChanged: recordReputationChanged
+    };
 
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            addEducationHistoryEvent: addEducationHistoryEvent,
-            getInstitutionHistory: getInstitutionHistory,
-            getFormattedEducationHistory: getFormattedEducationHistory,
-            getInstitutionHistoryStats: getInstitutionHistoryStats,
-            recordTeacherHired: recordTeacherHired,
-            recordTeacherLeft: recordTeacherLeft,
-            getTeacherEmploymentHistory: getTeacherEmploymentHistory,
-            getFormattedTeacherEmploymentHistory: getFormattedTeacherEmploymentHistory,
-            recordStudentEnrolled: recordStudentEnrolled,
-            recordStudentGraduated: recordStudentGraduated,
-            recordStudentWithdrew: recordStudentWithdrew,
-            getStudentEducationHistory: getStudentEducationHistory,
-            getFormattedStudentEducationHistory: getFormattedStudentEducationHistory,
-            recordHeadmasterAppointed: recordHeadmasterAppointed,
-            recordHeadmasterEnded: recordHeadmasterEnded,
-            getCharacterHeadmasterHistory: getCharacterHeadmasterHistory,
-            recordInstitutionRenamed: recordInstitutionRenamed,
-            recordInstitutionMoved: recordInstitutionMoved,
-            recordReputationChanged: recordReputationChanged,
-            getCharacterEducationHistory: getCharacterEducationHistory,
-            getFormattedCharacterEducationHistory: getFormattedCharacterEducationHistory
-        };
+        module.exports = window.EducationHistory;
     }
-
 })();
