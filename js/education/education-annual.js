@@ -1,798 +1,530 @@
 /**
- * =============================================================================
- * STILL WATERS - EDUCATION ANNUAL (education-annual.js)
- * =============================================================================
- * 
- * This file contains annual processing for education:
- * - Student skill advancement (auto-learning)
- * - Graduation readiness checks
- * - Enrollment age checks
- * - SCHOOL FINANCES - Public school funding + Private school profit
- * - SETTLEMENT BUDGET PROCESSING (NEW)
- * 
- * DEPENDENCIES:
- *   - education-state.js (EducationState)
- *   - education-commands.js (EducationCommands)
- *   - education-learning.js (EducationLearning)
- *   - accessors.js (getCharacterById)
- *   - time.js (getCurrentYearSafe)
- *   - settlement-state.js (SettlementState) - for budget allocation
- * 
- * =============================================================================
+ * STILL WATERS - EDUCATION ANNUAL
+ * Annual processing orchestrator. Owns sequence, not mutations. Calls
+ * EducationCommands for writes, EducationQueries for reads, and commits at the
+ * end via EducationCommands.persist(). Returns structured results. No toasts.
+ *
+ * Pipeline order (frozen):
+ *   1. Learning advancement (per student, per curriculum item)
+ *   2. Graduation readiness evaluation (recorded, not auto-committed)
+ *   3. Settlement education budget allocation (fund schools for the year)
+ *   4. School finances (public funding, private profit)
+ *   5. Persist
  */
 
 (function() {
     'use strict';
 
-    // =========================================================================
-    // 1. RECURSION GUARDS
-    // =========================================================================
+    // --- Dependencies: no fallbacks. ---
 
-    var _processingAnnual = false;
-
-    // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
-    // =========================================================================
-
-    function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(id);
+    function _commands() {
+        if (typeof window.EducationCommands === 'undefined') {
+            throw new Error('education-annual.js requires EducationCommands');
         }
-        return null;
+        return window.EducationCommands;
+    }
+
+    function _queries() {
+        if (typeof window.EducationQueries === 'undefined') {
+            throw new Error('education-annual.js requires EducationQueries');
+        }
+        return window.EducationQueries;
+    }
+
+    function _state() {
+        if (typeof window.EducationState === 'undefined') {
+            throw new Error('education-annual.js requires EducationState');
+        }
+        return window.EducationState;
+    }
+
+    function _rules() {
+        if (typeof window.EducationRules === 'undefined') {
+            throw new Error('education-annual.js requires EducationRules');
+        }
+        return window.EducationRules;
     }
 
     function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
-    function _saveMasterData() {
-        if (typeof window.saveMasterData === 'function') {
-            window.saveMasterData();
+        if (typeof window.getCurrentYearSafe !== 'function') {
+            throw new Error('education-annual.js requires getCurrentYearSafe');
         }
+        return window.getCurrentYearSafe();
     }
 
-    function _showToast(message, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(message, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(message, type);
+    function _getPlaces() {
+        if (typeof window.getPlaces !== 'function') {
+            throw new Error('education-annual.js requires getPlaces');
         }
+        return window.getPlaces();
     }
 
-    function _logEvent(category, type, message, subjects) {
-        if (typeof window.logEvent === 'function') {
-            window.logEvent(category, type, message, subjects);
+    // --- Per-student annual advance ---
+
+    /**
+     * Advance a single student one year of learning, and evaluate readiness.
+     * Does not graduate. Returns a structured result for aggregation.
+     *
+     * @returns {{
+     *   studentId: string,
+     *   skillGains: Array<Object>,
+     *   readyForGraduation: boolean,
+     *   readyDetails: Object|null,
+     *   error: string|null
+     * }}
+     */
+    function _advanceStudentYear(studentRecord, institution, currentYear) {
+        var result = {
+            studentId: studentRecord.studentId,
+            skillGains: [],
+            readyForGraduation: false,
+            readyDetails: null,
+            error: null
+        };
+
+        var student = window.getCharacterById ? window.getCharacterById(studentRecord.studentId) : null;
+        if (!student) {
+            result.error = 'student_not_found';
+            return result;
         }
-    }
-
-    // =========================================================================
-    // 3. DEPENDENCY: EDUCATION LEARNING
-    // =========================================================================
-
-    function _advanceLearning(characterId, curriculumItem, progress) {
-        if (typeof window.EducationLearning !== 'undefined' && window.EducationLearning.advanceLearning) {
-            return window.EducationLearning.advanceLearning(characterId, curriculumItem, progress);
+        if (student.isDeceased) {
+            result.error = 'student_deceased';
+            return result;
         }
-        if (typeof window.advanceLearning === 'function') {
-            return window.advanceLearning(characterId, curriculumItem, progress);
+
+        var yearsEnrolled = currentYear - studentRecord.enrollmentYear;
+        if (yearsEnrolled < 1) return result;
+
+        var skillGainPerYear = institution.skillGainPerYear;
+        if (typeof skillGainPerYear !== 'number' || !isFinite(skillGainPerYear) || skillGainPerYear < 0) {
+            result.error = 'invalid_skill_gain_configuration';
+            return result;
         }
-        return null;
-    }
 
-    function _getProficiency(characterId, curriculumItem) {
-        if (typeof window.EducationLearning !== 'undefined' && window.EducationLearning.getProficiency) {
-            return window.EducationLearning.getProficiency(characterId, curriculumItem);
-        }
-        if (typeof window.getProficiency === 'function') {
-            return window.getProficiency(characterId, curriculumItem);
-        }
-        return 0;
-    }
-
-    function _getCharacterProficiencies(characterId) {
-        if (typeof window.EducationLearning !== 'undefined' && window.EducationLearning.getCharacterProficiencies) {
-            return window.EducationLearning.getCharacterProficiencies(characterId);
-        }
-        if (typeof window.getCharacterProficiencies === 'function') {
-            return window.getCharacterProficiencies(characterId);
-        }
-        return [];
-    }
-
-    // =========================================================================
-    // 4. SETTLEMENT BUDGET HELPERS (NEW)
-    // =========================================================================
-
-    function _getSettlementData(locationId) {
-        if (typeof window.SettlementState !== 'undefined' && window.SettlementState.getSettlementData) {
-            return window.SettlementState.getSettlementData(locationId);
-        }
-        return null;
-    }
-
-    function _getEducationBudget(locationId) {
-        if (typeof window.SettlementState !== 'undefined') {
-            return window.SettlementState.getEducationBudget(locationId);
-        }
-        return 0;
-    }
-
-    function _getSettlementBudgetAllocation(locationId) {
-        if (typeof window.SettlementState !== 'undefined') {
-            return window.SettlementState.getSettlementBudgetAllocation(locationId);
-        }
-        return null;
-    }
-
-    // =========================================================================
-    // 5. ANNUAL PROCESSING
-    // =========================================================================
-
-    function processAnnualEducation(year, options) {
-        if (_processingAnnual) {
-            return { graduations: [], skillGains: [], finances: null };
-        }
-        _processingAnnual = true;
-
-        try {
-            options = options || {};
-            var silent = options.silent === true;
-            var processFinances = options.processFinances !== false;
-            var autoGraduate = options.autoGraduate === true;
-
-            var institutions = EducationState.getAllInstitutions();
-            var results = {
-                graduations: [],
-                skillGains: [],
-                readyForGraduation: [],
-                finances: null,
-                budgetProcessing: null,
-                year: year || _getCurrentYear(),
-                processedCount: 0
-            };
-
-            if (!institutions || institutions.length === 0) {
-                return results;
+        var curriculum = institution.curriculum || [];
+        for (var k = 0; k < curriculum.length; k++) {
+            var item = curriculum[k];
+            var advance = _commands().advanceLearning(student.id, item, skillGainPerYear);
+            if (advance.success && advance.increased > 0) {
+                result.skillGains.push({
+                    studentId: student.id,
+                    studentName: student.name,
+                    institutionId: institution.id,
+                    institutionName: institution.name,
+                    subjectId: advance.subjectId,
+                    subjectName: advance.subjectName,
+                    gain: advance.increased,
+                    newLevel: advance.newLevel
+                });
             }
+            // advanceLearning failures are recorded but do not halt the year.
+            // Silent advance failures indicate invalid curriculum or config.
+        }
 
-            var currentYear = year || _getCurrentYear();
-
-            // ================================================================
-            // 1. Process student learning and graduation readiness
-            // ================================================================
-
-            for (var i = 0; i < institutions.length; i++) {
-                var institution = institutions[i];
-                if (!institution.students || institution.students.length === 0) continue;
-
-                var skillGainPerYear = institution.skillGainPerYear || 10;
-                var students = institution.students.slice();
-
-                for (var j = 0; j < students.length; j++) {
-                    var studentRecord = students[j];
-                    if (studentRecord.graduated) continue;
-
-                    var student = _getCharacterById(studentRecord.studentId);
-
-                    if (!student || student.isDeceased) {
-                        if (typeof window.withdrawStudent === 'function') {
-                            window.withdrawStudent(institution.id, studentRecord.studentId, 'Student deceased');
-                        }
-                        continue;
-                    }
-
-                    var yearsEnrolled = currentYear - studentRecord.enrollmentYear;
-                    if (yearsEnrolled < 1) continue;
-
-                    // ================================================================
-                    // AUTO-LEARNING: Students gain proficiency each year
-                    // ================================================================
-                    var gainAmount = skillGainPerYear;
-
-                    if (institution.curriculum) {
-                        for (var k = 0; k < institution.curriculum.length; k++) {
-                            var curriculumItem = institution.curriculum[k];
-                            var currentSkill = _getProficiency(student.id, curriculumItem);
-                            if (currentSkill >= 100) continue;
-
-                            var result = _advanceLearning(student.id, curriculumItem, gainAmount);
-                            if (result && result.increased > 0) {
-                                results.skillGains.push({
-                                    studentName: student.name,
-                                    studentId: student.id,
-                                    institutionName: institution.name,
-                                    institutionId: institution.id,
-                                    subject: curriculumItem.name,
-                                    gain: result.increased,
-                                    newLevel: result.newLevel,
-                                    yearsEnrolled: yearsEnrolled
-                                });
-                            }
-                        }
-                    }
-
-                    // ================================================================
-                    // GRADUATION READINESS CHECK
-                    // ================================================================
-                    var allMastered = true;
-                    if (institution.curriculum) {
-                        for (var k = 0; k < institution.curriculum.length; k++) {
-                            var skill = _getProficiency(student.id, institution.curriculum[k]);
-                            if (skill < 90) {
-                                allMastered = false;
-                                break;
-                            }
-                        }
-                    }
-
-                    var minYears = institution.requiredYears || 3;
-                    var hasEnoughYears = yearsEnrolled >= minYears;
-
-                    if (allMastered && hasEnoughYears && !studentRecord.graduated) {
-                        // Student is ready for graduation
-                        results.readyForGraduation.push({
-                            student: student,
-                            studentId: student.id,
-                            studentName: student.name,
-                            institution: institution,
-                            institutionId: institution.id,
-                            institutionName: institution.name,
-                            yearsEnrolled: yearsEnrolled,
-                            taughtRoles: institution.taughtRoles || [],
-                            curriculum: institution.curriculum || []
-                        });
-
-                        // Auto-graduate if enabled
-                        if (autoGraduate) {
-                            // If only one role, auto-grant it
-                            var taughtRoles = institution.taughtRoles || [];
-                            var roleToGrant = null;
-                            if (taughtRoles.length === 1) {
-                                roleToGrant = taughtRoles[0];
-                            }
-                            // If multiple roles, don't auto-graduate - user must select
-                            if (taughtRoles.length <= 1) {
-                                if (typeof window.graduateStudent === 'function') {
-                                    var success = window.graduateStudent(institution.id, student.id, currentYear, roleToGrant);
-                                    if (success) {
-                                        results.graduations.push({
-                                            studentName: student.name,
-                                            studentId: student.id,
-                                            institutionName: institution.name,
-                                            institutionId: institution.id,
-                                            year: currentYear,
-                                            yearsEnrolled: yearsEnrolled,
-                                            grantedRole: roleToGrant
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    results.processedCount++;
+        // Readiness via EducationRules. Build the proficiency map from the student.
+        var proficiencyByKey = {};
+        if (student.subjectProgress) {
+            for (var key in student.subjectProgress) {
+                if (student.subjectProgress.hasOwnProperty(key)) {
+                    proficiencyByKey[key] = student.subjectProgress[key].level || 0;
                 }
             }
-
-            // ================================================================
-            // 2. Process school finances (UPDATED with settlement budget)
-            // ================================================================
-
-            if (processFinances) {
-                try {
-                    var financeResults = _processSchoolFinances(currentYear, { silent: true });
-                    results.finances = financeResults;
-                } catch (err) {
-                    results.finances = { error: err.message };
-                }
-            }
-
-            // ================================================================
-            // 3. Process settlement education budget (NEW)
-            // ================================================================
-
-            try {
-                var budgetResults = _processEducationBudgets(currentYear, { silent: true });
-                results.budgetProcessing = budgetResults;
-            } catch (err) {
-                results.budgetProcessing = { error: err.message };
-            }
-
-            _saveMasterData();
-
-            // Build toast message
-            var messages = [];
-            if (results.graduations.length > 0) {
-                messages.push(results.graduations.length + ' students graduated');
-            }
-            if (results.readyForGraduation.length > 0 && !autoGraduate) {
-                messages.push(results.readyForGraduation.length + ' students ready for graduation');
-            }
-            if (results.skillGains.length > 0) {
-                messages.push(results.skillGains.length + ' skill gains');
-            }
-            if (results.finances && results.finances.success) {
-                if (results.finances.totalFunding > 0) {
-                    messages.push(results.finances.totalFunding + ' gold public funding');
-                }
-                if (results.finances.totalProfit > 0) {
-                    messages.push(results.finances.totalProfit + ' gold private profit');
-                }
-            }
-            if (results.budgetProcessing && results.budgetProcessing.success) {
-                if (results.budgetProcessing.totalBudget > 0) {
-                    messages.push(results.budgetProcessing.totalBudget + ' gold settlement budget allocated');
-                }
-            }
-
-            if (messages.length > 0 && !silent) {
-                _showToast('Education Year ' + currentYear + ': ' + messages.join(', '), 'info');
-            }
-
-            return results;
-
-        } finally {
-            _processingAnnual = false;
         }
-    }
 
-    function processAnnualInstitution(institutionId, year) {
-        if (_processingAnnual) {
-            return { graduations: [], skillGains: [], readyForGraduation: [] };
-        }
-        _processingAnnual = true;
+        var ready = _rules().isGraduationEligible({
+            yearsEnrolled: yearsEnrolled,
+            requiredYears: institution.requiredYears,
+            curriculum: curriculum,
+            proficiencyByKey: proficiencyByKey
+        });
 
-        try {
-            var institution = EducationState.getInstitution(institutionId);
-            if (!institution) {
-                return { graduations: [], skillGains: [], readyForGraduation: [] };
-            }
-
-            var currentYear = year || _getCurrentYear();
-            var results = {
-                institutionId: institutionId,
+        if (ready.eligible) {
+            result.readyForGraduation = true;
+            result.readyDetails = {
+                studentId: student.id,
+                studentName: student.name,
+                institutionId: institution.id,
                 institutionName: institution.name,
-                graduations: [],
-                skillGains: [],
-                readyForGraduation: [],
-                processedCount: 0,
-                finances: null
+                yearsEnrolled: yearsEnrolled,
+                taughtRoles: (institution.taughtRoles || []).slice()
             };
+        }
 
-            if (!institution.students || institution.students.length === 0) {
-                return results;
-            }
+        return result;
+    }
 
-            var skillGainPerYear = institution.skillGainPerYear || 10;
-            var students = institution.students.slice();
+    // --- Pipeline steps ---
 
+    function _stepLearningAndReadiness(currentYear, results) {
+        var institutions = _state()._getAllInstitutionsCanonical();
+
+        for (var i = 0; i < institutions.length; i++) {
+            var inst = institutions[i];
+            if (inst.status === 'demolished') continue;
+            if (!inst.students || inst.students.length === 0) continue;
+
+            var students = inst.students.slice();
             for (var j = 0; j < students.length; j++) {
-                var studentRecord = students[j];
-                if (studentRecord.graduated) continue;
+                var rec = students[j];
+                if (rec.graduated) continue;
 
-                var student = _getCharacterById(studentRecord.studentId);
+                var r = _advanceStudentYear(rec, inst, currentYear);
 
-                if (!student || student.isDeceased) {
-                    if (typeof window.withdrawStudent === 'function') {
-                        window.withdrawStudent(institutionId, studentRecord.studentId, 'Student deceased');
+                if (r.error === 'student_deceased' || r.error === 'student_not_found') {
+                    var withdrew = _commands().withdrawStudent(
+                        inst.id,
+                        rec.studentId,
+                        r.error === 'student_deceased' ? 'Student deceased' : 'Student record missing'
+                    );
+                    if (withdrew.success) {
+                        results.withdrawals.push({
+                            studentId: rec.studentId,
+                            institutionId: inst.id,
+                            reason: r.error
+                        });
                     }
                     continue;
                 }
 
-                var yearsEnrolled = currentYear - studentRecord.enrollmentYear;
-                if (yearsEnrolled < 1) continue;
-
-                var gainAmount = skillGainPerYear;
-
-                if (institution.curriculum) {
-                    for (var k = 0; k < institution.curriculum.length; k++) {
-                        var curriculumItem = institution.curriculum[k];
-                        var currentSkill = _getProficiency(student.id, curriculumItem);
-                        if (currentSkill >= 100) continue;
-
-                        var result = _advanceLearning(student.id, curriculumItem, gainAmount);
-                        if (result && result.increased > 0) {
-                            results.skillGains.push({
-                                studentName: student.name,
-                                studentId: student.id,
-                                subject: curriculumItem.name,
-                                gain: result.increased,
-                                newLevel: result.newLevel,
-                                yearsEnrolled: yearsEnrolled
-                            });
-                        }
-                    }
-                }
-
-                var allMastered = true;
-                if (institution.curriculum) {
-                    for (var k = 0; k < institution.curriculum.length; k++) {
-                        var skill = _getProficiency(student.id, institution.curriculum[k]);
-                        if (skill < 90) {
-                            allMastered = false;
-                            break;
-                        }
-                    }
-                }
-
-                var minYears = institution.requiredYears || 3;
-                var hasEnoughYears = yearsEnrolled >= minYears;
-
-                if (allMastered && hasEnoughYears && !studentRecord.graduated) {
-                    results.readyForGraduation.push({
-                        student: student,
-                        studentId: student.id,
-                        studentName: student.name,
-                        yearsEnrolled: yearsEnrolled,
-                        taughtRoles: institution.taughtRoles || [],
-                        curriculum: institution.curriculum || []
-                    });
-                }
-
-                results.processedCount++;
-            }
-
-            // Process finances for this institution
-            try {
-                if (institution.ownershipType === 'public') {
-                    var fundingResult = _applyGovernmentFunding(institutionId, currentYear);
-                    if (fundingResult && fundingResult.success) {
-                        results.finances = {
-                            type: 'public',
-                            funding: fundingResult.funding,
-                            students: fundingResult.studentCount
-                        };
-                    }
-                } else if (institution.ownershipType === 'private') {
-                    var profitResult = _processPrivateSchoolProfit(institutionId, currentYear);
-                    if (profitResult && profitResult.success) {
-                        results.finances = {
-                            type: 'private',
-                            profit: profitResult.profit,
-                            income: profitResult.income,
-                            expenses: profitResult.expenses,
-                            ownerId: profitResult.ownerId
-                        };
-                    }
-                }
-            } catch (e) {
-                results.finances = { error: e.message };
-            }
-
-            _saveMasterData();
-            return results;
-
-        } finally {
-            _processingAnnual = false;
-        }
-    }
-
-    function getStudentsReadyForGraduation(institutionId, year) {
-        if (_processingAnnual) {
-            return [];
-        }
-        _processingAnnual = true;
-
-        try {
-            var institution = EducationState.getInstitution(institutionId);
-            if (!institution || !institution.students) return [];
-
-            var currentYear = year || _getCurrentYear();
-            var ready = [];
-
-            for (var i = 0; i < institution.students.length; i++) {
-                var studentRecord = institution.students[i];
-                if (studentRecord.graduated) continue;
-
-                var student = _getCharacterById(studentRecord.studentId);
-                if (!student || student.isDeceased) continue;
-
-                var yearsEnrolled = currentYear - studentRecord.enrollmentYear;
-                var minYears = institution.requiredYears || 3;
-
-                if (yearsEnrolled < minYears) continue;
-
-                var allMastered = true;
-                if (institution.curriculum) {
-                    for (var j = 0; j < institution.curriculum.length; j++) {
-                        var skill = _getProficiency(student.id, institution.curriculum[j]);
-                        if (skill < 90) {
-                            allMastered = false;
-                            break;
-                        }
-                    }
-                }
-
-                if (allMastered) {
-                    ready.push({
-                        student: student,
-                        record: studentRecord,
-                        yearsEnrolled: yearsEnrolled,
-                        proficiencies: _getCharacterProficiencies(student.id),
-                        taughtRoles: institution.taughtRoles || []
-                    });
-                }
-            }
-
-            return ready;
-
-        } finally {
-            _processingAnnual = false;
-        }
-    }
-
-    // =========================================================================
-    // 6. SCHOOL FINANCE PROCESSING (UPDATED)
-    // =========================================================================
-
-    function _processSchoolFinances(year, options) {
-        if (_processingAnnual) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processingAnnual = true;
-
-        try {
-            options = options || {};
-            var silent = options.silent === true;
-
-            var currentYear = year || _getCurrentYear();
-            var institutions = EducationState.getAllInstitutions();
-
-            var results = {
-                success: true,
-                year: currentYear,
-                publicFunding: [],
-                privateProfits: [],
-                errors: [],
-                totalFunding: 0,
-                totalProfit: 0
-            };
-
-            for (var i = 0; i < institutions.length; i++) {
-                var inst = institutions[i];
-                try {
-                    if (inst.ownershipType === 'public') {
-                        var fundingResult = _applyGovernmentFunding(inst.id, currentYear);
-                        if (fundingResult && fundingResult.success) {
-                            results.publicFunding.push({
-                                institutionId: inst.id,
-                                institutionName: inst.name,
-                                funding: fundingResult.funding,
-                                students: fundingResult.studentCount
-                            });
-                            results.totalFunding += fundingResult.funding;
-                        } else {
-                            results.errors.push({
-                                institutionId: inst.id,
-                                institutionName: inst.name,
-                                error: fundingResult ? fundingResult.reason : 'Unknown error'
-                            });
-                        }
-                    } else if (inst.ownershipType === 'private') {
-                        var profitResult = _processPrivateSchoolProfit(inst.id, currentYear);
-                        if (profitResult && profitResult.success) {
-                            results.privateProfits.push({
-                                institutionId: inst.id,
-                                institutionName: inst.name,
-                                profit: profitResult.profit,
-                                income: profitResult.income,
-                                expenses: profitResult.expenses,
-                                ownerId: profitResult.ownerId,
-                                ownerType: profitResult.ownerType
-                            });
-                            results.totalProfit += profitResult.profit;
-                        } else {
-                            results.errors.push({
-                                institutionId: inst.id,
-                                institutionName: inst.name,
-                                error: profitResult ? profitResult.reason : 'Unknown error'
-                            });
-                        }
-                    }
-                } catch (e) {
+                if (r.error === 'invalid_skill_gain_configuration') {
                     results.errors.push({
+                        scope: 'learning',
                         institutionId: inst.id,
                         institutionName: inst.name,
-                        error: e.message || 'Unknown error'
+                        error: r.error
                     });
+                    continue;
+                }
+
+                for (var s = 0; s < r.skillGains.length; s++) {
+                    results.skillGains.push(r.skillGains[s]);
+                }
+
+                if (r.readyForGraduation) {
+                    results.readyForGraduation.push(r.readyDetails);
                 }
             }
-
-            if (!silent) {
-                var msg = 'School finances processed: ';
-                if (results.totalFunding > 0) msg += results.totalFunding + ' gold public funding, ';
-                if (results.totalProfit > 0) msg += results.totalProfit + ' gold private profit';
-                else msg += 'no significant financial activity';
-                if (results.errors.length > 0) msg += ' (' + results.errors.length + ' errors)';
-                _showToast(msg, results.errors.length > 0 ? 'warning' : 'success');
-            }
-
-            if (results.totalFunding > 0 || results.totalProfit > 0) {
-                _logEvent('education', 'School Finances',
-                    'Public funding: ' + results.totalFunding + ' gold, Private profit: ' + results.totalProfit + ' gold',
-                    []);
-            }
-
-            return results;
-
-        } finally {
-            _processingAnnual = false;
         }
     }
 
-    // =========================================================================
-    // 7. SETTLEMENT BUDGET PROCESSING (NEW)
-    // =========================================================================
+    function _stepBudgetAllocation(currentYear, results) {
+        var places = _getPlaces();
+        var budgetResults = {
+            settlements: [],
+            totalBudget: 0,
+            totalInstitutions: 0
+        };
+
+        for (var i = 0; i < places.length; i++) {
+            var place = places[i];
+
+            var educationBudget = null;
+            if (typeof window.SettlementState !== 'undefined' &&
+                typeof window.SettlementState.getEducationBudget === 'function') {
+                educationBudget = window.SettlementState.getEducationBudget(place.id);
+            }
+            if (educationBudget === null || educationBudget === undefined || educationBudget <= 0) continue;
+
+            var allocated = _commands().receiveSettlementBudget(place.id, educationBudget, currentYear);
+            if (!allocated.success) {
+                results.errors.push({
+                    scope: 'budget',
+                    locationId: place.id,
+                    locationName: place.displayName,
+                    error: allocated.reason
+                });
+                continue;
+            }
+
+            budgetResults.settlements.push({
+                locationId: place.id,
+                locationName: place.displayName,
+                budget: educationBudget,
+                institutions: allocated.institutions,
+                perInstitution: allocated.perInstitution
+            });
+            budgetResults.totalBudget += educationBudget;
+            budgetResults.totalInstitutions += allocated.institutions;
+        }
+
+        results.budgetProcessing = budgetResults;
+    }
+
+    function _stepSchoolFinances(currentYear, results) {
+        var finances = _commands().processAllSchoolFinances(currentYear);
+        if (!finances.success) {
+            results.errors.push({ scope: 'finances', error: finances.reason });
+            results.finances = { success: false, reason: finances.reason };
+            return;
+        }
+        results.finances = {
+            success: true,
+            publicFunding: finances.publicFunding,
+            privateProfits: finances.privateProfits,
+            totalFunding: finances.totalFunding,
+            totalProfit: finances.totalProfit,
+            errors: finances.errors
+        };
+        for (var i = 0; i < finances.errors.length; i++) {
+            results.errors.push(Object.assign({ scope: 'finances' }, finances.errors[i]));
+        }
+    }
+
+    // --- Public entry points ---
 
     /**
-     * Processes education budgets from settlements
-     * Called during annual processing
-     * @param {number} year - Year to process
-     * @param {Object} options - Processing options
-     * @param {boolean} options.silent - Suppress notifications
-     * @returns {Object} Budget processing results
+     * Run the annual education pipeline.
+     *
+     * @param {number} [year]        - The year to process. Defaults to current.
+     * @param {Object} [options]
+     * @param {boolean} [options.autoGraduate=false]
+     *        If true, students ready to graduate are graduated this run.
+     *        Only auto-graduates when the institution teaches at most one role,
+     *        since otherwise a role choice is required.
+     * @param {boolean} [options.processFinances=true]
+     * @param {boolean} [options.processBudgets=true]
+     * @param {boolean} [options.persist=true]
+     * @returns {Object} Structured result envelope.
      */
-    function _processEducationBudgets(year, options) {
-        if (_processingAnnual) {
-            return { success: false, reason: 'Already processing' };
-        }
-        _processingAnnual = true;
+    function processAnnualEducation(year, options) {
+        options = options || {};
 
-        try {
-            options = options || {};
-            var silent = options.silent === true;
-            var currentYear = year || _getCurrentYear();
+        var currentYear = (year !== undefined) ? year : _getCurrentYear();
+        var autoGraduate = options.autoGraduate === true;
+        var processFinances = options.processFinances !== false;
+        var processBudgets = options.processBudgets !== false;
+        var shouldPersist = options.persist !== false;
 
-            var places = typeof window.getPlaces === 'function' ? window.getPlaces() : [];
-            var results = {
-                success: true,
-                year: currentYear,
-                settlements: [],
-                totalBudget: 0,
-                totalInstitutions: 0,
-                errors: []
-            };
+        var results = {
+            year: currentYear,
+            status: 'completed',
+            processedStudentCount: 0,
+            skillGains: [],
+            withdrawals: [],
+            readyForGraduation: [],
+            graduations: [],
+            finances: null,
+            budgetProcessing: null,
+            errors: []
+        };
 
-            for (var i = 0; i < places.length; i++) {
-                var place = places[i];
-                try {
-                    var settlement = _getSettlementData(place.id);
-                    if (!settlement) continue;
+        // Step 1+2: learning and readiness.
+        _stepLearningAndReadiness(currentYear, results);
 
-                    var educationBudget = settlement.educationBudget || 0;
-                    if (educationBudget <= 0) continue;
+        // Auto-graduation (optional).
+        if (autoGraduate) {
+            for (var i = 0; i < results.readyForGraduation.length; i++) {
+                var ready = results.readyForGraduation[i];
+                if (ready.taughtRoles.length > 1) continue; // require explicit role choice
+                var roleToGrant = ready.taughtRoles.length === 1 ? ready.taughtRoles[0] : null;
 
-                    // Get institutions in this settlement
-                    var institutions = EducationState.getInstitutionsByLocation(place.id);
-                    if (institutions.length === 0) {
-                        results.errors.push({
-                            locationId: place.id,
-                            locationName: place.displayName,
-                            error: 'No institutions to receive budget'
-                        });
-                        continue;
-                    }
-
-                    // Distribute budget equally among institutions
-                    var perInstitution = educationBudget / institutions.length;
-                    var distributed = 0;
-
-                    for (var j = 0; j < institutions.length; j++) {
-                        var inst = institutions[j];
-                        inst.governmentFunding = perInstitution;
-                        inst.governmentFundingYear = currentYear;
-                        inst.lastFunded = currentYear;
-
-                        EducationState._updateInstitution(inst.id, {
-                            governmentFunding: perInstitution,
-                            governmentFundingYear: currentYear,
-                            lastFunded: currentYear
-                        });
-
-                        distributed += perInstitution;
-
-                        _logEvent('education', 'institution_budget_allocation',
-                            'Institution ' + inst.name + ' received ' + Math.round(perInstitution) + 
-                            ' gold from settlement ' + place.displayName + ' budget',
-                            []);
-                    }
-
-                    results.settlements.push({
-                        locationId: place.id,
-                        locationName: place.displayName,
-                        budget: educationBudget,
-                        institutions: institutions.length,
-                        distributed: Math.round(distributed),
-                        perInstitution: Math.round(perInstitution)
+                var grad = _commands().graduateStudent(
+                    ready.institutionId,
+                    ready.studentId,
+                    currentYear,
+                    roleToGrant
+                );
+                if (grad.success) {
+                    results.graduations.push({
+                        studentId: ready.studentId,
+                        studentName: ready.studentName,
+                        institutionId: ready.institutionId,
+                        institutionName: ready.institutionName,
+                        grantedRole: grad.grantedRole,
+                        year: currentYear
                     });
-
-                    results.totalBudget += educationBudget;
-                    results.totalInstitutions += institutions.length;
-
-                    _logEvent('education', 'settlement_budget_processed',
-                        'Settlement ' + place.displayName + ' allocated ' + educationBudget + 
-                        ' gold to ' + institutions.length + ' institutions',
-                        []);
-
-                } catch (e) {
+                } else {
                     results.errors.push({
-                        locationId: place.id,
-                        locationName: place.displayName,
-                        error: e.message || 'Unknown error'
+                        scope: 'graduation',
+                        institutionId: ready.institutionId,
+                        studentId: ready.studentId,
+                        error: grad.reason
                     });
                 }
             }
+        }
 
-            if (!silent) {
-                var msg = 'Education budgets processed: ' + results.totalBudget + ' gold distributed to ' + 
-                          results.totalInstitutions + ' institutions';
-                if (results.errors.length > 0) {
-                    msg += ' (' + results.errors.length + ' errors)';
+        // Step 3: settlement education budget allocation (before finances).
+        if (processBudgets) {
+            _stepBudgetAllocation(currentYear, results);
+        }
+
+        // Step 4: school finances.
+        if (processFinances) {
+            _stepSchoolFinances(currentYear, results);
+        }
+
+        // Step 5: persist once.
+        if (shouldPersist) {
+            try {
+                _commands().persist();
+            } catch (e) {
+                results.errors.push({ scope: 'persist', error: e.message || 'Unknown persistence error' });
+            }
+        }
+
+        // Determine overall status.
+        if (results.errors.length > 0) {
+            var fatalErrors = results.errors.filter(function(e) {
+                return e.scope === 'persist' || e.scope === 'learning';
+            });
+            results.status = fatalErrors.length > 0 ? 'partial' : 'completed_with_errors';
+        }
+
+        results.processedStudentCount =
+            results.skillGains.length > 0
+                ? _uniqueStudents(results.skillGains).length
+                : 0;
+
+        return results;
+    }
+
+    /**
+     * Run the annual pipeline for a single institution.
+     * Uses the same per-student primitive as processAnnualEducation. Does not
+     * persist or allocate budget (budget allocation is a settlement-level
+     * concern). School finance for the institution runs unless disabled.
+     */
+    function processAnnualInstitution(institutionId, year, options) {
+        options = options || {};
+        var currentYear = (year !== undefined) ? year : _getCurrentYear();
+        var processFinance = options.processFinance !== false;
+
+        var inst = _state()._getInstitutionCanonical(institutionId);
+        if (!inst) {
+            return {
+                institutionId: institutionId,
+                status: 'failed',
+                error: 'institution_not_found',
+                skillGains: [],
+                withdrawals: [],
+                readyForGraduation: [],
+                graduations: [],
+                finances: null,
+                errors: [{ scope: 'lookup', error: 'institution_not_found' }]
+            };
+        }
+
+        var results = {
+            institutionId: inst.id,
+            institutionName: inst.name,
+            year: currentYear,
+            status: 'completed',
+            processedStudentCount: 0,
+            skillGains: [],
+            withdrawals: [],
+            readyForGraduation: [],
+            graduations: [],
+            finances: null,
+            errors: []
+        };
+
+        if (inst.status === 'demolished') {
+            results.status = 'skipped';
+            results.errors.push({ scope: 'status', error: 'institution_demolished' });
+            return results;
+        }
+
+        var students = (inst.students || []).slice();
+        var studentIds = {};
+
+        for (var j = 0; j < students.length; j++) {
+            var rec = students[j];
+            if (rec.graduated) continue;
+
+            var r = _advanceStudentYear(rec, inst, currentYear);
+
+            if (r.error === 'student_deceased' || r.error === 'student_not_found') {
+                var withdrew = _commands().withdrawStudent(
+                    inst.id,
+                    rec.studentId,
+                    r.error === 'student_deceased' ? 'Student deceased' : 'Student record missing'
+                );
+                if (withdrew.success) {
+                    results.withdrawals.push({
+                        studentId: rec.studentId,
+                        reason: r.error
+                    });
                 }
-                _showToast(msg, results.errors.length > 0 ? 'warning' : 'success');
+                continue;
             }
 
-            return results;
+            if (r.error === 'invalid_skill_gain_configuration') {
+                results.errors.push({ scope: 'learning', error: r.error });
+                continue;
+            }
 
-        } finally {
-            _processingAnnual = false;
+            for (var s = 0; s < r.skillGains.length; s++) {
+                results.skillGains.push(r.skillGains[s]);
+                studentIds[r.skillGains[s].studentId] = true;
+            }
+
+            if (r.readyForGraduation) {
+                results.readyForGraduation.push(r.readyDetails);
+            }
         }
+
+        results.processedStudentCount = Object.keys(studentIds).length;
+
+        if (processFinance) {
+            if (inst.ownershipType === 'public') {
+                var fr = _commands().applyGovernmentFunding(inst.id, currentYear);
+                if (fr.success) {
+                    results.finances = {
+                        type: 'public',
+                        funding: fr.funding,
+                        studentCount: fr.studentCount
+                    };
+                } else {
+                    results.errors.push({ scope: 'finances', error: fr.reason });
+                }
+            } else if (inst.ownershipType === 'private') {
+                var pr = _commands().processPrivateSchoolProfit(inst.id, currentYear);
+                if (pr.success) {
+                    results.finances = {
+                        type: 'private',
+                        profit: pr.profit,
+                        ownerId: pr.ownerId,
+                        ownerType: pr.ownerType
+                    };
+                } else {
+                    results.errors.push({ scope: 'finances', error: pr.reason });
+                }
+            }
+        }
+
+        if (results.errors.length > 0) {
+            results.status = 'completed_with_errors';
+        }
+
+        return results;
     }
 
-    // =========================================================================
-    // 8. HELPERS (Wrappers for EducationCommands)
-    // =========================================================================
-
-    function _applyGovernmentFunding(institutionId, year) {
-        if (typeof window.EducationCommands !== 'undefined' && window.EducationCommands.applyGovernmentFunding) {
-            return window.EducationCommands.applyGovernmentFunding(institutionId, year);
-        }
-        if (typeof window.applyGovernmentFunding === 'function') {
-            return window.applyGovernmentFunding(institutionId, year);
-        }
-        return { success: false, reason: 'Funding function not available' };
+    /**
+     * Backwards-compatible alias. Delegates to EducationQueries.
+     * Prefer EducationQueries.getStudentsReadyForGraduation directly.
+     */
+    function getStudentsReadyForGraduation(institutionId, year) {
+        return _queries().getStudentsReadyForGraduation(institutionId, year);
     }
 
-    function _processPrivateSchoolProfit(institutionId, year) {
-        if (typeof window.EducationCommands !== 'undefined' && window.EducationCommands.processPrivateSchoolProfit) {
-            return window.EducationCommands.processPrivateSchoolProfit(institutionId, year);
-        }
-        if (typeof window.processPrivateSchoolProfit === 'function') {
-            return window.processPrivateSchoolProfit(institutionId, year);
-        }
-        return { success: false, reason: 'Profit function not available' };
+    // --- Internal helpers ---
+
+    function _uniqueStudents(gains) {
+        var ids = {};
+        for (var i = 0; i < gains.length; i++) ids[gains[i].studentId] = true;
+        return Object.keys(ids);
     }
 
-    // =========================================================================
-    // 9. EXPORTS
-    // =========================================================================
+    // --- Exports ---
 
     window.EducationAnnual = {
         processAnnualEducation: processAnnualEducation,
         processAnnualInstitution: processAnnualInstitution,
-        getStudentsReadyForGraduation: getStudentsReadyForGraduation,
-        _processSchoolFinances: _processSchoolFinances,
-        _processEducationBudgets: _processEducationBudgets
+        getStudentsReadyForGraduation: getStudentsReadyForGraduation
     };
 
-    // Legacy aliases
-    window._processAnnualEducation = processAnnualEducation;
-    window._processSchoolFinances = _processSchoolFinances;
-    window._processEducationBudgets = _processEducationBudgets;
-
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            processAnnualEducation: processAnnualEducation,
-            processAnnualInstitution: processAnnualInstitution,
-            getStudentsReadyForGraduation: getStudentsReadyForGraduation,
-            _processSchoolFinances: _processSchoolFinances,
-            _processEducationBudgets: _processEducationBudgets
-        };
+        module.exports = window.EducationAnnual;
     }
-
 })();
