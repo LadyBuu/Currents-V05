@@ -1,1649 +1,826 @@
-File: education-doc.txt
-[file content begin]
-# EDUCATION SYSTEM - COMPLETE DOCUMENTATION
+# `education-doc.txt` — full rewrite
 
-## SYSTEM OVERVIEW
+Replaces the old documentation entirely. The old file described the pre-refactor architecture: `village_school`/`guild_hall`/`cathedral_school` institution types, `GENERAL_SUBJECTS`/`HIGHER_SUBJECTS` splits, `EducationState` as both state and persistence layer, formatted HTML functions inside the history module, toasts from Commands, direct recursion guards on queries. None of that matches the current code.
 
-The Education System manages all educational institutions, student enrollment, teacher management, learning progression, and institutional administration within the game world. It provides a complete API for institution CRUD operations, student/teacher management, headmaster appointments, curriculum management, and settlement budget integration.
+This version documents the twelve files as they now exist.
 
-**Key Design Principles:**
-- **Single Source of Truth**: `education-state.js` holds all education data
-- **Command-Query Separation**: Commands (writes) vs Queries (reads) separated
-- **Separation of Concerns**: State, commands, queries, learning, annual processing, UI all separate
-- **Recursion Guards**: All public functions protected from infinite loops
-- **Role Integration**: Institutions can teach specific roles (professions)
-- **Settlement Integration**: Public schools receive funding from settlement budgets
-- **Private School Economy**: Private schools charge tuition and generate profit for owners
-- **Religious School System**: Schools owned by religions with doctrine teaching and clergy oversight
-- **Tuition System**: Dynamic tuition based on reputation, type, and manual overrides
-- **Specialization**: Institutions can specialize in specific role categories
-- **Graduation with Role Granting**: Graduates can receive roles upon completion
-- **History Tracking**: Full historical record of all institution events
+```text
+# EDUCATION SYSTEM - DOCUMENTATION
 
----
+## Overview
 
-## FILE STRUCTURE
+The Education System manages educational institutions, enrolment, teaching
+staff, curriculum, learning progression, tuition, ownership, finance, and
+historical records. It is one of the layered domain subsystems alongside
+Apprenticeship, Professional, Relationship, Settlement, Religion, and Household.
 
-```
-js/systems/education/
-├── education-state.js              # Single source of truth + cache + notifications
-├── education-commands.js           # All write operations (CRUD, enrollment, hiring, graduation)
-├── education-queries.js            # All read operations (search, filter, stats, demand)
-├── education-learning.js           # Core learning mechanics (proficiency, literacy, advancement)
-├── education-annual.js             # Annual processing (learning, graduation, finances, budgets)
-├── education-history.js            # History tracking (teacher, student, headmaster events)
-├── education-constants.js          # All constants (levels, subjects, institution types, ownership types)
-├── education-system.js             # Wrapper for backward compatibility
-└── modals-education.js             # UI modals
+Design principles:
 
-js/core/modals/
-├── modals-education.js                 # Main education modals
-├── modals-char-select.js               # Character selector
-└── modals-household-selector.js        # Household selector
-```
+- Layered: constants → rules → state → queries/commands → annual → UI.
+- Single source of truth: `education-state.js` owns canonical institution records.
+- Projections: queries return frozen projections, never live records.
+- Transaction boundary: commands mutate; the caller persists once.
+- Fail loud: missing dependencies throw; they do not return empty values.
+- Append-only history: education events are never edited or deleted.
+- Cross-domain via commands: education calls Role, Household, Settlement, and
+  Religion commands for cross-domain effects; it does not touch their state.
 
 ---
 
-# 1. EDUCATION-STATE.JS
+## File layout
 
-**PURPOSE:** Single source of truth for all education data. Manages caching, subscriptions, and data loading.
+    js/systems/education/
+    ├── education-constants.js    Vocabulary, static config, tuning parameters.
+    ├── education-rules.js        Pure policy: level thresholds, eligibility.
+    ├── education-state.js        Canonical institutions, indexes, subscriptions.
+    ├── education-queries.js      Semantic reads; returns frozen projections.
+    ├── education-commands.js     All writes; one save boundary per caller batch.
+    ├── education-learning.js     Proficiency, literacy, education level reads.
+    ├── education-annual.js       Annual pipeline orchestrator.
+    ├── education-history.js      Append-only event ledger on each institution.
+    ├── education-system.js       Legacy alias shim. Slated for deletion.
+    ├── education-ui-list.js      Renderers for lists, cards, tables, summaries.
+    └── modals-education.js       Interactive modals for all education mutations.
 
-**DEPENDENCIES:**
-- `accessors.js` - `getCharacters`, `getPlaces`
-- `ids.js` - `generateId`
-- `storage.js` - `saveMasterData`
+Load order:
 
----
+    education-constants.js
+    education-rules.js
+    education-state.js
+    education-learning.js
+    education-history.js
+    education-queries.js
+    education-commands.js
+    education-annual.js
+    education-system.js          (only if legacy callers still need aliases)
+    education-ui-list.js
+    modals-education.js
 
-## Constants (Imported from education-constants.js)
-
-### Education Levels
-
-| Level | yearsRequired | literacy | Description |
-|-------|---------------|----------|-------------|
-| ILLITERATE | 0 | 0 | Cannot read or write |
-| BASIC | 2 | 30 | Can read simple texts |
-| LITERATE | 4 | 60 | Can read and write fluently |
-| EDUCATED | 6 | 80 | Well-read and knowledgeable |
-| SCHOLAR | 10 | 95 | Master of multiple disciplines |
-
-### Institution Types
-
-| Type | maxStudents | baseReputation | requiredYears | minPopulation | Description |
-|------|-------------|----------------|---------------|---------------|-------------|
-| village_school | 30 | 30 | 3 | 200 | Small local school for basic education |
-| guild_hall | 50 | 50 | 5 | 1000 | Trade and craft education center |
-| cathedral_school | 40 | 60 | 4 | 500 | Religious and classical education |
-| university | 200 | 80 | 6 | 5000 | Higher education institution |
-| military_academy | 100 | 65 | 4 | 2000 | Officer training and military science |
-| court_tutor | 5 | 90 | 4 | 100 | Private education for nobility |
-| specialized_school | 40 | 50 | 4 | 500 | School focused on a specific profession |
-
-### Religious Institution Types (NEW)
-
-| Type | maxStudents | baseReputation | requiredYears | minPopulation | Description |
-|------|-------------|----------------|---------------|---------------|-------------|
-| religious_seminary | 30 | 55 | 4 | 500 | Institution for religious education and clergy training |
-| monastic_school | 20 | 50 | 3 | 300 | School operated by a religious order |
-
-### Ownership Types (NEW)
-
-| Type | Description |
-|------|-------------|
-| PUBLIC | Government-funded, free tuition |
-| PRIVATE | Tuition-funded, owner receives profit |
-| RELIGIOUS | Religion-owned, doctrine teaching, often subsidized |
+App bootstrap calls `EducationState.hydrateFromMasterData([...])` once before
+any query or command runs. There is no implicit hydration on module load.
 
 ---
 
-## Data Access Functions
+## Module responsibilities
 
-### `EducationState.subscribe(callback)`
+### education-constants.js
 
-| Property | Value |
-|----------|-------|
-| **Description** | Subscribes to state changes |
-| **Parameters** | `callback` (function) - Receives event object |
-| **Returns** | `function` - Unsubscribe function |
+Vocabulary and configuration only. No logic.
 
-### `EducationState.getAllInstitutions()`
+Exports on `window`:
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all educational institutions |
-| **Returns** | `Array` - Array of institution objects |
+    EDUCATION_LEVELS        Literacy-based education tiers.
+    SUBJECTS                Canonical subject registry.
+    INSTITUTION_TYPES       Seven institution tiers, size/prestige-based.
+    OWNERSHIP_TYPES         public | private | religious.
+    SCHOOL_TIERS            Exclusive reputation bands (half-open).
+    ROLE_CATEGORIES         Role category vocabulary (for specialization).
+    TUITION_DEFAULTS        Tuition tuning parameters.
+    TUITION_TYPE_MULTIPLIERS Per-type tuition multipliers.
+    HISTORY_EVENT_TYPES     Closed vocabulary for history events.
 
-### `EducationState.getInstitution(id)`
+Conventions:
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets an institution by ID |
-| **Parameters** | `id` (string) - Institution ID |
-| **Returns** | `Object|null` - Institution object or null |
+- `education-constants.js` is the only source for these values. No other module
+  may define fallback copies.
+- `INSTITUTION_TYPES[*].baseTuition` is canonical. There is no separate
+  `DEFAULT_TUITION_BY_TYPE`.
+- `SCHOOL_TIERS` boundaries are half-open `[min, max)`. A reputation of 40 is
+  `lower_middle`, not `poor`.
+- `HISTORY_EVENT_TYPES` is closed. The history module rejects unknown types.
 
-### `EducationState.getInstitutionsByLocation(locationId)`
+### education-rules.js
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets institutions by location |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Array` - Array of institution objects |
+Pure policy. No state, no I/O, no mutation. Every function accepts facts and
+returns a decision.
 
-### `EducationState.getInstitutionsByType(typeId)`
+Key functions:
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets institutions by type |
-| **Parameters** | `typeId` (string) |
-| **Returns** | `Array` - Array of institution objects |
+    getEducationLevelForLiteracy(literacy)     Highest level whose threshold is met.
+    isLiterateAtLevel(literacy)                literacy >= LITERACY_THRESHOLD (30).
+    calculateLearningResult(current, delta)    Validated, clamped proficiency.
+    isGraduationEligible({...})                Single canonical graduation check.
+    progressKeyFor(curriculumItem)             `role_<id>` or `<id>`.
 
-### `EducationState.getInstitutionsByOwner(ownerId, ownerType)`
+`isGraduationEligible` is the only implementation of graduation readiness. It
+takes `{ yearsEnrolled, requiredYears, curriculum, proficiencyByKey }` and
+returns `{ eligible, missing, reason }`.
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets institutions by owner |
-| **Parameters** | `ownerId` (string), `ownerType` (string - 'character', 'household', or 'religion') |
-| **Returns** | `Array` - Array of institution objects |
+### education-state.js
 
-### `EducationState.getInstitutionsByOwnershipType(ownershipType)`
+Canonical institution records, indexes, subscriptions, UI state, hydration.
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets institutions by ownership type |
-| **Parameters** | `ownershipType` (string - 'public', 'private', or 'religious') |
-| **Returns** | `Array` - Array of institution objects |
+Public API:
 
-### `EducationState.getPublicSchools()`
+    subscribe(callback)                        Subscribe to state events.
+    getAllInstitutions()                       Cloned records (defensive).
+    getInstitution(id)                         Cloned record or null.
+    getInstitutionsByLocation(locationId)      Cloned records.
+    getInstitutionsByType(typeId)              Cloned records.
+    getInstitutionsByOwnershipType(type)       Cloned records.
+    getInstitutionsByReligion(religionId)      Cloned records.
+    getUIState()                               Frozen snapshot.
+    updateUIState(partial)                     Merge top-level fields.
+    hydrateFromMasterData(list)                Replace state from raw data.
+    migrateInstitution(raw)                    Normalize a raw record.
+    isHydrated()                               Whether hydration has run.
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all public schools |
-| **Returns** | `Array` - Array of institution objects |
+Internal API (for Commands only, prefixed `_`):
 
-### `EducationState.getPrivateSchools()`
+    _getInstitutionCanonical(id)               Live canonical record.
+    _getAllInstitutionsCanonical()             Live array.
+    _addInstitution(inst)                      Add and reindex. No save.
+    _updateInstitution(id, patch)              Patch and reindex. No save.
+    _removeInstitution(id)                     Remove and reindex. No save.
+    _indexesRebuild()                          Rebuild indexes manually.
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all private schools |
-| **Returns** | `Array` - Array of institution objects |
+Rules:
 
-### `EducationState.getReligiousSchools()` (NEW)
+- State does not persist. Callers call `EducationCommands.persist()`.
+- State does not interpret domain fields. No `religionId → isReligiousSchool`
+  inference, no `specializationCategory → isSpecialized` inference.
+- Reads return clones. Mutating a clone has no effect on canonical state.
+- Subscriptions are queued, not recursive. Nested mutations dispatch after the
+  outer notification finishes; events are never dropped.
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all religious schools |
-| **Returns** | `Array` - Array of institution objects |
+### education-learning.js
 
-### `EducationState.getInstitutionsByReligion(religionId)` (NEW)
+Proficiency, literacy, and education level reads. Hydration helper.
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets institutions by religion ID |
-| **Parameters** | `religionId` (string) |
-| **Returns** | `Array` - Array of institution objects |
+Public API:
 
-### `EducationState.getReligiousSchoolsByReligion(religionId)` (NEW)
+    ensureCharacterEducationRecord(character)  Initialize education fields.
+    getProficiency(characterId, item)          Subject proficiency 0-100.
+    getSubjectProficiency(characterId, id)     By subject id or `role_<id>`.
+    getCharacterProficiencies(characterId)     All proficiency records.
+    getEducationLevel(characterId)             Level object from constants.
+    isLiterate(characterId)                    Literacy threshold predicate.
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets religious schools by religion |
-| **Parameters** | `religionId` (string) |
-| **Returns** | `Array` - Array of institution objects |
+Rules:
+
+- `subjectProgress.literacy.level` is canonical for literacy.
+  `character.isLiterate` is a materialized milestone maintained by
+  `EducationCommands.advanceLearning` and is not consulted by reads.
+- Reads do not mutate. `ensureCharacterEducationRecord` is explicit; it is
+  never called by a read.
+
+### education-queries.js
+
+All semantic reads. Returns frozen projections, never live records.
+
+Institution queries:
+
+    getInstitutions(filters)                Filtered summaries. Sorted by reputation.
+    getInstitution(id)                      Single summary.
+    getInstitutionDetails(id)               Detail projection.
+    getInstitutionsInRegion(locId, deep)    Region summaries.
+
+Religious school queries:
+
+    getReligiousInstitutions(religionId, locationId)
+    getInstitutionsByReligion(religionId)
+    getReligiousInstitutionsByLocation(locationId)
+
+The predicate is `isReligiousSchool === true`. Ownership type `'religious'` is
+a separate concept and is queried via `getInstitutions({ ownershipType })`.
+
+Student / teacher / headmaster:
+
+    getInstitutionStudents(id, includeChar)     Student projections.
+    getInstitutionGraduates(id, includeChar)    Graduate projections.
+    getInstitutionTeachers(id, includeChar)     Teacher projections.
+    getStudentInstitutions(studentId)           Institutions a student attended.
+    isStudentEnrolled(instId, studentId)        Enrolment check.
+    getHeadmaster(instId)                       Headmaster projection.
+    getHeadmasterHistory(instId)                History projections.
+
+Statistics:
+
+    getInstitutionStatistics(id)             Per-institution stats.
+    getLocationEducationSummary(loc, deep)   Aggregate for a location.
+
+Graduation readiness:
+
+    getStudentsReadyForGraduation(instId, year)  Projections of eligible students.
+
+Institutions needing teachers:
+
+    getInstitutionsNeedingTeachers(maxRep, minStudents)
+
+Role queries:
+
+    getInstitutionsByRole(roleId)
+    getInstitutionsBySpecializationCategory(cat)
+    getInstitutionsTeachingRoleCategory(cat)
+    getTaughtRolesByInstitution(instId)
+    getAvailableRolesForInstitution(instId)
+
+Demographic and learning reads:
+
+    getLiteracyRate(locId, minAge)
+    getSchoolAgePopulation(locId, minAge, maxAge)
+    getEligibleStudents(locId, minAge, maxAge, instId)
+    getStudentDemand(locId)
+
+Planning and recommendation (policy; may move to Rules later):
+
+    getEducationHealthScore(locId)
+    recommendNewSchoolLocations(minSchoolAgePop)
+    getEducationDemandBySettlement(locId, options)
+    getStudentDensityBySettlement(locId, options)
+
+Projection shapes:
+
+    InstitutionSummary
+        id, name, icon, type, typeName, locationId, locationName,
+        status, ownershipType, ownerId, ownerType, ownerName,
+        isReligiousSchool, religionId, religionName,
+        reputation, currentStudentCount, teacherCount, graduateCount,
+        maxStudents, utilization, curriculumCount, taughtRoleCount,
+        isSpecialized, specializationCategory, headmasterName, foundedYear
+
+    InstitutionDetail
+        summary, description, students[], teachers[], graduates[],
+        headmaster, curriculum[], taughtRoles[], educationBudget,
+        status, demolishedAt, demolishedReason, destroyedBy
+
+    StudentProjection
+        studentId, studentName, enrollmentYear, graduated, graduationYear,
+        attendance, notes, tuitionPaid, tuitionYear, tuitionWaived,
+        grantedRole, age, gender
+
+    TeacherProjection
+        teacherId, teacherName, subjectId, subjectName, subjectType, hiredYear
+
+    GraduateProjection
+        studentId, studentName, graduationYear, grantedRole
+
+Rules:
+
+- All projections are frozen. Callers cannot mutate canonical state through
+  them.
+- Queries compose freely. There is no global query mutex.
+- Missing infrastructure dependencies (EducationState, getCharacters, ...)
+  throw. Missing domain entities return `null` or an empty list.
+
+### education-commands.js
+
+All write operations. Every command:
+
+    1. Validates input and dependencies.
+    2. Reads canonical state via `_getInstitutionCanonical`.
+    3. Applies mutations via `_addInstitution` / `_updateInstitution` /
+       `_removeInstitution` and cross-domain commands.
+    4. Emits history events via `EducationHistory`.
+    5. Returns a structured result.
+
+Commands do not persist. The caller calls `EducationCommands.persist()` once
+after a batch. Commands do not toast. The caller surfaces notifications.
+
+Institution CRUD:
+
+    createInstitution(options)           Single object. Legacy positional also accepted.
+    createReligiousSchool(religionId, name, locationId, options)
+    updateInstitution(id, updates)
+    deleteInstitution(id, cascade)
+    updateReputation(id, delta)
+
+Teachers:
+
+    hireTeacher(institutionId, teacherId, subjectId)
+    fireTeacher(institutionId, teacherId, reason)
+
+Students:
+
+    enrollStudent(institutionId, studentId, startYear)
+    graduateStudent(institutionId, studentId, graduationYear, selectedRoleId)
+    withdrawStudent(institutionId, studentId, reason)
+
+Learning:
+
+    advanceLearning(characterId, curriculumItem, progress)
+
+Headmaster:
+
+    setHeadmaster(institutionId, characterId, title, startYear)
+    endHeadmasterTerm(institutionId, endYear, reason)
+
+Tuition:
+
+    calculateTuition(institutionId, year)
+    updateTuition(institutionId, newTuition, reason)
+    updateTuitionWaiver(institutionId, waiveTuition, reason)
+    getTuitionHistory(institutionId, limit)
+
+Ownership:
+
+    setSchoolOwnership(institutionId, ownershipType, ownerId, ownerType)
+    setSchoolOwner(institutionId, ownerId, ownerType)
+
+Finance:
+
+    calculatePublicSchoolFunding(institutionId, year)
+    applyGovernmentFunding(institutionId, year)
+    calculatePrivateSchoolProfit(institutionId, year)
+    processPrivateSchoolProfit(institutionId, year)
+    processAllSchoolFinances(year)
+
+Settlement:
+
+    receiveSettlementBudget(locationId, amount, year)
+    getSettlementFundingSummary(locationId, year)
+
+Demolition:
+
+    demolishInstitution(id, reason, year, options)
+    rebuildInstitution(id, rebuildYear, options)
+    getDemolishedInstitutions(options)
+    getInstitutionDemolitionStats(locationId)
+
+Persistence:
+
+    persist()                            Save current state. Caller-owned.
+
+Result shape:
+
+    { success: true, ...command-specific fields }
+    { success: false, reason: string, ...contextual fields }
+
+Command semantics:
+
+- `createInstitution` accepts a single options object. Legacy positional
+  `(name, typeId, locationId, options)` is detected and normalized.
+- `enrollStudent` deducts tuition from the student's household if the
+  institution is private and tuition is non-zero. Household wealth is read via
+  `HouseholdEconomy`. If the household cannot afford tuition, enrollment fails.
+- `graduateStudent` delegates graduation eligibility to
+  `EducationRules.isGraduationEligible` via `getStudentsReadyForGraduation`.
+  Grants role on graduation if the institution teaches roles. Multi-role
+  institutions require `selectedRoleId`.
+- `advanceLearning` writes to `character.subjectProgress` and syncs
+  `character.professions` via Role commands. Emits `student_became_literate`
+  when literacy threshold is crossed.
+- `applyGovernmentFunding` and `processPrivateSchoolProfit` are the write paths
+  for public and private finance respectively. `processAllSchoolFinances` runs
+  both in one pass and returns a summary.
+- `receiveSettlementBudget` distributes a settlement's education budget equally
+  among its institutions.
+- `demolishInstitution` and `rebuildInstitution` are the only paths that set
+  `status` to `demolished` and back. Both preserve religion fields.
+
+### education-annual.js
+
+Annual pipeline orchestrator. Owns sequence, not mutation.
+
+    processAnnualEducation(year, options)       Full pipeline.
+    processAnnualInstitution(id, year, options) Single-institution pipeline.
+    getStudentsReadyForGraduation(id, year)     Delegates to EducationQueries.
+
+Pipeline order (frozen):
+
+    1. Learning advancement for every enrolled student.
+    2. Graduation readiness evaluation (recorded, not committed).
+    3. Settlement education budget allocation (before finance).
+    4. School finances (public funding, private profit).
+    5. Persist once.
+
+Options:
+
+    autoGraduate     If true, auto-graduates students when the institution
+                     teaches at most one role. Multi-role institutions require
+                     explicit selection and are skipped.
+    processFinances  Default true. Runs step 4.
+    processBudgets   Default true. Runs step 3.
+    persist          Default true. Runs step 5.
+
+Result envelope:
+
+    {
+      year, status,
+      processedStudentCount,
+      skillGains[], withdrawals[], readyForGraduation[], graduations[],
+      finances, budgetProcessing,
+      errors[]
+    }
+
+`status` is `completed`, `completed_with_errors`, or `partial`.
+
+The annual pipeline saves once via `EducationCommands.persist()`. It never
+toasts. It never mutates state directly.
+
+### education-history.js
+
+Append-only event ledger embedded on each institution as `institution.history`.
+
+Public API:
+
+    addEvent(institutionOrId, event)             Append. No save.
+    getInstitutionHistory(id, options)           Frozen event copies.
+    getInstitutionHistoryStats(id)               Event type counts.
+    getTeacherEmploymentHistory(characterId)     Hiring + departure events.
+    getStudentEducationHistory(studentId)        Enrolment + graduation events.
+    getCharacterHeadmasterHistory(characterId)   Appointment + end events.
+    getCharacterEducationHistory(characterId)    Combined history.
+
+Recorders (call these from Commands; they call `addEvent` internally):
+
+    recordTeacherHired(instId, teacherId, subjectId, year, skill, notes)
+    recordTeacherDeparted(instId, teacherId, year, reason, notes)
+    recordStudentEnrolled(instId, studentId, year, notes)
+    recordStudentGraduated(instId, studentId, year, notes)
+    recordStudentWithdrew(instId, studentId, year, reason, notes)
+    recordHeadmasterAppointed(instId, characterId, title, year, notes)
+    recordHeadmasterEnded(instId, characterId, year, reason, notes)
+    recordInstitutionRenamed(instId, oldName, newName, year, reason)
+    recordInstitutionMoved(instId, oldLocName, newLocName, year, reason)
+    recordReputationChanged(instId, oldRep, newRep, year, reason)
+
+Event shape:
+
+    { id, type, year, entityId, entityName, details, reason,
+      previousValue, newValue, metadata, timestamp }
+
+Rules:
+
+- Events are frozen on read.
+- Events are never edited or deleted. Corrections are new events.
+- `type` must be in `HISTORY_EVENT_TYPES`. Unknown types throw.
+- `metadata` is a structured object, not a JSON string.
+- Sort order is `(year desc, timestamp desc, id desc)`. Deterministic for
+  same-year events.
+- History does not persist. The enclosing Command's caller saves.
+- Formatted HTML is not produced here. Rendering is `education-ui-list.js`.
+
+### education-system.js
+
+Legacy alias shim. Contains no constants, no fallbacks, no logic. Every alias
+is marked `// legacy:` and can be deleted once callers migrate.
+
+Load-order check: the file throws at load if any of `EducationState`,
+`EducationRules`, `EducationLearning`, `EducationQueries`,
+`EducationCommands`, `EducationAnnual`, or `EducationHistory` is missing.
+
+Alias groups:
+
+- State reads: `getAllEducationalInstitutions`, `getEducationalInstitution`,
+  `getInstitutionsAtLocation`, `getInstitutionsByType`.
+- Commands: `createEducationalInstitution`, `updateEducationalInstitution`,
+  `deleteEducationalInstitution`, `updateInstitutionReputation`, `enrollStudent`,
+  `graduateStudent`, `withdrawStudent`, `hireTeacher`, `fireTeacher`,
+  `setHeadmaster`, `endHeadmasterTerm`.
+- Queries: `getInstitutionDetails`, `getInstitutionsInRegion`,
+  `getInstitutionStudents`, `getInstitutionGraduates`, `getInstitutionTeachers`,
+  `isStudentEnrolled`, `getHeadmaster`, `getHeadmasterHistory`,
+  `getInstitutionStatistics`, `getLocationEducationSummary`,
+  `getEducationHealthScore`, `recommendNewSchoolLocation`,
+  `getInstitutionsNeedingTeachers`.
+- Learning: `advanceLearning`, `getProficiency`, `getSubjectProficiency`,
+  `getCharacterProficiencies`, `getEducationLevel`, `isLiterate`,
+  `getLiteracyRate`, `getSchoolAgePopulation`, `getEligibleStudents`,
+  `getStudentDemand`.
+- Annual: `processAnnualEducation`, `processAnnualInstitution`,
+  `getStudentsReadyForGraduation`.
+- History: `addEducationHistoryEvent`, `getInstitutionHistory`,
+  `getInstitutionHistoryStats`, `recordTeacherHired`, `recordTeacherDeparted`,
+  `recordStudentEnrolled`, `recordStudentGraduated`, `recordStudentWithdrew`,
+  `recordHeadmasterAppointed`, `recordHeadmasterEnded`,
+  `recordInstitutionRenamed`, `recordInstitutionMoved`,
+  `recordReputationChanged`.
+
+This file exists to be removed.
+
+### education-ui-list.js
+
+Renderers. Reads via `EducationQueries`. Never touches `EducationState`,
+`EducationCommands`, or canonical records.
+
+    renderInstitutionList(containerId, options)
+    renderInstitutionCard(institutionOrId, options)
+    renderInstitutionTable(institutions, options)
+    renderEducationSummary(containerId, locationId, options)
+    renderReligiousSchoolsList(containerId, religionId, options)
+    refreshEducationList(containerId, options)
+    debouncedRefresh(containerId, options)
+
+Helpers exported:
+
+    getStatusBadge(status)
+    getOwnershipBadge(ownershipType, ownerName)
+    getReputationColor(reputation)
+
+Rules:
+
+- No emojis. Icons come from `Icons` via `_getIcon()`.
+- Semantic filtering is delegated to Queries. UI does presentation sorting
+  only.
+- Refresh timers are keyed per container.
+- No legacy aliases. Callers use `EducationUI.*`.
+
+### modals-education.js
+
+Interactive modals for all education mutations. Reads via Queries, writes via
+Commands, persists once per successful batch, surfaces command results.
+
+    openCreateInstitutionModal(onSuccess, defaultData)
+    openEditInstitutionModal(institutionId, onSuccess)
+    openInstitutionDetailsModal(institutionId, onSuccess)
+    openEditCurriculumModal(institutionId, onSuccess)
+    openEnrollStudentModal(institutionId, onSuccess)
+    openHireTeacherModal(institutionId, onSuccess)
+    openSetHeadmasterModal(institutionId, onSuccess)
+    openGraduateStudentModal(institutionId, onSuccess)
+    openDeleteInstitutionModal(institutionId, onSuccess)
+    openTuitionManagementModal(institutionId, onSuccess)
+    openOwnershipManagementModal(institutionId, onSuccess)
+
+Rules:
+
+- No direct state access. Details come from
+  `EducationQueries.getInstitutionDetails(id)`.
+- No policy. Thresholds, eligibility, and validation come from Rules via
+  Commands.
+- One `EducationCommands.persist()` per successful mutation batch.
+- Command result shape is `{ success, reason, ... }`. The modal reads
+  `.success`, surfaces `.reason` on failure, and produces its own success
+  message on success.
+- No emojis.
 
 ---
 
-## Role-Based Queries
+## Data model
 
-### `EducationState.getInstitutionsByTaughtRole(roleId)`
+### Institution
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets institutions that teach a specific role |
-| **Parameters** | `roleId` (string) |
-| **Returns** | `Array` - Array of institution objects |
+    id, name, type, typeName, icon,
+    locationId, locationName,
+    students[], graduates[], teachers[],
+    foundedYear, curriculum[], taughtRoles[],
+    isSpecialized, specializationCategory,
+    reputation, maxStudents, description,
+    requiredYears, skillGainPerYear, notes,
 
-### `EducationState.getInstitutionsBySpecializationCategory(categoryId)`
+    headmaster, headmasterHistory[], history[],
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets institutions by specialization category |
-| **Parameters** | `categoryId` (string) |
-| **Returns** | `Array` - Array of institution objects |
+    baseTuition, tuitionPerYear, customTuition, tuitionHistory[], waiveTuition,
 
-### `EducationState.getInstitutionsTeachingRoleCategory(categoryId)`
+    ownershipType, ownerId, ownerType, ownerName,
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets institutions teaching any role in a category |
-| **Parameters** | `categoryId` (string) |
-| **Returns** | `Array` - Array of institution objects |
+    governmentFunding, governmentFundingYear, lastFunded,
+    governmentFundingHistory[],
+    annualIncome, annualExpenses, netProfit, profitHistory[],
 
----
+    status, demolishedAt, demolishedReason, destroyedBy, disasterId,
+    demolishedRecord,
 
-## UI State Management
+    religionId, religionName, isReligiousSchool,
+    clergyHeadId, teachesDoctrine, hasMandatoryWorship
 
-### `EducationState.getUIState()`
+Notes:
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the current UI state |
-| **Returns** | `{ selectedInstitutionId, filters: { type, location, minReputation, ownershipType, roleCategory, taughtRole, religionId }, viewMode }` |
+- `type` is an `INSTITUTION_TYPES` id (`hut_school` … `grand_university`).
+- `baseTuition` is derived from the type's constants entry. `tuitionPerYear`
+  is the current base. `customTuition` overrides calculation when non-null.
+- `isReligiousSchool` is independent of `ownershipType`. A private religious
+  school has `ownershipType: 'private'` and `isReligiousSchool: true`.
+- `isSpecialized` should be derived from `!!specializationCategory &&
+  taughtRoles.length > 0`. Commands maintain this invariant on write.
+- `history` is the append-only ledger. `historyEvents` does not exist.
 
-### `EducationState.updateUIState(updates)`
+### Student record
 
-| Property | Value |
-|----------|-------|
-| **Description** | Updates UI state |
-| **Parameters** | `updates` (Object) |
+    studentId, studentName, enrollmentYear, progress, graduated,
+    graduationYear, attendance, notes,
+    tuitionPaid, tuitionYear, tuitionWaived, grantedRole
 
----
+### Teacher record
 
-## Internal State Mutators (For Commands)
+    teacherId, teacherName, subjectId, subjectName, subjectType, hiredYear
 
-| Function | Description |
-|----------|-------------|
-| `_addInstitution(institution)` | Adds an institution |
-| `_updateInstitution(id, updates)` | Updates an institution |
-| `_deleteInstitution(id)` | Deletes an institution |
-| `_clearAllInstitutions()` | Clears all institutions |
-| `_rebuildCaches()` | Rebuilds all caches |
-| `_persistState()` | Persists state to masterData |
-| `_initializeState()` | Initializes state from masterData |
-| `_ensureInstitutionInitialized(institution)` | Ensures institution has all fields |
+### Graduate record
 
----
+    studentId, studentName, graduationYear, grantedRole
 
-# 2. EDUCATION-COMMANDS.JS
+### Headmaster record
 
-**PURPOSE:** All write operations for education management.
+    characterId, name, title, startYear
+    (in headmasterHistory: plus endYear, reason)
 
-**DEPENDENCIES:**
-- `education-state.js` - `EducationState`
-- `education-history.js` - History recording functions
-- `accessors.js` - `getCharacterById`, `getCharacters`, `getPlaceById`
-- `role-state.js` - `RoleState`
-- `role-queries.js` - `RoleQueries`
-- `role-commands.js` - `RoleCommands`
-- `religion-state.js` - `ReligionState` (NEW)
+### History event
 
----
+    id, type, year, entityId, entityName, details, reason,
+    previousValue, newValue, metadata, timestamp
 
-## Institution Management
+### Character education fields
 
-### `EducationCommands.createInstitution(name, typeId, locationId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Creates a new educational institution |
-| **Parameters** | `name` (string), `typeId` (string), `locationId` (string), `options.curriculum` (Array), `options.ownershipType` (string - 'public', 'private', or 'religious'), `options.ownerId` (string), `options.ownerType` (string), `options.specializationCategory` (string), `options.taughtRoles` (Array), `options.tuitionPerYear` (number), `options.religionId` (string - for religious schools), `options.clergyHeadId` (string), `options.teachesDoctrine` (boolean), `options.hasMandatoryWorship` (boolean) |
-| **Returns** | `Object|null` - Created institution or null |
-
-### `EducationCommands.createReligiousSchool(religionId, name, locationId, options)` (NEW)
-
-| Property | Value |
-|----------|-------|
-| **Description** | Creates a religious school linked to a specific religion |
-| **Parameters** | `religionId` (string), `name` (string), `locationId` (string), `options` (Object) |
-| **Returns** | `Object|null` - Created institution or null |
-
-### `EducationCommands.updateInstitution(institutionId, updates)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates an institution |
-| **Parameters** | `institutionId` (string), `updates` (Object - includes religionId, religionName, isReligiousSchool) |
-| **Returns** | `boolean` - True if updated |
-
-### `EducationCommands.deleteInstitution(institutionId, cascade)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Deletes an institution |
-| **Parameters** | `institutionId` (string), `cascade` (boolean) |
-| **Returns** | `boolean` - True if deleted |
-
-### `EducationCommands.updateReputation(institutionId, delta)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates institution reputation |
-| **Parameters** | `institutionId` (string), `delta` (number) |
-| **Returns** | `number` - New reputation |
+    subjectProgress[<key>].level         0-100 proficiency for a curriculum item.
+    subjectProgress[<key>].type          'subject' or 'role'.
+    subjectProgress[<key>].roleId        Role id when type is 'role'.
+    subjectProgress[<key>].lastStudied   Year of last learning event.
+    isLiterate                           Materialized milestone.
+    education[<institutionId>]           Enrolment status per institution.
+    educationHistory[]                   Historical enrolment records.
 
 ---
 
-## Tuition Management
+## Cross-domain integration
 
-### `EducationCommands.calculateTuition(institutionId, year)`
+Education reads and writes through other domains via their commands. It does
+not touch their state directly.
 
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates tuition for an institution |
-| **Parameters** | `institutionId` (string), `year` (number) |
-| **Returns** | `{ success: boolean, tuition: number, breakdown: Object, manualOverride: number|null }` |
+Role:
 
-**Tuition Rules:**
-- Public schools: Always 0 gold (free)
-- Religious schools: 30% discount from base, often waived
-- Private schools: Dynamic based on reputation, type multiplier, manual override
+- `RoleCommands.assignRoleToCharacter(cid, rid, opts)` — used by graduation.
+- `RoleCommands.updateProfessionSkill(cid, rid, level)` — used by
+  `advanceLearning` for role-type curriculum items.
+- `RoleState.getRole(id)`, `RoleState.getAllRoles()` — for specialization and
+  category lookups.
 
-### `EducationCommands.updateTuition(institutionId, newTuition, reason)`
+Household:
 
-| Property | Value |
-|----------|-------|
-| **Description** | Updates tuition (manual override) |
-| **Parameters** | `institutionId` (string), `newTuition` (number|null), `reason` (string) |
-| **Returns** | `{ success: boolean, tuition: number|null, mode: string }` |
+- `HouseholdEconomy.getHouseholdWealth(hid)`, `updateHouseholdWealth(...)`,
+  `trackTuitionExpense(...)` — for private tuition payment on enrolment.
 
-### `EducationCommands.updateTuitionWaiver(institutionId, waiveTuition, reason)`
+Settlement:
 
-| Property | Value |
-|----------|-------|
-| **Description** | Updates tuition waiver status |
-| **Parameters** | `institutionId` (string), `waiveTuition` (boolean), `reason` (string) |
-| **Returns** | `{ success: boolean, waiveTuition: boolean }` |
+- `SettlementState.getEducationBudget(locId)` — the annual budget source.
+- `SettlementCommands.updateWealth(locId, delta, reason)` — debited when a
+  public school receives funding.
 
-### `EducationCommands.getTuitionHistory(institutionId, limit)`
+Religion:
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets tuition history |
-| **Parameters** | `institutionId` (string), `limit` (number) |
-| **Returns** | `Array` - Tuition history entries |
+- `ReligionState.getReligion(id)`, `ReligionState.getAllReligions()` — for
+  religious school affiliation and ownership.
+
+Character:
+
+- `getCharacterById`, `getCharacters`, `calculateAge` — read access.
+- Education writes only to `character.subjectProgress`, `character.isLiterate`,
+  `character.education`, and `character.educationHistory`. Profession records
+  are written via Role commands.
 
 ---
 
-## School Ownership Management
+## Persistence
 
-### `EducationCommands.setSchoolOwnership(institutionId, ownershipType, ownerId, ownerType)`
+Every mutation path leads to `EducationCommands.persist()`, which calls
+`saveMasterData()` exactly once. Commands do not save individually.
 
-| Property | Value |
-|----------|-------|
-| **Description** | Sets school ownership type |
-| **Parameters** | `institutionId` (string), `ownershipType` (string - 'public', 'private', or 'religious'), `ownerId` (string), `ownerType` (string - 'character', 'household', or 'religion') |
-| **Returns** | `{ success: boolean, institution: Object }` |
+Callers that mutate:
 
-### `EducationCommands.setSchoolOwner(institutionId, ownerId, ownerType)`
+- `education-annual.js` persists once at the end of the annual pipeline.
+- `modals-education.js` persists once per successful modal submission.
+- External orchestrators persist once after their batch.
 
-| Property | Value |
-|----------|-------|
-| **Description** | Sets school owner |
-| **Parameters** | `institutionId` (string), `ownerId` (string), `ownerType` (string - 'character', 'household', or 'religion') |
-| **Returns** | `{ success: boolean, institution: Object }` |
+State hydration is explicit:
 
----
+    EducationState.hydrateFromMasterData(
+        window.masterData?.data?.educationalInstitutions || []
+    );
 
-## School Funding and Profit
-
-### `EducationCommands.calculatePublicSchoolFunding(institutionId, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates government funding for a public school |
-| **Parameters** | `institutionId` (string), `year` (number) |
-| **Returns** | `{ success: boolean, funding: number, studentCount: number, breakdown: Object }` |
-
-### `EducationCommands.applyGovernmentFunding(institutionId, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Applies government funding to a public school |
-| **Parameters** | `institutionId` (string), `year` (number) |
-| **Returns** | `{ success: boolean, funding: number, studentCount: number, year: number }` |
-
-### `EducationCommands.calculatePrivateSchoolProfit(institutionId, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Calculates profit for a private school |
-| **Parameters** | `institutionId` (string), `year` (number) |
-| **Returns** | `{ success: boolean, profit: number, income: number, expenses: number, breakdown: Object }` |
-
-### `EducationCommands.processPrivateSchoolProfit(institutionId, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Processes profit for a private school (sends to owner) |
-| **Parameters** | `institutionId` (string), `year` (number) |
-| **Returns** | `{ success: boolean, profit: number, ownerId: string, ownerType: string }` |
-
-### `EducationCommands.processAllSchoolFinances(year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Processes finances for all schools |
-| **Parameters** | `year` (number) |
-| **Returns** | `{ success: boolean, results: Object, totalFunding: number, totalProfit: number }` |
+Called once at app bootstrap before any query or command runs.
 
 ---
 
-## Settlement Budget Receipt
+## Integration with Apprenticeship
 
-### `EducationCommands.receiveSettlementBudget(locationId, amount, year)`
+Education and Apprenticeship share the profession record as the canonical
+store for role skill.
 
-| Property | Value |
-|----------|-------|
-| **Description** | Receives settlement budget allocation for education |
-| **Parameters** | `locationId` (string), `amount` (number), `year` (number) |
-| **Returns** | `{ success: boolean, institutions: number, total: number, perInstitution: number, year: number }` |
+- Education writes role skill via `RoleCommands.updateProfessionSkill`.
+- Apprenticeship writes role skill via `RoleCommands.setSkillLevel`.
+- Education reads school proficiency from `character.subjectProgress`. This is
+  the curriculum mirror, not the canonical profession skill.
+- Apprenticeship reads role skill from `character.professions`. This is
+  canonical.
+- Graduation grants role skill to `professions` via `assignRoleToCharacter`.
 
-### `EducationCommands.getSettlementFundingSummary(locationId, year)`
+A character who has both school and apprenticeship training will have two
+numbers: the school curriculum proficiency in `subjectProgress`, and the
+professional skill in `professions`. They are not the same value and should
+not be treated as such.
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets funding summary for a settlement |
-| **Parameters** | `locationId` (string), `year` (number) |
-| **Returns** | `{ locationId, year, total, institutions, count }` |
-
----
-
-## Teacher Management
-
-### `EducationCommands.hireTeacher(institutionId, teacherId, subjectId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Hires a teacher at an institution |
-| **Parameters** | `institutionId` (string), `teacherId` (string), `subjectId` (string) |
-| **Returns** | `boolean` - True if hired |
-
-**Note:** No skill check required. Teachers are hired based on their profession/role.
-
-### `EducationCommands.fireTeacher(institutionId, teacherId, reason)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Fires a teacher |
-| **Parameters** | `institutionId` (string), `teacherId` (string), `reason` (string) |
-| **Returns** | `boolean` - True if fired |
+The canonical rule: **`professions[i].skillLevel` is the source of truth for
+competence. `subjectProgress` is a curriculum progress log.**
 
 ---
 
-## Student Management
+## Testing and verification checklist
 
-### `EducationCommands.enrollStudent(institutionId, studentId, startYear)`
+Load:
 
-| Property | Value |
-|----------|-------|
-| **Description** | Enrolls a student at an institution |
-| **Parameters** | `institutionId` (string), `studentId` (string), `startYear` (number) |
-| **Returns** | `boolean` - True if enrolled |
+- `education-constants.js` loads without `window.masterData` present.
+- Each subsequent module loads after its dependencies.
+- `education-system.js` throws clearly if a canonical module is missing.
 
-### `EducationCommands.graduateStudent(institutionId, studentId, graduationYear, selectedRoleId)`
+Hydration:
 
-| Property | Value |
-|----------|-------|
-| **Description** | Graduates a student (with role granting) |
-| **Parameters** | `institutionId` (string), `studentId` (string), `graduationYear` (number), `selectedRoleId` (string) |
-| **Returns** | `boolean` or `{ success: false, reason: string, availableRoles: Array }` |
+- `hydrateFromMasterData([])` leaves state empty but valid.
+- `hydrateFromMasterData([raw])` normalizes missing fields.
+- `migrateInstitution(null)` returns null.
+- `migrateInstitution({})` returns null (no id).
 
-### `EducationCommands.withdrawStudent(institutionId, studentId, reason)`
+Reads:
 
-| Property | Value |
-|----------|-------|
-| **Description** | Withdraws a student |
-| **Parameters** | `institutionId` (string), `studentId` (string), `reason` (string) |
-| **Returns** | `boolean` - True if withdrawn |
+- `getInstitution(id)` returns a clone; mutating the clone has no effect.
+- `getInstitutionDetails(id)` returns frozen projections.
+- `getInstitutions()` filters without crashing on missing reputation.
+- `getReligiousInstitutions()` uses `isReligiousSchool === true`.
+- `getStudentsReadyForGraduation()` delegates to the rules.
 
----
+Writes:
 
-## Headmaster Management
+- `createInstitution({...})` returns `{ success: true, institutionId }`.
+- `createInstitution(name, typeId, locId, opts)` legacy form works.
+- Private institution without owner fails with `Private institutions require
+  an ownerId`.
+- Public institution with a religion is allowed and remains `public`.
+- Religious ownership without a religion fails.
+- `enrollStudent` on private school with insufficient household wealth fails.
+- `graduateStudent` with multiple taught roles and no `selectedRoleId` returns
+  `availableRoles`.
+- `advanceLearning` crossing the literacy threshold emits
+  `student_became_literate`.
+- `demolishInstitution` records `institution_demolished`. `rebuildInstitution`
+  records `institution_rebuilt`.
 
-### `EducationCommands.setHeadmaster(institutionId, characterId, title, startYear)`
+Annual:
 
-| Property | Value |
-|----------|-------|
-| **Description** | Appoints a headmaster |
-| **Parameters** | `institutionId` (string), `characterId` (string), `title` (string), `startYear` (number) |
-| **Returns** | `boolean` - True if appointed |
+- `processAnnualEducation` runs the full pipeline.
+- With `autoGraduate: false`, students appear in `readyForGraduation`.
+- With `autoGraduate: true` and a single taught role, students graduate.
+- With `autoGraduate: true` and multiple taught roles, students are skipped
+  and remain in `readyForGraduation`.
+- Settlement budgets allocate before finance.
+- One save occurs at the end.
 
-### `EducationCommands.endHeadmasterTerm(institutionId, endYear, reason)`
+History:
 
-| Property | Value |
-|----------|-------|
-| **Description** | Ends a headmaster's term |
-| **Parameters** | `institutionId` (string), `endYear` (number), `reason` (string) |
-| **Returns** | `boolean` - True if ended |
+- `addEvent` throws on unknown types.
+- `addEvent` returns a frozen copy.
+- `getInstitutionHistory` returns frozen copies sorted by year desc.
+- `getStudentEducationHistory(id)` merges enrolment, graduation, withdrawal
+  events across institutions.
 
----
+UI:
 
-## Institutions Needing Teachers
+- `renderInstitutionList` handles empty list.
+- `renderInstitutionCard` accepts an id or a summary.
+- `renderInstitutionTable` returns HTML without event handlers.
+- `renderReligiousSchoolsList` reads via `getReligiousInstitutions`.
+- No emoji in any rendered markup.
 
-### `EducationCommands.getInstitutionsNeedingTeachers(maxReputation, minStudents)`
+Modals:
 
-| Property | Value |
-|----------|-------|
-| **Description** | Gets institutions that need teachers |
-| **Parameters** | `maxReputation` (number), `minStudents` (number) |
-| **Returns** | `Array` - Institutions with missing subjects |
-
----
-
-## Religious School Commands (NEW)
-
-### `EducationCommands.getReligiousSchools(religionId, locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets religious schools filtered by religion and location |
-| **Parameters** | `religionId` (string), `locationId` (string) |
-| **Returns** | `Array` - Religious school institutions |
-
----
-
-## Demolish and Rebuild Functions
-
-### `EducationCommands.demolishInstitution(institutionId, reason, year, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Demolishes an institution (preserves religion fields) |
-| **Parameters** | `institutionId` (string), `reason` (string), `year` (number), `options.removeStudents` (boolean), `options.removeTeachers` (boolean), `options.destroyedBy` (string), `options.silent` (boolean) |
-| **Returns** | `{ success: boolean, demolitionRecord: Object, institution: Object }` |
-
-### `EducationCommands.rebuildInstitution(institutionId, rebuildYear, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Rebuilds a demolished institution (restores religion fields) |
-| **Parameters** | `institutionId` (string), `rebuildYear` (number), `options.maxStudents` (number), `options.initialReputation` (number), `options.silent` (boolean) |
-| **Returns** | `{ success: boolean, institution: Object, rebuiltAt: number }` |
-
-### `EducationCommands.getDemolishedInstitutions(options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets demolished institutions with filters |
-| **Parameters** | `options.locationId` (string), `options.destroyedBy` (string), `options.type` (string), `options.includeRecords` (boolean) |
-| **Returns** | `Array` - Demolished institutions |
-
-### `EducationCommands.getInstitutionDemolitionStats(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets demolition statistics for a location |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `{ totalDemolished, byDestroyedBy, byType, totalReputationLost, totalStudentsLost, totalTeachersLost, recentDemolitions }` |
+- All modals read via `getInstitutionDetails`.
+- All modals write via Commands and check `.success`.
+- All modals call `EducationCommands.persist()` once on success.
 
 ---
 
-# 3. EDUCATION-QUERIES.JS
+## Known deferrals
 
-**PURPOSE:** All read-only queries for education data.
-
-**DEPENDENCIES:**
-- `education-state.js` - `EducationState`
-- `accessors.js` - `getCharacterById`, `getCharacters`, `getPlaceById`, `getPlaces`
-- `time.js` - `getCurrentYearSafe`, `calculateAge`
-
----
-
-## Institution Queries
-
-### `EducationQueries.getInstitutions(filters)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets institutions with filters |
-| **Parameters** | `filters.type`, `filters.location`, `filters.minReputation`, `filters.taughtRole`, `filters.specializationCategory`, `filters.roleCategory`, `filters.hasTaughtRoles`, `filters.isSpecialized`, `filters.search`, `filters.religionId` (NEW), `filters.ownershipType` (NEW), `filters.isReligiousSchool` (NEW) |
-| **Returns** | `Array` - Filtered institutions |
-
-### `EducationQueries.getInstitutionDetails(id)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets detailed institution data |
-| **Parameters** | `id` (string) |
-| **Returns** | `{ institution, students, teachers, graduates, headmaster, studentCount, teacherCount, graduateCount, capacityUsed, educationBudget, budgetAllocation, religionInfo, isReligiousSchool }` |
-
-### `EducationQueries.getInstitutionsInRegion(locationId, includeChildren)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets institutions in a region |
-| **Parameters** | `locationId` (string), `includeChildren` (boolean) |
-| **Returns** | `Array` - Institutions |
+- `education-system.js` is scheduled for deletion once its callers migrate.
+- Planning and recommendation functions (`getEducationHealthScore`,
+  `recommendNewSchoolLocations`, `getEducationDemandBySettlement`,
+  `getStudentDensityBySettlement`) currently live in Queries. They may move to
+  a dedicated planning module when the codebase justifies it. Do not split
+  them into more files solely for architectural tidiness.
+- CSS class extraction for `education-ui-list.js` and `modals-education.js` is
+  a separate UI pass.
+- Icon registry: `TEACHER`, `GRADUATE`, `CHURCH` may need to be added to the
+  canonical `Icons` set. Until then the UI falls back gracefully.
 
 ---
 
-## Religious School Queries (NEW)
+## End of documentation
 
-### `EducationQueries.getReligiousSchools(religionId, locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets religious schools filtered by religion and location |
-| **Parameters** | `religionId` (string), `locationId` (string) |
-| **Returns** | `Array` - Religious school institutions |
-
-### `EducationQueries.getInstitutionsByReligion(religionId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all institutions belonging to a religion |
-| **Parameters** | `religionId` (string) |
-| **Returns** | `Array` - Institutions |
-
-### `EducationQueries.getReligiousSchoolsByLocation(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets religious schools at a location |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `Array` - Religious school institutions |
-
----
-
-## Student Queries
-
-### `EducationQueries.getInstitutionStudents(institutionId, includeCharacterData)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets students of an institution |
-| **Parameters** | `institutionId` (string), `includeCharacterData` (boolean) |
-| **Returns** | `Array` - Student records |
-
-### `EducationQueries.getInstitutionGraduates(institutionId, includeCharacterData)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets graduates of an institution |
-| **Parameters** | `institutionId` (string), `includeCharacterData` (boolean) |
-| **Returns** | `Array` - Graduate records |
-
-### `EducationQueries.getStudentInstitutions(studentId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets institutions a student has attended |
-| **Parameters** | `studentId` (string) |
-| **Returns** | `Array` - Institution records with status |
-
-### `EducationQueries.isStudentEnrolled(institutionId, studentId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Checks if a student is enrolled |
-| **Parameters** | `institutionId` (string), `studentId` (string) |
-| **Returns** | `boolean` |
-
----
-
-## Teacher Queries
-
-### `EducationQueries.getInstitutionTeachers(institutionId, includeCharacterData)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets teachers of an institution |
-| **Parameters** | `institutionId` (string), `includeCharacterData` (boolean) |
-| **Returns** | `Array` - Teacher records |
-
----
-
-## Headmaster Queries
-
-### `EducationQueries.getHeadmaster(institutionId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the headmaster of an institution |
-| **Parameters** | `institutionId` (string) |
-| **Returns** | `{ details, character }|null` |
-
-### `EducationQueries.getHeadmasterHistory(institutionId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets headmaster history |
-| **Parameters** | `institutionId` (string) |
-| **Returns** | `Array` - History entries |
-
----
-
-## Statistics Queries
-
-### `EducationQueries.getInstitutionStatistics(institutionId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets institution statistics |
-| **Parameters** | `institutionId` (string) |
-| **Returns** | `{ studentCount, teacherCount, graduateCount, capacityUsed, reputation, foundedYear, enrollmentByYear, graduatesByYear, isSpecialized, taughtRoles, curriculumCount, educationBudget, isReligiousSchool, religionId, religionName }` |
-
-### `EducationQueries.getLocationEducationSummary(locationId, includeChildren)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets education summary for a location |
-| **Parameters** | `locationId` (string), `includeChildren` (boolean) |
-| **Returns** | `{ locationName, institutionCount, totalStudents, totalTeachers, totalGraduates, totalCapacity, averageReputation, capacityUsed, institutions, educationBudget, religiousSchools }` |
-
-### `EducationQueries.getEducationHealthScore(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets education health score for a location |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `{ score, coverageRatio, averageReputation, teacherStudentRatio, schoolAgePopulation, totalCapacity, institutionCount, recommendation, needsMoreSchools, educationBudget, religiousSchools }` |
-
----
-
-## Role-Based Queries
-
-### `EducationQueries.getInstitutionsByRole(roleId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets institutions by taught role |
-| **Parameters** | `roleId` (string) |
-| **Returns** | `Array` - Institutions |
-
-### `EducationQueries.getInstitutionsByRoleCategory(categoryId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets institutions by specialization category |
-| **Parameters** | `categoryId` (string) |
-| **Returns** | `Array` - Institutions |
-
-### `EducationQueries.getInstitutionsTeachingRoleCategory(categoryId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets institutions teaching any role in a category |
-| **Parameters** | `categoryId` (string) |
-| **Returns** | `Array` - Institutions |
-
-### `EducationQueries.getTaughtRolesByInstitution(institutionId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets roles taught by an institution |
-| **Parameters** | `institutionId` (string) |
-| **Returns** | `Array` - Role objects |
-
-### `EducationQueries.getAvailableRolesForInstitution(institutionId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets roles available for an institution based on specialization |
-| **Parameters** | `institutionId` (string) |
-| **Returns** | `Array` - Role objects |
-
----
-
-## Education Demand by Settlement
-
-### `EducationQueries.getEducationDemandBySettlement(locationId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets education demand analytics for a settlement |
-| **Parameters** | `locationId` (string), `options.includeProjections` (boolean), `options.projectionYears` (number), `options.religionId` (NEW) |
-| **Returns** | `{ settlementId, settlementName, population, schoolAgePopulation, totalInstitutions, totalCapacity, totalStudents, totalTeachers, currentCoverage, currentGap, studentTeacherRatio, byType, growthRate, growthData, projections, recommendations, needsMoreSchools, needsMoreTeachers, educationBudget, religiousInstitutions }` |
-
----
-
-## Student Density by Settlement
-
-### `EducationQueries.getStudentDensityBySettlement(locationId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets student density analytics for a settlement |
-| **Parameters** | `locationId` (string), `options.byAgeGroup` (boolean), `options.byGender` (boolean), `options.bySchool` (boolean), `options.religionId` (NEW) |
-| **Returns** | `{ settlementId, settlementName, totalStudents, totalCapacity, capacityUtilization, studentDensity, bySchool, byAgeGroup, byGender, byInstitution, studentList, educationBudget }` |
-
----
-
-# 4. EDUCATION-LEARNING.JS
-
-**PURPOSE:** Core learning mechanics (proficiency, literacy, advancement).
-
-**DEPENDENCIES:**
-- `education-state.js` - `EducationState`
-- `education-constants.js` - `EDUCATION_LEVELS`
-- `accessors.js` - `getCharacterById`, `getCharacters`, `getPlaceById`
-- `time.js` - `getCurrentYearSafe`, `calculateAge`
-
----
-
-## Character Education Initialization
-
-### `EducationLearning.initCharacterEducationFields(character)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Initializes education fields on a character |
-| **Parameters** | `character` (Object) |
-| **Returns** | `Object` - Character with education fields |
-
----
-
-## Learning Progress
-
-### `EducationLearning.advanceLearning(characterId, curriculumItem, progress)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Advances learning for a character |
-| **Parameters** | `characterId` (string), `curriculumItem` (Object), `progress` (number) |
-| **Returns** | `{ subjectId, subjectName, oldLevel, newLevel, increased }` |
-
-### `EducationLearning.getProficiency(characterId, curriculumItem)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets proficiency for a curriculum item |
-| **Parameters** | `characterId` (string), `curriculumItem` (Object) |
-| **Returns** | `number` - Proficiency level (0-100) |
-
-### `EducationLearning.getSubjectProficiency(characterId, subjectId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets proficiency for a subject |
-| **Parameters** | `characterId` (string), `subjectId` (string) |
-| **Returns** | `number` - Proficiency level |
-
-### `EducationLearning.getCharacterProficiencies(characterId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all proficiencies for a character |
-| **Parameters** | `characterId` (string) |
-| **Returns** | `Array` - { id, name, level, type, lastStudied } |
-
----
-
-## Education Levels
-
-### `EducationLearning.getEducationLevel(characterId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the education level of a character |
-| **Parameters** | `characterId` (string) |
-| **Returns** | `Object` - Level object from EDUCATION_LEVELS |
-
-### `EducationLearning.isLiterate(characterId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Checks if a character is literate |
-| **Parameters** | `characterId` (string) |
-| **Returns** | `boolean` |
-
-### `EducationLearning.getLiteracyRate(locationId, minAge)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the literacy rate for a location |
-| **Parameters** | `locationId` (string), `minAge` (number) |
-| **Returns** | `number` - Literacy rate percentage |
-
----
-
-## School-Age Population
-
-### `EducationLearning.getSchoolAgePopulation(locationId, minAge, maxAge)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets the school-age population for a location |
-| **Parameters** | `locationId` (string), `minAge` (number), `maxAge` (number) |
-| **Returns** | `number` - Population count |
-
-### `EducationLearning.getEligibleStudents(locationId, minAge, maxAge, institutionId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets eligible students for enrollment |
-| **Parameters** | `locationId` (string), `minAge` (number), `maxAge` (number), `institutionId` (string) |
-| **Returns** | `Array` - Eligible students with age, literacy, skills |
-
-### `EducationLearning.getStudentDemand(locationId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets student demand for a location |
-| **Parameters** | `locationId` (string) |
-| **Returns** | `{ schoolAgePopulation, totalCapacity, gap, coverageRatio, needsMoreSchools }` |
-
----
-
-# 5. EDUCATION-ANNUAL.JS
-
-**PURPOSE:** Annual processing for education (learning, graduation, finances, budgets).
-
-**DEPENDENCIES:**
-- `education-state.js` - `EducationState`
-- `education-commands.js` - `EducationCommands`
-- `education-learning.js` - `EducationLearning`
-- `accessors.js` - `getCharacterById`
-- `settlement-state.js` - `SettlementState`
-
----
-
-## Annual Processing
-
-### `EducationAnnual.processAnnualEducation(year, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Processes annual education for all institutions |
-| **Parameters** | `year` (number), `options.silent` (boolean), `options.processFinances` (boolean), `options.autoGraduate` (boolean) |
-| **Returns** | `{ graduations, skillGains, readyForGraduation, finances, budgetProcessing, year, processedCount }` |
-
-**Processing Steps:**
-1. Student learning advancement
-2. Graduation readiness check
-3. School finances (public funding + private profit)
-4. Settlement education budget allocation
-
-### `EducationAnnual.processAnnualInstitution(institutionId, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Processes annual for a single institution |
-| **Parameters** | `institutionId` (string), `year` (number) |
-| **Returns** | `{ institutionId, institutionName, graduations, skillGains, readyForGraduation, processedCount, finances }` |
-
-### `EducationAnnual.getStudentsReadyForGraduation(institutionId, year)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets students ready for graduation |
-| **Parameters** | `institutionId` (string), `year` (number) |
-| **Returns** | `Array` - Ready students with proficiencies |
-
----
-
-## School Finance Processing
-
-### `EducationAnnual._processSchoolFinances(year, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Processes all school finances |
-| **Parameters** | `year` (number), `options.silent` (boolean) |
-| **Returns** | `{ success, year, publicFunding, privateProfits, errors, totalFunding, totalProfit }` |
-
-### `EducationAnnual._processEducationBudgets(year, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Processes education budgets from settlements |
-| **Parameters** | `year` (number), `options.silent` (boolean) |
-| **Returns** | `{ success, year, settlements, totalBudget, totalInstitutions, errors }` |
-
----
-
-# 6. EDUCATION-HISTORY.JS
-
-**PURPOSE:** History tracking for educational events.
-
-**DEPENDENCIES:**
-- `accessors.js` - `getCharacterById`, `getEducationalInstitution`
-- `storage.js` - `saveMasterData`
-- `ids.js` - `generateId`
-
----
-
-## Institution History
-
-### `addEducationHistoryEvent(institutionId, event)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Adds a history event to an institution |
-| **Parameters** | `institutionId` (string), `event.type`, `event.year`, `event.entityId`, `event.entityName`, `event.details`, `event.reason`, `event.previousValue`, `event.newValue`, `event.extra` |
-| **Returns** | `boolean` |
-
-### `getInstitutionHistory(institutionId, type, limit, entityId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets institution history |
-| **Parameters** | `institutionId` (string), `type` (string), `limit` (number), `entityId` (string) |
-| **Returns** | `Array` - History events |
-
-### `getFormattedEducationHistory(institutionId, limit, filterType)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets formatted institution history HTML |
-| **Parameters** | `institutionId` (string), `limit` (number), `filterType` (string) |
-| **Returns** | `string` - HTML |
-
-### `getInstitutionHistoryStats(institutionId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets history statistics |
-| **Parameters** | `institutionId` (string) |
-| **Returns** | `Object` - Event type counts |
-
----
-
-## Teacher History
-
-### `recordTeacherHired(institutionId, teacherId, subjectId, year, skill, notes)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Records teacher hiring |
-| **Parameters** | `institutionId` (string), `teacherId` (string), `subjectId` (string), `year` (number), `skill` (number), `notes` (string) |
-| **Returns** | `boolean` |
-
-### `recordTeacherLeft(institutionId, teacherId, year, reason, notes)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Records teacher departure |
-| **Parameters** | `institutionId` (string), `teacherId` (string), `year` (number), `reason` (string), `notes` (string) |
-| **Returns** | `boolean` |
-
-### `getTeacherEmploymentHistory(teacherId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets teacher employment history |
-| **Parameters** | `teacherId` (string) |
-| **Returns** | `Array` - Employment events |
-
-### `getFormattedTeacherEmploymentHistory(teacherId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets formatted teacher employment history HTML |
-| **Parameters** | `teacherId` (string) |
-| **Returns** | `string` - HTML |
-
----
-
-## Student History
-
-### `recordStudentEnrolled(institutionId, studentId, year, notes)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Records student enrollment |
-| **Parameters** | `institutionId` (string), `studentId` (string), `year` (number), `notes` (string) |
-| **Returns** | `boolean` |
-
-### `recordStudentGraduated(institutionId, studentId, year, notes)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Records student graduation |
-| **Parameters** | `institutionId` (string), `studentId` (string), `year` (number), `notes` (string) |
-| **Returns** | `boolean` |
-
-### `recordStudentWithdrew(institutionId, studentId, year, reason, notes)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Records student withdrawal |
-| **Parameters** | `institutionId` (string), `studentId` (string), `year` (number), `reason` (string), `notes` (string) |
-| **Returns** | `boolean` |
-
-### `getStudentEducationHistory(studentId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets student education history |
-| **Parameters** | `studentId` (string) |
-| **Returns** | `Array` - Education events |
-
-### `getFormattedStudentEducationHistory(studentId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets formatted student education history HTML |
-| **Parameters** | `studentId` (string) |
-| **Returns** | `string` - HTML |
-
----
-
-## Headmaster History
-
-### `recordHeadmasterAppointed(institutionId, characterId, title, year, notes)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Records headmaster appointment |
-| **Parameters** | `institutionId` (string), `characterId` (string), `title` (string), `year` (number), `notes` (string) |
-| **Returns** | `boolean` |
-
-### `recordHeadmasterEnded(institutionId, characterId, year, reason, notes)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Records headmaster term ending |
-| **Parameters** | `institutionId` (string), `characterId` (string), `year` (number), `reason` (string), `notes` (string) |
-| **Returns** | `boolean` |
-
-### `getCharacterHeadmasterHistory(characterId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets character headmaster history |
-| **Parameters** | `characterId` (string) |
-| **Returns** | `Array` - Headmaster events |
-
----
-
-## Institution Change History
-
-### `recordInstitutionRenamed(institutionId, oldName, newName, year, reason)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Records institution renaming |
-| **Parameters** | `institutionId` (string), `oldName` (string), `newName` (string), `year` (number), `reason` (string) |
-| **Returns** | `boolean` |
-
-### `recordInstitutionMoved(institutionId, oldLocation, newLocation, year, reason)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Records institution relocation |
-| **Parameters** | `institutionId` (string), `oldLocation` (string), `newLocation` (string), `year` (number), `reason` (string) |
-| **Returns** | `boolean` |
-
-### `recordReputationChanged(institutionId, oldReputation, newReputation, year, reason)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Records reputation change |
-| **Parameters** | `institutionId` (string), `oldReputation` (number), `newReputation` (number), `year` (number), `reason` (string) |
-| **Returns** | `boolean` |
-
----
-
-## Combined Character History
-
-### `getCharacterEducationHistory(characterId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets complete education history for a character |
-| **Parameters** | `characterId` (string) |
-| **Returns** | `{ characterId, asStudent, asTeacher, asHeadmaster, totalEvents }` |
-
-### `getFormattedCharacterEducationHistory(characterId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets formatted character education history HTML |
-| **Parameters** | `characterId` (string) |
-| **Returns** | `string` - HTML |
-
----
-
-# 7. EDUCATION-CONSTANTS.JS
-
-**PURPOSE:** All education-related constants.
-
-**DEPENDENCIES:** None (pure constants)
-
----
-
-## Constants
-
-### `EDUCATION_LEVELS`
-
-Education levels with literacy thresholds.
-
-### `GENERAL_SUBJECTS`
-
-Academic subjects (literacy, math, history, law, etc.).
-
-### `HIGHER_SUBJECTS`
-
-Advanced subjects (astronomy, medicine, engineering, etc.).
-
-### `ALL_SUBJECTS`
-
-Combined general and higher subjects.
-
-### `INSTITUTION_TYPES`
-
-Institution type definitions with properties.
-
-### `OWNERSHIP_TYPES` (NEW)
-
-| Constant | Value | Description |
-|----------|-------|-------------|
-| PUBLIC | 'public' | Government-funded, free tuition |
-| PRIVATE | 'private' | Tuition-funded, owner receives profit |
-| RELIGIOUS | 'religious' | Religion-owned, doctrine teaching |
-
-### `ROLE_CATEGORY_OPTIONS`
-
-Role categories for specialization.
-
-### Tuition Constants
-
-| Constant | Default | Description |
-|----------|---------|-------------|
-| `DEFAULT_TUITION` | 10 | Default tuition |
-| `MIN_TUITION` | 0 | Minimum tuition |
-| `MAX_TUITION` | 200 | Maximum tuition |
-| `TUITION_REPUTATION_MODIFIER_MIN` | 0.75 | Minimum reputation modifier |
-| `TUITION_REPUTATION_MODIFIER_MAX` | 1.25 | Maximum reputation modifier |
-| `TUITION_REPUTATION_NEUTRAL` | 50 | Neutral reputation |
-
-### `TUITION_TYPE_MULTIPLIERS`
-
-Type-specific tuition multipliers.
-
-### `DEFAULT_TUITION_BY_TYPE`
-
-Default tuition by institution type (includes religious school types).
-
----
-
-# 8. EDUCATION-SYSTEM.JS (Wrapper)
-
-**PURPOSE:** Re-exports all education functions for backward compatibility.
-
-**DEPENDENCIES:**
-- All education modules
-
----
-
-## Re-exported Functions
-
-| Category | Functions |
-|----------|-----------|
-| State | `subscribe`, `getAllEducationalInstitutions`, `getEducationalInstitution`, `getInstitutionsAtLocation`, `getInstitutionsByType` |
-| Commands | `createEducationalInstitution`, `updateEducationalInstitution`, `deleteEducationalInstitution`, `updateInstitutionReputation`, `enrollStudent`, `graduateStudent`, `withdrawStudent`, `hireTeacher`, `fireTeacher`, `setHeadmaster`, `endHeadmasterTerm`, `getInstitutionsNeedingTeachers`, `createReligiousSchool`, `demolishInstitution`, `rebuildInstitution` |
-| Queries | `getInstitutionDetails`, `getInstitutionsInRegion`, `getInstitutionStudents`, `getInstitutionGraduates`, `getInstitutionTeachers`, `isStudentEnrolled`, `getHeadmaster`, `getHeadmasterHistory`, `getInstitutionStatistics`, `getLocationEducationSummary`, `getEducationHealthScore`, `recommendNewSchoolLocation`, `getReligiousSchools`, `getInstitutionsByReligion`, `getReligiousSchoolsByLocation`, `getDemolishedInstitutions` |
-| Learning | `advanceLearning`, `getProficiency`, `getSubjectProficiency`, `getCharacterProficiencies`, `getEducationLevel`, `isLiterate`, `getLiteracyRate`, `getSchoolAgePopulation`, `getEligibleStudents`, `getStudentDemand` |
-| Annual | `processAnnualEducation`, `processAnnualInstitution`, `getStudentsReadyForGraduation` |
-| History | `addEducationHistoryEvent`, `getInstitutionHistory`, `getFormattedEducationHistory`, `getInstitutionHistoryStats`, `recordTeacherHired`, `recordTeacherLeft`, `getTeacherEmploymentHistory`, `getFormattedTeacherEmploymentHistory`, `recordStudentEnrolled`, `recordStudentGraduated`, `recordStudentWithdrew`, `getStudentEducationHistory`, `getFormattedStudentEducationHistory`, `recordHeadmasterAppointed`, `recordHeadmasterEnded`, `getCharacterHeadmasterHistory`, `recordInstitutionRenamed`, `recordInstitutionMoved`, `recordReputationChanged`, `getCharacterEducationHistory`, `getFormattedCharacterEducationHistory` |
-
----
-
-# 9. MODALS-EDUCATION.JS
-
-**PURPOSE:** UI modals for education management.
-
-**DEPENDENCIES:**
-- `modals-core.js` - `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon`
-- `education-state.js` - `EducationState`
-- `education-commands.js` - `EducationCommands`
-- `education-queries.js` - `EducationQueries`
-- `modals-char-select.js` - `openCharacterSelector`
-- `modals-household-selector.js` - `openHouseholdSelector`
-
----
-
-## Modal Functions
-
-| Function | Description |
-|----------|-------------|
-| `openCreateInstitutionModal(locationId, onSuccess)` | Creates a new institution (includes religious school options) |
-| `openEditInstitutionModal(institutionId, onSuccess)` | Edits an institution (includes religion fields) |
-| `openEditCurriculumModal(institutionId, onSuccess)` | Edits curriculum (with role filtering) |
-| `openInstitutionDetailsModal(institutionId, onSuccess)` | Shows institution details (includes religion info) |
-| `openEnrollStudentModal(institutionId, onSuccess)` | Enrolls a student (tuition-aware) |
-| `openHireTeacherModal(institutionId, onSuccess)` | Hires a teacher (no skill check) |
-| `openSetHeadmasterModal(institutionId, onSuccess)` | Sets headmaster |
-| `openDeleteInstitutionModal(institutionId, onSuccess)` | Deletes an institution |
-| `openTuitionManagementModal(institutionId, onSuccess)` | Manages tuition (includes religious school discounts) |
-| `openOwnershipManagementModal(institutionId, onSuccess)` | Manages ownership (includes religious ownership) |
-| `openGraduateStudentModal(institutionId, studentId, onSuccess)` | Graduates a student with role selection |
-
----
-
-# 10. EDUCATION DATA SCHEMA
-
-## Institution Object Schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Unique identifier |
-| `name` | string | Institution name |
-| `type` | string | Institution type ID |
-| `typeName` | string | Type display name |
-| `icon` | string | Type icon |
-| `locationId` | string | Location ID |
-| `locationName` | string | Location display name |
-| `students` | array | Student records |
-| `graduates` | array | Graduate records |
-| `teachers` | array | Teacher records |
-| `foundedYear` | number | Year founded |
-| `curriculum` | array | Curriculum items |
-| `taughtRoles` | array | Role IDs taught |
-| `isSpecialized` | boolean | Specialized flag |
-| `specializationCategory` | string | Category ID |
-| `costPerYear` | number | Cost per year |
-| `reputation` | number | 0-100 |
-| `maxStudents` | number | Capacity |
-| `description` | string | Description |
-| `requiredYears` | number | Years required for graduation |
-| `skillGainPerYear` | number | Skill gain per year |
-| `notes` | string | Notes |
-| `headmaster` | object | Current headmaster |
-| `headmasterHistory` | array | Headmaster history |
-| `history` | array | History events |
-| `tuitionPerYear` | number | Base tuition |
-| `customTuition` | number | Manual override |
-| `tuitionHistory` | array | Tuition history |
-| `waiveTuition` | boolean | Tuition waived |
-| `ownershipType` | string | 'public', 'private', or 'religious' |
-| `ownerId` | string | Owner ID |
-| `ownerType` | string | 'character', 'household', or 'religion' |
-| `ownerName` | string | Owner display name |
-| `governmentFunding` | number | Funding amount |
-| `governmentFundingHistory` | array | Funding history |
-| `annualIncome` | number | Annual income |
-| `annualExpenses` | number | Annual expenses |
-| `netProfit` | number | Net profit |
-| `profitHistory` | array | Profit history |
-| `studentCount` | number | Current student count |
-| **RELIGION FIELDS (NEW)** | | |
-| `religionId` | string | Religion ID |
-| `religionName` | string | Religion display name |
-| `isReligiousSchool` | boolean | Religious school flag |
-| `clergyHeadId` | string | Clergy head character ID |
-| `teachesDoctrine` | boolean | Teaches religious doctrine |
-| `hasMandatoryWorship` | boolean | Mandatory worship requirement |
-| **DEMOLITION FIELDS** | | |
-| `status` | string | 'active' or 'demolished' |
-| `demolishedAt` | number | Year demolished |
-| `demolishedReason` | string | Reason for demolition |
-| `destroyedBy` | string | 'manual', 'disaster', etc. |
-| `disasterId` | string | Disaster ID (if applicable) |
-| `demolishedRecord` | object | Full demolition record |
-
----
-
-## Student Record Schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `studentId` | string | Character ID |
-| `studentName` | string | Character name |
-| `enrollmentYear` | number | Year enrolled |
-| `progress` | object | Skill progress |
-| `graduated` | boolean | Graduated flag |
-| `graduationYear` | number | Year graduated |
-| `attendance` | number | Attendance percentage |
-| `notes` | string | Notes |
-| `tuitionPaid` | number | Tuition paid |
-| `tuitionYear` | number | Tuition year |
-| `tuitionWaived` | boolean | Tuition waived |
-| `grantedRole` | string | Role granted on graduation |
-
----
-
-## Teacher Record Schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `teacherId` | string | Character ID |
-| `teacherName` | string | Character name |
-| `subjectId` | string | Subject ID |
-| `subjectName` | string | Subject name |
-| `subjectType` | string | 'role' or 'subject' |
-| `hiredYear` | number | Year hired |
-
----
-
-## Headmaster Record Schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `characterId` | string | Character ID |
-| `name` | string | Character name |
-| `title` | string | Title (Headmaster, Dean, etc.) |
-| `startYear` | number | Year appointed |
-| `endYear` | number | Year term ended |
-| `reason` | string | Reason for ending |
-
----
-
-## Demolition Record Schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `institutionId` | string | Institution ID |
-| `institutionName` | string | Institution name |
-| `type` | string | Institution type ID |
-| `typeName` | string | Type display name |
-| `locationId` | string | Location ID |
-| `locationName` | string | Location display name |
-| `demolishedYear` | number | Year demolished |
-| `demolishedReason` | string | Reason for demolition |
-| `destroyedBy` | string | 'manual' or 'disaster' |
-| `disasterId` | string | Disaster ID (if applicable) |
-| `previousReputation` | number | Reputation before demolition |
-| `previousStudents` | number | Student count before demolition |
-| `previousTeachers` | number | Teacher count before demolition |
-| `previousMaxStudents` | number | Capacity before demolition |
-| `headmasterId` | string | Headmaster ID at demolition |
-| `headmasterName` | string | Headmaster name at demolition |
-| `ownershipType` | string | Ownership type at demolition |
-| `ownerId` | string | Owner ID at demolition |
-| `ownerName` | string | Owner name at demolition |
-| `religionId` | string | Religion ID (NEW) |
-| `religionName` | string | Religion name (NEW) |
-| `timestamp` | number | Record timestamp |
-
----
-
-# 11. DEPENDENCY MAP
-
-## Core Dependencies
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    CORE DEPENDENCIES                                       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  modals-core.js ─────────────────────────────────────────────────────────┐ │
-│  ├── openModal()                                                         │ │
-│  ├── closeTopModal()                                                     │ │
-│  ├── _escapeHtml()                                                       │ │
-│  ├── _showToast()                                                        │ │
-│  ├── _getIcon()                                                          │ │
-│  └── _getCurrentYear()                                                   │ │
-│                                                                             │
-│  accessors.js ──────────────────────────────────────────────────────────┐ │
-│  ├── getCharacterById()                                                  │ │
-│  ├── getCharacters()                                                     │ │
-│  ├── getPlaceById()                                                      │ │
-│  ├── getPlaces()                                                         │ │
-│  ├── getCurrentYear()                                                    │ │
-│  └── getLocationTypeById()                                               │ │
-│                                                                             │
-│  storage.js ────────────────────────────────────────────────────────────┐ │
-│  └── saveMasterData()                                                    │ │
-│                                                                             │
-│  ids.js ────────────────────────────────────────────────────────────────┐ │
-│  └── generateId()                                                        │ │
-│                                                                             │
-│  role-system.js ────────────────────────────────────────────────────────┐ │
-│  ├── RoleState.getRole()                                                 │ │
-│  ├── RoleState.getAllRoles()                                             │ │
-│  ├── RoleQueries.getCharactersWithRoleDetails()                          │ │
-│  └── RoleCommands.assignRoleToCharacter()                                │ │
-│                                                                             │
-│  religion-system.js ────────────────────────────────────────────────────┐ │
-│  └── ReligionState.getReligion() (NEW)                                   │ │
-│                                                                             │
-│  settlement-system.js ──────────────────────────────────────────────────┐ │
-│  ├── SettlementState.getSettlementData()                                 │ │
-│  └── SettlementState.getEducationBudget()                                │ │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-## Education System Dependencies
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    EDUCATION SYSTEM DEPENDENCIES                           │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  education-state.js ─────────────────────────────────────────────────────┐ │
-│  ├── accessors.js                                                        │ │
-│  └── storage.js                                                          │ │
-│                                                                             │
-│  education-commands.js ─────────────────────────────────────────────────┐ │
-│  ├── education-state.js                                                  │ │
-│  ├── education-history.js                                                │ │
-│  ├── education-constants.js                                              │ │
-│  ├── accessors.js                                                        │ │
-│  ├── role-state.js                                                       │ │
-│  ├── role-queries.js                                                     │ │
-│  ├── role-commands.js                                                    │ │
-│  └── religion-state.js (NEW)                                             │ │
-│                                                                             │
-│  education-queries.js ──────────────────────────────────────────────────┐ │
-│  ├── education-state.js                                                  │ │
-│  ├── accessors.js                                                        │ │
-│  └── time.js                                                             │ │
-│                                                                             │
-│  education-learning.js ─────────────────────────────────────────────────┐ │
-│  ├── education-state.js                                                  │ │
-│  ├── education-constants.js                                              │ │
-│  └── accessors.js                                                        │ │
-│                                                                             │
-│  education-annual.js ───────────────────────────────────────────────────┐ │
-│  ├── education-state.js                                                  │ │
-│  ├── education-commands.js                                               │ │
-│  ├── education-learning.js                                               │ │
-│  ├── accessors.js                                                        │ │
-│  └── settlement-state.js                                                 │ │
-│                                                                             │
-│  education-history.js ──────────────────────────────────────────────────┐ │
-│  ├── accessors.js                                                        │ │
-│  └── storage.js                                                          │ │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+Generated: post-refactor.
 ```
 
 ---
 
-# 12. INTEGRATION WITH OTHER SYSTEMS
+## What changed vs the old doc
 
-## Education ↔ Religion System (NEW)
+- Institution types list updated to the actual seven-tier set (`hut_school`
+  through `grand_university`).
+- Removed references to `GENERAL_SUBJECTS` and `HIGHER_SUBJECTS`. There is
+  now a single `SUBJECTS` registry.
+- Removed references to `religious_seminary`, `monastic_school`, and other
+  retired types.
+- Removed `costPerYear`. Tuition is `baseTuition`.
+- Documented the actual command result shape (`{ success, reason }`), not the
+  old boolean / null returns.
+- Documented persistence boundary: callers save, Commands do not.
+- Documented the annual pipeline order (learning → readiness → budget →
+  finance → persist).
+- Documented history as append-only, structured metadata, and no formatting.
+- Documented religion as orthogonal to ownership.
+- Documented the apprenticeship integration and the canonical skill store.
+- Removed the old `EducationCommands._getTeacherSkillLevelName` reference.
+- Removed the old `_getInstitutions`, `_saveInstitutions`,
+  `_refreshInstitutionCache` legacy surface.
+- Removed the old `_getState()` escape hatch.
+- Removed the old formatted history functions.
+- Added a testing checklist.
 
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Religion → Religious Schools | `institution.religionId` | ✅ Integrated |
-| Religion → School Creation | `createReligiousSchool()` | ✅ Integrated |
-| Religious School → Clergy | `clergyHeadId` | ✅ Integrated |
-| Religious School → Doctrine | `teachesDoctrine` | ✅ Integrated |
-| Religious School → Worship | `hasMandatoryWorship` | ✅ Integrated |
-| Religion → School Ownership | `ownershipType: 'religious'` | ✅ Integrated |
-
-## Education ↔ Role System
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Institutions → Roles | `institution.taughtRoles` | ✅ Integrated |
-| Institutions → Role Category | `institution.specializationCategory` | ✅ Integrated |
-| Graduation → Role Granting | `EducationCommands.graduateStudent()` | ✅ Integrated |
-| Curriculum → Roles | `curriculum.type === 'role'` | ✅ Integrated |
-| Teacher → Role Check | `hireTeacher()` role verification | ✅ Integrated |
-
-## Education ↔ Settlement System
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Settlement Budget → Education | `receiveSettlementBudget()` | ✅ Integrated |
-| Public School Funding | `applyGovernmentFunding()` | ✅ Integrated |
-| Education Budget → Institutions | `_processEducationBudgets()` | ✅ Integrated |
-| Settlement Prosperity → Funding | `calculatePublicSchoolFunding()` | ✅ Integrated |
-
-## Education ↔ Household System
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Tuition Payment | `_updateHouseholdWealth()` | ✅ Integrated |
-| Tuition Tracking | `_trackTuitionExpense()` | ✅ Integrated |
-| Private School Profit → Household | `processPrivateSchoolProfit()` | ✅ Integrated |
-| School Owner → Household | `setSchoolOwner()` | ✅ Integrated |
-
-## Education ↔ Character System
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Character → Student | `enrollStudent()` | ✅ Integrated |
-| Character → Teacher | `hireTeacher()` | ✅ Integrated |
-| Character → Headmaster | `setHeadmaster()` | ✅ Integrated |
-| Education Level → Character | `getEducationLevel()` | ✅ Integrated |
-| Literacy → Character | `isLiterate()` | ✅ Integrated |
-
----
-
-# 13. RECURSION GUARDS
-
-| Guard Name | Location | Purpose |
-|------------|----------|---------|
-| `_processingStateUpdate` | education-state.js | Prevent state update re-entry |
-| `_processingCommand` | education-commands.js | Prevent command re-entry |
-| `_processingQuery` | education-queries.js | Prevent query re-entry |
-| `_processingLearning` | education-learning.js | Prevent learning re-entry |
-| `_processingAnnual` | education-annual.js | Prevent annual processing re-entry |
-| `_processingHistory` | education-history.js | Prevent history recording re-entry |
-
----
-
-# 14. ICON POLICY
-
-All icons must come from `icons.js` via the `_getIcon()` function.
-
-## Available Icons for Education System
-
-| Usage | Icon |
-|-------|------|
-| Institution | HOME |
-| Student | PERSON |
-| Teacher | PERSON |
-| Headmaster | CROWN |
-| Curriculum | GEAR |
-| Tuition | COIN |
-| Reputation | STAR_4 |
-| Edit | EDIT |
-| Delete | X_HEAVY |
-| Warning | WARNING |
-| Success | CHECK_SIMPLE |
-| Location | LOCATION |
-| Religion | CHURCH (NEW) |
-
----
-
-# 15. TYPES OF EDUCATIONAL INSTITUTIONS
-
-| Ownership Type | Tuition | Funding | Owner | Use Case |
-|----------------|---------|---------|-------|----------|
-| **Public** | Free (0 gold) | Government/settlement | None | Standard education for all |
-| **Private** | Tuition-based | Tuition fees | Character or Household | Elite/noble education, profit-driven |
-| **Religious** | Free or discounted | Religion/Settlement subsidies | Religion | Clergy training, doctrinal education |
-
----
-
-# 16. TUITION RULES BY OWNERSHIP TYPE
-
-| Ownership Type | Tuition Calculation |
-|----------------|---------------------|
-| **Public** | Always 0 gold (free) |
-| **Religious** | 30% discount from base, often waived. Manual override available. |
-| **Private** | Dynamic: base × reputation_modifier × type_multiplier. Manual override available. |
-
----
-
-# END OF DOCUMENTATION
-
-**Generated:** 2026-07-12
-**Version:** 4.0
-**File Count:** 8 core modules + 1 modal file
+Nothing else in the codebase needs to change to match this doc.
