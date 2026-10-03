@@ -3,92 +3,119 @@
  * STILL WATERS - CHARACTER QUERIES (js/character/character-queries.js)
  * =============================================================================
  *
- * Semantic character queries built on top of accessors, character state,
- * and family accessors.
+ * Semantic character-level read API.
  *
  * SCOPE:
- *   - Name search
- *   - Character summaries (name, age, location, rank, family)
- *   - Character facts (flat projection for cross-domain consumers)
+ *   - Character search (name substring)
+ *   - Character summary projection (identity + age + location + rank +
+ *     family counts + primary profession)
+ *   - Character facts projection (narrow identity + demographics + rank id
+ *     + location id) for cross-domain consumers
  *   - Location-scoped character lookups
- *   - Profession queries (by skill, masters)
- *   - Education status adapters (delegated to education-queries.js)
- *   - Character population statistics
- *   - Thin family adapters over FamilyAccessors
+ *   - Whole-collection defensive projection
  *
  * OUT OF SCOPE:
- *   - Raw accessor lookups → accessors.js
- *   - Family graph traversal → FamilyAccessors
- *   - Family statistics aggregation → FamilyStatistics
- *   - Relationship semantics → relationship-queries.js
- *   - Education semantics → education-queries.js
- *   - Mutation → CharacterCommands
- *   - Persistence → storage.js
- *   - Presentation → CharacterUI, modals
+ *   - Family graph semantics         → family-queries.js
+ *   - Family aggregate counts        → family-statistics.js
+ *   - Profession semantics           → professional-queries.js
+ *   - Population statistics          → character-statistics.js
+ *   - Education status               → education-queries.js
+ *   - Relationship semantics         → relationship-queries.js
+ *   - Rank semantics                 → role-queries.js (RankQueries facade)
+ *   - Mutation                       → character-commands.js
+ *   - Persistence                    → storage.js
+ *   - Presentation                   → character-ui-list.js, modals
+ *
+ * COMPATIBILITY DELEGATES:
+ *   A small number of functions that used to live here are kept as thin
+ *   delegating wrappers. They call the authoritative module and return
+ *   its result. They do NOT reimplement semantics. They exist so that
+ *   existing callers continue to work during the transition. Each is
+ *   marked "COMPAT" below and can be deleted once callers migrate.
+ *
+ *     getCharacterProfessions(id)             → character-commands.getProfessions
+ *     getPrimaryProfession(id)                → professional-queries
+ *     getCharactersByProfessionSkill(...)     → professional-queries
+ *     getMasterCharacters(...)                → professional-queries
+ *
+ *     getCharacterChildren(...)               → family-queries
+ *     getCharacterParents(...)                → family-queries
+ *     getCharacterSiblings(...)               → family-queries
+ *     getCharacterGrandparents(...)           → family-queries
+ *     getCharacterGrandchildren(...)          → family-queries
+ *     getCharacterFirstCousins(...)           → family-queries
+ *     getCharacterAuntsAndUncles(...)         → family-queries
+ *     getCharacterNiecesAndNephews(...)       → family-queries
+ *     getCharacterKinship(a, b)               → family-queries
+ *     getCharacterKinshipCloseness(a, b)      → family-queries
+ *     getCharacterFamilyStatistics(id)        → family-statistics
+ *     getCharacterFamilySummary(id)           → family-statistics
+ *
+ *     getCharactersByEducationStatus(...)     → education-queries (if loaded)
+ *     getCharactersNotInEducation(...)        → education-queries (if loaded)
+ *     getCharacterStatistics()                → character-statistics
+ *
+ * REMOVED FROM THIS MODULE (now live in their own files, delivered in this
+ * same refactor slice):
+ *   getCharacterStatistics                   → character-statistics.js
+ *   getCharacterFacts (professional fields)  → professional-queries.js
+ *   getCharactersByProfessionSkill           → professional-queries.js
+ *   getMasterCharacters                      → professional-queries.js
  *
  * SEMANTIC RULES:
- *   - Queries are reentrant. There is no `_processing` guard.
  *   - Missing/invalid input returns null (singular) or [] (collection).
- *   - Invalid explicit query arguments throw, matching the project
- *     convention. Query results do not silently default.
- *   - Returned character objects are live canonical references. Callers
- *     must not mutate them. Only CharacterCommands mutates.
- *   - getCharacterFacts returns a defensive projection. It does not leak
- *     the canonical character object.
+ *   - Invalid explicit input throws.
+ *   - Every returned character is a defensive projection. No live canonical
+ *     object leaves this module.
+ *   - Reads are reentrant. No _processing guard.
+ *   - No fallback dependencies. If a required dependency is missing at load,
+ *     this module throws.
  *
- * DEPENDENCIES (REQUIRED):
- *   - accessors.js:   getCharacters, getCharacterById
- *   - time.js:        calculateAge, getCurrentYear
- *   - FamilyAccessors
+ * DEPENDENCIES (REQUIRED, load first):
+ *   - character-state.js     (CharacterState) — collection + projections
+ *   - time.js                (calculateAge, getCurrentYear, isValidYear)
  *
- * DEPENDENCIES (OPTIONAL):
- *   - CharacterState     — for fast indexed lookups
- *   - LocationQueries    — required for getCurrentLocationId and
- *                          location-scoped lookups
- *   - WorldQueries       — for location display
- *   - RankQueries        — for active rank display
- *   - EducationQueries   — required for education-status queries only
- *   - FamilyStatistics   — for family statistics aggregation
+ * DEPENDENCIES (OPTIONAL, present in the current codebase):
+ *   - character-commands.js  (CharacterCommands) — profession delegate
+ *   - role-queries.js        (RoleQueries) — rank display
+ *   - family-queries.js      (FamilyQueries) — family delegate
+ *   - family-statistics.js   (FamilyStatistics) — family stats delegate
+ *   - professional-queries.js (ProfessionalQueries) — profession delegate
+ *   - character-statistics.js (CharacterStatistics) — statistics delegate
+ *   - education-queries.js   (EducationQueries) — education delegate
+ *
+ *   When an optional dependency is absent, the corresponding compatibility
+ *   wrapper returns null (singular) or [] (collection) with no fabricated
+ *   data. The wrapper does not invent results.
  *
  * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
-    // 0. DEPENDENCY GUARDS
+    // 0. HARD DEPENDENCY CHECK
     // =========================================================================
 
-    function _requireCoreDependencies() {
-        var required = [
-            'getCharacters',
-            'getCharacterById',
-            'calculateAge',
-            'getCurrentYear'
-        ];
-        var missing = [];
-        for (var i = 0; i < required.length; i++) {
-            if (typeof window[required[i]] === 'undefined') {
-                missing.push(required[i]);
-            }
-        }
-        if (missing.length > 0) {
-            throw new Error(
-                'character-queries.js: missing required dependencies: ' +
-                missing.join(', ')
-            );
-        }
-        if (typeof window.FamilyAccessors === 'undefined') {
-            throw new Error(
-                'character-queries.js: family-accessors.js must load first.'
-            );
-        }
+    if (!window.CharacterState) {
+        throw new Error(
+            'character-queries.js requires character-state.js (CharacterState) to load first.'
+        );
+    }
+    if (typeof window.calculateAge !== 'function') {
+        throw new Error('character-queries.js requires time.js (calculateAge).');
+    }
+    if (typeof window.getCurrentYear !== 'function') {
+        throw new Error('character-queries.js requires time.js (getCurrentYear).');
+    }
+    if (typeof window.isValidYear !== 'function') {
+        throw new Error('character-queries.js requires time.js (isValidYear).');
     }
 
-    _requireCoreDependencies();
+    var CS = window.CharacterState;
 
     // =========================================================================
     // 1. INTERNAL HELPERS
@@ -108,106 +135,39 @@
         return proto === Object.prototype || proto === null;
     }
 
-    function _getAll() {
-        if (typeof window.CharacterState !== 'undefined'
-            && typeof window.CharacterState.getAllCharacters === 'function') {
-            return window.CharacterState.getAllCharacters();
-        }
-        return window.getCharacters();
-    }
-
-    function _getCharacter(id) {
+    /**
+     * Reads the character projection from CharacterState.
+     * Never returns a live canonical object.
+     */
+    function _readCharacter(id) {
         if (!_hasId(id)) return null;
-        if (typeof window.CharacterState !== 'undefined'
-            && typeof window.CharacterState.getCharacter === 'function') {
-            var c = window.CharacterState.getCharacter(id);
-            if (c) return c;
-        }
-        return window.getCharacterById(id);
-    }
-
-    function _age(character) {
-        if (!character) return null;
-        return window.calculateAge(
-            character.birthYear,
-            character.isDeceased === true,
-            character.deathYear
-        );
-    }
-
-    function _currentLocationDisplay(character) {
-        if (!character) return null;
-
-        if (typeof window.WorldQueries !== 'undefined'
-            && typeof window.WorldQueries.getCurrentLocationDisplay === 'function') {
-            return window.WorldQueries.getCurrentLocationDisplay(character);
-        }
-
-        var locationId = _currentLocationId(character);
-        if (!locationId) return null;
-
-        if (typeof window.getPlaceById !== 'function') return null;
-        var place = window.getPlaceById(locationId);
-        return place && typeof place.displayName === 'string'
-            ? place.displayName
-            : null;
+        return CS.getCharacter(id);
     }
 
     /**
-     * Resolves the current location id for a character.
-     * Delegates to LocationQueries.getCurrentLocationId when available,
-     * which is the canonical owner of movement records.
+     * Reads the full projection array from CharacterState.
      */
-    function _currentLocationId(character) {
-        if (!character) return null;
-
-        if (typeof window.LocationQueries !== 'undefined'
-            && typeof window.LocationQueries.getCurrentLocationId === 'function') {
-            return window.LocationQueries.getCurrentLocationId(character.id);
-        }
-
-        // Fallback: character record's currentLocationId field. This is a
-        // snapshot; the canonical movement history lives in CharacterState.
-        if (_hasId(character.currentLocationId)) return character.currentLocationId;
-        return null;
+    function _readAll() {
+        return CS.getAllCharacters();
     }
 
-    function _activeRankDisplay(character) {
-        if (!character) return null;
-        if (!_hasId(character.activeRankId)) return null;
-
-        if (typeof window.RankQueries !== 'undefined'
-            && typeof window.RankQueries.getActiveRankDisplay === 'function') {
-            return window.RankQueries.getActiveRankDisplay(character);
-        }
-
-        if (typeof window.getRankById !== 'function') return null;
-        var rank = window.getRankById(character.activeRankId);
-        if (!rank) return null;
-        return {
-            id: rank.id,
-            name: rank.name || null,
-            display: rank.name || null
-        };
+    function _age(projection) {
+        if (!projection) return null;
+        return window.calculateAge(
+            projection.birthYear,
+            projection.isDeceased === true,
+            projection.deathYear
+        );
     }
 
-    function _unwrapCharacters(list) {
-        if (!Array.isArray(list)) return [];
-        var out = [];
-        for (var i = 0; i < list.length; i++) {
-            var item = list[i];
-            if (!item) continue;
-            var c = item.character || item;
-            if (c && _hasId(c.id)) out.push(c);
-        }
-        return out;
+    function _fullName(projection) {
+        if (!projection) return '';
+        var name = typeof projection.name === 'string' ? projection.name : '';
+        var surname = typeof projection.surname === 'string' ? projection.surname : '';
+        return (name + ' ' + surname).trim();
     }
 
-    // =========================================================================
-    // 2. VALIDATION HELPERS
-    // =========================================================================
-
-    function _validateString(value, name, allowMissing) {
+    function _validateStringArgument(value, name, allowMissing) {
         if (_isMissing(value)) {
             if (allowMissing) return { ok: true, value: null };
             return { ok: false, reason: name + ' is required' };
@@ -218,7 +178,7 @@
         return { ok: true, value: value };
     }
 
-    function _validateInteger(value, name, allowMissing) {
+    function _validateIntegerArgument(value, name, allowMissing) {
         if (_isMissing(value)) {
             if (allowMissing) return { ok: true, value: null };
             return { ok: false, reason: name + ' is required' };
@@ -231,28 +191,26 @@
     }
 
     // =========================================================================
-    // 3. SEARCH
+    // 2. SEARCH
     // =========================================================================
 
+    /**
+     * Case-insensitive substring match against the full name.
+     * Empty/missing query returns the full collection.
+     */
     function searchCharacters(query) {
-        var validation = _validateString(query, 'query', true);
-        if (!validation.ok) throw new Error('searchCharacters: ' + validation.reason);
+        var v = _validateStringArgument(query, 'query', true);
+        if (!v.ok) throw new Error('searchCharacters: ' + v.reason);
 
-        var all = _getAll();
-        if (_isMissing(validation.value) || validation.value.trim() === '') {
-            return all;
-        }
+        var all = _readAll();
+        if (_isMissing(v.value) || v.value.trim() === '') return all;
 
-        var lower = validation.value.toLowerCase().trim();
+        var lower = v.value.trim().toLowerCase();
         var result = [];
         for (var i = 0; i < all.length; i++) {
             var c = all[i];
-            var name = typeof c.name === 'string' ? c.name : '';
-            var surname = typeof c.surname === 'string' ? c.surname : '';
-            var full = (name + ' ' + surname).toLowerCase();
-            if (full.indexOf(lower) !== -1) {
-                result.push(c);
-            }
+            var full = ((c.name || '') + ' ' + (c.surname || '')).toLowerCase();
+            if (full.indexOf(lower) !== -1) result.push(c);
         }
         return result;
     }
@@ -262,90 +220,37 @@
     }
 
     // =========================================================================
-    // 4. CHARACTER FACTS (flat projections for cross-domain consumers)
-    // =========================================================================
-    //
-    // getCharacterFacts returns a flat projection that other domains can
-    // consume without knowing the character record shape. It is the API
-    // Government and other domains use for eligibility checks.
-    //
-    // Fields:
-    //   id, fullName, name, surname, age, birthYear, gender, isDeceased,
-    //   activeRankId, experienceYears, roleIds, skillLevels
-    //
-    // experienceYears is derived from the character's primary profession
-    // startYear. It is null when the character has no primary profession.
-    //
-    // skillLevels is a map of roleId -> skillLevel for the character's
-    // current professions.
+    // 3. BASIC LOOKUPS
     // =========================================================================
 
-    function getCharacterFacts(id) {
+    function getAllCharacters() {
+        return _readAll();
+    }
+
+    function getCharacter(id) {
         if (!_hasId(id)) return null;
-        var character = _getCharacter(id);
-        if (!character) return null;
-
-        var age = _age(character);
-
-        var roleIds = [];
-        var skillLevels = {};
-        if (Array.isArray(character.professions)) {
-            for (var i = 0; i < character.professions.length; i++) {
-                var p = character.professions[i];
-                if (!p || typeof p.id !== 'string' || p.id.length === 0) continue;
-                roleIds.push(p.id);
-                skillLevels[p.id] = typeof p.skillLevel === 'number'
-                    ? p.skillLevel
-                    : 0;
-            }
-        }
-
-        var experienceYears = null;
-        var primary = getPrimaryProfession(id);
-        if (primary && primary.startYear !== undefined && primary.startYear !== null) {
-            var currentYear = window.getCurrentYear();
-            var yrs = currentYear - primary.startYear;
-            if (typeof yrs === 'number' && isFinite(yrs) && yrs >= 0) {
-                experienceYears = yrs;
-            }
-        }
-
-        return {
-            id: character.id,
-            fullName: ((character.name || '') + ' ' + (character.surname || '')).trim(),
-            name: character.name || '',
-            surname: character.surname || '',
-            age: age,
-            birthYear: character.birthYear !== undefined ? character.birthYear : null,
-            gender: character.gender || null,
-            isDeceased: character.isDeceased === true,
-            activeRankId: character.activeRankId || null,
-            experienceYears: experienceYears,
-            roleIds: roleIds,
-            skillLevels: skillLevels
-        };
+        return _readCharacter(id);
     }
 
-    function getAllCharacterFacts() {
-        var all = _getAll();
-        var out = [];
-        for (var i = 0; i < all.length; i++) {
-            var f = getCharacterFacts(all[i].id);
-            if (f) out.push(f);
-        }
-        return out;
+    function getCharacterDisplayName(id) {
+        var projection = _readCharacter(id);
+        if (!projection) return null;
+        return _fullName(projection);
+    }
+
+    function getCurrentLocationId(id) {
+        var projection = _readCharacter(id);
+        if (!projection) return null;
+        return projection.currentLocationId || null;
     }
 
     // =========================================================================
-    // 5. LOCATION-SCOPED CHARACTER LOOKUPS
+    // 4. LOCATION-SCOPED LOOKUPS
     // =========================================================================
 
     /**
-     * Returns all characters whose current location is in the given id set.
-     * Delegates to LocationQueries for current location resolution.
-     *
-     * @param {string[]} locationIds
-     * @returns {Array}
+     * Returns all characters whose canonical currentLocationId is in the
+     * given id set.
      */
     function getCharactersInLocations(locationIds) {
         if (!Array.isArray(locationIds) || locationIds.length === 0) return [];
@@ -355,254 +260,393 @@
             if (_hasId(locationIds[i])) idSet[locationIds[i]] = true;
         }
 
-        var all = _getAll();
+        var all = _readAll();
         var out = [];
         for (var j = 0; j < all.length; j++) {
             var c = all[j];
-            var locId = _currentLocationId(c);
-            if (locId && idSet[locId]) out.push(c);
+            if (c.currentLocationId && idSet[c.currentLocationId]) {
+                out.push(c);
+            }
+        }
+        return out;
+    }
+
+    // =========================================================================
+    // 5. CHARACTER SUMMARY
+    // =========================================================================
+
+    /**
+     * Returns a compact semantic projection of a character.
+     *
+     * Composes CharacterState, RankQueries (if loaded), FamilyStatistics
+     * (if loaded), FamilyQueries (if loaded), and CharacterCommands (if
+     * loaded) to produce a single object suitable for UI and cross-domain
+     * consumers.
+     *
+     * @param {string} id
+     * @returns {Object|null}
+     */
+    function getCharacterSummary(id) {
+        var projection = _readCharacter(id);
+        if (!projection) return null;
+
+        var age = _age(projection);
+        var fullName = _fullName(projection);
+
+        // Rank display — delegate to RoleQueries.getRankSummary if loaded.
+        var rankDisplay = null;
+        if (projection.activeRankId
+            && typeof window.RoleQueries !== 'undefined'
+            && typeof window.RoleQueries.getRankSummary === 'function') {
+            var rankSummary = window.RoleQueries.getRankSummary(projection.activeRankId);
+            if (rankSummary) rankDisplay = rankSummary.name || null;
+        }
+
+        // Primary profession — delegate to CharacterCommands if loaded.
+        var primaryProfession = null;
+        if (typeof window.CharacterCommands !== 'undefined'
+            && typeof window.CharacterCommands.getProfessions === 'function') {
+            var professions = window.CharacterCommands.getProfessions(id);
+            if (Array.isArray(professions) && professions.length > 0) {
+                for (var i = 0; i < professions.length; i++) {
+                    if (professions[i].primary === true) {
+                        primaryProfession = professions[i];
+                        break;
+                    }
+                }
+                if (!primaryProfession) primaryProfession = professions[0];
+            }
+        }
+
+        // Family counts — delegate to FamilyStatistics if loaded.
+        var familyCounts = {
+            father: null,
+            mother: null,
+            childCount: 0,
+            hasChildren: false
+        };
+        if (typeof window.FamilyStatistics !== 'undefined'
+            && typeof window.FamilyStatistics.getFamilyStatistics === 'function') {
+            var stats = window.FamilyStatistics.getFamilyStatistics(id);
+            if (stats) {
+                familyCounts.father = stats.parents ? (stats.parents.father || null) : null;
+                familyCounts.mother = stats.parents ? (stats.parents.mother || null) : null;
+                familyCounts.childCount = stats.children ? (stats.children.total || 0) : 0;
+                familyCounts.hasChildren = familyCounts.childCount > 0;
+            }
+        } else if (typeof window.FamilyQueries !== 'undefined') {
+            if (typeof window.FamilyQueries.getParents === 'function') {
+                var parents = window.FamilyQueries.getParents(id);
+                if (parents) {
+                    familyCounts.father = parents.father || null;
+                    familyCounts.mother = parents.mother || null;
+                }
+            }
+            if (typeof window.FamilyQueries.getChildren === 'function') {
+                var children = window.FamilyQueries.getChildren(id);
+                if (Array.isArray(children)) {
+                    familyCounts.childCount = children.length;
+                    familyCounts.hasChildren = children.length > 0;
+                }
+            }
+        }
+
+        return {
+            id: projection.id,
+            name: projection.name,
+            surname: projection.surname,
+            fullName: fullName,
+            gender: _isMissing(projection.gender) ? 'unknown' : projection.gender,
+            age: age,
+            birthYear: _isMissing(projection.birthYear) ? null : projection.birthYear,
+            deathYear: _isMissing(projection.deathYear) ? null : projection.deathYear,
+            deathCause: _isMissing(projection.deathCause) ? null : projection.deathCause,
+            isDeceased: projection.isDeceased === true,
+            location: null, // resolved by UI via LocationQueries; kept null here
+            locationId: projection.currentLocationId || null,
+            rank: rankDisplay,
+            rankId: projection.activeRankId || null,
+            household: projection.household || null,
+            religionId: projection.religionId || null,
+            cultureId: projection.cultureId || null,
+            professionCount: (function () {
+                if (typeof window.CharacterCommands !== 'undefined'
+                    && typeof window.CharacterCommands.getProfessions === 'function') {
+                    var ps = window.CharacterCommands.getProfessions(id);
+                    return Array.isArray(ps) ? ps.length : 0;
+                }
+                return 0;
+            })(),
+            primaryProfession: primaryProfession,
+            notes: _isMissing(projection.notes) ? '' : projection.notes,
+            epithet: _isMissing(projection.epithet) ? '' : projection.epithet,
+            isDeleted: projection.isDeleted === true,
+            family: {
+                father: familyCounts.father,
+                mother: familyCounts.mother,
+                childCount: familyCounts.childCount,
+                hasChildren: familyCounts.hasChildren
+            }
+        };
+    }
+
+    // =========================================================================
+    // 6. CHARACTER FACTS
+    // =========================================================================
+    //
+    // A deliberately narrow projection for cross-domain consumers. It
+    // contains character-owned identity facts only. Professional facts
+    // (roles, skill levels, experience) live in professional-queries.js.
+
+    function getCharacterFacts(id) {
+        var projection = _readCharacter(id);
+        if (!projection) return null;
+
+        return {
+            id: projection.id,
+            name: projection.name,
+            surname: projection.surname,
+            fullName: _fullName(projection),
+            gender: _isMissing(projection.gender) ? 'unknown' : projection.gender,
+            birthYear: _isMissing(projection.birthYear) ? null : projection.birthYear,
+            age: _age(projection),
+            isDeceased: projection.isDeceased === true,
+            deathYear: _isMissing(projection.deathYear) ? null : projection.deathYear,
+            currentLocationId: projection.currentLocationId || null,
+            household: projection.household || null,
+            activeRankId: projection.activeRankId || null,
+            religionId: projection.religionId || null,
+            cultureId: projection.cultureId || null
+        };
+    }
+
+    function getAllCharacterFacts() {
+        var all = _readAll();
+        var out = [];
+        for (var i = 0; i < all.length; i++) {
+            var facts = getCharacterFacts(all[i].id);
+            if (facts) out.push(facts);
         }
         return out;
     }
 
     /**
-     * Returns the current location id for a character.
-     * Uses LocationQueries when available; falls back to the character's
-     * own currentLocationId field.
-     *
-     * @param {string} characterId
-     * @returns {string|null}
+     * Alias retained for callers that expect the older name.
      */
-    function getCurrentLocationId(characterId) {
-        if (!_hasId(characterId)) return null;
-        var character = _getCharacter(characterId);
-        if (!character) return null;
-        return _currentLocationId(character);
-    }
-
-    /**
-     * Returns all characters, defensive. Alias for getCharacters accessor
-     * exposed on the query surface for cross-domain consumers.
-     */
-    function getAllCharacters() {
-        return _getAll();
+    function getCharacterIdentityFacts(id) {
+        return getCharacterFacts(id);
     }
 
     // =========================================================================
-    // 6. CHARACTER SUMMARY
+    // 7. COMPATIBILITY DELEGATES — PROFESSION
     // =========================================================================
-
-    function getCharacterSummary(id) {
-        if (!_hasId(id)) return null;
-        var character = _getCharacter(id);
-        if (!character) return null;
-
-        var age = _age(character);
-        var location = _currentLocationDisplay(character);
-        var rank = _activeRankDisplay(character);
-
-        var family = null;
-        if (typeof window.FamilyStatistics !== 'undefined'
-            && typeof window.FamilyStatistics.getFamilyStatistics === 'function') {
-            family = window.FamilyStatistics.getFamilyStatistics(id);
-        }
-        if (!family) {
-            var parents = window.FamilyAccessors.getParents(id);
-            var children = window.FamilyAccessors.getAllChildren(id, false);
-            family = {
-                parents: {
-                    father: parents.father || null,
-                    mother: parents.mother || null
-                },
-                children: { total: Array.isArray(children) ? children.length : 0 },
-                hasChildren: Array.isArray(children) && children.length > 0
-            };
-        }
-
-        var primaryProfession = null;
-        if (Array.isArray(character.professions) && character.professions.length > 0) {
-            for (var i = 0; i < character.professions.length; i++) {
-                if (character.professions[i].primary === true) {
-                    primaryProfession = character.professions[i];
-                    break;
-                }
-            }
-            if (!primaryProfession) primaryProfession = character.professions[0];
-        }
-
-        var name = typeof character.name === 'string' ? character.name : '';
-        var surname = typeof character.surname === 'string' ? character.surname : '';
-
-        return {
-            id: character.id,
-            name: name,
-            surname: surname,
-            fullName: (name + ' ' + surname).trim(),
-            gender: _isMissing(character.gender) ? 'unknown' : character.gender,
-            age: age,
-            location: location,
-            rank: rank ? rank.display : null,
-            isDeceased: character.isDeceased === true,
-            birthYear: _isMissing(character.birthYear) ? null : character.birthYear,
-            deathYear: _isMissing(character.deathYear) ? null : character.deathYear,
-            deathCause: _isMissing(character.deathCause) ? null : character.deathCause,
-            household: _isMissing(character.household) ? null : character.household,
-            professionCount: Array.isArray(character.professions)
-                ? character.professions.length
-                : 0,
-            primaryProfession: primaryProfession,
-            notes: _isMissing(character.notes) ? '' : character.notes,
-            epithet: _isMissing(character.epithet) ? '' : character.epithet,
-            family: {
-                father: family.parents ? (family.parents.father || null) : null,
-                mother: family.parents ? (family.parents.mother || null) : null,
-                childCount: family.children ? (family.children.total || 0) : 0,
-                hasChildren: family.hasChildren === true
-            }
-        };
-    }
+    //
+    // These delegate to the authoritative modules. They do not reimplement
+    // profession semantics. Absent dependencies return null or [] without
+    // fabricating data.
 
     function getCharacterProfessions(id) {
         if (!_hasId(id)) return [];
-        var character = _getCharacter(id);
-        if (!character) return [];
-        return Array.isArray(character.professions) ? character.professions : [];
+        if (typeof window.CharacterCommands === 'undefined') return [];
+        if (typeof window.CharacterCommands.getProfessions !== 'function') return [];
+        return window.CharacterCommands.getProfessions(id);
     }
 
     function getPrimaryProfession(id) {
-        var professions = getCharacterProfessions(id);
-        if (professions.length === 0) return null;
-        for (var i = 0; i < professions.length; i++) {
-            if (professions[i] && professions[i].primary === true) {
-                return professions[i];
-            }
-        }
-        return professions[0] || null;
-    }
-
-    function getCharacterSurnameHistory(id) {
         if (!_hasId(id)) return null;
-        var character = _getCharacter(id);
-        if (!character) return null;
-
-        if (character.surnameHistory && _isPlainObject(character.surnameHistory)) {
-            return character.surnameHistory;
+        if (typeof window.ProfessionalQueries !== 'undefined'
+            && typeof window.ProfessionalQueries.getPrimaryProfession === 'function') {
+            return window.ProfessionalQueries.getPrimaryProfession(id);
         }
-
-        var birthYear = _isMissing(character.birthYear)
-            ? window.getCurrentYear()
-            : character.birthYear;
-        return {
-            birthSurname: typeof character.surname === 'string' ? character.surname : '',
-            entries: [],
-            lastUpdated: birthYear
-        };
+        // Fall back to reading professions and picking the primary flag.
+        var professions = getCharacterProfessions(id);
+        if (!Array.isArray(professions) || professions.length === 0) return null;
+        for (var i = 0; i < professions.length; i++) {
+            if (professions[i].primary === true) return professions[i];
+        }
+        return professions[0];
     }
-
-    // =========================================================================
-    // 7. PROFESSION QUERIES
-    // =========================================================================
 
     function getCharactersByProfessionSkill(roleId, minSkill) {
-        var roleValidation = _validateString(roleId, 'roleId', false);
-        if (!roleValidation.ok) {
-            throw new Error('getCharactersByProfessionSkill: ' + roleValidation.reason);
+        var roleCheck = _validateStringArgument(roleId, 'roleId', false);
+        if (!roleCheck.ok) {
+            throw new Error('getCharactersByProfessionSkill: ' + roleCheck.reason);
         }
-        var skillValidation = _validateInteger(minSkill, 'minSkill', false);
-        if (!skillValidation.ok) {
-            throw new Error('getCharactersByProfessionSkill: ' + skillValidation.reason);
+        var skillCheck = _validateIntegerArgument(minSkill, 'minSkill', false);
+        if (!skillCheck.ok) {
+            throw new Error('getCharactersByProfessionSkill: ' + skillCheck.reason);
         }
-        if (skillValidation.value < 0 || skillValidation.value > 100) {
+        if (skillCheck.value < 0 || skillCheck.value > 100) {
             throw new Error('getCharactersByProfessionSkill: minSkill must be between 0 and 100');
         }
 
-        var all = _getAll();
-        var result = [];
-        for (var i = 0; i < all.length; i++) {
-            var c = all[i];
-            if (c.isDeceased === true) continue;
-            if (!Array.isArray(c.professions)) continue;
-
-            for (var j = 0; j < c.professions.length; j++) {
-                var p = c.professions[j];
-                if (!p || p.id !== roleValidation.value) continue;
-                var skill = typeof p.skillLevel === 'number' && Number.isFinite(p.skillLevel)
-                    ? p.skillLevel
-                    : 0;
-                if (skill >= skillValidation.value) {
-                    result.push(c);
-                    break;
-                }
-            }
+        if (typeof window.ProfessionalQueries === 'undefined') return [];
+        if (typeof window.ProfessionalQueries.getCharactersByProfessionSkill !== 'function') {
+            return [];
         }
-        return result;
+        return window.ProfessionalQueries.getCharactersByProfessionSkill(
+            roleCheck.value,
+            skillCheck.value
+        );
     }
 
     function getMasterCharacters(roleId) {
         if (!_isMissing(roleId)) {
-            var v = _validateString(roleId, 'roleId', false);
+            var v = _validateStringArgument(roleId, 'roleId', false);
             if (!v.ok) throw new Error('getMasterCharacters: ' + v.reason);
             roleId = v.value;
         } else {
             roleId = null;
         }
 
-        var all = _getAll();
-        var result = [];
-        for (var i = 0; i < all.length; i++) {
-            var c = all[i];
-            if (!Array.isArray(c.professions)) continue;
-
-            for (var j = 0; j < c.professions.length; j++) {
-                var p = c.professions[j];
-                if (!p) continue;
-                if (roleId && p.id !== roleId) continue;
-                var skill = typeof p.skillLevel === 'number' && Number.isFinite(p.skillLevel)
-                    ? p.skillLevel
-                    : 0;
-                if (skill >= 76) {
-                    result.push(c);
-                    break;
-                }
-            }
-        }
-        return result;
+        if (typeof window.ProfessionalQueries === 'undefined') return [];
+        if (typeof window.ProfessionalQueries.getMasterCharacters !== 'function') return [];
+        return window.ProfessionalQueries.getMasterCharacters(roleId);
     }
 
     // =========================================================================
-    // 8. EDUCATION STATUS (DELEGATED)
+    // 8. COMPATIBILITY DELEGATES — FAMILY
+    // =========================================================================
+    //
+    // These delegate to FamilyQueries / FamilyStatistics. Absent dependencies
+    // return null or [] without fabricating data.
+
+    function _familyQueriesAvailable() {
+        return typeof window.FamilyQueries !== 'undefined';
+    }
+
+    function _familyStatisticsAvailable() {
+        return typeof window.FamilyStatistics !== 'undefined';
+    }
+
+    function getCharacterChildren(characterId, includeDeceased, includeAdopted) {
+        if (!_hasId(characterId)) return [];
+        if (!_familyQueriesAvailable()) return [];
+        if (typeof window.FamilyQueries.getChildren !== 'function') return [];
+        return window.FamilyQueries.getChildren(characterId, {
+            includeDeceased: includeDeceased === true,
+            includeAdopted: includeAdopted !== false
+        });
+    }
+
+    function getCharacterParents(characterId, includeAdoptive) {
+        var empty = { father: null, mother: null, adoptiveParents: [] };
+        if (!_hasId(characterId)) return empty;
+        if (!_familyQueriesAvailable()) return empty;
+        if (typeof window.FamilyQueries.getParents !== 'function') return empty;
+        return window.FamilyQueries.getParents(characterId, {
+            includeAdoptive: includeAdoptive === true
+        });
+    }
+
+    function getCharacterSiblings(characterId, includeHalfSiblings, includeDeceased, includeAdopted) {
+        if (!_hasId(characterId)) return [];
+        if (!_familyQueriesAvailable()) return [];
+        if (typeof window.FamilyQueries.getSiblings !== 'function') return [];
+        return window.FamilyQueries.getSiblings(characterId, {
+            includeHalf: includeHalfSiblings !== false,
+            includeDeceased: includeDeceased === true,
+            includeAdoptive: includeAdopted !== false
+        });
+    }
+
+    function getCharacterGrandparents(characterId, includeAdoptive) {
+        if (!_hasId(characterId)) return [];
+        if (!_familyQueriesAvailable()) return [];
+        if (typeof window.FamilyQueries.getGrandparents !== 'function') return [];
+        return window.FamilyQueries.getGrandparents(characterId, {
+            includeAdoptive: includeAdoptive === true
+        });
+    }
+
+    function getCharacterGrandchildren(characterId, includeDeceased, includeAdopted) {
+        if (!_hasId(characterId)) return [];
+        if (!_familyQueriesAvailable()) return [];
+        if (typeof window.FamilyQueries.getGrandchildren !== 'function') return [];
+        return window.FamilyQueries.getGrandchildren(characterId, {
+            includeDeceased: includeDeceased === true,
+            includeAdopted: includeAdopted !== false
+        });
+    }
+
+    function getCharacterFirstCousins(characterId, includeDeceased) {
+        if (!_hasId(characterId)) return [];
+        if (!_familyQueriesAvailable()) return [];
+        if (typeof window.FamilyQueries.getFirstCousins !== 'function') return [];
+        return window.FamilyQueries.getFirstCousins(characterId, {
+            includeDeceased: includeDeceased === true
+        });
+    }
+
+    function getCharacterAuntsAndUncles(characterId, includeDeceased) {
+        if (!_hasId(characterId)) return [];
+        if (!_familyQueriesAvailable()) return [];
+        if (typeof window.FamilyQueries.getAuntsAndUncles !== 'function') return [];
+        return window.FamilyQueries.getAuntsAndUncles(characterId, {
+            includeDeceased: includeDeceased === true
+        });
+    }
+
+    function getCharacterNiecesAndNephews(characterId, includeDeceased) {
+        if (!_hasId(characterId)) return [];
+        if (!_familyQueriesAvailable()) return [];
+        if (typeof window.FamilyQueries.getNiecesAndNephews !== 'function') return [];
+        return window.FamilyQueries.getNiecesAndNephews(characterId, {
+            includeDeceased: includeDeceased === true
+        });
+    }
+
+    function getCharacterKinship(charId1, charId2) {
+        if (!_hasId(charId1) || !_hasId(charId2)) return null;
+        if (!_familyQueriesAvailable()) return null;
+        if (typeof window.FamilyQueries.getKinship !== 'function') return null;
+        return window.FamilyQueries.getKinship(charId1, charId2);
+    }
+
+    function getCharacterKinshipCloseness(charId1, charId2) {
+        if (!_hasId(charId1) || !_hasId(charId2)) return null;
+        if (!_familyQueriesAvailable()) return null;
+        if (typeof window.FamilyQueries.getKinshipCloseness !== 'function') return null;
+        return window.FamilyQueries.getKinshipCloseness(charId1, charId2);
+    }
+
+    function getCharacterFamilyStatistics(characterId) {
+        if (!_hasId(characterId)) return null;
+        if (!_familyStatisticsAvailable()) return null;
+        if (typeof window.FamilyStatistics.getFamilyStatistics !== 'function') return null;
+        return window.FamilyStatistics.getFamilyStatistics(characterId);
+    }
+
+    function getCharacterFamilySummary(characterId) {
+        if (!_hasId(characterId)) return null;
+        if (!_familyStatisticsAvailable()) return null;
+        if (typeof window.FamilyStatistics.getFamilySummary !== 'function') return null;
+        return window.FamilyStatistics.getFamilySummary(characterId);
+    }
+
+    // =========================================================================
+    // 9. COMPATIBILITY DELEGATES — EDUCATION
     // =========================================================================
 
     function getCharactersByEducationStatus(status, institutionId) {
-        var statusValidation = _validateString(status, 'status', false);
-        if (!statusValidation.ok) {
-            throw new Error('getCharactersByEducationStatus: ' + statusValidation.reason);
+        var statusCheck = _validateStringArgument(status, 'status', false);
+        if (!statusCheck.ok) {
+            throw new Error('getCharactersByEducationStatus: ' + statusCheck.reason);
         }
-        var valid = ['enrolled', 'graduated', 'withdrawn', 'never_attended'];
-        if (valid.indexOf(statusValidation.value) === -1) {
-            throw new Error('getCharactersByEducationStatus: status must be one of ' + valid.join(', '));
-        }
-        if (!_isMissing(institutionId)) {
-            var idValidation = _validateString(institutionId, 'institutionId', false);
-            if (!idValidation.ok) {
-                throw new Error('getCharactersByEducationStatus: ' + idValidation.reason);
-            }
-        }
-
         if (typeof window.EducationQueries === 'undefined'
             || typeof window.EducationQueries.getCharactersByStatus !== 'function') {
             return null;
         }
         return window.EducationQueries.getCharactersByStatus(
-            statusValidation.value,
+            statusCheck.value,
             _isMissing(institutionId) ? null : institutionId
         );
     }
 
     function getCharactersNotInEducation(minAge, maxAge) {
-        var minV = _validateInteger(minAge, 'minAge', true);
+        var minV = _validateIntegerArgument(minAge, 'minAge', true);
         if (!minV.ok) throw new Error('getCharactersNotInEducation: ' + minV.reason);
-        var maxV = _validateInteger(maxAge, 'maxAge', true);
+        var maxV = _validateIntegerArgument(maxAge, 'maxAge', true);
         if (!maxV.ok) throw new Error('getCharactersNotInEducation: ' + maxV.reason);
 
         var actualMin = _isMissing(minV.value) ? 7 : minV.value;
@@ -619,234 +663,13 @@
     }
 
     // =========================================================================
-    // 9. FAMILY QUERIES (THIN ADAPTERS)
-    // =========================================================================
-
-    function getCharacterChildren(characterId, includeDeceased, includeAdopted) {
-        if (!_hasId(characterId)) return [];
-        includeDeceased = includeDeceased === true;
-        includeAdopted = includeAdopted !== false;
-
-        var all = window.FamilyAccessors.getAllChildren(characterId, includeDeceased);
-        if (!includeAdopted) {
-            all = all.filter(function(entry) { return entry.biological === true; });
-        }
-        return _unwrapCharacters(all);
-    }
-
-    function getCharacterParents(characterId, includeAdoptive) {
-        var empty = { father: null, mother: null, adoptiveParents: [] };
-        if (!_hasId(characterId)) return empty;
-
-        var parents = window.FamilyAccessors.getParents(characterId);
-        var result = {
-            father: parents.father || null,
-            mother: parents.mother || null,
-            adoptiveParents: []
-        };
-
-        if (includeAdoptive === true) {
-            var allParents = window.FamilyAccessors.getAllParents(characterId, true);
-            for (var i = 0; i < allParents.length; i++) {
-                var p = allParents[i];
-                if (p && p.adoptive === true && p.character) {
-                    result.adoptiveParents.push(p.character);
-                }
-            }
-        }
-
-        return result;
-    }
-
-    function getCharacterSiblings(characterId, includeHalfSiblings, includeDeceased, includeAdopted) {
-        if (!_hasId(characterId)) return [];
-        includeHalfSiblings = includeHalfSiblings !== false;
-        includeDeceased = includeDeceased === true;
-        includeAdopted = includeAdopted !== false;
-
-        var all = window.FamilyAccessors.getSiblings(
-            characterId,
-            includeHalfSiblings,
-            includeDeceased,
-            includeAdopted
-        );
-        return _unwrapCharacters(all);
-    }
-
-    function getCharacterGrandparents(characterId, includeAdoptive) {
-        if (!_hasId(characterId)) return [];
-        return window.FamilyAccessors.getGrandparents(
-            characterId,
-            includeAdoptive === true
-        );
-    }
-
-    function getCharacterGrandchildren(characterId, includeDeceased, includeAdopted) {
-        if (!_hasId(characterId)) return [];
-        return window.FamilyAccessors.getGrandchildren(
-            characterId,
-            includeDeceased === true,
-            includeAdopted !== false
-        );
-    }
-
-    function getCharacterFirstCousins(characterId, includeDeceased) {
-        if (!_hasId(characterId)) return [];
-        return window.FamilyAccessors.getFirstCousins(
-            characterId,
-            includeDeceased === true
-        );
-    }
-
-    function getCharacterAuntsAndUncles(characterId, includeDeceased) {
-        if (!_hasId(characterId)) return [];
-        return window.FamilyAccessors.getAuntsAndUncles(
-            characterId,
-            includeDeceased === true
-        );
-    }
-
-    function getCharacterNiecesAndNephews(characterId, includeDeceased) {
-        if (!_hasId(characterId)) return [];
-        return window.FamilyAccessors.getNiecesAndNephews(
-            characterId,
-            includeDeceased === true
-        );
-    }
-
-    function getCharacterKinship(charId1, charId2) {
-        if (!_hasId(charId1) || !_hasId(charId2)) return null;
-        return window.FamilyAccessors.getKinship(charId1, charId2);
-    }
-
-    function getCharacterKinshipCloseness(charId1, charId2) {
-        if (!_hasId(charId1) || !_hasId(charId2)) return 99;
-        return window.FamilyAccessors.getKinshipCloseness(charId1, charId2);
-    }
-
-    function getCharacterFamilyStatistics(characterId) {
-        if (!_hasId(characterId)) return null;
-        if (typeof window.FamilyStatistics === 'undefined') return null;
-        if (typeof window.FamilyStatistics.getFamilyStatistics !== 'function') return null;
-        return window.FamilyStatistics.getFamilyStatistics(characterId);
-    }
-
-    function getCharacterFamilySummary(characterId) {
-        if (!_hasId(characterId)) return null;
-        if (typeof window.FamilyStatistics === 'undefined') return null;
-        if (typeof window.FamilyStatistics.getFamilySummary !== 'function') return null;
-        return window.FamilyStatistics.getFamilySummary(characterId);
-    }
-
-    // =========================================================================
-    // 10. STATISTICS
+    // 10. COMPATIBILITY DELEGATES — STATISTICS
     // =========================================================================
 
     function getCharacterStatistics() {
-        var all = _getAll();
-        var currentYear = window.getCurrentYear();
-
-        var stats = {
-            total: all.length,
-            living: 0,
-            deceased: 0,
-            male: 0,
-            female: 0,
-            unknownGender: 0,
-            averageCurrentAge: 0,
-            averageAgeAtDeath: 0,
-            byAgeGroup: {},
-            livingByAgeGroup: {},
-            byHousehold: {},
-            byProfession: {},
-            byRank: {}
-        };
-
-        var ageGroups = window.AGE_GROUPS || [];
-        for (var g = 0; g < ageGroups.length; g++) {
-            stats.byAgeGroup[ageGroups[g]] = 0;
-            stats.livingByAgeGroup[ageGroups[g]] = 0;
-        }
-
-        var totalCurrentAge = 0;
-        var livingCount = 0;
-        var totalAgeAtDeath = 0;
-        var deceasedCount = 0;
-
-        for (var i = 0; i < all.length; i++) {
-            var c = all[i];
-
-            if (c.isDeceased === true) {
-                stats.deceased++;
-                if (window.isValidYear(c.birthYear) && window.isValidYear(c.deathYear)) {
-                    totalAgeAtDeath += c.deathYear - c.birthYear;
-                    deceasedCount++;
-                }
-            } else {
-                stats.living++;
-                if (window.isValidYear(c.birthYear)) {
-                    totalCurrentAge += currentYear - c.birthYear;
-                    livingCount++;
-                }
-            }
-
-            if (c.gender === 'male') stats.male++;
-            else if (c.gender === 'female') stats.female++;
-            else stats.unknownGender++;
-
-            var ageForGrouping = c.isDeceased === true
-                ? (window.isValidYear(c.birthYear) && window.isValidYear(c.deathYear)
-                    ? c.deathYear - c.birthYear : null)
-                : (window.isValidYear(c.birthYear) ? currentYear - c.birthYear : null);
-
-            if (ageForGrouping !== null && ageForGrouping >= 0) {
-                var groupKey = _resolveAgeGroup(ageForGrouping, ageGroups);
-                if (groupKey) {
-                    stats.byAgeGroup[groupKey] = (stats.byAgeGroup[groupKey] || 0) + 1;
-                    if (c.isDeceased !== true) {
-                        stats.livingByAgeGroup[groupKey] = (stats.livingByAgeGroup[groupKey] || 0) + 1;
-                    }
-                }
-            }
-
-            if (_hasId(c.household)) {
-                stats.byHousehold[c.household] = (stats.byHousehold[c.household] || 0) + 1;
-            }
-
-            if (Array.isArray(c.professions)) {
-                var seenProf = {};
-                for (var j = 0; j < c.professions.length; j++) {
-                    var p = c.professions[j];
-                    if (!p || !_hasId(p.id)) continue;
-                    if (seenProf[p.id]) continue;
-                    seenProf[p.id] = true;
-                    stats.byProfession[p.id] = (stats.byProfession[p.id] || 0) + 1;
-                }
-            }
-
-            if (_hasId(c.activeRankId)) {
-                stats.byRank[c.activeRankId] = (stats.byRank[c.activeRankId] || 0) + 1;
-            }
-        }
-
-        stats.averageCurrentAge = livingCount > 0
-            ? Math.round(totalCurrentAge / livingCount)
-            : 0;
-        stats.averageAgeAtDeath = deceasedCount > 0
-            ? Math.round(totalAgeAtDeath / deceasedCount)
-            : 0;
-
-        return stats;
-    }
-
-    function _resolveAgeGroup(age, ageGroups) {
-        for (var i = 0; i < ageGroups.length; i++) {
-            var parts = ageGroups[i].split('-');
-            var min = parseInt(parts[0], 10);
-            var max = parts[1] === '+' ? Infinity : parseInt(parts[1], 10);
-            if (age >= min && age <= max) return ageGroups[i];
-        }
-        return null;
+        if (typeof window.CharacterStatistics === 'undefined') return null;
+        if (typeof window.CharacterStatistics.getCharacterStatistics !== 'function') return null;
+        return window.CharacterStatistics.getCharacterStatistics();
     }
 
     // =========================================================================
@@ -858,30 +681,28 @@
         searchCharacters: searchCharacters,
         readCharactersByName: readCharactersByName,
 
-        // Facts (flat projections)
-        getCharacterFacts: getCharacterFacts,
-        getAllCharacterFacts: getAllCharacterFacts,
+        // Basic lookups
+        getAllCharacters: getAllCharacters,
+        getCharacter: getCharacter,
+        getCharacterDisplayName: getCharacterDisplayName,
+        getCurrentLocationId: getCurrentLocationId,
 
         // Location-scoped
         getCharactersInLocations: getCharactersInLocations,
-        getCurrentLocationId: getCurrentLocationId,
-        getAllCharacters: getAllCharacters,
 
-        // Summary and projections
+        // Summary and facts
         getCharacterSummary: getCharacterSummary,
+        getCharacterFacts: getCharacterFacts,
+        getAllCharacterFacts: getAllCharacterFacts,
+        getCharacterIdentityFacts: getCharacterIdentityFacts,
+
+        // COMPAT — profession
         getCharacterProfessions: getCharacterProfessions,
         getPrimaryProfession: getPrimaryProfession,
-        getCharacterSurnameHistory: getCharacterSurnameHistory,
-
-        // Profession queries
         getCharactersByProfessionSkill: getCharactersByProfessionSkill,
         getMasterCharacters: getMasterCharacters,
 
-        // Education adapters
-        getCharactersByEducationStatus: getCharactersByEducationStatus,
-        getCharactersNotInEducation: getCharactersNotInEducation,
-
-        // Family adapters
+        // COMPAT — family
         getCharacterChildren: getCharacterChildren,
         getCharacterParents: getCharacterParents,
         getCharacterSiblings: getCharacterSiblings,
@@ -895,19 +716,15 @@
         getCharacterFamilyStatistics: getCharacterFamilyStatistics,
         getCharacterFamilySummary: getCharacterFamilySummary,
 
-        // Statistics
+        // COMPAT — education
+        getCharactersByEducationStatus: getCharactersByEducationStatus,
+        getCharactersNotInEducation: getCharactersNotInEducation,
+
+        // COMPAT — statistics
         getCharacterStatistics: getCharacterStatistics
     };
 
-    // =========================================================================
-    // 12. LEGACY GLOBAL ALIASES
-    // =========================================================================
-
-    window.getCharacterChildren = getCharacterChildren;
-    window.getCharacterParents = getCharacterParents;
-    window.getCharacterSiblings = getCharacterSiblings;
-    window.getCharacterGrandparents = getCharacterGrandparents;
-    window.getCharacterGrandchildren = getCharacterGrandchildren;
-    window.getCharacterFamilyStatistics = getCharacterFamilyStatistics;
-
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.CharacterQueries;
+    }
 })();
