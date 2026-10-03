@@ -1,1011 +1,699 @@
 /**
- * =============================================================================
- * STILL WATERS - EDUCATION MODALS (js/education/modals-education.js)
- * =============================================================================
- * 
- * PURPOSE: UI modals for education management (institutions, students, teachers,
- *          curriculum, tuition, ownership, graduation).
- * 
- * DEPENDS ON:
- *   - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
- *   - education-state.js (EducationState)
- *   - education-commands.js (EducationCommands)
- *   - education-queries.js (EducationQueries)
- *   - education-annual.js (EducationAnnual)
- *   - accessors.js (getCharacterById, getCharacters, getPlaceById, getPlaces)
- *   - role-state.js (RoleState) - for role queries
- *   - modals-char-select.js (openCharacterSelector)
- *   - modals-household-selector.js (openHouseholdSelector)
- * 
- * ICON POLICY:
- *   - All icons from icons.js via _getIcon()
- *   - NO emojis
- *   - NO icons in confirm/cancel buttons (plain text only)
- * 
- * UPDATED: Edit Curriculum modal with role filtering by specialization
- * UPDATED: Hire Teacher modal - NO SKILL LEVEL requirement
- * 
- * =============================================================================
+ * STILL WATERS - EDUCATION MODALS
+ * UI modals for education management. Reads via EducationQueries, writes via
+ * EducationCommands, persists once per successful mutation batch, surfaces
+ * command results to the user. No state, no policy, no toasts from Commands.
  */
 
 (function() {
     'use strict';
 
-    // =========================================================================
-    // 0. RECURSION GUARD
-    // =========================================================================
-
     var _processingModal = false;
 
-    // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
-    // =========================================================================
+    // --- Dependencies ---
+
+    function _queries() {
+        if (typeof window.EducationQueries === 'undefined') {
+            throw new Error('modals-education.js requires EducationQueries');
+        }
+        return window.EducationQueries;
+    }
+
+    function _commands() {
+        if (typeof window.EducationCommands === 'undefined') {
+            throw new Error('modals-education.js requires EducationCommands');
+        }
+        return window.EducationCommands;
+    }
 
     function _openModal(options) {
-        if (typeof window.openModal === 'function') {
-            return window.openModal(options);
+        if (typeof window.openModal === 'function') return window.openModal(options);
+        if (typeof window._openModal === 'function') return window._openModal(options);
+        throw new Error('modals-education.js requires openModal');
+    }
+
+    function _closeTopModal() {
+        if (typeof window.closeTopModal === 'function') window.closeTopModal();
+        else if (typeof window._closeTopModal === 'function') window._closeTopModal();
+    }
+
+    function _confirmDialog(message, title, onConfirm, onCancel) {
+        if (typeof window.confirmDialog === 'function') return window.confirmDialog(message, title, onConfirm, onCancel);
+        if (typeof window._confirmDialog === 'function') return window._confirmDialog(message, title, onConfirm, onCancel);
+        if (window.confirm(message)) { if (onConfirm) onConfirm(); }
+        else { if (onCancel) onCancel(); }
+    }
+
+    function _escapeHtml(str) {
+        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
+        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
+        if (!str) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function _showToast(message, type) {
+        if (typeof window._showToast === 'function') window._showToast(message, type);
+        else if (typeof window.showToast === 'function') window.showToast(message, type);
+    }
+
+    function _getIcon(name) {
+        if (typeof window._getIcon === 'function') return window._getIcon(name);
+        if (window.Icons && window.Icons[name]) return window.Icons[name];
+        return '';
+    }
+
+    function _getCurrentYear() {
+        if (typeof window.getCurrentYearSafe !== 'function') {
+            throw new Error('modals-education.js requires getCurrentYearSafe');
         }
-        if (typeof window._openModal === 'function') {
-            return window._openModal(options);
+        return window.getCurrentYearSafe();
+    }
+
+    function _getPlaces() {
+        if (typeof window.getPlaces !== 'function') {
+            throw new Error('modals-education.js requires getPlaces');
+        }
+        return window.getPlaces();
+    }
+
+    function _getPlaceById(id) {
+        if (typeof window.getPlaceById !== 'function') {
+            throw new Error('modals-education.js requires getPlaceById');
+        }
+        return window.getPlaceById(id);
+    }
+
+    function _getCharacterById(id) {
+        if (typeof window.getCharacterById !== 'function') return null;
+        return window.getCharacterById(id);
+    }
+
+    function _getCharacters() {
+        if (typeof window.getCharacters !== 'function') return [];
+        return window.getCharacters();
+    }
+
+    function _calculateAge(birthYear) {
+        if (typeof window.calculateAge !== 'function') return null;
+        return window.calculateAge(birthYear, false, null);
+    }
+
+    function _getRoleById(roleId) {
+        if (typeof window.RoleState !== 'undefined' && typeof window.RoleState.getRole === 'function') {
+            return window.RoleState.getRole(roleId);
+        }
+        if (typeof window.getRoleById === 'function') return window.getRoleById(roleId);
+        return null;
+    }
+
+    function _getAllRoles() {
+        if (typeof window.RoleState !== 'undefined' && typeof window.RoleState.getAllRoles === 'function') {
+            return window.RoleState.getAllRoles();
+        }
+        if (typeof window.getRoles === 'function') return window.getRoles();
+        return [];
+    }
+
+    function _getReligionById(religionId) {
+        if (typeof window.ReligionState !== 'undefined' && typeof window.ReligionState.getReligion === 'function') {
+            return window.ReligionState.getReligion(religionId);
         }
         return null;
     }
 
-    function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') {
-            window.closeTopModal();
+    function _getAllReligions() {
+        if (typeof window.ReligionState !== 'undefined' && typeof window.ReligionState.getAllReligions === 'function') {
+            return window.ReligionState.getAllReligions();
         }
-        if (typeof window._closeTopModal === 'function') {
-            window._closeTopModal();
-        }
+        return [];
     }
 
-    function _confirmDialog(message, title, onConfirm, onCancel) {
-        if (typeof window.confirmDialog === 'function') {
-            return window.confirmDialog(message, title, onConfirm, onCancel);
-        }
-        if (typeof window._confirmDialog === 'function') {
-            return window._confirmDialog(message, title, onConfirm, onCancel);
-        }
-        if (confirm(message)) {
-            if (onConfirm) onConfirm();
-        } else {
-            if (onCancel) onCancel();
-        }
-    }
-
-    function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
-        }
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
-
-    function _showToast(message, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(message, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(message, type);
-        }
-    }
-
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
-    function _getIcon(name) {
-        if (typeof window._getIcon === 'function') {
-            return window._getIcon(name);
-        }
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
-        return '';
-    }
-
-    function _openCharacterSelectorForEducation(title, onSelect, options) {
+    function _openCharacterSelector(title, onSelect, options) {
         options = options || {};
         if (typeof window.openCharacterSelector === 'function') {
             return window.openCharacterSelector({
-                title: title || 'Select Character',
+                title: title,
                 targetId: options.targetId || null,
                 onSelect: onSelect,
                 filters: {
                     gender: options.gender || 'all',
                     status: options.status || 'all',
-                    showDeceased: options.showDeceased || false,
+                    showDeceased: options.showDeceased === true,
                     location: options.locationFilter || 'all'
                 }
             });
         }
         if (typeof window.openUnifiedCharacterSelector === 'function') {
             return window.openUnifiedCharacterSelector({
-                title: title || 'Select Character',
+                title: title,
                 targetId: options.targetId || null,
-                onSelect: onSelect,
-                filters: {
-                    gender: options.gender || 'all',
-                    status: options.status || 'all',
-                    showDeceased: options.showDeceased || false,
-                    location: options.locationFilter || 'all'
-                }
+                onSelect: onSelect
             });
         }
         _showToast('Character selector not available', 'error');
         return null;
     }
 
-    function _openHouseholdSelectorForEducation(title, onSelect) {
+    function _openHouseholdSelector(title, onSelect) {
         if (typeof window.openHouseholdSelector === 'function') {
-            return window.openHouseholdSelector({
-                title: title || 'Select Household',
-                targetId: null,
-                onSelect: onSelect
-            });
+            return window.openHouseholdSelector({ title: title, targetId: null, onSelect: onSelect });
         }
         if (typeof window._openHouseholdSelector === 'function') {
-            return window._openHouseholdSelector({
-                title: title || 'Select Household',
-                targetId: null,
-                onSelect: onSelect
-            });
+            return window._openHouseholdSelector({ title: title, targetId: null, onSelect: onSelect });
         }
         _showToast('Household selector not available', 'error');
         return null;
     }
 
-    // =========================================================================
-    // 2. STATE AND SYSTEM REFERENCE
-    // =========================================================================
+    // --- Constants accessors ---
 
-    var _state = window.EducationState;
-    var _commands = window.EducationCommands;
-    var _queries = window.EducationQueries;
-    var _annual = window.EducationAnnual;
-
-    // =========================================================================
-    // 3. BUSINESS LOGIC WRAPPERS
-    // =========================================================================
-
-    function _getInstitution(institutionId) {
-        return _state ? _state.getInstitution(institutionId) : null;
+    function _institutionTypes() {
+        var TYPES = window.INSTITUTION_TYPES;
+        if (!TYPES) throw new Error('modals-education.js requires INSTITUTION_TYPES');
+        return TYPES;
     }
 
-    function _getAllInstitutions() {
-        return _state ? _state.getAllInstitutions() : [];
+    function _subjects() {
+        var S = window.SUBJECTS;
+        if (!S) throw new Error('modals-education.js requires SUBJECTS');
+        return S;
     }
 
-    function _getCharacterById(characterId) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(characterId);
-        }
-        return null;
+    function _roleCategories() {
+        return window.ROLE_CATEGORIES || {};
     }
 
-    function _getCharacters() {
-        if (typeof window.getCharacters === 'function') {
-            return window.getCharacters();
-        }
-        return [];
+    // --- Persistence helper ---
+
+    function _persist() {
+        var cmd = _commands();
+        if (typeof cmd.persist === 'function') cmd.persist();
     }
 
-    function _getPlaceById(placeId) {
-        if (typeof window.getPlaceById === 'function') {
-            return window.getPlaceById(placeId);
-        }
-        return null;
-    }
-
-    function _getPlaces() {
-        if (typeof window.getPlaces === 'function') {
-            return window.getPlaces();
-        }
-        return [];
-    }
-
-    function _getRoleById(roleId) {
-        if (typeof window.getRoleById === 'function') {
-            return window.getRoleById(roleId);
-        }
-        return null;
-    }
-
-    function _getAllRoles() {
-        if (typeof window.RoleState !== 'undefined' && window.RoleState.getAllRoles) {
-            return window.RoleState.getAllRoles();
-        }
-        if (typeof window.getRoles === 'function') {
-            return window.getRoles();
-        }
-        return [];
-    }
-
-    function _getAllSubjects() {
-        return _state ? _state.getAllSubjects() : {};
-    }
-
-    function _getEligibleStudents(locationId, minAge, maxAge, excludeInstitutionId) {
-        var allChars = _getCharacters();
-        var result = [];
-
-        for (var i = 0; i < allChars.length; i++) {
-            var char = allChars[i];
-            if (char.isDeceased) continue;
-            if (char.isDeleted) continue;
-
-            var age = _calculateAge(char.birthYear, false, null);
-            if (age < minAge || age > maxAge) continue;
-
-            // Check if already enrolled elsewhere
-            var enrolled = false;
-            var institutions = _getAllInstitutions();
-            for (var j = 0; j < institutions.length; j++) {
-                if (excludeInstitutionId && institutions[j].id === excludeInstitutionId) continue;
-                if (institutions[j].students) {
-                    for (var k = 0; k < institutions[j].students.length; k++) {
-                        if (institutions[j].students[k].studentId === char.id && !institutions[j].students[k].graduated) {
-                            enrolled = true;
-                            break;
-                        }
-                    }
-                }
-                if (enrolled) break;
-            }
-
-            if (enrolled) continue;
-
-            // Check location
-            var charLocation = _getCurrentLocationId(char);
-            if (locationId && charLocation !== locationId) continue;
-
-            result.push({
-                character: char,
-                age: age
-            });
-        }
-
-        return result;
-    }
-
-    function _getCurrentLocationId(character) {
-        if (typeof window.getCurrentLocationId === 'function') {
-            return window.getCurrentLocationId(character);
-        }
-        return character.currentLocationId || null;
-    }
-
-    function _calculateAge(birthYear, isDeceased, deathYear) {
-    // Delegates to time.js — do not reimplement age logic here.
-    if (typeof window.calculateAge === 'function') {
-        return window.calculateAge(birthYear, isDeceased, deathYear);
-    }
-    return null;
-}
-
-    function _calculateTuition(institutionId, year) {
-        if (_commands && typeof _commands.calculateTuition === 'function') {
-            return _commands.calculateTuition(institutionId, year);
-        }
-        return { success: false, reason: 'Tuition calculation not available' };
-    }
-
-    function _calculatePublicSchoolFunding(institutionId, year) {
-        if (_annual && typeof _annual.calculatePublicSchoolFunding === 'function') {
-            return _annual.calculatePublicSchoolFunding(institutionId, year);
-        }
-        if (_commands && typeof _commands.calculatePublicSchoolFunding === 'function') {
-            return _commands.calculatePublicSchoolFunding(institutionId, year);
-        }
-        return { success: false, reason: 'Funding calculation not available' };
-    }
-
-    function _calculatePrivateSchoolProfit(institutionId, year) {
-        if (_annual && typeof _annual.calculatePrivateSchoolProfit === 'function') {
-            return _annual.calculatePrivateSchoolProfit(institutionId, year);
-        }
-        if (_commands && typeof _commands.calculatePrivateSchoolProfit === 'function') {
-            return _commands.calculatePrivateSchoolProfit(institutionId, year);
-        }
-        return { success: false, reason: 'Profit calculation not available' };
-    }
-
-    function _getTuitionHistory(institutionId, limit) {
-        var inst = _getInstitution(institutionId);
-        if (!inst) return [];
-        var history = inst.institution?.tuitionHistory || inst.tuitionHistory || [];
-        if (limit && limit > 0) {
-            history = history.slice(-limit);
-        }
-        return history;
-    }
-
-    function _updateInstitution(institutionId, updates) {
-        if (_commands && typeof _commands.updateInstitution === 'function') {
-            return _commands.updateInstitution(institutionId, updates);
-        }
-        return null;
-    }
-
-    function _enrollStudent(institutionId, studentId, year) {
-        if (_commands && typeof _commands.enrollStudent === 'function') {
-            return _commands.enrollStudent(institutionId, studentId, year);
-        }
-        return null;
-    }
-
-    function _hireTeacher(institutionId, teacherId, subjectId) {
-        if (_commands && typeof _commands.hireTeacher === 'function') {
-            return _commands.hireTeacher(institutionId, teacherId, subjectId);
-        }
-        return null;
-    }
-
-    function _setHeadmaster(institutionId, characterId, title, startYear) {
-        if (_commands && typeof _commands.setHeadmaster === 'function') {
-            return _commands.setHeadmaster(institutionId, characterId, title, startYear);
-        }
-        return null;
-    }
-
-    function _endHeadmasterTerm(institutionId, endYear, reason) {
-        if (_commands && typeof _commands.endHeadmasterTerm === 'function') {
-            return _commands.endHeadmasterTerm(institutionId, endYear, reason);
-        }
-        return null;
-    }
-
-    function _deleteInstitution(institutionId, cascade) {
-        if (_commands && typeof _commands.deleteInstitution === 'function') {
-            return _commands.deleteInstitution(institutionId, cascade);
-        }
-        return null;
-    }
-
-    function _setSchoolOwnership(institutionId, ownershipType, ownerId, ownerType) {
-        if (_commands && typeof _commands.setSchoolOwnership === 'function') {
-            return _commands.setSchoolOwnership(institutionId, ownershipType, ownerId, ownerType);
-        }
-        return null;
-    }
-
-    function _graduateStudent(institutionId, studentId, year) {
-        if (_commands && typeof _commands.graduateStudent === 'function') {
-            return _commands.graduateStudent(institutionId, studentId, year);
-        }
-        return null;
-    }
-
-    // =========================================================================
-    // 4. HELPER FUNCTIONS
-    // =========================================================================
-
-    function _getLocationTypeName(typeId) {
-        if (typeof window.getLocationTypeName === 'function') {
-            return window.getLocationTypeName(typeId);
-        }
-        return typeId || 'Unknown';
-    }
-
-    function _getEducationLevels() {
-        return {
-            elementary: { id: 'elementary', label: 'Elementary', minAge: 6, maxAge: 12 },
-            secondary: { id: 'secondary', label: 'Secondary', minAge: 12, maxAge: 18 },
-            tertiary: { id: 'tertiary', label: 'Tertiary', minAge: 18, maxAge: 30 },
-            vocational: { id: 'vocational', label: 'Vocational', minAge: 14, maxAge: 25 }
-        };
-    }
-
-    function _getAgeGroups() {
-        return [
-            { id: 'child', label: 'Child (0-12)', minAge: 0, maxAge: 12, icon: 'PERSON' },
-            { id: 'youth', label: 'Youth (13-17)', minAge: 13, maxAge: 17, icon: 'PERSON' },
-            { id: 'young_adult', label: 'Young Adult (18-25)', minAge: 18, maxAge: 25, icon: 'PERSON' },
-            { id: 'adult', label: 'Adult (26-59)', minAge: 26, maxAge: 59, icon: 'PERSON' },
-            { id: 'elder', label: 'Elder (60+)', minAge: 60, maxAge: 150, icon: 'PERSON' }
-        ];
-    }
-
-    function _getAgeGroupLabel(age) {
-        var groups = _getAgeGroups();
-        for (var i = 0; i < groups.length; i++) {
-            if (age >= groups[i].minAge && age <= groups[i].maxAge) {
-                return groups[i].label;
-            }
-        }
-        return 'Unknown';
-    }
-
-    function _getAgeGroupIcon(age) {
-        var groups = _getAgeGroups();
-        for (var i = 0; i < groups.length; i++) {
-            if (age >= groups[i].minAge && age <= groups[i].maxAge) {
-                return _getIcon(groups[i].icon);
-            }
-        }
-        return _getIcon('PERSON');
-    }
-
-    function _getIconHTML(name) {
-        var icon = _getIcon(name);
-        return icon || '';
-    }
-
-    // =========================================================================
-    // 5. CREATE INSTITUTION MODAL
-    // =========================================================================
+    // =====================================================================
+    // Create Institution Modal
+    // =====================================================================
 
     function openCreateInstitutionModal(onSuccess, defaultData) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
+        if (_processingModal) return;
         _processingModal = true;
+        defaultData = defaultData || {};
 
         try {
-            defaultData = defaultData || {};
-            var currentYear = _getCurrentYear();
             var places = _getPlaces();
+            var currentYear = _getCurrentYear();
+            var types = _institutionTypes();
 
+            // Type options from canonical constants
+            var typeOptions = '';
+            for (var k in types) {
+                if (!types.hasOwnProperty(k)) continue;
+                var t = types[k];
+                var selected = (t.id === defaultData.typeId) ? ' selected' : '';
+                typeOptions += '<option value="' + _escapeHtml(t.id) + '"' + selected + '>' +
+                    _escapeHtml(t.name) + '</option>';
+            }
+
+            // Place options
             var placeOptions = '<option value="">No location</option>';
             for (var i = 0; i < places.length; i++) {
-                var selected = (places[i].id === defaultData.locationId) ? 'selected' : '';
-                placeOptions += '<option value="' + places[i].id + '" ' + selected + '>' + _escapeHtml(places[i].displayName) + '</option>';
+                var selected = (places[i].id === defaultData.locationId) ? ' selected' : '';
+                placeOptions += '<option value="' + _escapeHtml(places[i].id) + '"' + selected + '>' +
+                    _escapeHtml(places[i].displayName) + '</option>';
             }
 
-            var typeOptions = '';
-            var types = {
-                school: { id: 'school', label: 'School' },
-                university: { id: 'university', label: 'University' },
-                academy: { id: 'academy', label: 'Academy' },
-                college: { id: 'college', label: 'College' },
-                seminary: { id: 'seminary', label: 'Seminary' },
-                workshop: { id: 'workshop', label: 'Workshop' }
-            };
-            for (var key in types) {
-                var selected = (types[key].id === defaultData.institutionType) ? 'selected' : '';
-                typeOptions += '<option value="' + types[key].id + '" ' + selected + '>' + types[key].label + '</option>';
+            // Religions
+            var religions = _getAllReligions();
+            var religionOptions = '<option value="">None</option>';
+            for (var i = 0; i < religions.length; i++) {
+                religionOptions += '<option value="' + _escapeHtml(religions[i].id) + '">' +
+                    _escapeHtml(religions[i].name) + '</option>';
             }
+            var hasReligions = religions.length > 0;
 
-            var levelOptions = '';
-            var levels = _getEducationLevels();
-            for (var key in levels) {
-                var selected = (levels[key].id === defaultData.level) ? 'selected' : '';
-                levelOptions += '<option value="' + levels[key].id + '" ' + selected + '>' + levels[key].label + ' (' + levels[key].minAge + '-' + levels[key].maxAge + ')</option>';
-            }
+            var modalContent =
+                '<div style="max-height:520px;overflow-y:auto;padding:4px;">' +
 
-            var ownershipOptions = '';
-            var ownershipTypes = ['public', 'private'];
-            for (var i = 0; i < ownershipTypes.length; i++) {
-                var selected = (ownershipTypes[i] === defaultData.ownershipType) ? 'selected' : '';
-                ownershipOptions += '<option value="' + ownershipTypes[i] + '" ' + selected + '>' + (ownershipTypes[i] === 'public' ? 'Public (Free)' : 'Private (Tuition)') + '</option>';
-            }
-
-            var infoIcon = _getIcon('CIRCLE_DOT');
-            var gearIcon = _getIcon('GEAR');
-
-            var modalContent = 
-                '<div style="max-height:500px;overflow-y:auto;padding:4px;">' +
                 '<div class="form-group" style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Institution Name *</label>' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Name *</label>' +
                 '<input type="text" id="createInstName" value="' + _escapeHtml(defaultData.name || '') + '" placeholder="e.g., Oxford Academy" autofocus style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Type</label>' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Type *</label>' +
                 '<select id="createInstType" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
-                typeOptions +
-                '</select>' +
+                typeOptions + '</select>' +
+                '<small id="createInstTypeHint" style="font-size:0.5rem;color:var(--dim);"></small>' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Education Level</label>' +
-                '<select id="createInstLevel" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
-                levelOptions +
-                '</select>' +
-                '</div>' +
-
-                '<div class="form-group" style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Location</label>' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Location *</label>' +
                 '<select id="createInstLocation" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
-                placeOptions +
-                '</select>' +
+                placeOptions + '</select>' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Ownership</label>' +
                 '<select id="createInstOwnership" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
-                ownershipOptions +
+                '<option value="public">Public (Free)</option>' +
+                '<option value="private">Private (Tuition)</option>' +
+                (hasReligions ? '<option value="religious">Religious</option>' : '') +
                 '</select>' +
                 '</div>' +
 
-                '<div id="createInstOwnerSection" style="' + (defaultData.ownershipType === 'private' ? 'display:block;' : 'display:none;') + 'margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
-                '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;">' +
+                // Religion section (visible when ownership is religious)
+                '<div id="createInstReligionSection" style="display:none;margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
+                '<label style="display:block;font-size:0.65rem;color:var(--accent);margin-bottom:4px;">Religion</label>' +
+                '<select id="createInstReligion" style="width:100%;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;color:var(--text);">' +
+                religionOptions + '</select>' +
+                '</div>' +
+
+                // Owner section (visible when ownership is private)
+                '<div id="createInstOwnerSection" style="display:none;margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
+                '<div style="display:flex;gap:8px;margin-bottom:6px;">' +
                 '<label style="display:flex;align-items:center;gap:6px;font-size:0.6rem;cursor:pointer;">' +
-                '<input type="radio" name="createInstOwnerType" id="createInstOwnerCharacter" value="character" checked style="cursor:pointer;">' +
-                '<span>Character</span>' +
-                '</label>' +
+                '<input type="radio" name="createInstOwnerType" value="character" checked> Character</label>' +
                 '<label style="display:flex;align-items:center;gap:6px;font-size:0.6rem;cursor:pointer;">' +
-                '<input type="radio" name="createInstOwnerType" id="createInstOwnerHousehold" value="household" style="cursor:pointer;">' +
-                '<span>Household</span>' +
-                '</label>' +
+                '<input type="radio" name="createInstOwnerType" value="household"> Household</label>' +
                 '</div>' +
                 '<div style="display:flex;gap:8px;">' +
                 '<input type="text" id="createInstOwnerName" placeholder="Select owner..." readonly style="flex:1;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;color:var(--text);cursor:pointer;">' +
-                '<input type="hidden" id="createInstOwnerId" value="">' +
-                '<button id="createInstSelectOwnerBtn" class="btn small" style="padding:4px 10px;font-size:0.6rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">Select</button>' +
-                '<button id="createInstClearOwnerBtn" class="btn small" style="padding:4px 10px;font-size:0.6rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Clear</button>' +
+                '<button id="createInstSelectOwnerBtn" class="btn" style="padding:4px 10px;font-size:0.6rem;">Select</button>' +
+                '<button id="createInstClearOwnerBtn" class="btn" style="padding:4px 10px;font-size:0.6rem;">Clear</button>' +
                 '</div>' +
-                '<small style="font-size:0.5rem;color:var(--dim);">Private schools must have an owner</small>' +
+                '<small style="font-size:0.5rem;color:var(--dim);">Private institutions must have an owner</small>' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Description</label>' +
-                '<textarea id="createInstDescription" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' + _escapeHtml(defaultData.description || '') + '</textarea>' +
+                '<textarea id="createInstDescription" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                _escapeHtml(defaultData.description || '') + '</textarea>' +
                 '</div>' +
 
-                '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
-                infoIcon + ' Institutions can be public (free, funded by settlement) or private (tuition-based).' +
-                '</div>' +
                 '</div>';
 
             _openModal({
-                title: gearIcon + ' Create Educational Institution',
+                title: _getIcon('GEAR') + ' Create Educational Institution',
                 content: modalContent,
                 confirmText: 'Create',
                 cancelText: 'Cancel',
                 onOpen: function() {
-                    var publicRadio = document.getElementById('createInstOwnership');
+                    var typeSel = document.getElementById('createInstType');
+                    var typeHint = document.getElementById('createInstTypeHint');
+                    var ownershipSel = document.getElementById('createInstOwnership');
+                    var religionSection = document.getElementById('createInstReligionSection');
                     var ownerSection = document.getElementById('createInstOwnerSection');
 
-                    if (publicRadio && ownerSection) {
-                        publicRadio.onchange = function() {
-                            ownerSection.style.display = this.value === 'private' ? 'block' : 'none';
-                        };
-                    }
-
-                    var selectOwnerBtn = document.getElementById('createInstSelectOwnerBtn');
-                    var clearOwnerBtn = document.getElementById('createInstClearOwnerBtn');
-                    var ownerNameInput = document.getElementById('createInstOwnerName');
-                    var ownerIdInput = document.getElementById('createInstOwnerId');
-
-                    if (selectOwnerBtn) {
-                        selectOwnerBtn.onclick = function() {
-                            var ownerType = document.querySelector('input[name="createInstOwnerType"]:checked');
-                            var type = ownerType ? ownerType.value : 'character';
-
-                            if (type === 'character') {
-                                _openCharacterSelectorForEducation(
-                                    'Select Owner',
-                                    function(character) {
-                                        if (character) {
-                                            ownerNameInput.value = character.name + ' ' + (character.surname || '');
-                                            ownerIdInput.value = character.id;
-                                            _showToast('Selected: ' + character.name, 'success');
-                                        }
-                                    },
-                                    { showDeceased: false }
-                                );
-                            } else {
-                                _openHouseholdSelectorForEducation(
-                                    'Select Owner',
-                                    function(household) {
-                                        if (household) {
-                                            ownerNameInput.value = household.name;
-                                            ownerIdInput.value = household.id;
-                                            _showToast('Selected: ' + household.name, 'success');
-                                        }
-                                    }
-                                );
+                    function updateTypeHint() {
+                        var types = _institutionTypes();
+                        for (var k in types) {
+                            if (types[k].id === typeSel.value) {
+                                var t = types[k];
+                                typeHint.textContent = 'Capacity: ' + t.maxStudents +
+                                    ' · Min pop: ' + t.minPopulation +
+                                    ' · Tuition base: ' + t.baseTuition +
+                                    ' · Reputation: ' + t.baseReputation;
+                                return;
                             }
-                        };
+                        }
+                        typeHint.textContent = '';
                     }
 
-                    if (clearOwnerBtn) {
-                        clearOwnerBtn.onclick = function() {
-                            ownerNameInput.value = '';
-                            ownerIdInput.value = '';
-                        };
+                    function updateOwnershipSections() {
+                        var v = ownershipSel.value;
+                        religionSection.style.display = (v === 'religious') ? 'block' : 'none';
+                        ownerSection.style.display = (v === 'private') ? 'block' : 'none';
                     }
 
-                    setTimeout(function() {
-                        var nameInput = document.getElementById('createInstName');
-                        if (nameInput) nameInput.focus();
+                    typeSel.addEventListener('change', updateTypeHint);
+                    ownershipSel.addEventListener('change', updateOwnershipSections);
+                    updateTypeHint();
+                    updateOwnershipSections();
+
+                    var ownerName = document.getElementById('createInstOwnerName');
+                    var ownerId = null;
+
+                    var selectBtn = document.getElementById('createInstSelectOwnerBtn');
+                    var clearBtn = document.getElementById('createInstClearOwnerBtn');
+
+                    selectBtn.onclick = function() {
+                        var choice = document.querySelector('input[name="createInstOwnerType"]:checked');
+                        var type = choice ? choice.value : 'character';
+                        if (type === 'character') {
+                            _openCharacterSelector('Select Owner', function(character) {
+                                if (!character) return;
+                                ownerId = character.id;
+                                ownerName.value = character.name + (character.surname ? ' ' + character.surname : '');
+                                ownerName.dataset.ownerType = 'character';
+                            });
+                        } else {
+                            _openHouseholdSelector('Select Owner', function(household) {
+                                if (!household) return;
+                                ownerId = household.id;
+                                ownerName.value = household.name;
+                                ownerName.dataset.ownerType = 'household';
+                            });
+                        }
+                    };
+
+                    clearBtn.onclick = function() {
+                        ownerId = null;
+                        ownerName.value = '';
+                        ownerName.dataset.ownerType = '';
+                    };
+
+                    // Store on window-scoped closure via dataset for reading at confirm
+                    ownerName.dataset.ownerId = '';
+                    var observer = setInterval(function() {
+                        ownerName.dataset.ownerId = ownerId || '';
                     }, 100);
+
+                    // Cleanup when modal closes
+                    var cancelObserver = function() { clearInterval(observer); };
+                    window._createInstObserverCleanup = cancelObserver;
                 },
                 onConfirm: function() {
                     var name = document.getElementById('createInstName').value.trim();
-                    var type = document.getElementById('createInstType').value;
-                    var level = document.getElementById('createInstLevel').value;
-                    var locationId = document.getElementById('createInstLocation').value || null;
+                    var typeId = document.getElementById('createInstType').value;
+                    var locationId = document.getElementById('createInstLocation').value;
                     var ownership = document.getElementById('createInstOwnership').value;
                     var description = document.getElementById('createInstDescription').value.trim();
-                    var ownerId = document.getElementById('createInstOwnerId').value || null;
-                    var ownerName = document.getElementById('createInstOwnerName').value || null;
-                    var ownerType = document.querySelector('input[name="createInstOwnerType"]:checked');
-                    var ownerTypeValue = ownerType ? ownerType.value : 'character';
 
-                    if (!name) {
-                        _showToast('Institution name is required', 'error');
-                        return false;
+                    var religionId = null;
+                    if (ownership === 'religious') {
+                        religionId = document.getElementById('createInstReligion').value || null;
+                        if (!religionId) {
+                            _showToast('Please select a religion', 'error');
+                            return false;
+                        }
                     }
 
-                    if (ownership === 'private' && !ownerId) {
-                        _showToast('Private institutions must have an owner', 'error');
-                        return false;
+                    var ownerId = null;
+                    var ownerType = null;
+                    if (ownership === 'private') {
+                        var ownerNameEl = document.getElementById('createInstOwnerName');
+                        ownerId = ownerNameEl.dataset.ownerId || null;
+                        ownerType = ownerNameEl.dataset.ownerType || null;
+                        if (!ownerId) {
+                            _showToast('Please select an owner', 'error');
+                            return false;
+                        }
                     }
+
+                    if (!name) { _showToast('Name is required', 'error'); return false; }
+                    if (!locationId) { _showToast('Location is required', 'error'); return false; }
 
                     var data = {
                         name: name,
-                        type: type,
-                        level: level,
+                        typeId: typeId,
                         locationId: locationId,
                         ownershipType: ownership,
                         description: description,
                         foundedYear: currentYear,
-                        ownerId: ownerId || null,
-                        ownerName: ownerName || null,
-                        ownerType: ownerTypeValue || null
+                        religionId: religionId,
+                        ownerId: ownerId,
+                        ownerType: ownerType
                     };
 
-                    var result = _commands.createInstitution(data);
-                    if (result && result.success) {
-                        _showToast('Institution created: ' + name, 'success');
-                        _closeTopModal();
-                        _processingModal = false;
-                        if (onSuccess) onSuccess(result.data);
-                    } else {
-                        _showToast('Failed to create institution: ' + (result ? result.reason : 'Unknown error'), 'error');
+                    var result = _commands().createInstitution(data);
+                    if (!result.success) {
+                        _showToast(result.reason || 'Failed to create institution', 'error');
+                        return false;
                     }
+
+                    _persist();
+                    _showToast('Institution created: ' + name, 'success');
+                    _processingModal = false;
+                    if (window._createInstObserverCleanup) {
+                        window._createInstObserverCleanup();
+                        window._createInstObserverCleanup = null;
+                    }
+                    _closeTopModal();
+                    if (onSuccess) onSuccess(result.institutionId);
                     return true;
                 },
                 onCancel: function() {
                     _processingModal = false;
+                    if (window._createInstObserverCleanup) {
+                        window._createInstObserverCleanup();
+                        window._createInstObserverCleanup = null;
+                    }
                 }
             });
 
         } catch (e) {
             _processingModal = false;
-            _showToast('Error opening create institution modal', 'error');
+            _showToast('Error opening create institution modal: ' + (e.message || 'unknown'), 'error');
         }
     }
 
-    // =========================================================================
-    // 6. EDIT INSTITUTION MODAL
-    // =========================================================================
+    // =====================================================================
+    // Edit Institution Modal
+    // =====================================================================
 
     function openEditInstitutionModal(institutionId, onSuccess) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
+        if (_processingModal) return;
         _processingModal = true;
 
         try {
-            var institution = _getInstitution(institutionId);
-            if (!institution) {
+            var details = _queries().getInstitutionDetails(institutionId);
+            if (!details) {
                 _showToast('Institution not found', 'error');
                 _processingModal = false;
                 return;
             }
 
-            var inst = institution.institution || institution;
+            var s = details.summary;
             var places = _getPlaces();
-            var currentYear = _getCurrentYear();
+            var types = _institutionTypes();
+
+            var typeOptions = '';
+            for (var k in types) {
+                if (!types.hasOwnProperty(k)) continue;
+                var t = types[k];
+                var selected = (t.id === s.type) ? ' selected' : '';
+                typeOptions += '<option value="' + _escapeHtml(t.id) + '"' + selected + '>' +
+                    _escapeHtml(t.name) + '</option>';
+            }
 
             var placeOptions = '<option value="">No location</option>';
             for (var i = 0; i < places.length; i++) {
-                var selected = (places[i].id === inst.locationId) ? 'selected' : '';
-                placeOptions += '<option value="' + places[i].id + '" ' + selected + '>' + _escapeHtml(places[i].displayName) + '</option>';
+                var selected = (places[i].id === s.locationId) ? ' selected' : '';
+                placeOptions += '<option value="' + _escapeHtml(places[i].id) + '"' + selected + '>' +
+                    _escapeHtml(places[i].displayName) + '</option>';
             }
 
-            var typeOptions = '';
-            var types = {
-                school: { id: 'school', label: 'School' },
-                university: { id: 'university', label: 'University' },
-                academy: { id: 'academy', label: 'Academy' },
-                college: { id: 'college', label: 'College' },
-                seminary: { id: 'seminary', label: 'Seminary' },
-                workshop: { id: 'workshop', label: 'Workshop' }
-            };
-            for (var key in types) {
-                var selected = (types[key].id === inst.institutionType) ? 'selected' : '';
-                typeOptions += '<option value="' + types[key].id + '" ' + selected + '>' + types[key].label + '</option>';
-            }
-
-            var levelOptions = '';
-            var levels = _getEducationLevels();
-            for (var key in levels) {
-                var selected = (levels[key].id === inst.level) ? 'selected' : '';
-                levelOptions += '<option value="' + levels[key].id + '" ' + selected + '>' + levels[key].label + ' (' + levels[key].minAge + '-' + levels[key].maxAge + ')</option>';
-            }
-
-            var infoIcon = _getIcon('CIRCLE_DOT');
-            var editIcon = _getIcon('EDIT');
-
-            var modalContent = 
-                '<div style="max-height:500px;overflow-y:auto;padding:4px;">' +
+            var modalContent =
+                '<div style="max-height:520px;overflow-y:auto;padding:4px;">' +
                 '<div style="margin-bottom:12px;padding:8px;background:var(--bg2);border-radius:6px;font-size:0.6rem;color:var(--dim);">' +
-                'Editing <strong>' + _escapeHtml(inst.name) + '</strong>' +
+                'Editing <strong>' + _escapeHtml(s.name) + '</strong>' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Institution Name *</label>' +
-                '<input type="text" id="editInstName" value="' + _escapeHtml(inst.name) + '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Name *</label>' +
+                '<input type="text" id="editInstName" value="' + _escapeHtml(s.name) + '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Type</label>' +
                 '<select id="editInstType" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
-                typeOptions +
-                '</select>' +
-                '</div>' +
-
-                '<div class="form-group" style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Education Level</label>' +
-                '<select id="editInstLevel" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
-                levelOptions +
-                '</select>' +
+                typeOptions + '</select>' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Location</label>' +
                 '<select id="editInstLocation" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
-                placeOptions +
-                '</select>' +
+                placeOptions + '</select>' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Description</label>' +
-                '<textarea id="editInstDescription" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' + _escapeHtml(inst.description || '') + '</textarea>' +
+                '<textarea id="editInstDescription" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                _escapeHtml(details.description || '') + '</textarea>' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Max Students</label>' +
-                '<input type="number" id="editInstMaxStudents" value="' + (inst.maxStudents || 30) + '" min="1" max="500" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                '<input type="number" id="editInstMaxStudents" value="' + s.maxStudents + '" min="1" max="5000" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
                 '</div>' +
 
-                '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
-                infoIcon + ' To change ownership or specialization, use the dedicated management modals.' +
-                '</div>' +
                 '</div>';
 
             _openModal({
-                title: editIcon + ' Edit Institution: ' + inst.name,
+                title: _getIcon('EDIT') + ' Edit Institution: ' + s.name,
                 content: modalContent,
-                confirmText: 'Save Changes',
+                confirmText: 'Save',
                 cancelText: 'Cancel',
                 onConfirm: function() {
                     var name = document.getElementById('editInstName').value.trim();
                     var type = document.getElementById('editInstType').value;
-                    var level = document.getElementById('editInstLevel').value;
                     var locationId = document.getElementById('editInstLocation').value || null;
                     var description = document.getElementById('editInstDescription').value.trim();
-                    var maxStudents = parseInt(document.getElementById('editInstMaxStudents').value) || 30;
+                    var maxStudents = parseInt(document.getElementById('editInstMaxStudents').value, 10);
 
-                    if (!name) {
-                        _showToast('Institution name is required', 'error');
+                    if (!name) { _showToast('Name is required', 'error'); return false; }
+                    if (isNaN(maxStudents) || maxStudents < 1) { _showToast('Invalid capacity', 'error'); return false; }
+
+                    var result = _commands().updateInstitution(institutionId, {
+                        name: name,
+                        type: type,
+                        locationId: locationId,
+                        description: description,
+                        maxStudents: maxStudents
+                    });
+
+                    if (!result.success) {
+                        _showToast(result.reason || 'Failed to update', 'error');
                         return false;
                     }
 
-                    var updates = {
-                        name: name,
-                        institutionType: type,
-                        level: level,
-                        locationId: locationId,
-                        description: description,
-                        maxStudents: maxStudents,
-                        updatedAt: Date.now()
-                    };
-
-                    var result = _updateInstitution(institutionId, updates);
-
-                    if (result) {
-                        _showToast('Institution updated: ' + name, 'success');
-                        _closeTopModal();
-                        _processingModal = false;
-                        if (onSuccess) onSuccess();
-                    } else {
-                        _showToast('Failed to update institution', 'error');
-                    }
+                    _persist();
+                    _showToast('Institution updated', 'success');
+                    _processingModal = false;
+                    _closeTopModal();
+                    if (onSuccess) onSuccess();
                     return true;
                 },
-                onCancel: function() {
-                    _processingModal = false;
-                }
+                onCancel: function() { _processingModal = false; }
             });
 
         } catch (e) {
             _processingModal = false;
-            _showToast('Error opening edit institution modal', 'error');
+            _showToast('Error opening edit modal: ' + (e.message || 'unknown'), 'error');
         }
     }
 
-    // =========================================================================
-    // 7. INSTITUTION DETAILS MODAL
-    // =========================================================================
+    // =====================================================================
+    // Institution Details Modal
+    // =====================================================================
 
     function openInstitutionDetailsModal(institutionId, onSuccess) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
+        if (_processingModal) return;
         _processingModal = true;
 
         try {
-            var institution = _getInstitution(institutionId);
-            if (!institution) {
+            var details = _queries().getInstitutionDetails(institutionId);
+            if (!details) {
                 _showToast('Institution not found', 'error');
                 _processingModal = false;
                 return;
             }
 
-            var inst = institution.institution || institution;
-            var currentYear = _getCurrentYear();
-            var students = inst.students || [];
-            var teachers = inst.teachers || [];
-            var graduates = inst.graduates || [];
-            var isPublic = inst.ownershipType === 'public';
-            var isPrivate = inst.ownershipType === 'private';
+            var s = details.summary;
 
-            var locationName = inst.locationId ? (_getPlaceById(inst.locationId)?.displayName || 'Unknown') : 'None';
-            var levelName = inst.level ? (_getEducationLevels()[inst.level]?.label || inst.level) : 'Unknown';
-            var typeName = inst.institutionType || 'School';
-
-            // Calculate tuition
-            var tuitionResult = _calculateTuition(institutionId, currentYear);
-            var tuitionDisplay = isPublic ? 'Free (Public)' :
-                (inst.waiveTuition ? 'Waived' :
-                (tuitionResult.success ? tuitionResult.tuition + ' gold' : 'Unknown'));
-
-            // Calculate funding/profit
-            var fundingDisplay = 'N/A';
-            var profitDisplay = 'N/A';
-            if (isPublic) {
-                var fundingResult = _calculatePublicSchoolFunding(institutionId, currentYear);
-                if (fundingResult && fundingResult.success) {
-                    fundingDisplay = fundingResult.funding + ' gold (' + fundingResult.studentCount + ' students)';
-                }
-            }
-            if (isPrivate) {
-                var profitResult = _calculatePrivateSchoolProfit(institutionId, currentYear);
-                if (profitResult && profitResult.success) {
-                    profitDisplay = profitResult.profit + ' gold';
-                }
-            }
-
-            // Build student list
-            var studentHtml = '';
-            if (students.length === 0) {
-                studentHtml = '<div style="color:var(--dim);font-size:0.55rem;text-align:center;padding:8px;">No students enrolled</div>';
-            } else {
-                studentHtml = '<div style="max-height:150px;overflow-y:auto;">';
-                for (var i = 0; i < Math.min(students.length, 10); i++) {
-                    var s = students[i];
-                    var char = _getCharacterById(s.studentId);
-                    var name = char ? char.name + ' ' + (char.surname || '') : 'Unknown';
-                    var age = char ? _calculateAge(char.birthYear, false, null) : '?';
-                    var enrolledYear = s.enrolledYear || '?';
-                    var graduated = s.graduated ? '✓' : '';
-
-                    studentHtml += '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border-light);font-size:0.55rem;">' +
-                        '<span>' + _escapeHtml(name) + (graduated ? ' <span style="color:var(--success);font-size:0.5rem;">(Graduated)</span>' : '') + '</span>' +
-                        '<span style="color:var(--dim);">' + age + 'y · Enrolled ' + enrolledYear + '</span>' +
-                        '</div>';
-                }
-                if (students.length > 10) {
-                    studentHtml += '<div style="font-size:0.5rem;color:var(--dim);text-align:center;padding-top:4px;">... and ' + (students.length - 10) + ' more</div>';
-                }
-                studentHtml += '</div>';
-            }
-
-            // Build teacher list
-            var teacherHtml = '';
-            if (teachers.length === 0) {
-                teacherHtml = '<div style="color:var(--dim);font-size:0.55rem;text-align:center;padding:8px;">No teachers hired</div>';
-            } else {
-                teacherHtml = '<div style="max-height:150px;overflow-y:auto;">';
-                for (var i = 0; i < Math.min(teachers.length, 10); i++) {
-                    var t = teachers[i];
-                    var char = _getCharacterById(t.teacherId);
-                    var name = char ? char.name + ' ' + (char.surname || '') : 'Unknown';
-                    var subject = t.subjectName || t.subjectId || 'Unknown';
-                    var hiredYear = t.hiredYear || '?';
-
-                    teacherHtml += '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border-light);font-size:0.55rem;">' +
-                        '<span>' + _escapeHtml(name) + ' <span style="color:var(--accent);font-size:0.5rem;">(' + _escapeHtml(subject) + ')</span></span>' +
-                        '<span style="color:var(--dim);">Hired ' + hiredYear + '</span>' +
-                        '</div>';
-                }
-                if (teachers.length > 10) {
-                    teacherHtml += '<div style="font-size:0.5rem;color:var(--dim);text-align:center;padding-top:4px;">... and ' + (teachers.length - 10) + ' more</div>';
-                }
-                teacherHtml += '</div>';
-            }
-
-            // Curriculum display
-            var curriculumItems = inst.curriculum || [];
             var curriculumHtml = '';
-            if (curriculumItems.length === 0) {
-                curriculumHtml = '<div style="color:var(--dim);font-size:0.55rem;text-align:center;padding:8px;">No curriculum defined</div>';
+            if (details.curriculum.length === 0) {
+                curriculumHtml = '<span style="color:var(--dim);font-size:0.55rem;">No curriculum</span>';
             } else {
                 curriculumHtml = '<div style="display:flex;flex-wrap:wrap;gap:4px;">';
-                for (var i = 0; i < curriculumItems.length; i++) {
-                    var item = curriculumItems[i];
-                    var icon = item.icon || (item.type === 'role' ? '◉' : '⌇');
+                for (var i = 0; i < details.curriculum.length; i++) {
+                    var item = details.curriculum[i];
                     curriculumHtml += '<span style="background:var(--bg3);padding:2px 8px;border-radius:12px;font-size:0.5rem;border:1px solid var(--border);">' +
-                        icon + ' ' + _escapeHtml(item.name) +
-                        '</span>';
+                        _escapeHtml(item.name) + '</span>';
                 }
                 curriculumHtml += '</div>';
             }
 
-            var infoIcon = _getIcon('CIRCLE_DOT');
-            var personIcon = _getIcon('PERSON');
-            var gearIcon = _getIcon('GEAR');
-            var homeIcon = _getIcon('HOME');
+            var studentsHtml = '';
+            if (details.students.length === 0) {
+                studentsHtml = '<div style="color:var(--dim);font-size:0.55rem;text-align:center;padding:8px;">No students enrolled</div>';
+            } else {
+                studentsHtml = '<div style="max-height:150px;overflow-y:auto;">';
+                for (var i = 0; i < Math.min(details.students.length, 10); i++) {
+                    var st = details.students[i];
+                    studentsHtml += '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border-light);font-size:0.55rem;">' +
+                        '<span>' + _escapeHtml(st.studentName || 'Unknown') + '</span>' +
+                        '<span style="color:var(--dim);">' + (st.age !== null ? st.age + 'y' : '?') +
+                        ' · Enrolled ' + (st.enrollmentYear !== null ? st.enrollmentYear : '?') + '</span>' +
+                        '</div>';
+                }
+                if (details.students.length > 10) {
+                    studentsHtml += '<div style="font-size:0.5rem;color:var(--dim);text-align:center;padding-top:4px;">... and ' +
+                        (details.students.length - 10) + ' more</div>';
+                }
+                studentsHtml += '</div>';
+            }
 
-            var modalContent = 
-                '<div style="max-height:550px;overflow-y:auto;padding:4px;">' +
+            var teachersHtml = '';
+            if (details.teachers.length === 0) {
+                teachersHtml = '<div style="color:var(--dim);font-size:0.55rem;text-align:center;padding:8px;">No teachers hired</div>';
+            } else {
+                teachersHtml = '<div style="max-height:150px;overflow-y:auto;">';
+                for (var i = 0; i < Math.min(details.teachers.length, 10); i++) {
+                    var t = details.teachers[i];
+                    teachersHtml += '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border-light);font-size:0.55rem;">' +
+                        '<span>' + _escapeHtml(t.teacherName || 'Unknown') +
+                        ' <span style="color:var(--accent);font-size:0.5rem;">(' + _escapeHtml(t.subjectName || '?') + ')</span></span>' +
+                        '<span style="color:var(--dim);">' + (t.hiredYear !== null ? t.hiredYear : '?') + '</span>' +
+                        '</div>';
+                }
+                if (details.teachers.length > 10) {
+                    teachersHtml += '<div style="font-size:0.5rem;color:var(--dim);text-align:center;padding-top:4px;">... and ' +
+                        (details.teachers.length - 10) + ' more</div>';
+                }
+                teachersHtml += '</div>';
+            }
+
+            var headmasterLine = details.headmaster
+                ? _escapeHtml(details.headmaster.name || 'Unknown') + ' (' + _escapeHtml(details.headmaster.title || 'Headmaster') + ' since ' + (details.headmaster.startYear || '?') + ')'
+                : '<span style="color:var(--dim);">None</span>';
+
+            var modalContent =
+                '<div style="max-height:580px;overflow-y:auto;padding:4px;">' +
+
                 '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">' +
                 '<div style="background:var(--bg2);padding:12px;border-radius:8px;">' +
                 '<div style="font-size:0.6rem;color:var(--dim);">Institution</div>' +
-                '<div style="font-size:0.9rem;font-weight:bold;">' + _escapeHtml(inst.name) + '</div>' +
-                '<div style="font-size:0.65rem;color:var(--dim);">' + _escapeHtml(typeName) + ' · ' + _escapeHtml(levelName) + '</div>' +
-                '<div style="font-size:0.65rem;color:var(--dim);">' + homeIcon + ' ' + _escapeHtml(locationName) + '</div>' +
+                '<div style="font-size:0.9rem;font-weight:bold;">' + _escapeHtml(s.name) + '</div>' +
+                '<div style="font-size:0.65rem;color:var(--dim);">' + _escapeHtml(s.typeName || 'Unknown') + '</div>' +
+                '<div style="font-size:0.65rem;color:var(--dim);">' + _escapeHtml(s.locationName) + '</div>' +
                 '</div>' +
                 '<div style="background:var(--bg2);padding:12px;border-radius:8px;">' +
                 '<div style="font-size:0.6rem;color:var(--dim);">Statistics</div>' +
                 '<div style="font-size:0.75rem;">' +
-                '<div>' + personIcon + ' Students: ' + students.length + ' / ' + (inst.maxStudents || 30) + '</div>' +
-                '<div>' + gearIcon + ' Teachers: ' + teachers.length + '</div>' +
-                '<div>🎓 Graduates: ' + graduates.length + '</div>' +
-                '<div>⌇ Curriculum: ' + curriculumItems.length + ' items</div>' +
-                '</div>' +
-                '</div>' +
+                '<div>' + s.currentStudentCount + ' / ' + s.maxStudents + ' students</div>' +
+                '<div>' + s.teacherCount + ' teachers</div>' +
+                '<div>' + s.graduateCount + ' graduates</div>' +
+                '<div>' + details.curriculum.length + ' curriculum items</div>' +
+                '</div></div>' +
                 '</div>' +
 
                 '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">' +
                 '<div style="background:var(--bg2);padding:12px;border-radius:8px;">' +
                 '<div style="font-size:0.6rem;color:var(--dim);">Ownership</div>' +
-                '<div style="font-size:0.75rem;font-weight:bold;color:' + (isPublic ? 'var(--accent)' : 'var(--accent)') + ';">' + (isPublic ? 'Public' : 'Private') + '</div>' +
-                (isPrivate ? '<div style="font-size:0.6rem;color:var(--dim);">Owner: ' + _escapeHtml(inst.ownerName || 'None') + '</div>' : '') +
+                '<div style="font-size:0.75rem;font-weight:bold;">' + _escapeHtml(s.ownershipType || 'public') + '</div>' +
+                (s.ownerName ? '<div style="font-size:0.6rem;color:var(--dim);">Owner: ' + _escapeHtml(s.ownerName) + '</div>' : '') +
+                (s.religionName ? '<div style="font-size:0.6rem;color:#4a9e6a;">' + _escapeHtml(s.religionName) + '</div>' : '') +
                 '</div>' +
                 '<div style="background:var(--bg2);padding:12px;border-radius:8px;">' +
-                '<div style="font-size:0.6rem;color:var(--dim);">Tuition</div>' +
-                '<div style="font-size:0.75rem;font-weight:bold;">' + tuitionDisplay + '</div>' +
-                (isPublic ? '<div style="font-size:0.55rem;color:var(--accent);">Funding: ' + fundingDisplay + '</div>' : '') +
-                (isPrivate ? '<div style="font-size:0.55rem;color:var(--accent);">Profit: ' + profitDisplay + '</div>' : '') +
+                '<div style="font-size:0.6rem;color:var(--dim);">Headmaster</div>' +
+                '<div style="font-size:0.7rem;">' + headmasterLine + '</div>' +
                 '</div>' +
                 '</div>' +
 
                 '<div style="margin-bottom:12px;">' +
                 '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">Curriculum</div>' +
-                '<div style="background:var(--bg3);padding:8px;border-radius:6px;min-height:30px;">' +
-                curriculumHtml +
-                '</div>' +
+                '<div style="background:var(--bg3);padding:8px;border-radius:6px;min-height:30px;">' + curriculumHtml + '</div>' +
                 '</div>' +
 
                 '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">' +
                 '<div style="background:var(--bg2);padding:12px;border-radius:8px;">' +
-                '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">' + personIcon + ' Students (' + students.length + ')</div>' +
-                studentHtml +
+                '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">Students (' + details.students.length + ')</div>' +
+                studentsHtml +
                 '</div>' +
                 '<div style="background:var(--bg2);padding:12px;border-radius:8px;">' +
-                '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">' + gearIcon + ' Teachers (' + teachers.length + ')</div>' +
-                teacherHtml +
+                '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">Teachers (' + details.teachers.length + ')</div>' +
+                teachersHtml +
                 '</div>' +
                 '</div>' +
 
-                (inst.description ? '<div style="font-size:0.55rem;color:var(--dim);padding:8px;background:var(--bg3);border-radius:6px;margin-bottom:12px;">' + _escapeHtml(inst.description) + '</div>' : '') +
+                (details.description ? '<div style="font-size:0.55rem;color:var(--dim);padding:8px;background:var(--bg3);border-radius:6px;margin-bottom:12px;">' +
+                    _escapeHtml(details.description) + '</div>' : '') +
 
                 '<div style="display:flex;gap:8px;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:12px;">' +
                 '<button id="instEditBtn" class="btn primary" style="font-size:0.65rem;padding:4px 12px;">Edit</button>' +
@@ -1018,10 +706,11 @@
                 '<button id="instGraduateBtn" class="btn" style="font-size:0.65rem;padding:4px 12px;">Graduate</button>' +
                 '<button id="instDeleteBtn" class="btn danger" style="font-size:0.65rem;padding:4px 12px;">Delete</button>' +
                 '</div>' +
+
                 '</div>';
 
             _openModal({
-                title: 'Institution Details: ' + inst.name,
+                title: 'Institution: ' + s.name,
                 content: modalContent,
                 confirmText: 'Close',
                 cancelText: '',
@@ -1029,639 +718,397 @@
                     _closeTopModal();
                     _processingModal = false;
                     if (onSuccess) onSuccess();
-                }
+                    return true;
+                },
+                onCancel: function() { _processingModal = false; }
             });
 
             setTimeout(function() {
-                var editBtn = document.getElementById('instEditBtn');
-                if (editBtn) {
-                    editBtn.onclick = function() {
-                        _closeTopModal();
+                function bind(id, fn) {
+                    var el = document.getElementById(id);
+                    if (!el) return;
+                    el.onclick = function() {
                         _processingModal = false;
-                        openEditInstitutionModal(institutionId, function() {
-                            setTimeout(function() {
-                                openInstitutionDetailsModal(institutionId, onSuccess);
-                            }, 100);
-                        });
+                        _closeTopModal();
+                        fn();
                     };
                 }
 
-                var curriculumBtn = document.getElementById('instCurriculumBtn');
-                if (curriculumBtn) {
-                    curriculumBtn.onclick = function() {
-                        _closeTopModal();
-                        _processingModal = false;
-                        openEditCurriculumModal(institutionId, function() {
-                            setTimeout(function() {
-                                openInstitutionDetailsModal(institutionId, onSuccess);
-                            }, 100);
-                        });
-                    };
-                }
-
-                var enrollBtn = document.getElementById('instEnrollBtn');
-                if (enrollBtn) {
-                    enrollBtn.onclick = function() {
-                        _closeTopModal();
-                        _processingModal = false;
-                        openEnrollStudentModal(institutionId, function() {
-                            setTimeout(function() {
-                                openInstitutionDetailsModal(institutionId, onSuccess);
-                            }, 100);
-                        });
-                    };
-                }
-
-                var hireBtn = document.getElementById('instHireBtn');
-                if (hireBtn) {
-                    hireBtn.onclick = function() {
-                        _closeTopModal();
-                        _processingModal = false;
-                        openHireTeacherModal(institutionId, function() {
-                            setTimeout(function() {
-                                openInstitutionDetailsModal(institutionId, onSuccess);
-                            }, 100);
-                        });
-                    };
-                }
-
-                var headmasterBtn = document.getElementById('instHeadmasterBtn');
-                if (headmasterBtn) {
-                    headmasterBtn.onclick = function() {
-                        _closeTopModal();
-                        _processingModal = false;
-                        openSetHeadmasterModal(institutionId, function() {
-                            setTimeout(function() {
-                                openInstitutionDetailsModal(institutionId, onSuccess);
-                            }, 100);
-                        });
-                    };
-                }
-
-                var tuitionBtn = document.getElementById('instTuitionBtn');
-                if (tuitionBtn) {
-                    tuitionBtn.onclick = function() {
-                        _closeTopModal();
-                        _processingModal = false;
-                        openTuitionManagementModal(institutionId, function() {
-                            setTimeout(function() {
-                                openInstitutionDetailsModal(institutionId, onSuccess);
-                            }, 100);
-                        });
-                    };
-                }
-
-                var ownershipBtn = document.getElementById('instOwnershipBtn');
-                if (ownershipBtn) {
-                    ownershipBtn.onclick = function() {
-                        _closeTopModal();
-                        _processingModal = false;
-                        openOwnershipManagementModal(institutionId, function() {
-                            setTimeout(function() {
-                                openInstitutionDetailsModal(institutionId, onSuccess);
-                            }, 100);
-                        });
-                    };
-                }
-
-                var graduateBtn = document.getElementById('instGraduateBtn');
-                if (graduateBtn) {
-                    graduateBtn.onclick = function() {
-                        _closeTopModal();
-                        _processingModal = false;
-                        openGraduateStudentModal(institutionId, function() {
-                            setTimeout(function() {
-                                openInstitutionDetailsModal(institutionId, onSuccess);
-                            }, 100);
-                        });
-                    };
-                }
-
-                var deleteBtn = document.getElementById('instDeleteBtn');
-                if (deleteBtn) {
-                    deleteBtn.onclick = function() {
-                        _closeTopModal();
-                        _processingModal = false;
-                        openDeleteInstitutionModal(institutionId, function() {
-                            _processingModal = false;
-                            if (onSuccess) onSuccess();
-                        });
-                    };
-                }
+                bind('instEditBtn', function() {
+                    openEditInstitutionModal(institutionId, function() {
+                        setTimeout(function() { openInstitutionDetailsModal(institutionId, onSuccess); }, 100);
+                    });
+                });
+                bind('instCurriculumBtn', function() {
+                    openEditCurriculumModal(institutionId, function() {
+                        setTimeout(function() { openInstitutionDetailsModal(institutionId, onSuccess); }, 100);
+                    });
+                });
+                bind('instEnrollBtn', function() {
+                    openEnrollStudentModal(institutionId, function() {
+                        setTimeout(function() { openInstitutionDetailsModal(institutionId, onSuccess); }, 100);
+                    });
+                });
+                bind('instHireBtn', function() {
+                    openHireTeacherModal(institutionId, function() {
+                        setTimeout(function() { openInstitutionDetailsModal(institutionId, onSuccess); }, 100);
+                    });
+                });
+                bind('instHeadmasterBtn', function() {
+                    openSetHeadmasterModal(institutionId, function() {
+                        setTimeout(function() { openInstitutionDetailsModal(institutionId, onSuccess); }, 100);
+                    });
+                });
+                bind('instTuitionBtn', function() {
+                    openTuitionManagementModal(institutionId, function() {
+                        setTimeout(function() { openInstitutionDetailsModal(institutionId, onSuccess); }, 100);
+                    });
+                });
+                bind('instOwnershipBtn', function() {
+                    openOwnershipManagementModal(institutionId, function() {
+                        setTimeout(function() { openInstitutionDetailsModal(institutionId, onSuccess); }, 100);
+                    });
+                });
+                bind('instGraduateBtn', function() {
+                    openGraduateStudentModal(institutionId, function() {
+                        setTimeout(function() { openInstitutionDetailsModal(institutionId, onSuccess); }, 100);
+                    });
+                });
+                bind('instDeleteBtn', function() {
+                    openDeleteInstitutionModal(institutionId, function() {
+                        if (onSuccess) onSuccess();
+                    });
+                });
             }, 100);
 
         } catch (e) {
             _processingModal = false;
-            _showToast('Error opening institution details', 'error');
+            _showToast('Error opening details modal: ' + (e.message || 'unknown'), 'error');
         }
     }
 
-    // =========================================================================
-    // 8. GRADUATE STUDENT MODAL
-    // =========================================================================
-
-    function openGraduateStudentModal(institutionId, onSuccess) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
-        _processingModal = true;
-
-        try {
-            var institution = _getInstitution(institutionId);
-            if (!institution) {
-                _showToast('Institution not found', 'error');
-                _processingModal = false;
-                return;
-            }
-
-            var inst = institution.institution || institution;
-            var students = inst.students || [];
-            var enrolledStudents = students.filter(function(s) { return !s.graduated; });
-
-            if (enrolledStudents.length === 0) {
-                _showToast('No enrolled students to graduate', 'info');
-                _processingModal = false;
-                if (onSuccess) onSuccess();
-                return;
-            }
-
-            var currentYear = _getCurrentYear();
-            var personIcon = _getIcon('PERSON');
-            var infoIcon = _getIcon('CIRCLE_DOT');
-
-            var studentOptions = enrolledStudents.map(function(s) {
-                var char = _getCharacterById(s.studentId);
-                var name = char ? char.name + ' ' + (char.surname || '') : 'Unknown';
-                var age = char ? _calculateAge(char.birthYear, false, null) : '?';
-                var enrolledYear = s.enrolledYear || '?';
-                return '<option value="' + s.studentId + '">' + personIcon + ' ' + _escapeHtml(name) + ' (' + age + 'y, enrolled ' + enrolledYear + ')</option>';
-            }).join('');
-
-            var modalContent = 
-                '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
-                'Graduate student from <strong>' + _escapeHtml(inst.name) + '</strong>' +
-                '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' + infoIcon + ' ' + enrolledStudents.length + ' students eligible to graduate</div>' +
-                '</div>' +
-
-                '<div class="form-group" style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">' + personIcon + ' Select Student</label>' +
-                '<select id="graduateStudentSelect" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
-                studentOptions +
-                '</select>' +
-                '</div>' +
-
-                '<div class="form-group" style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">' + infoIcon + ' Graduation Year</label>' +
-                '<input type="number" id="graduateYear" value="' + currentYear + '" min="1" max="' + (currentYear + 5) + '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
-                '</div>' +
-
-                '<div class="form-group" style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">' + infoIcon + ' Notes (optional)</label>' +
-                '<textarea id="graduateNotes" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);" placeholder="e.g., With honors, Valedictorian..."></textarea>' +
-                '</div>' +
-
-                '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;margin-top:8px;">' +
-                infoIcon + ' Graduating a student removes them from the active student list and adds them to the graduates list.' +
-                '</div>';
-
-            _openModal({
-                title: 'Graduate Student',
-                content: modalContent,
-                confirmText: 'Graduate',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var studentId = document.getElementById('graduateStudentSelect').value;
-                    var year = parseInt(document.getElementById('graduateYear').value);
-                    var notes = document.getElementById('graduateNotes').value;
-
-                    if (!studentId) {
-                        _showToast('Please select a student', 'error');
-                        return false;
-                    }
-
-                    if (isNaN(year) || year < 1) {
-                        _showToast('Please enter a valid year', 'error');
-                        return false;
-                    }
-
-                    var result = _graduateStudent(institutionId, studentId, year);
-
-                    if (result) {
-                        var student = _getCharacterById(studentId);
-                        _showToast((student ? student.name : 'Student') + ' graduated in ' + year, 'success');
-                        _closeTopModal();
-                        _processingModal = false;
-                        if (onSuccess) onSuccess();
-                    } else {
-                        _showToast('Failed to graduate student', 'error');
-                    }
-                    return true;
-                },
-                onCancel: function() {
-                    _processingModal = false;
-                }
-            });
-
-        } catch (e) {
-            _processingModal = false;
-            _showToast('Error opening graduate student modal', 'error');
-        }
-    }
-
-    // =========================================================================
-    // 9. EDIT CURRICULUM MODAL (UPDATED with role filtering)
-    // =========================================================================
+    // =====================================================================
+    // Edit Curriculum Modal
+    // =====================================================================
 
     function openEditCurriculumModal(institutionId, onSuccess) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
+        if (_processingModal) return;
         _processingModal = true;
 
         try {
-            var institution = _getInstitution(institutionId);
-            if (!institution) {
+            var details = _queries().getInstitutionDetails(institutionId);
+            if (!details) {
                 _showToast('Institution not found', 'error');
                 _processingModal = false;
                 return;
             }
 
-            var inst = institution.institution || institution;
-            var currentCurriculum = inst.curriculum || [];
-            var specializationCategory = inst.specializationCategory || null;
+            var s = details.summary;
+            var current = details.curriculum;
+            var subjects = _subjects();
+            var categories = _roleCategories();
+            var specCat = s.specializationCategory;
             var allRoles = _getAllRoles();
-            var allSubjects = _getAllSubjects();
 
             // Filter roles by specialization category
-            var filteredRoles = allRoles;
-            if (specializationCategory) {
-                filteredRoles = allRoles.filter(function(r) {
-                    return r.category === specializationCategory;
-                });
+            var rolePool = specCat
+                ? allRoles.filter(function(r) { return r.category === specCat; })
+                : allRoles;
+
+            // Build checked lookup
+            var checkedIds = {};
+            for (var i = 0; i < current.length; i++) {
+                checkedIds[current[i].id] = true;
             }
 
-            // Build role options
-            var roleOptions = filteredRoles.map(function(r) {
-                var checked = currentCurriculum.some(function(c) {
-                    return c.type === 'role' && c.id === r.id;
-                });
-                var icon = r.icon || '◉';
-                return '<label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:0.6rem;">' +
-                    '<input type="checkbox" class="curriculum-role-cb" value="' + r.id + '" ' + (checked ? 'checked' : '') + '>' +
-                    icon + ' ' + _escapeHtml(r.name) +
-                    (r.category ? ' <span style="color:var(--dim);font-size:0.5rem;">(' + r.category + ')</span>' : '') +
-                    '</label>';
-            }).join('');
-
-            if (filteredRoles.length === 0) {
-                roleOptions = '<div style="color:var(--dim);font-size:0.55rem;text-align:center;padding:8px;">' +
-                    (specializationCategory ? 'No roles found in category "' + specializationCategory + '"' : 'No roles available') +
+            // Role checkboxes
+            var roleHtml = '';
+            if (rolePool.length === 0) {
+                roleHtml = '<div style="color:var(--dim);font-size:0.55rem;text-align:center;padding:8px;">' +
+                    (specCat ? 'No roles in category "' + _escapeHtml(specCat) + '"' : 'No roles available') +
                     '</div>';
+            } else {
+                for (var i = 0; i < rolePool.length; i++) {
+                    var r = rolePool[i];
+                    var chk = checkedIds[r.id] ? ' checked' : '';
+                    roleHtml += '<label style="display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer;font-size:0.6rem;">' +
+                        '<input type="checkbox" class="curriculum-role-cb" value="' + _escapeHtml(r.id) + '"' + chk + '>' +
+                        _escapeHtml(r.name) +
+                        (r.category ? ' <span style="color:var(--dim);font-size:0.5rem;">(' + _escapeHtml(r.category) + ')</span>' : '') +
+                        '</label>';
+                }
             }
 
-            // Subject categories
-            var subjectCategories = {
-                academic: { label: 'Academic Subjects', icon: '⌇' },
-                science: { label: 'Sciences', icon: '⌇' },
-                humanities: { label: 'Humanities', icon: '⌇' },
-                social: { label: 'Social Sciences', icon: '⌇' },
-                professional: { label: 'Professional Studies', icon: '⌇' },
-                arts: { label: 'Arts', icon: '⌇' },
-                legal: { label: 'Legal', icon: '⌇' },
-                religious: { label: 'Religious', icon: '⌆' },
-                language: { label: 'Languages', icon: '⌇' },
-                military: { label: 'Military', icon: '⚔' },
-                craft: { label: 'Craft', icon: '⌇' },
-                commercial: { label: 'Commercial', icon: '⌇' }
-            };
+            // Subjects grouped by category
+            var subjectGroups = {};
+            for (var key in subjects) {
+                if (!subjects.hasOwnProperty(key)) continue;
+                var sub = subjects[key];
+                var cat = sub.category || 'other';
+                if (!subjectGroups[cat]) subjectGroups[cat] = [];
+                subjectGroups[cat].push(sub);
+            }
 
             var subjectHtml = '';
-            var groupedSubjects = {};
-
-            var allSubjectsKeys = Object.keys(allSubjects);
-            for (var i = 0; i < allSubjectsKeys.length; i++) {
-                var key = allSubjectsKeys[i];
-                var subject = allSubjects[key];
-                var category = subject.category || 'academic';
-                if (!groupedSubjects[category]) {
-                    groupedSubjects[category] = [];
+            for (var cat in subjectGroups) {
+                if (!subjectGroups.hasOwnProperty(cat)) continue;
+                var catInfo = categories[cat] || { name: cat };
+                subjectHtml += '<div style="margin-bottom:8px;">';
+                subjectHtml += '<div style="font-size:0.55rem;color:var(--accent);margin-bottom:4px;">' + _escapeHtml(catInfo.name || cat) + '</div>';
+                subjectHtml += '<div style="display:flex;flex-wrap:wrap;gap:4px;">';
+                for (var i = 0; i < subjectGroups[cat].length; i++) {
+                    var sub = subjectGroups[cat][i];
+                    var chk = checkedIds[sub.id] ? ' checked' : '';
+                    var border = checkedIds[sub.id] ? 'var(--accent)' : 'var(--border)';
+                    subjectHtml += '<label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.55rem;background:var(--bg2);padding:2px 8px;border-radius:12px;border:1px solid ' + border + ';">' +
+                        '<input type="checkbox" class="curriculum-subject-cb" value="' + _escapeHtml(sub.id) + '"' + chk + '>' +
+                        _escapeHtml(sub.name) +
+                        '</label>';
                 }
-                groupedSubjects[category].push(subject);
-            }
-
-            var categoryOrder = ['academic', 'science', 'humanities', 'social', 'professional', 'arts', 'legal', 'religious', 'language', 'military', 'craft', 'commercial'];
-
-            for (var ci = 0; ci < categoryOrder.length; ci++) {
-                var cat = categoryOrder[ci];
-                if (groupedSubjects[cat]) {
-                    var catInfo = subjectCategories[cat] || { label: cat.charAt(0).toUpperCase() + cat.slice(1), icon: '⌇' };
-                    subjectHtml += '<div style="margin-bottom:8px;">';
-                    subjectHtml += '<div style="font-size:0.55rem;color:var(--accent);margin-bottom:4px;">' + catInfo.icon + ' ' + catInfo.label + '</div>';
-                    subjectHtml += '<div style="display:flex;flex-wrap:wrap;gap:4px;">';
-
-                    for (var si = 0; si < groupedSubjects[cat].length; si++) {
-                        var s = groupedSubjects[cat][si];
-                        var checked = currentCurriculum.some(function(c) {
-                            return c.type === 'subject' && c.id === s.id;
-                        });
-                        subjectHtml += '<label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.55rem;background:var(--bg2);padding:2px 8px;border-radius:12px;border:1px solid ' + (checked ? 'var(--accent)' : 'var(--border)') + ';">' +
-                            '<input type="checkbox" class="curriculum-subject-cb" value="' + s.id + '" ' + (checked ? 'checked' : '') + '>' +
-                            _escapeHtml(s.name) +
-                            '</label>';
-                    }
-
-                    subjectHtml += '</div></div>';
-                }
+                subjectHtml += '</div></div>';
             }
 
             // Custom subjects
-            var customSubjects = currentCurriculum.filter(function(c) {
-                return c.type === 'custom';
-            });
-            var customSubjectsHtml = customSubjects.map(function(c, idx) {
-                return '<div class="custom-subject-item" data-index="' + idx + '" style="display:flex;align-items:center;gap:6px;background:var(--bg3);padding:4px 10px;border-radius:12px;border:1px solid var(--border);font-size:0.55rem;">' +
-                    '<span>✎ ' + _escapeHtml(c.name) + '</span>' +
-                    '<button class="remove-custom-subject-btn" data-index="' + idx + '" style="background:none;border:none;color:var(--danger-lt);cursor:pointer;font-size:0.5rem;padding:0 2px;">' + _getIcon('X_HEAVY') + '</button>' +
-                    '</div>';
-            }).join('');
-
-            // Show warning if specialization category is set
-            var specializationWarning = '';
-            if (specializationCategory) {
-                specializationWarning = '<div style="padding:8px;background:rgba(200,112,64,0.15);border:1px solid var(--warn);border-radius:6px;margin-bottom:12px;font-size:0.55rem;">' +
-                    'This institution is specialized in <strong>' + specializationCategory + '</strong>. Only roles from this category can be added to the curriculum.' +
-                    '</div>';
+            var custom = current.filter(function(c) { return c.type === 'custom' || c.isCustom; });
+            var customHtml = '';
+            for (var i = 0; i < custom.length; i++) {
+                customHtml += _customSubjectChip(custom[i].name, custom[i].name);
+            }
+            if (!customHtml) {
+                customHtml = '<span style="color:var(--dim);font-size:0.5rem;padding:4px;">No custom subjects</span>';
             }
 
-            var gearIcon = _getIcon('GEAR');
-            var crossIcon = _getIcon('X_HEAVY');
+            var specWarning = '';
+            if (specCat) {
+                specWarning = '<div style="padding:8px;background:rgba(200,112,64,0.15);border:1px solid var(--warn);border-radius:6px;margin-bottom:12px;font-size:0.55rem;">' +
+                    'This institution is specialized in <strong>' + _escapeHtml(specCat) + '</strong>. Only roles in this category can be added.</div>';
+            }
 
-            var modalContent = 
-                '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
-                gearIcon + ' Editing curriculum for <strong>' + _escapeHtml(inst.name) + '</strong>' +
-                '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' + currentCurriculum.length + ' items currently in curriculum</div>' +
-                (specializationCategory ? '<div style="font-size:0.6rem;color:var(--accent);margin-top:4px;">Specialized: ' + specializationCategory + '</div>' : '') +
+            var modalContent =
+                '<div style="margin-bottom:12px;padding:12px;background:var(--bg2);border-radius:8px;">' +
+                _getIcon('GEAR') + ' Editing curriculum for <strong>' + _escapeHtml(s.name) + '</strong>' +
+                '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' + current.length + ' items currently</div>' +
                 '</div>' +
-
-                specializationWarning +
+                specWarning +
 
                 '<div style="margin-bottom:16px;">' +
-                '<div style="font-size:0.65rem;font-weight:bold;color:var(--accent);margin-bottom:8px;">◉ Roles (Professions)</div>' +
+                '<div style="font-size:0.65rem;font-weight:bold;color:var(--accent);margin-bottom:8px;">Roles (Professions)</div>' +
                 '<div style="background:var(--bg);padding:10px;border-radius:6px;border:1px solid var(--border);max-height:150px;overflow-y:auto;">' +
-                roleOptions +
-                '</div>' +
-                '<small style="font-size:0.5rem;color:var(--dim);">Select roles that this institution teaches</small>' +
-                '</div>' +
+                roleHtml + '</div></div>' +
 
                 '<div style="margin-bottom:16px;">' +
-                '<div style="font-size:0.65rem;font-weight:bold;color:var(--accent);margin-bottom:8px;">Subjects (Academic Disciplines)</div>' +
+                '<div style="font-size:0.65rem;font-weight:bold;color:var(--accent);margin-bottom:8px;">Subjects</div>' +
                 '<div style="background:var(--bg);padding:10px;border-radius:6px;border:1px solid var(--border);max-height:250px;overflow-y:auto;">' +
-                subjectHtml +
-                '</div>' +
-                '<small style="font-size:0.5rem;color:var(--dim);">Select academic subjects taught at this institution</small>' +
-                '</div>' +
+                subjectHtml + '</div></div>' +
 
                 '<div style="margin-bottom:16px;">' +
-                '<div style="font-size:0.65rem;font-weight:bold;color:var(--accent);margin-bottom:8px;">✎ Custom Subjects</div>' +
+                '<div style="font-size:0.65rem;font-weight:bold;color:var(--accent);margin-bottom:8px;">Custom Subjects</div>' +
                 '<div style="display:flex;gap:8px;margin-bottom:8px;">' +
-                '<input type="text" id="customSubjectInput" placeholder="Enter custom subject name..." style="flex:1;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.55rem;color:var(--text);">' +
-                '<button id="addCustomSubjectBtn" class="btn small" style="padding:4px 12px;font-size:0.5rem;">Add</button>' +
+                '<input type="text" id="customSubjectInput" placeholder="Custom subject name..." style="flex:1;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.55rem;color:var(--text);">' +
+                '<button id="addCustomSubjectBtn" class="btn" style="padding:4px 12px;font-size:0.5rem;">Add</button>' +
                 '</div>' +
                 '<div id="customSubjectsContainer" style="display:flex;flex-wrap:wrap;gap:4px;min-height:30px;padding:4px;background:var(--bg);border:1px solid var(--border);border-radius:6px;">' +
-                (customSubjectsHtml || '<span style="color:var(--dim);font-size:0.5rem;padding:4px;">No custom subjects added</span>') +
-                '</div>' +
-                '<small style="font-size:0.5rem;color:var(--dim);">Add any subject not in the lists above</small>' +
-                '</div>';
+                customHtml + '</div></div>';
 
             _openModal({
-                title: gearIcon + ' Edit Curriculum: ' + inst.name,
+                title: _getIcon('GEAR') + ' Edit Curriculum',
                 content: modalContent,
-                confirmText: 'Save Curriculum',
+                confirmText: 'Save',
                 cancelText: 'Cancel',
                 onConfirm: function() {
                     var newCurriculum = [];
 
-                    var roleCheckboxes = document.querySelectorAll('.curriculum-role-cb:checked');
-                    for (var i = 0; i < roleCheckboxes.length; i++) {
-                        var roleId = roleCheckboxes[i].value;
+                    var roleBoxes = document.querySelectorAll('.curriculum-role-cb:checked');
+                    for (var i = 0; i < roleBoxes.length; i++) {
+                        var roleId = roleBoxes[i].value;
                         var role = _getRoleById(roleId);
                         if (role) {
                             newCurriculum.push({
                                 type: 'role',
                                 id: roleId,
                                 name: role.name,
-                                icon: role.icon || '◉',
+                                icon: role.icon || null,
                                 baseLearnRate: 10
                             });
                         }
                     }
 
-                    var subjectCheckboxes = document.querySelectorAll('.curriculum-subject-cb:checked');
-                    for (var i = 0; i < subjectCheckboxes.length; i++) {
-                        var subjectId = subjectCheckboxes[i].value;
-                        var subject = allSubjects[subjectId];
-                        if (subject) {
+                    var subBoxes = document.querySelectorAll('.curriculum-subject-cb:checked');
+                    for (var i = 0; i < subBoxes.length; i++) {
+                        var subId = subBoxes[i].value;
+                        var sub = subjects[subId];
+                        // Subjects are keyed by uppercase enum name in constants; also try id lookup.
+                        if (!sub) {
+                            for (var key in subjects) {
+                                if (subjects.hasOwnProperty(key) && subjects[key].id === subId) {
+                                    sub = subjects[key];
+                                    break;
+                                }
+                            }
+                        }
+                        if (sub) {
                             newCurriculum.push({
                                 type: 'subject',
-                                id: subjectId,
-                                name: subject.name,
-                                icon: subject.icon || '⌇',
-                                baseLearnRate: 10,
-                                category: subject.category
+                                id: sub.id,
+                                name: sub.name,
+                                icon: sub.icon || null,
+                                category: sub.category || null,
+                                baseLearnRate: sub.baseLearnRate || 10
                             });
                         }
                     }
 
                     var customItems = document.querySelectorAll('.custom-subject-item');
                     for (var i = 0; i < customItems.length; i++) {
-                        var name = customItems[i].textContent.replace('✎', '').trim();
+                        var name = customItems[i].dataset.name;
                         if (name) {
                             newCurriculum.push({
                                 type: 'custom',
                                 id: 'custom_' + Date.now() + '_' + i,
                                 name: name,
-                                icon: '✎',
+                                icon: null,
                                 baseLearnRate: 10,
                                 isCustom: true
                             });
                         }
                     }
 
-                    var taughtRoles = newCurriculum.filter(function(c) { return c.type === 'role'; }).map(function(c) { return c.id; });
+                    var taughtRoles = newCurriculum
+                        .filter(function(c) { return c.type === 'role'; })
+                        .map(function(c) { return c.id; });
 
-                    var updates = {
+                    var result = _commands().updateInstitution(institutionId, {
                         curriculum: newCurriculum,
-                        taughtRoles: taughtRoles,
-                        isSpecialized: !!specializationCategory && taughtRoles.length > 0
-                    };
+                        taughtRoles: taughtRoles
+                    });
 
-                    var result = _updateInstitution(institutionId, updates);
-
-                    if (result) {
-                        _showToast('Curriculum updated for ' + inst.name, 'success');
-                        _closeTopModal();
-                        _processingModal = false;
-                        if (onSuccess) onSuccess();
-                    } else {
-                        _showToast('Failed to update curriculum', 'error');
+                    if (!result.success) {
+                        _showToast(result.reason || 'Failed to update curriculum', 'error');
+                        return false;
                     }
+
+                    _persist();
+                    _showToast('Curriculum updated', 'success');
+                    _processingModal = false;
+                    _closeTopModal();
+                    if (onSuccess) onSuccess();
                     return true;
                 },
-                onCancel: function() {
-                    _processingModal = false;
-                }
+                onCancel: function() { _processingModal = false; }
             });
 
             setTimeout(function() {
-                var addBtn = document.getElementById('addCustomSubjectBtn');
                 var input = document.getElementById('customSubjectInput');
+                var addBtn = document.getElementById('addCustomSubjectBtn');
                 var container = document.getElementById('customSubjectsContainer');
 
-                if (addBtn && input && container) {
-                    var addCustomSubject = function() {
-                        var name = input.value.trim();
-                        if (!name) return;
-
-                        var existing = container.querySelectorAll('.custom-subject-item');
-                        for (var i = 0; i < existing.length; i++) {
-                            if (existing[i].textContent.replace('✎', '').trim() === name) {
-                                _showToast('Subject already exists', 'warning');
-                                return;
+                function addCustom() {
+                    var name = input.value.trim();
+                    if (!name) return;
+                    var chip = _customSubjectChip(name, name);
+                    var emptyMsg = container.querySelector('span[style*="dim"]');
+                    if (emptyMsg && emptyMsg.textContent.indexOf('No custom') !== -1) container.innerHTML = '';
+                    container.insertAdjacentHTML('beforeend', chip);
+                    var lastChip = container.lastElementChild;
+                    var removeBtn = lastChip.querySelector('.remove-custom-subject-btn');
+                    if (removeBtn) {
+                        removeBtn.onclick = function() {
+                            lastChip.remove();
+                            if (!container.querySelectorAll('.custom-subject-item').length) {
+                                container.innerHTML = '<span style="color:var(--dim);font-size:0.5rem;padding:4px;">No custom subjects</span>';
                             }
-                        }
+                        };
+                    }
+                    input.value = '';
+                }
 
-                        var index = container.querySelectorAll('.custom-subject-item').length;
-                        var item = document.createElement('div');
-                        item.className = 'custom-subject-item';
-                        item.dataset.index = index;
-                        item.style.cssText = 'display:flex;align-items:center;gap:6px;background:var(--bg3);padding:4px 10px;border-radius:12px;border:1px solid var(--border);font-size:0.55rem;';
-                        item.innerHTML = '<span>✎ ' + _escapeHtml(name) + '</span>' +
-                            '<button class="remove-custom-subject-btn" data-index="' + index + '" style="background:none;border:none;color:var(--danger-lt);cursor:pointer;font-size:0.5rem;padding:0 2px;">' + crossIcon + '</button>';
+                addBtn.onclick = addCustom;
+                input.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter') { e.preventDefault(); addCustom(); }
+                });
 
-                        var emptyMsg = container.querySelector('span[style]');
-                        if (emptyMsg && emptyMsg.textContent === 'No custom subjects added') {
-                            container.innerHTML = '';
-                        }
-
-                        container.appendChild(item);
-                        input.value = '';
-
-                        item.querySelector('.remove-custom-subject-btn').addEventListener('click', function(e) {
-                            e.stopPropagation();
-                            var parent = this.closest('.custom-subject-item');
-                            if (parent) parent.remove();
-                            if (container.querySelectorAll('.custom-subject-item').length === 0) {
-                                container.innerHTML = '<span style="color:var(--dim);font-size:0.5rem;padding:4px;">No custom subjects added</span>';
+                // Bind removes for pre-existing chips
+                var existing = container.querySelectorAll('.remove-custom-subject-btn');
+                for (var i = 0; i < existing.length; i++) {
+                    (function(btn) {
+                        btn.onclick = function() {
+                            var chip = btn.closest('.custom-subject-item');
+                            if (chip) chip.remove();
+                            if (!container.querySelectorAll('.custom-subject-item').length) {
+                                container.innerHTML = '<span style="color:var(--dim);font-size:0.5rem;padding:4px;">No custom subjects</span>';
                             }
-                        });
-                    };
-
-                    addBtn.onclick = addCustomSubject;
-                    input.addEventListener('keydown', function(e) {
-                        if (e.key === 'Enter') {
-                            e.preventDefault();
-                            addCustomSubject();
-                        }
-                    });
-
-                    container.querySelectorAll('.remove-custom-subject-btn').forEach(function(btn) {
-                        btn.addEventListener('click', function(e) {
-                            e.stopPropagation();
-                            var parent = this.closest('.custom-subject-item');
-                            if (parent) parent.remove();
-                            if (container.querySelectorAll('.custom-subject-item').length === 0) {
-                                container.innerHTML = '<span style="color:var(--dim);font-size:0.5rem;padding:4px;">No custom subjects added</span>';
-                            }
-                        });
-                    });
+                        };
+                    })(existing[i]);
                 }
             }, 100);
 
         } catch (e) {
             _processingModal = false;
-            _showToast('Error opening edit curriculum modal', 'error');
+            _showToast('Error opening curriculum modal: ' + (e.message || 'unknown'), 'error');
         }
     }
 
-    // =========================================================================
-    // 10. ENROLL STUDENT MODAL
-    // =========================================================================
+    function _customSubjectChip(name, datasetName) {
+        return '<div class="custom-subject-item" data-name="' + _escapeHtml(datasetName || name) + '" ' +
+            'style="display:flex;align-items:center;gap:6px;background:var(--bg3);padding:4px 10px;border-radius:12px;border:1px solid var(--border);font-size:0.55rem;">' +
+            '<span>' + _escapeHtml(name) + '</span>' +
+            '<button class="remove-custom-subject-btn" style="background:none;border:none;color:#b54a4a;cursor:pointer;font-size:0.5rem;padding:0 2px;">' +
+            _getIcon('X_HEAVY') + '</button>' +
+            '</div>';
+    }
+
+    // =====================================================================
+    // Enroll Student Modal
+    // =====================================================================
 
     function openEnrollStudentModal(institutionId, onSuccess) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
+        if (_processingModal) return;
         _processingModal = true;
 
         try {
-            var institution = _getInstitution(institutionId);
-            if (!institution) {
-                _showToast('Institution not found', 'error');
+            var details = _queries().getInstitutionDetails(institutionId);
+            if (!details) { _showToast('Institution not found', 'error'); _processingModal = false; return; }
+
+            var s = details.summary;
+            var year = _getCurrentYear();
+
+            // Determine age band from type (rough default; the Command validates actual eligibility)
+            var minAge = 5, maxAge = 25;
+            var eligible = _queries().getEligibleStudents(s.locationId, minAge, maxAge, institutionId);
+
+            if (eligible.length === 0) {
+                _showToast('No eligible students available', 'error');
                 _processingModal = false;
                 return;
             }
 
-            var inst = institution.institution || institution;
-            var currentYear = _getCurrentYear();
-            var isPublic = inst.ownershipType === 'public';
-
-            var tuitionResult = _calculateTuition(institutionId, currentYear);
-            var tuitionInfo = isPublic ? 'Free (Public school)' :
-                (inst.waiveTuition ? 'Free (Tuition waived)' :
-                (tuitionResult.success ? tuitionResult.tuition + ' gold/year' : 'Not available'));
-
-            // Get eligible students based on institution level
-            var levels = _getEducationLevels();
-            var levelConfig = levels[inst.level] || levels.elementary;
-            var minAge = levelConfig.minAge || 6;
-            var maxAge = levelConfig.maxAge || 16;
-
-            var eligibleStudents = _getEligibleStudents(inst.locationId, minAge, maxAge, institutionId);
-
-            var personIcon = _getIcon('PERSON');
-            var infoIcon = _getIcon('CIRCLE_DOT');
-
-            if (eligibleStudents.length === 0) {
-                _showToast('No eligible students available for enrollment', 'error');
-                _processingModal = false;
-                return;
+            var studentOptions = '';
+            for (var i = 0; i < eligible.length; i++) {
+                var e = eligible[i];
+                studentOptions += '<option value="' + _escapeHtml(e.characterId) + '">' +
+                    _escapeHtml(e.characterName) + ' (' + e.age + 'y)</option>';
             }
 
-            var studentOptions = eligibleStudents.map(function(e) {
-                var char = e.character;
-                var age = e.age;
-                var genderSymbol = char.gender === 'male' ? '♂' : (char.gender === 'female' ? '♀' : '⚥');
-                return '<option value="' + char.id + '">' + personIcon + ' ' + _escapeHtml(char.name) + ' ' + _escapeHtml(char.surname || '') + ' (' + age + 'y ' + genderSymbol + ')</option>';
-            }).join('');
+            var tuitionInfo = _commands().calculateTuition(institutionId, year);
+            var tuitionLine = tuitionInfo.success
+                ? (tuitionInfo.tuition === 0 ? 'Free' : tuitionInfo.tuition + ' gold/year')
+                : 'Not available';
 
-            var modalContent = 
+            var modalContent =
                 '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
-                'Enroll student in <strong>' + _escapeHtml(inst.name) + '</strong>' +
-                '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' + infoIcon + ' ' + (inst.students ? inst.students.length : 0) + ' of ' + (inst.maxStudents || 30) + ' capacity</div>' +
-                '<div style="font-size:0.6rem;color:var(--accent);margin-top:4px;padding:4px 8px;background:var(--bg3);border-radius:4px;">' +
-                'Tuition: ' + tuitionInfo +
-                (isPublic ? ' (Funded by settlement)' : '') +
-                '</div>' +
+                'Enroll student in <strong>' + _escapeHtml(s.name) + '</strong>' +
+                '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' + s.currentStudentCount + ' of ' + s.maxStudents + ' capacity</div>' +
+                '<div style="font-size:0.6rem;color:var(--accent);margin-top:4px;padding:4px 8px;background:var(--bg3);border-radius:4px;">Tuition: ' + _escapeHtml(tuitionLine) + '</div>' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">' + personIcon + ' Select Student</label>' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Student</label>' +
                 '<select id="enrollStudentSelect" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
-                studentOptions +
-                '</select>' +
-                '</div>' +
+                studentOptions + '</select></div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">' + infoIcon + ' Enrollment Year</label>' +
-                '<input type="number" id="enrollYear" value="' + currentYear + '" min="1" max="' + (currentYear + 5) + '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
-                '</div>' +
-
-                '<div class="form-group" style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">' + infoIcon + ' Notes (optional)</label>' +
-                '<textarea id="enrollNotes" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);" placeholder="e.g., Scholarship, Recommended by..."></textarea>' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Enrollment Year</label>' +
+                '<input type="number" id="enrollYear" value="' + year + '" min="1" max="' + (year + 5) + '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
                 '</div>';
 
             _openModal({
@@ -1671,135 +1118,101 @@
                 cancelText: 'Cancel',
                 onConfirm: function() {
                     var studentId = document.getElementById('enrollStudentSelect').value;
-                    var year = parseInt(document.getElementById('enrollYear').value);
-                    var notes = document.getElementById('enrollNotes').value;
+                    var enrollYear = parseInt(document.getElementById('enrollYear').value, 10);
+                    if (!studentId) { _showToast('Select a student', 'error'); return false; }
+                    if (isNaN(enrollYear) || enrollYear < 1) { _showToast('Invalid year', 'error'); return false; }
 
-                    if (!studentId) {
-                        _showToast('Please select a student', 'error');
+                    var result = _commands().enrollStudent(institutionId, studentId, enrollYear);
+                    if (!result.success) {
+                        _showToast(result.reason || 'Failed to enroll', 'error');
                         return false;
                     }
-
-                    if (isNaN(year) || year < 1) {
-                        _showToast('Please enter a valid year', 'error');
-                        return false;
-                    }
-
-                    var result = _enrollStudent(institutionId, studentId, year);
-
-                    if (result) {
-                        var student = _getCharacterById(studentId);
-                        var tuitionMsg = isPublic ? ' (Free - Public)' : (inst.waiveTuition ? ' (Tuition waived)' : '');
-                        _showToast((student ? student.name : 'Student') + ' enrolled' + tuitionMsg, 'success');
-                        _closeTopModal();
-                        _processingModal = false;
-                        if (onSuccess) onSuccess();
-                    } else {
-                        _showToast('Failed to enroll student', 'error');
-                    }
+                    _persist();
+                    _showToast('Student enrolled', 'success');
+                    _processingModal = false;
+                    _closeTopModal();
+                    if (onSuccess) onSuccess();
                     return true;
                 },
-                onCancel: function() {
-                    _processingModal = false;
-                }
+                onCancel: function() { _processingModal = false; }
             });
 
         } catch (e) {
             _processingModal = false;
-            _showToast('Error opening enroll student modal', 'error');
+            _showToast('Error opening enroll modal: ' + (e.message || 'unknown'), 'error');
         }
     }
 
-    // =========================================================================
-    // 11. HIRE TEACHER MODAL (UPDATED - NO SKILL)
-    // =========================================================================
+    // =====================================================================
+    // Hire Teacher Modal
+    // =====================================================================
 
     function openHireTeacherModal(institutionId, onSuccess) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
+        if (_processingModal) return;
         _processingModal = true;
 
         try {
-            var institution = _getInstitution(institutionId);
-            if (!institution) {
-                _showToast('Institution not found', 'error');
-                _processingModal = false;
-                return;
-            }
+            var details = _queries().getInstitutionDetails(institutionId);
+            if (!details) { _showToast('Institution not found', 'error'); _processingModal = false; return; }
 
-            var inst = institution.institution || institution;
-            var allChars = _getCharacters();
-            var teacherIds = {};
-            if (inst.teachers) {
-                for (var i = 0; i < inst.teachers.length; i++) {
-                    teacherIds[inst.teachers[i].teacherId] = true;
-                }
-            }
+            var s = details.summary;
+            var teachers = details.teachers;
+            var alreadyTeaching = {};
+            for (var i = 0; i < teachers.length; i++) alreadyTeaching[teachers[i].teacherId] = true;
 
-            var eligibleTeachers = [];
-            for (var i = 0; i < allChars.length; i++) {
-                var c = allChars[i];
+            var characters = _getCharacters();
+            var eligible = [];
+            for (var i = 0; i < characters.length; i++) {
+                var c = characters[i];
                 if (c.isDeceased) continue;
-                if (teacherIds[c.id]) continue;
+                if (alreadyTeaching[c.id]) continue;
                 if (!c.professions || c.professions.length === 0) continue;
-                eligibleTeachers.push(c);
+                eligible.push(c);
             }
 
-            var gearIcon = _getIcon('GEAR');
-            var personIcon = _getIcon('PERSON');
-            var infoIcon = _getIcon('CIRCLE_DOT');
-
-            if (eligibleTeachers.length === 0) {
+            if (eligible.length === 0) {
                 _showToast('No eligible teachers available', 'error');
                 _processingModal = false;
                 return;
             }
 
-            var teacherOptions = eligibleTeachers.map(function(c) {
-                var age = _calculateAge(c.birthYear, false, null);
-                var genderSymbol = c.gender === 'male' ? '♂' : (c.gender === 'female' ? '♀' : '⚥');
-                var professionNames = (c.professions || []).map(function(p) { return p.name; }).join(', ');
-                return '<option value="' + c.id + '" data-professions="' + _escapeHtml(professionNames) + '">' +
-                    personIcon + ' ' + _escapeHtml(c.name) + ' ' + _escapeHtml(c.surname || '') +
-                    ' (' + age + 'y ' + genderSymbol + ') - ' + _escapeHtml(professionNames) +
-                    '</option>';
-            }).join('');
-
-            var curriculumItems = inst.curriculum || [];
-            var subjectOptions = curriculumItems.map(function(item) {
-                var icon = item.icon || (item.type === 'role' ? '◉' : '⌇');
-                return '<option value="' + item.id + '">' + icon + ' ' + _escapeHtml(item.name) + ' (' + item.type + ')</option>';
-            }).join('');
-
-            if (!subjectOptions) {
-                subjectOptions = '<option value="">No curriculum subjects available</option>';
+            var teacherOptions = '';
+            for (var i = 0; i < eligible.length; i++) {
+                var c = eligible[i];
+                var age = _calculateAge(c.birthYear);
+                var profNames = (c.professions || []).map(function(p) { return p.name; }).join(', ');
+                teacherOptions += '<option value="' + _escapeHtml(c.id) + '">' +
+                    _escapeHtml(c.name + ' ' + (c.surname || '')) + ' (' + (age !== null ? age : '?') + 'y) — ' +
+                    _escapeHtml(profNames) + '</option>';
             }
 
-            var modalContent = 
+            var curriculum = details.curriculum;
+            var subjectOptions = '';
+            if (curriculum.length === 0) {
+                subjectOptions = '<option value="">No curriculum subjects available</option>';
+            } else {
+                for (var i = 0; i < curriculum.length; i++) {
+                    var item = curriculum[i];
+                    subjectOptions += '<option value="' + _escapeHtml(item.id) + '">' +
+                        _escapeHtml(item.name) + ' (' + _escapeHtml(item.type) + ')</option>';
+                }
+            }
+
+            var modalContent =
                 '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
-                'Hire teacher for <strong>' + _escapeHtml(inst.name) + '</strong>' +
-                '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' + infoIcon + ' ' + (inst.teachers ? inst.teachers.length : 0) + ' teachers currently hired</div>' +
-                '<div style="font-size:0.55rem;color:var(--accent);margin-top:4px;">No skill check required - teachers are hired based on their profession</div>' +
+                'Hire teacher for <strong>' + _escapeHtml(s.name) + '</strong>' +
+                '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' + teachers.length + ' teachers currently</div>' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">' + personIcon + ' Select Teacher</label>' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Teacher</label>' +
                 '<select id="hireTeacherSelect" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
-                teacherOptions +
-                '</select>' +
-                '</div>' +
+                teacherOptions + '</select></div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">' + gearIcon + ' Subject to Teach</label>' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Subject</label>' +
                 '<select id="hireSubjectSelect" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
-                subjectOptions +
-                '</select>' +
-                '</div>' +
-
-                '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;margin-top:8px;">' +
-                infoIcon + ' If the subject is a role, the teacher must have that profession. No skill level requirement.' +
-                '</div>';
+                subjectOptions + '</select></div>';
 
             _openModal({
                 title: 'Hire Teacher',
@@ -1809,160 +1222,120 @@
                 onConfirm: function() {
                     var teacherId = document.getElementById('hireTeacherSelect').value;
                     var subjectId = document.getElementById('hireSubjectSelect').value;
+                    if (!teacherId) { _showToast('Select a teacher', 'error'); return false; }
+                    if (!subjectId) { _showToast('Select a subject', 'error'); return false; }
 
-                    if (!teacherId) {
-                        _showToast('Please select a teacher', 'error');
+                    var result = _commands().hireTeacher(institutionId, teacherId, subjectId);
+                    if (!result.success) {
+                        _showToast(result.reason || 'Failed to hire', 'error');
                         return false;
                     }
-
-                    if (!subjectId) {
-                        _showToast('Please select a subject', 'error');
-                        return false;
-                    }
-
-                    var result = _hireTeacher(institutionId, teacherId, subjectId);
-
-                    if (result) {
-                        var teacher = _getCharacterById(teacherId);
-                        _showToast((teacher ? teacher.name : 'Teacher') + ' hired', 'success');
-                        _closeTopModal();
-                        _processingModal = false;
-                        if (onSuccess) onSuccess();
-                    } else {
-                        _showToast('Failed to hire teacher', 'error');
-                    }
+                    _persist();
+                    _showToast('Teacher hired', 'success');
+                    _processingModal = false;
+                    _closeTopModal();
+                    if (onSuccess) onSuccess();
                     return true;
                 },
-                onCancel: function() {
-                    _processingModal = false;
-                }
+                onCancel: function() { _processingModal = false; }
             });
 
         } catch (e) {
             _processingModal = false;
-            _showToast('Error opening hire teacher modal', 'error');
+            _showToast('Error opening hire modal: ' + (e.message || 'unknown'), 'error');
         }
     }
 
-    // =========================================================================
-    // 12. SET HEADMASTER MODAL
-    // =========================================================================
+    // =====================================================================
+    // Set Headmaster Modal
+    // =====================================================================
 
     function openSetHeadmasterModal(institutionId, onSuccess) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
+        if (_processingModal) return;
         _processingModal = true;
 
         try {
-            var institution = _getInstitution(institutionId);
-            if (!institution) {
-                _showToast('Institution not found', 'error');
-                _processingModal = false;
-                return;
-            }
+            var details = _queries().getInstitutionDetails(institutionId);
+            if (!details) { _showToast('Institution not found', 'error'); _processingModal = false; return; }
 
-            var inst = institution.institution || institution;
-            var currentHeadmaster = institution.headmaster || null;
-            var allChars = _getCharacters();
-            var currentYear = _getCurrentYear();
+            var s = details.summary;
+            var current = details.headmaster;
+            var year = _getCurrentYear();
 
+            var characters = _getCharacters();
             var eligible = [];
-            var currentHeadmasterId = currentHeadmaster ? currentHeadmaster.details.characterId : null;
-
-            for (var i = 0; i < allChars.length; i++) {
-                var c = allChars[i];
+            for (var i = 0; i < characters.length; i++) {
+                var c = characters[i];
                 if (c.isDeceased) continue;
-                if (currentHeadmasterId && c.id === currentHeadmasterId) continue;
+                if (current && c.id === current.characterId) continue;
                 eligible.push(c);
             }
 
-            var crownIcon = _getIcon('CROWN');
-            var personIcon = _getIcon('PERSON');
-            var infoIcon = _getIcon('CIRCLE_DOT');
+            var options = '<option value="">— Select —</option>';
+            for (var i = 0; i < eligible.length; i++) {
+                var c = eligible[i];
+                var age = _calculateAge(c.birthYear);
+                options += '<option value="' + _escapeHtml(c.id) + '">' +
+                    _escapeHtml(c.name + ' ' + (c.surname || '')) + ' (' + (age !== null ? age : '?') + 'y)</option>';
+            }
 
-            var headmasterOptions = eligible.map(function(c) {
-                var age = _calculateAge(c.birthYear, false, null);
-                var genderSymbol = c.gender === 'male' ? '♂' : (c.gender === 'female' ? '♀' : '⚥');
-                var rank = c.activeRankId && typeof window.getRankById === 'function' ? window.getRankById(c.activeRankId) : null;
-                var rankDisplay = rank ? rank.symbol + ' ' : '';
-                return '<option value="' + c.id + '">' + rankDisplay + personIcon + ' ' + _escapeHtml(c.name) + ' ' + _escapeHtml(c.surname || '') + ' (' + age + 'y ' + genderSymbol + ')</option>';
-            }).join('');
+            var currentLine = current
+                ? '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">Current: ' +
+                  _escapeHtml(current.name || 'Unknown') + ' (' + _escapeHtml(current.title || 'Headmaster') +
+                  ' since ' + (current.startYear || '?') + ')</div>'
+                : '';
 
-            var modalContent = 
+            var modalContent =
                 '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
-                crownIcon + ' Appoint Headmaster for <strong>' + _escapeHtml(inst.name) + '</strong>' +
-                (currentHeadmaster ? '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">Current: ' + _escapeHtml(currentHeadmaster.details.name) + ' (' + _escapeHtml(currentHeadmaster.details.title || 'Headmaster') + ' since ' + currentHeadmaster.details.startYear + ')</div>' : '') +
+                'Appoint headmaster for <strong>' + _escapeHtml(s.name) + '</strong>' + currentLine +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">' + personIcon + ' Select Headmaster</label>' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Headmaster</label>' +
                 '<select id="headmasterSelect" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
-                '<option value="">' + infoIcon + ' Select a character</option>' +
-                headmasterOptions +
-                '</select>' +
-                '</div>' +
+                options + '</select></div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Title</label>' +
-                '<input type="text" id="headmasterTitle" value="Headmaster" placeholder="e.g., Dean, Rector, Principal" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                '<input type="text" id="headmasterTitle" value="Headmaster" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Start Year</label>' +
-                '<input type="number" id="headmasterStartYear" value="' + currentYear + '" min="1" max="' + (currentYear + 5) + '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                '<input type="number" id="headmasterStartYear" value="' + year + '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
                 '</div>' +
 
-                (currentHeadmaster ?
+                (current ?
                     '<div style="margin-top:12px;padding:12px;background:rgba(200,112,64,0.1);border-radius:6px;border:1px solid var(--warn);">' +
-                    '<button id="endHeadmasterTermBtn" class="btn small danger" style="background:#8a5a20;border:none;color:white;padding:4px 10px;border-radius:4px;cursor:pointer;">End Current Headmaster\'s Term</button>' +
-                    '<span style="font-size:0.5rem;color:var(--dim);margin-left:8px;">This will end the current headmaster\'s term</span>' +
-                    '</div>' :
-                    ''
-                );
+                    '<button id="endHeadmasterTermBtn" class="btn small" style="background:#8a5a20;border:none;color:white;padding:4px 10px;border-radius:4px;cursor:pointer;">End Current Term</button>' +
+                    '</div>' : '');
 
             _openModal({
-                title: crownIcon + ' Appoint Headmaster',
+                title: 'Appoint Headmaster',
                 content: modalContent,
                 confirmText: 'Appoint',
                 cancelText: 'Cancel',
                 onConfirm: function() {
                     var characterId = document.getElementById('headmasterSelect').value;
-                    var title = document.getElementById('headmasterTitle').value.trim();
-                    var startYear = parseInt(document.getElementById('headmasterStartYear').value);
+                    var title = document.getElementById('headmasterTitle').value.trim() || 'Headmaster';
+                    var startYear = parseInt(document.getElementById('headmasterStartYear').value, 10);
 
-                    if (!characterId) {
-                        _showToast('Please select a headmaster', 'error');
+                    if (!characterId) { _showToast('Select a headmaster', 'error'); return false; }
+                    if (isNaN(startYear) || startYear < 1) { _showToast('Invalid year', 'error'); return false; }
+
+                    var result = _commands().setHeadmaster(institutionId, characterId, title, startYear);
+                    if (!result.success) {
+                        _showToast(result.reason || 'Failed to appoint', 'error');
                         return false;
                     }
-
-                    if (!title) {
-                        _showToast('Please enter a title', 'error');
-                        return false;
-                    }
-
-                    if (isNaN(startYear) || startYear < 1) {
-                        _showToast('Please enter a valid start year', 'error');
-                        return false;
-                    }
-
-                    var result = _setHeadmaster(institutionId, characterId, title, startYear);
-
-                    if (result) {
-                        var character = _getCharacterById(characterId);
-                        _showToast((character ? character.name : 'Character') + ' appointed as ' + title, 'success');
-                        _closeTopModal();
-                        _processingModal = false;
-                        if (onSuccess) onSuccess();
-                    } else {
-                        _showToast('Failed to appoint headmaster', 'error');
-                    }
+                    _persist();
+                    _showToast('Headmaster appointed', 'success');
+                    _processingModal = false;
+                    _closeTopModal();
+                    if (onSuccess) onSuccess();
                     return true;
                 },
-                onCancel: function() {
-                    _processingModal = false;
-                }
+                onCancel: function() { _processingModal = false; }
             });
 
             setTimeout(function() {
@@ -1970,16 +1343,16 @@
                 if (endBtn) {
                     endBtn.onclick = function() {
                         _confirmDialog('End the current headmaster\'s term?', 'End Term', function() {
-                            var endYear = _getCurrentYear();
-                            var result = _endHeadmasterTerm(institutionId, endYear, 'Term ended');
-                            if (result) {
-                                _showToast('Headmaster term ended', 'success');
-                                _closeTopModal();
-                                _processingModal = false;
-                                if (onSuccess) onSuccess();
-                            } else {
-                                _showToast('Failed to end term', 'error');
+                            var r = _commands().endHeadmasterTerm(institutionId, _getCurrentYear(), 'Term ended');
+                            if (!r.success) {
+                                _showToast(r.reason || 'Failed', 'error');
+                                return;
                             }
+                            _persist();
+                            _showToast('Term ended', 'success');
+                            _processingModal = false;
+                            _closeTopModal();
+                            if (onSuccess) onSuccess();
                         });
                     };
                 }
@@ -1987,471 +1360,449 @@
 
         } catch (e) {
             _processingModal = false;
-            _showToast('Error opening set headmaster modal', 'error');
+            _showToast('Error opening headmaster modal: ' + (e.message || 'unknown'), 'error');
         }
     }
 
-    // =========================================================================
-    // 13. DELETE INSTITUTION MODAL
-    // =========================================================================
+    // =====================================================================
+    // Graduate Student Modal
+    // =====================================================================
 
-    function openDeleteInstitutionModal(institutionId, onSuccess) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
+    function openGraduateStudentModal(institutionId, onSuccess) {
+        if (_processingModal) return;
         _processingModal = true;
 
         try {
-            var institution = _getInstitution(institutionId);
-            if (!institution) {
-                _showToast('Institution not found', 'error');
+            var details = _queries().getInstitutionDetails(institutionId);
+            if (!details) { _showToast('Institution not found', 'error'); _processingModal = false; return; }
+
+            var s = details.summary;
+            var enrolled = details.students.filter(function(st) { return !st.graduated; });
+            if (enrolled.length === 0) {
+                _showToast('No enrolled students', 'info');
                 _processingModal = false;
+                if (onSuccess) onSuccess();
                 return;
             }
 
-            var inst = institution.institution || institution;
-            var students = institution.students || [];
-            var teachers = institution.teachers || [];
-            var graduates = institution.graduates || [];
+            var year = _getCurrentYear();
 
-            var warningIcon = _getIcon('WARNING');
-            var infoIcon = _getIcon('CIRCLE_DOT');
+            var studentOptions = '';
+            for (var i = 0; i < enrolled.length; i++) {
+                var st = enrolled[i];
+                studentOptions += '<option value="' + _escapeHtml(st.studentId) + '">' +
+                    _escapeHtml(st.studentName || 'Unknown') + ' (' + (st.age !== null ? st.age + 'y' : '?') + ')</option>';
+            }
 
-            var modalContent = 
-                '<div style="background:rgba(200,68,68,0.15);border:1px solid var(--warn);border-radius:8px;padding:12px;margin-bottom:16px;">' +
-                '<strong>' + warningIcon + ' Warning: This action cannot be undone!</strong>' +
-                '<div style="margin-top:8px;">You are about to delete the institution "<strong>' + _escapeHtml(inst.name) + '</strong>".</div>' +
-                (students.length > 0 ? '<div style="margin-top:8px;">' + infoIcon + ' ' + students.length + ' students enrolled</div>' : '') +
-                (teachers.length > 0 ? '<div style="margin-top:4px;">' + infoIcon + ' ' + teachers.length + ' teachers hired</div>' : '') +
-                (graduates.length > 0 ? '<div style="margin-top:4px;">' + infoIcon + ' ' + graduates.length + ' graduates</div>' : '') +
+            var taughtRoles = s.taughtRoleCount > 0 ? details.taughtRoles : [];
+            var roleSelectHtml = '';
+            if (taughtRoles.length > 0) {
+                var roleOptions = '<option value="">— No role —</option>';
+                for (var i = 0; i < taughtRoles.length; i++) {
+                    var roleId = taughtRoles[i];
+                    var role = _getRoleById(roleId);
+                    roleOptions += '<option value="' + _escapeHtml(roleId) + '">' +
+                        _escapeHtml(role ? role.name : roleId) + '</option>';
+                }
+                roleSelectHtml =
+                    '<div class="form-group" style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Role to Grant</label>' +
+                    '<select id="graduateRoleSelect" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                    roleOptions + '</select>' +
+                    '<small style="font-size:0.5rem;color:var(--dim);">If the institution teaches multiple roles, choose which to grant.</small>' +
+                    '</div>';
+            }
+
+            var modalContent =
+                '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
+                'Graduate a student from <strong>' + _escapeHtml(s.name) + '</strong>' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Type "<strong>' + _escapeHtml(inst.name) + '</strong>" to confirm</label>' +
-                '<input type="text" id="confirmDeleteInstName" placeholder="Enter institution name" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
-                '</div>' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Student</label>' +
+                '<select id="graduateStudentSelect" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                studentOptions + '</select></div>' +
+
+                roleSelectHtml +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
-                '<label style="display:flex;align-items:center;gap:8px;">' +
-                '<input type="checkbox" id="deleteCascade">' +
-                '<span style="font-size:0.65rem;">' + infoIcon + ' Also delete associated data (student records, teacher records)</span>' +
-                '</label>' +
-                '<small style="font-size:0.5rem;color:var(--dim);">If unchecked, student and teacher records will be preserved</small>' +
-                '</div>' +
-
-                '<div style="margin-top:12px;padding:8px;background:rgba(200,68,68,0.1);border-radius:6px;font-size:0.55rem;color:#8a3020;">' +
-                'This action cannot be undone. The institution will be permanently removed.' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Graduation Year</label>' +
+                '<input type="number" id="graduateYear" value="' + year + '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
                 '</div>';
 
             _openModal({
-                title: 'Delete Institution: ' + inst.name,
+                title: 'Graduate Student',
                 content: modalContent,
-                confirmText: 'Permanently Delete',
+                confirmText: 'Graduate',
                 cancelText: 'Cancel',
                 onConfirm: function() {
-                    var confirmName = document.getElementById('confirmDeleteInstName').value.trim();
-                    if (confirmName !== inst.name) {
-                        _showToast('Institution name does not match', 'error');
+                    var studentId = document.getElementById('graduateStudentSelect').value;
+                    var gradYear = parseInt(document.getElementById('graduateYear').value, 10);
+                    var roleSel = document.getElementById('graduateRoleSelect');
+                    var roleId = roleSel ? (roleSel.value || null) : null;
+
+                    if (!studentId) { _showToast('Select a student', 'error'); return false; }
+                    if (isNaN(gradYear) || gradYear < 1) { _showToast('Invalid year', 'error'); return false; }
+
+                    var result = _commands().graduateStudent(institutionId, studentId, gradYear, roleId);
+                    if (!result.success) {
+                        // Role selection required case
+                        if (result.availableRoles) {
+                            _showToast('Please choose a role to grant', 'error');
+                        } else {
+                            _showToast(result.reason || 'Failed to graduate', 'error');
+                        }
                         return false;
                     }
-
-                    var cascade = document.getElementById('deleteCascade').checked;
-                    var success = _deleteInstitution(institutionId, cascade);
-
-                    if (success) {
-                        _showToast('Institution "' + inst.name + '" deleted', 'info');
-                        _closeTopModal();
-                        _processingModal = false;
-                        if (onSuccess) onSuccess();
-                    } else {
-                        _showToast('Failed to delete institution', 'error');
-                    }
+                    _persist();
+                    _showToast('Student graduated', 'success');
+                    _processingModal = false;
+                    _closeTopModal();
+                    if (onSuccess) onSuccess();
                     return true;
                 },
-                onCancel: function() {
-                    _processingModal = false;
-                }
+                onCancel: function() { _processingModal = false; }
             });
 
         } catch (e) {
             _processingModal = false;
-            _showToast('Error opening delete institution modal', 'error');
+            _showToast('Error opening graduate modal: ' + (e.message || 'unknown'), 'error');
         }
     }
 
-    // =========================================================================
-    // 14. TUITION MANAGEMENT MODAL
-    // =========================================================================
+    // =====================================================================
+    // Delete Institution Modal
+    // =====================================================================
 
-    function openTuitionManagementModal(institutionId, onSuccess) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
+    function openDeleteInstitutionModal(institutionId, onSuccess) {
+        if (_processingModal) return;
         _processingModal = true;
 
         try {
-            var institution = _getInstitution(institutionId);
-            if (!institution) {
-                _showToast('Institution not found', 'error');
-                _processingModal = false;
-                return;
-            }
+            var details = _queries().getInstitutionDetails(institutionId);
+            if (!details) { _showToast('Institution not found', 'error'); _processingModal = false; return; }
 
-            var inst = institution.institution || institution;
-            var currentYear = _getCurrentYear();
-            var isPublic = inst.ownershipType === 'public';
+            var s = details.summary;
 
-            var tuitionResult = _calculateTuition(institutionId, currentYear);
-            var currentTuition = isPublic ? 'Free (Public)' :
-                (inst.waiveTuition ? 'Waived' :
-                (inst.customTuition !== null ? inst.customTuition + ' gold (Manual)' :
-                (tuitionResult.success ? tuitionResult.tuition + ' gold' : 'Unknown')));
-
-            var tuitionHistory = _getTuitionHistory(institutionId, 10);
-            var historyHtml = '';
-            if (tuitionHistory && tuitionHistory.length > 0) {
-                historyHtml = tuitionHistory.map(function(h) {
-                    return '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border-light);font-size:0.55rem;">' +
-                        '<span>' + h.year + '</span>' +
-                        '<span>' + h.oldAmount + ' → ' + h.newAmount + '</span>' +
-                        '<span style="color:var(--dim);font-size:0.5rem;">' + _escapeHtml(h.reason || '') + '</span>' +
-                        '</div>';
-                }).join('');
-            }
-
-            var infoIcon = _getIcon('CIRCLE_DOT');
-
-            var modalContent = 
-                '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
-                '<div style="font-size:0.7rem;"><strong>' + _escapeHtml(inst.name) + '</strong></div>' +
-                '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">Current tuition: <strong>' + currentTuition + '</strong></div>' +
-                (isPublic ? '<div style="font-size:0.55rem;color:var(--accent);margin-top:2px;">This is a public school. Tuition is always free.</div>' :
-                (inst.waiveTuition ? '<div style="font-size:0.55rem;color:var(--accent);margin-top:2px;">Tuition is currently waived for all students</div>' : '')) +
+            var modalContent =
+                '<div style="background:rgba(200,68,68,0.15);border:1px solid var(--warn);border-radius:8px;padding:12px;margin-bottom:16px;">' +
+                '<strong>' + _getIcon('WARNING') + ' This cannot be undone</strong>' +
+                '<div style="margin-top:8px;">Delete <strong>' + _escapeHtml(s.name) + '</strong>?</div>' +
+                (details.students.length > 0 ? '<div style="margin-top:4px;">' + details.students.length + ' students enrolled</div>' : '') +
+                (details.teachers.length > 0 ? '<div style="margin-top:4px;">' + details.teachers.length + ' teachers hired</div>' : '') +
                 '</div>' +
 
-                (isPublic ?
-                    '<div style="padding:12px;background:var(--bg3);border-radius:6px;text-align:center;color:var(--dim);font-size:0.6rem;">' +
-                    'Public schools are funded by the settlement. Tuition is always free (0 gold).' +
-                    '<br><small>To charge tuition, change ownership to Private in the Ownership management modal.</small>' +
-                    '</div>' :
+                '<div class="form-group" style="margin-bottom:12px;">' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Type "<strong>' +
+                _escapeHtml(s.name) + '</strong>" to confirm</label>' +
+                '<input type="text" id="confirmDeleteInstName" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                '</div>' +
+
+                '<div class="form-group" style="margin-bottom:12px;">' +
+                '<label style="display:flex;align-items:center;gap:8px;font-size:0.65rem;">' +
+                '<input type="checkbox" id="deleteCascade"> Cascade delete associated records' +
+                '</label>' +
+                '</div>';
+
+            _openModal({
+                title: 'Delete Institution',
+                content: modalContent,
+                confirmText: 'Delete',
+                cancelText: 'Cancel',
+                onConfirm: function() {
+                    var confirmName = document.getElementById('confirmDeleteInstName').value.trim();
+                    if (confirmName !== s.name) {
+                        _showToast('Name does not match', 'error');
+                        return false;
+                    }
+                    var cascade = document.getElementById('deleteCascade').checked;
+
+                    var result = _commands().deleteInstitution(institutionId, cascade);
+                    if (!result.success) {
+                        _showToast(result.reason || 'Failed to delete', 'error');
+                        return false;
+                    }
+                    _persist();
+                    _showToast('Institution deleted', 'info');
+                    _processingModal = false;
+                    _closeTopModal();
+                    if (onSuccess) onSuccess();
+                    return true;
+                },
+                onCancel: function() { _processingModal = false; }
+            });
+
+        } catch (e) {
+            _processingModal = false;
+            _showToast('Error opening delete modal: ' + (e.message || 'unknown'), 'error');
+        }
+    }
+
+    // =====================================================================
+    // Tuition Management Modal
+    // =====================================================================
+
+    function openTuitionManagementModal(institutionId, onSuccess) {
+        if (_processingModal) return;
+        _processingModal = true;
+
+        try {
+            var details = _queries().getInstitutionDetails(institutionId);
+            if (!details) { _showToast('Institution not found', 'error'); _processingModal = false; return; }
+
+            var s = details.summary;
+            var isPublic = s.ownershipType === 'public';
+
+            var tuitionInfo = _commands().calculateTuition(institutionId, _getCurrentYear());
+            var tuitionDisplay = isPublic
+                ? 'Free (Public)'
+                : (tuitionInfo.success ? (tuitionInfo.tuition + ' gold') : 'Unknown');
+
+            var history = _commands().getTuitionHistory(institutionId, 10);
+            var historyHtml = '';
+            for (var i = 0; i < history.length; i++) {
+                var h = history[i];
+                historyHtml += '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border-light);font-size:0.55rem;">' +
+                    '<span>' + _escapeHtml(String(h.year)) + '</span>' +
+                    '<span>' + h.oldAmount + ' → ' + h.newAmount + '</span>' +
+                    '<span style="color:var(--dim);">' + _escapeHtml(h.reason || '') + '</span>' +
+                    '</div>';
+            }
+
+            var modalContent =
+                '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
+                '<div style="font-size:0.7rem;"><strong>' + _escapeHtml(s.name) + '</strong></div>' +
+                '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">Current: <strong>' + _escapeHtml(tuitionDisplay) + '</strong></div>' +
+                (isPublic ? '<div style="font-size:0.55rem;color:var(--accent);margin-top:2px;">Public schools are funded by settlement. Change ownership for a private school.</div>' : '') +
+                '</div>' +
+
+                (isPublic ? '' :
                     '<div>' +
                     '<div class="form-group" style="margin-bottom:12px;">' +
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Base Tuition (gold/year)</label>' +
-                    '<input type="number" id="tuitionBase" value="' + (inst.tuitionPerYear || 0) + '" min="0" max="200" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
-                    '<small style="font-size:0.55rem;color:var(--dim);">Base tuition before modifiers. Changes will be recorded in history.</small>' +
+                    '<input type="number" id="tuitionBase" value="' + (details.summary.baseTuition || 0) + '" min="0" max="200" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
                     '</div>' +
-
                     '<div class="form-group" style="margin-bottom:12px;">' +
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Manual Override</label>' +
-                    '<input type="number" id="tuitionOverride" placeholder="Leave empty for calculated" min="0" max="200" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);" value="' + (inst.customTuition !== null ? inst.customTuition : '') + '">' +
-                    '<small style="font-size:0.55rem;color:var(--dim);">Set a fixed amount. Leave empty to use calculated value.</small>' +
+                    '<input type="number" id="tuitionOverride" min="0" max="200" placeholder="Leave empty for calculated" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
                     '</div>' +
-
                     '<div class="form-group" style="margin-bottom:12px;">' +
-                    '<label style="display:flex;align-items:center;gap:8px;font-size:0.65rem;cursor:pointer;">' +
-                    '<input type="checkbox" id="tuitionWaive" ' + (inst.waiveTuition ? 'checked' : '') + '>' +
-                    '<span>Waive tuition for all students</span>' +
-                    '</label>' +
+                    '<label style="display:flex;align-items:center;gap:8px;font-size:0.65rem;">' +
+                    '<input type="checkbox" id="tuitionWaive"> Waive tuition for all students</label>' +
                     '</div>' +
-
                     '<div class="form-group" style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason for Change</label>' +
-                    '<input type="text" id="tuitionReason" placeholder="e.g., Inflation, Scholarship program..." style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason</label>' +
+                    '<input type="text" id="tuitionReason" placeholder="e.g., Inflation, Scholarship" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
                     '</div>' +
-
-                    (historyHtml ?
-                        '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">' +
-                        '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">Tuition History</div>' +
-                        '<div style="max-height:150px;overflow-y:auto;background:var(--bg3);padding:8px;border-radius:6px;">' +
-                        historyHtml +
-                        '</div>' +
-                        '</div>' : ''
-                    ) +
-
-                    '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;margin-top:8px;">' +
-                    'Changes to tuition will affect all future enrollments. Existing students\' tuition history is preserved.' +
-                    '</div>' +
+                    (historyHtml ? '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">' +
+                        '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">History</div>' +
+                        '<div style="max-height:150px;overflow-y:auto;background:var(--bg3);padding:8px;border-radius:6px;">' + historyHtml + '</div>' +
+                        '</div>' : '') +
                     '</div>'
                 );
 
             _openModal({
-                title: 'Tuition Management: ' + inst.name,
+                title: 'Tuition: ' + s.name,
                 content: modalContent,
-                confirmText: isPublic ? 'Close' : 'Save Tuition Settings',
+                confirmText: isPublic ? 'Close' : 'Save',
                 cancelText: isPublic ? '' : 'Cancel',
                 onConfirm: function() {
                     if (isPublic) {
-                        _closeTopModal();
                         _processingModal = false;
+                        _closeTopModal();
                         if (onSuccess) onSuccess();
                         return true;
                     }
 
-                    var baseTuition = parseInt(document.getElementById('tuitionBase').value) || 0;
-                    var overrideValue = document.getElementById('tuitionOverride').value;
-                    var waiveTuition = document.getElementById('tuitionWaive').checked;
+                    var base = parseInt(document.getElementById('tuitionBase').value, 10) || 0;
+                    var override = document.getElementById('tuitionOverride').value;
+                    var waive = document.getElementById('tuitionWaive').checked;
                     var reason = document.getElementById('tuitionReason').value || 'Manual update';
 
-                    var updates = {
-                        tuitionPerYear: baseTuition,
-                        waiveTuition: waiveTuition,
+                    // Apply base tuition change
+                    var r1 = _commands().updateInstitution(institutionId, {
+                        tuitionPerYear: base,
                         tuitionReason: reason
-                    };
+                    });
+                    if (!r1.success) { _showToast(r1.reason || 'Failed', 'error'); return false; }
 
-                    if (overrideValue !== null && overrideValue !== '') {
-                        var customVal = parseInt(overrideValue);
-                        if (!isNaN(customVal)) {
-                            updates.customTuition = customVal;
-                        }
-                    } else {
-                        updates.customTuition = null;
-                    }
+                    // Apply override
+                    var overrideVal = override === '' ? null : parseInt(override, 10);
+                    var r2 = _commands().updateTuition(institutionId, overrideVal, reason);
+                    if (!r2.success) { _showToast(r2.reason || 'Failed', 'error'); return false; }
 
-                    // Update base tuition
-                    if (inst.tuitionPerYear !== baseTuition) {
-                        if (!inst.tuitionHistory) inst.tuitionHistory = [];
-                        inst.tuitionHistory.push({
-                            year: currentYear,
-                            oldAmount: inst.tuitionPerYear || 0,
-                            newAmount: baseTuition,
-                            reason: reason
-                        });
-                        if (inst.tuitionHistory.length > 20) {
-                            inst.tuitionHistory = inst.tuitionHistory.slice(-20);
-                        }
-                    }
+                    // Apply waiver
+                    var r3 = _commands().updateTuitionWaiver(institutionId, waive, reason);
+                    if (!r3.success) { _showToast(r3.reason || 'Failed', 'error'); return false; }
 
-                    var result = _updateInstitution(institutionId, updates);
-
-                    if (result) {
-                        var msg = 'Tuition updated: ';
-                        msg += waiveTuition ? 'Waived' : (baseTuition + ' gold/year');
-                        if (updates.customTuition !== null) {
-                            msg += ' (Manual override: ' + updates.customTuition + ')';
-                        }
-                        _showToast(msg, 'success');
-                        _closeTopModal();
-                        _processingModal = false;
-                        if (onSuccess) onSuccess();
-                    } else {
-                        _showToast('Failed to update tuition', 'error');
-                    }
+                    _persist();
+                    _showToast('Tuition updated', 'success');
+                    _processingModal = false;
+                    _closeTopModal();
+                    if (onSuccess) onSuccess();
                     return true;
                 },
-                onCancel: function() {
-                    _processingModal = false;
-                }
+                onCancel: function() { _processingModal = false; }
             });
 
         } catch (e) {
             _processingModal = false;
-            _showToast('Error opening tuition management modal', 'error');
+            _showToast('Error opening tuition modal: ' + (e.message || 'unknown'), 'error');
         }
     }
 
-    // =========================================================================
-    // 15. OWNERSHIP MANAGEMENT MODAL
-    // =========================================================================
+    // =====================================================================
+    // Ownership Management Modal
+    // =====================================================================
 
     function openOwnershipManagementModal(institutionId, onSuccess) {
-        if (_processingModal) {
-            _showToast('Already processing a modal action', 'warning');
-            return;
-        }
+        if (_processingModal) return;
         _processingModal = true;
 
         try {
-            var institution = _getInstitution(institutionId);
-            if (!institution) {
-                _showToast('Institution not found', 'error');
-                _processingModal = false;
-                return;
+            var details = _queries().getInstitutionDetails(institutionId);
+            if (!details) { _showToast('Institution not found', 'error'); _processingModal = false; return; }
+
+            var s = details.summary;
+            var isPublic = s.ownershipType === 'public';
+            var isPrivate = s.ownershipType === 'private';
+            var isReligious = s.ownershipType === 'religious';
+
+            var religions = _getAllReligions();
+            var religionOptions = '<option value="">— Select —</option>';
+            for (var i = 0; i < religions.length; i++) {
+                var sel = (religions[i].id === s.religionId) ? ' selected' : '';
+                religionOptions += '<option value="' + _escapeHtml(religions[i].id) + '"' + sel + '>' +
+                    _escapeHtml(religions[i].name) + '</option>';
             }
 
-            var inst = institution.institution || institution;
-            var isPublic = inst.ownershipType === 'public';
-            var isPrivate = inst.ownershipType === 'private';
-
-            var infoIcon = _getIcon('CIRCLE_DOT');
-
-            var fundingDisplay = 'N/A';
-            var profitDisplay = 'N/A';
-            if (isPublic) {
-                var fundingResult = _calculatePublicSchoolFunding(institutionId, _getCurrentYear());
-                if (fundingResult && fundingResult.success) {
-                    fundingDisplay = fundingResult.funding + ' gold/year (' + fundingResult.studentCount + ' students)';
-                }
-            }
-            if (isPrivate) {
-                var profitResult = _calculatePrivateSchoolProfit(institutionId, _getCurrentYear());
-                if (profitResult && profitResult.success) {
-                    profitDisplay = profitResult.profit + ' gold/year (Income: ' + profitResult.income + ', Expenses: ' + profitResult.expenses + ')';
-                }
-            }
-
-            var modalContent = 
+            var modalContent =
                 '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
-                '<div style="font-size:0.7rem;"><strong>' + _escapeHtml(inst.name) + '</strong></div>' +
-                '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">Current ownership: <strong>' + (isPublic ? 'Public' : 'Private') + '</strong></div>' +
-                (isPrivate ? '<div style="font-size:0.55rem;color:var(--accent);">Owner: ' + _escapeHtml(inst.ownerName || 'None') + '</div>' : '') +
-                '</div>' +
-
-                '<div style="margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
-                '<div style="font-size:0.6rem;font-weight:bold;color:var(--accent);margin-bottom:4px;">Financial Impact</div>' +
-                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:0.55rem;">' +
-                '<div><span style="color:var(--dim);">Type:</span> ' + (isPublic ? 'Public (Government funded)' : 'Private (Tuition funded)') + '</div>' +
-                '<div><span style="color:var(--dim);">' + (isPublic ? 'Funding:' : 'Profit:') + '</span> ' + (isPublic ? fundingDisplay : profitDisplay) + '</div>' +
-                '</div>' +
+                '<div style="font-size:0.7rem;"><strong>' + _escapeHtml(s.name) + '</strong></div>' +
+                '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">Current: <strong>' +
+                _escapeHtml(s.ownershipType || 'public') + '</strong></div>' +
+                (s.ownerName ? '<div style="font-size:0.55rem;">Owner: ' + _escapeHtml(s.ownerName) + '</div>' : '') +
+                (s.religionName ? '<div style="font-size:0.55rem;color:#4a9e6a;">Religion: ' + _escapeHtml(s.religionName) + '</div>' : '') +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Change Ownership</label>' +
-                '<div style="display:flex;gap:12px;flex-wrap:wrap;">' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Ownership Type</label>' +
+                '<div style="display:flex;flex-direction:column;gap:6px;">' +
                 '<label style="display:flex;align-items:center;gap:6px;font-size:0.65rem;cursor:pointer;">' +
-                '<input type="radio" name="mgmtOwnershipType" id="mgmtInstOwnershipPublic" value="public" ' + (isPublic ? 'checked' : '') + ' style="cursor:pointer;">' +
-                '<span>Public (Free tuition, government funded)</span>' +
-                '</label>' +
+                '<input type="radio" name="mgmtOwnershipType" value="public"' + (isPublic ? ' checked' : '') + '> Public (free)</label>' +
                 '<label style="display:flex;align-items:center;gap:6px;font-size:0.65rem;cursor:pointer;">' +
-                '<input type="radio" name="mgmtOwnershipType" id="mgmtInstOwnershipPrivate" value="private" ' + (isPrivate ? 'checked' : '') + ' style="cursor:pointer;">' +
-                '<span>Private (Tuition funded, owner receives profit)</span>' +
-                '</label>' +
-                '</div>' +
-                '</div>' +
+                '<input type="radio" name="mgmtOwnershipType" value="private"' + (isPrivate ? ' checked' : '') + '> Private (tuition)</label>' +
+                (religions.length > 0 ?
+                    '<label style="display:flex;align-items:center;gap:6px;font-size:0.65rem;cursor:pointer;">' +
+                    '<input type="radio" name="mgmtOwnershipType" value="religious"' + (isReligious ? ' checked' : '') + '> Religious</label>' : '') +
+                '</div></div>' +
 
-                '<div id="mgmtInstOwnerSection" style="' + (isPrivate ? 'display:block;' : 'display:none;') + 'margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
-                '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;">' +
+                '<div id="mgmtReligionSection" style="' + (isReligious ? 'display:block;' : 'display:none;') +
+                'margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
+                '<label style="display:block;font-size:0.65rem;color:var(--accent);margin-bottom:4px;">Religion</label>' +
+                '<select id="mgmtReligionSelect" style="width:100%;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;color:var(--text);">' +
+                religionOptions + '</select></div>' +
+
+                '<div id="mgmtOwnerSection" style="' + (isPrivate ? 'display:block;' : 'display:none;') +
+                'margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
+                '<div style="display:flex;gap:8px;margin-bottom:6px;">' +
                 '<label style="display:flex;align-items:center;gap:6px;font-size:0.6rem;cursor:pointer;">' +
-                '<input type="radio" name="mgmtOwnerType" id="mgmtInstOwnerCharacter" value="character" ' + (inst.ownerType === 'character' ? 'checked' : '') + ' style="cursor:pointer;">' +
-                '<span>Character</span>' +
-                '</label>' +
+                '<input type="radio" name="mgmtOwnerType" value="character" checked> Character</label>' +
                 '<label style="display:flex;align-items:center;gap:6px;font-size:0.6rem;cursor:pointer;">' +
-                '<input type="radio" name="mgmtOwnerType" id="mgmtInstOwnerHousehold" value="household" ' + (inst.ownerType === 'household' ? 'checked' : '') + ' style="cursor:pointer;">' +
-                '<span>Household</span>' +
-                '</label>' +
+                '<input type="radio" name="mgmtOwnerType" value="household"> Household</label>' +
                 '</div>' +
                 '<div style="display:flex;gap:8px;">' +
-                '<input type="text" id="mgmtInstOwnerName" value="' + _escapeHtml(inst.ownerName || '') + '" readonly style="flex:1;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;color:var(--text);cursor:pointer;">' +
-                '<input type="hidden" id="mgmtInstOwnerId" value="' + (inst.ownerId || '') + '">' +
-                '<button id="mgmtInstSelectOwnerBtn" class="btn small" style="padding:4px 10px;font-size:0.6rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">Select</button>' +
-                '<button id="mgmtInstClearOwnerBtn" class="btn small" style="padding:4px 10px;font-size:0.6rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Clear</button>' +
-                '</div>' +
-                '<small style="font-size:0.5rem;color:var(--dim);">Private schools must have an owner who receives the profit.</small>' +
-                '</div>' +
-
-                '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;margin-top:8px;">' +
-                infoIcon + ' Changing ownership type will affect tuition and funding. Public schools are free. Private schools charge tuition and send profit to the owner.' +
-                '</div>';
+                '<input type="text" id="mgmtOwnerName" value="' + _escapeHtml(s.ownerName || '') + '" readonly style="flex:1;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;color:var(--text);cursor:pointer;">' +
+                '<button id="mgmtSelectOwnerBtn" class="btn" style="padding:4px 10px;font-size:0.6rem;">Select</button>' +
+                '</div></div>';
 
             _openModal({
-                title: 'Ownership Management: ' + inst.name,
+                title: 'Ownership: ' + s.name,
                 content: modalContent,
-                confirmText: 'Save Ownership Settings',
+                confirmText: 'Save',
                 cancelText: 'Cancel',
                 onOpen: function() {
-                    var publicRadio = document.getElementById('mgmtInstOwnershipPublic');
-                    var privateRadio = document.getElementById('mgmtInstOwnershipPrivate');
-                    var ownerSection = document.getElementById('mgmtInstOwnerSection');
+                    var radios = document.querySelectorAll('input[name="mgmtOwnershipType"]');
+                    var religionSection = document.getElementById('mgmtReligionSection');
+                    var ownerSection = document.getElementById('mgmtOwnerSection');
 
-                    function updateMgmtOwnershipUI() {
-                        var isPublic = publicRadio.checked;
-                        ownerSection.style.display = isPublic ? 'none' : 'block';
+                    function update() {
+                        var v = null;
+                        for (var i = 0; i < radios.length; i++) if (radios[i].checked) v = radios[i].value;
+                        religionSection.style.display = (v === 'religious') ? 'block' : 'none';
+                        ownerSection.style.display = (v === 'private') ? 'block' : 'none';
                     }
+                    for (var i = 0; i < radios.length; i++) radios[i].onchange = update;
 
-                    if (publicRadio) publicRadio.onchange = updateMgmtOwnershipUI;
-                    if (privateRadio) privateRadio.onchange = updateMgmtOwnershipUI;
+                    var ownerName = document.getElementById('mgmtOwnerName');
+                    ownerName.dataset.ownerId = '';
+                    ownerName.dataset.ownerType = 'character';
 
-                    var selectOwnerBtn = document.getElementById('mgmtInstSelectOwnerBtn');
-                    var clearOwnerBtn = document.getElementById('mgmtInstClearOwnerBtn');
-                    var ownerNameInput = document.getElementById('mgmtInstOwnerName');
-                    var ownerIdInput = document.getElementById('mgmtInstOwnerId');
-
-                    if (selectOwnerBtn) {
-                        selectOwnerBtn.onclick = function() {
-                            var ownerType = document.querySelector('input[name="mgmtOwnerType"]:checked');
-                            var type = ownerType ? ownerType.value : 'character';
-
-                            if (type === 'character') {
-                                _openCharacterSelectorForEducation(
-                                    'Select School Owner',
-                                    function(character) {
-                                        if (character) {
-                                            ownerNameInput.value = character.name + ' ' + (character.surname || '');
-                                            ownerIdInput.value = character.id;
-                                            _showToast('Selected: ' + character.name, 'success');
-                                        }
-                                    },
-                                    { showDeceased: false }
-                                );
-                            } else {
-                                _openHouseholdSelectorForEducation(
-                                    'Select School Owner',
-                                    function(household) {
-                                        if (household) {
-                                            ownerNameInput.value = household.name;
-                                            ownerIdInput.value = household.id;
-                                            _showToast('Selected: ' + household.name, 'success');
-                                        }
-                                    }
-                                );
-                            }
-                        };
-                    }
-
-                    if (clearOwnerBtn) {
-                        clearOwnerBtn.onclick = function() {
-                            ownerNameInput.value = '';
-                            ownerIdInput.value = '';
-                        };
-                    }
+                    document.getElementById('mgmtSelectOwnerBtn').onclick = function() {
+                        var t = document.querySelector('input[name="mgmtOwnerType"]:checked');
+                        var type = t ? t.value : 'character';
+                        if (type === 'character') {
+                            _openCharacterSelector('Select Owner', function(c) {
+                                if (!c) return;
+                                ownerName.value = c.name + (c.surname ? ' ' + c.surname : '');
+                                ownerName.dataset.ownerId = c.id;
+                                ownerName.dataset.ownerType = 'character';
+                            });
+                        } else {
+                            _openHouseholdSelector('Select Owner', function(h) {
+                                if (!h) return;
+                                ownerName.value = h.name;
+                                ownerName.dataset.ownerId = h.id;
+                                ownerName.dataset.ownerType = 'household';
+                            });
+                        }
+                    };
                 },
                 onConfirm: function() {
-                    var ownershipType = document.querySelector('input[name="mgmtOwnershipType"]:checked');
-                    var ownership = ownershipType ? ownershipType.value : 'public';
+                    var selected = null;
+                    var radios = document.querySelectorAll('input[name="mgmtOwnershipType"]');
+                    for (var i = 0; i < radios.length; i++) if (radios[i].checked) selected = radios[i].value;
+                    if (!selected) { _showToast('Choose ownership', 'error'); return false; }
 
-                    var ownerId = document.getElementById('mgmtInstOwnerId').value;
-                    var ownerName = document.getElementById('mgmtInstOwnerName').value;
-                    var ownerType = document.querySelector('input[name="mgmtOwnerType"]:checked');
-                    var ownerTypeValue = ownerType ? ownerType.value : 'character';
+                    var ownerId = null, ownerType = null;
+                    if (selected === 'private') {
+                        var ownerName = document.getElementById('mgmtOwnerName');
+                        ownerId = ownerName.dataset.ownerId || null;
+                        ownerType = ownerName.dataset.ownerType || null;
+                        if (!ownerId) { _showToast('Select an owner', 'error'); return false; }
+                    }
 
-                    if (ownership === 'private' && !ownerId) {
-                        _showToast('Private schools must have an owner', 'error');
+                    var religionId = null;
+                    if (selected === 'religious') {
+                        religionId = document.getElementById('mgmtReligionSelect').value;
+                        if (!religionId) { _showToast('Select a religion', 'error'); return false; }
+                    }
+
+                    var result = _commands().setSchoolOwnership(institutionId, selected, ownerId || religionId, ownerType || (selected === 'religious' ? 'religion' : null));
+                    if (!result.success) {
+                        _showToast(result.reason || 'Failed', 'error');
                         return false;
                     }
 
-                    var result = _setSchoolOwnership(institutionId, ownership, ownerId || null, ownerTypeValue || null);
-
-                    if (result && result.success) {
-                        var msg = 'School ownership updated to ' + ownership;
-                        if (ownership === 'private') {
-                            msg += ' (Owner: ' + (ownerName || 'Unknown') + ')';
-                        } else {
-                            msg += ' - Free tuition enabled';
-                        }
-                        _showToast(msg, 'success');
-                        _closeTopModal();
-                        _processingModal = false;
-                        if (onSuccess) onSuccess();
-                    } else {
-                        _showToast(result ? result.reason : 'Failed to update ownership', 'error');
-                    }
+                    _persist();
+                    _showToast('Ownership updated', 'success');
+                    _processingModal = false;
+                    _closeTopModal();
+                    if (onSuccess) onSuccess();
                     return true;
                 },
-                onCancel: function() {
-                    _processingModal = false;
-                }
+                onCancel: function() { _processingModal = false; }
             });
 
         } catch (e) {
             _processingModal = false;
-            _showToast('Error opening ownership management modal', 'error');
+            _showToast('Error opening ownership modal: ' + (e.message || 'unknown'), 'error');
         }
     }
 
-    // =========================================================================
-    // 16. EXPORTS
-    // =========================================================================
+    // =====================================================================
+    // Exports
+    // =====================================================================
 
     window.openCreateInstitutionModal = openCreateInstitutionModal;
     window.openEditInstitutionModal = openEditInstitutionModal;
@@ -2465,27 +1816,6 @@
     window.openOwnershipManagementModal = openOwnershipManagementModal;
     window.openGraduateStudentModal = openGraduateStudentModal;
 
-    // Helper functions for other modals
-    window._getLocationTypeName = _getLocationTypeName;
-    window._getEducationLevels = _getEducationLevels;
-    window._getIconHTML = _getIconHTML;
-    window._getAgeGroups = _getAgeGroups;
-    window._getAgeGroupLabel = _getAgeGroupLabel;
-    window._getAgeGroupIcon = _getAgeGroupIcon;
-
-    // Legacy aliases
-    window._openCreateInstitutionModal = openCreateInstitutionModal;
-    window._openEditInstitutionModal = openEditInstitutionModal;
-    window._openEditCurriculumModal = openEditCurriculumModal;
-    window._openInstitutionDetailsModal = openInstitutionDetailsModal;
-    window._openEnrollStudentModal = openEnrollStudentModal;
-    window._openHireTeacherModal = openHireTeacherModal;
-    window._openSetHeadmasterModal = openSetHeadmasterModal;
-    window._openDeleteInstitutionModal = openDeleteInstitutionModal;
-    window._openTuitionManagementModal = openTuitionManagementModal;
-    window._openOwnershipManagementModal = openOwnershipManagementModal;
-    window._openGraduateStudentModal = openGraduateStudentModal;
-
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
             openCreateInstitutionModal: openCreateInstitutionModal,
@@ -2498,14 +1828,7 @@
             openDeleteInstitutionModal: openDeleteInstitutionModal,
             openTuitionManagementModal: openTuitionManagementModal,
             openOwnershipManagementModal: openOwnershipManagementModal,
-            openGraduateStudentModal: openGraduateStudentModal,
-            _getLocationTypeName: _getLocationTypeName,
-            _getEducationLevels: _getEducationLevels,
-            _getIconHTML: _getIconHTML,
-            _getAgeGroups: _getAgeGroups,
-            _getAgeGroupLabel: _getAgeGroupLabel,
-            _getAgeGroupIcon: _getAgeGroupIcon
+            openGraduateStudentModal: openGraduateStudentModal
         };
     }
-
 })();
