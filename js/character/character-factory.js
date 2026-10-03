@@ -10,18 +10,18 @@
  * any future creation path funnel through buildCharacter().
  *
  * SCOPE:
- *   - Validating character-owned input data against the character schema
- *   - Applying canonical defaults for missing character-owned fields
+ *   - Validating character-owned input data against the canonical schema
+ *   - Applying canonical defaults for missing optional fields
  *   - Generating the character ID
  *   - Assembling the complete character object
  *
  * OUT OF SCOPE:
- *   - Mutation of the canonical collection → character-state.js
- *   - Family graph mutations → family-commands.js
- *   - Random value generation → character-generator.js
- *   - Persistence → storage.js
- *   - Derived queries → character-queries.js
- *   - Presentation → character-ui-list.js
+ *   - Mutation of the canonical collection -> character-creation-commands.js
+ *   - Family graph mutations -> family-commands.js
+ *   - Random value generation -> character-generator.js
+ *   - Persistence -> storage.js
+ *   - Derived queries -> character-queries.js
+ *   - Presentation -> character-ui-list.js
  *
  * SEMANTIC RULES:
  *   - Missing (undefined/null) optional fields receive canonical defaults.
@@ -32,48 +32,41 @@
  *     as plain objects.
  *   - The returned character object is deeply owned by the factory. No
  *     references to caller-supplied arrays or objects are retained.
+ *   - Cyclic input objects are rejected outright.
  *   - IDs are generated via ids.js. No fallbacks.
- *   - `birthYear` omitted → the factory REQUIRES an explicit birthYear
- *     or an explicit `currentYear` option from the caller. It does not
- *     invent "current year minus 25". Generation policy lives in
- *     character-generator.js; the modal's form default lives in the modal.
- *   - Nested schema objects (surnameHistory, appearance, surnameRules,
- *     friendshipDetails, apprenticeshipDetails, activeRankNumber) have
- *     shape validation in the factory. Invalid nested shape is rejected,
- *     not repaired.
- *   - Cyclic input objects are rejected.
+ *   - `birthYear` omitted -> the factory REQUIRES options.currentYear to be
+ *     supplied by the caller. It does NOT reach into global time.
  *
- * SCHEMA OWNERSHIP:
- *   The factory constructs Character-owned fields only.
+ * REMOVED FIELDS:
+ *   The parent-child compatibility mirrors (motherId, fatherId, children,
+ *   adoptedParents, adoptedChildren) are not part of the character record
+ *   any more. Parent edges are created through family-commands.js after
+ *   the character exists. This factory does not accept or emit them.
  *
- *   The following fields are physically present on every character because
- *   the current persistence schema requires them, but they are DOMAIN-OWNED
- *   by other modules and always constructed in their neutral empty state
- *   here:
+ * DOMAIN-OWNED FIELDS:
+ *   The factory constructs the character record. Every embedded array and
+ *   pointer that is owned by a domain is constructed in its neutral empty
+ *   state here because the persistence schema requires it:
  *
- *       motherId, fatherId                      → family-commands.js
- *       children, adoptedParents, adoptedChildren → family-commands.js
- *       professions                             → character-commands.js
- *       rankAssignments, activeRankId,
- *         activeRankNumber                      → rank-commands.js
- *       relationships, friends,
- *         friendshipDetails                     → relationship-commands.js
- *       apprentices, masterId, isMaster,
- *         masterProfessionId,
- *         apprenticeshipDetails                 → apprenticeship-commands.js
- *       religionHistory                         → religion commands
+ *       professions                       -> character-commands.js
+ *       rankAssignments                   -> future rank domain
+ *       activeRankId, activeRankNumber    -> future rank domain
+ *       relationships                     -> future relationship domain
+ *       friends                           -> future relationship domain
+ *       apprentices, masterId,
+ *         isMaster, masterProfessionId,
+ *         apprenticeshipDetails           -> future apprenticeship domain
+ *       religionHistory                   -> religion commands
  *
- *   The factory MUST NOT accept these fields from the caller. If a caller
- *   needs to establish a domain edge, they call the owning domain command
- *   AFTER the character exists.
+ *   The factory accepts identity pointers (activeRankId, isMaster,
+ *   masterId, masterProfessionId) from the caller because those describe
+ *   the character's current identity. It does not accept domain records.
  *
  * DEPENDENCIES (REQUIRED):
  *   - ids.js:   generateId
  *
  * DEPENDENCIES (OPTIONAL):
- *   - time.js:  isValidYear — used if present to validate year fields.
- *               If absent, the factory validates year fields itself
- *               (finite integer).
+ *   - time.js:  isValidYear - used if present to validate year fields.
  *
  * ICON POLICY: No emojis. No icons.
  *
@@ -83,19 +76,11 @@
 (function () {
     'use strict';
 
-    // =========================================================================
-    // 0. DEPENDENCY GUARDS
-    // =========================================================================
-
-    function _requireDependencies() {
-        if (typeof window.generateId !== 'function') {
-            throw new Error(
-                'character-factory.js: ids.js must load first (generateId missing).'
-            );
-        }
+    if (typeof window.generateId !== 'function') {
+        throw new Error(
+            'character-factory.js: ids.js must load first (generateId missing).'
+        );
     }
-
-    _requireDependencies();
 
     // =========================================================================
     // 1. CONSTANTS
@@ -134,6 +119,10 @@
         }
         return true;
     }
+
+    // =========================================================================
+    // 3. VALIDATORS
+    // =========================================================================
 
     function _validateOptionalString(value, name) {
         if (_isMissing(value)) return { ok: true, value: null };
@@ -184,27 +173,19 @@
     }
 
     // =========================================================================
-    // 3. CYCLE-SAFE DEEP CLONE
+    // 4. CYCLE-SAFE DEEP CLONE
     // =========================================================================
-    //
-    // Callers may pass nested plain objects (appearance, surnameRules,
-    // surnameHistory, friendshipDetails, apprenticeshipDetails). We clone
-    // deeply so the factory fully owns the returned record. Cyclic input is
-    // rejected — the factory does not accept recursive structures.
 
     function _cloneSchemaValue(value, seen) {
         if (value === null || typeof value !== 'object') return value;
 
         if (Array.isArray(value)) {
-            if (seen.has(value)) return null; // signal via sentinel checked by caller
+            if (seen.has(value)) return { __cycle: true };
             seen.add(value);
             var arr = [];
             for (var i = 0; i < value.length; i++) {
                 var clonedItem = _cloneSchemaValue(value[i], seen);
-                if (clonedItem === null && value[i] !== null) {
-                    // The item was a cycle; abort.
-                    return null;
-                }
+                if (clonedItem && clonedItem.__cycle === true) return { __cycle: true };
                 arr.push(clonedItem);
             }
             seen.delete(value);
@@ -212,7 +193,7 @@
         }
 
         if (_isPlainObject(value)) {
-            if (seen.has(value)) return null;
+            if (seen.has(value)) return { __cycle: true };
             seen.add(value);
             var obj = {};
             var keys = Object.keys(value);
@@ -220,40 +201,29 @@
                 var k = keys[j];
                 if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
                 var clonedValue = _cloneSchemaValue(value[k], seen);
-                if (clonedValue === null && value[k] !== null) {
-                    return null;
-                }
+                if (clonedValue && clonedValue.__cycle === true) return { __cycle: true };
                 obj[k] = clonedValue;
             }
             seen.delete(value);
             return obj;
         }
 
-        // Unsupported nested types (Date, Map, Set, class instances) are
-        // rejected by returning the raw value; the caller validates type.
         return value;
     }
 
     function _safeClone(value) {
         var seen = new Set();
         var cloned = _cloneSchemaValue(value, seen);
+        if (cloned && cloned.__cycle === true) return null;
         return cloned;
     }
 
     // =========================================================================
-    // 4. NESTED SCHEMA VALIDATORS
+    // 5. NESTED SCHEMA VALIDATORS
     // =========================================================================
-    //
-    // Each function receives a plain object and returns
-    // { ok: true, value: normalised } or { ok: false, reason }.
-    //
-    // These normalise to the canonical empty shape and reject invalid nested
-    // fields. They do not silently coerce wrong types.
 
     function _validateSurnameHistory(input) {
-        if (_isMissing(input)) {
-            return { ok: true, value: null };
-        }
+        if (_isMissing(input)) return { ok: true, value: null };
         if (!_isPlainObject(input)) {
             return { ok: false, reason: 'surnameHistory must be a plain object when provided' };
         }
@@ -276,7 +246,6 @@
             return { ok: false, reason: 'surnameHistory.lastUpdated must be a valid year or null' };
         }
 
-        // Entries are cloned as-is but must be plain objects.
         var clonedEntries = [];
         for (var i = 0; i < entries.length; i++) {
             if (!_isPlainObject(entries[i])) {
@@ -299,50 +268,14 @@
         };
     }
 
-    function _validateSurnameRules(input) {
+    function _validateDeepObject(input, name) {
         if (_isMissing(input)) return { ok: true, value: null };
         if (!_isPlainObject(input)) {
-            return { ok: false, reason: 'surnameRules must be a plain object when provided' };
+            return { ok: false, reason: name + ' must be a plain object when provided' };
         }
         var cloned = _safeClone(input);
         if (cloned === null) {
-            return { ok: false, reason: 'surnameRules contains a cyclic structure' };
-        }
-        return { ok: true, value: cloned };
-    }
-
-    function _validateAppearance(input) {
-        if (_isMissing(input)) return { ok: true, value: null };
-        if (!_isPlainObject(input)) {
-            return { ok: false, reason: 'appearance must be a plain object when provided' };
-        }
-        var cloned = _safeClone(input);
-        if (cloned === null) {
-            return { ok: false, reason: 'appearance contains a cyclic structure' };
-        }
-        return { ok: true, value: cloned };
-    }
-
-    function _validateFriendshipDetails(input) {
-        if (_isMissing(input)) return { ok: true, value: null };
-        if (!_isPlainObject(input)) {
-            return { ok: false, reason: 'friendshipDetails must be a plain object when provided' };
-        }
-        var cloned = _safeClone(input);
-        if (cloned === null) {
-            return { ok: false, reason: 'friendshipDetails contains a cyclic structure' };
-        }
-        return { ok: true, value: cloned };
-    }
-
-    function _validateApprenticeshipDetails(input) {
-        if (_isMissing(input)) return { ok: true, value: null };
-        if (!_isPlainObject(input)) {
-            return { ok: false, reason: 'apprenticeshipDetails must be a plain object when provided' };
-        }
-        var cloned = _safeClone(input);
-        if (cloned === null) {
-            return { ok: false, reason: 'apprenticeshipDetails contains a cyclic structure' };
+            return { ok: false, reason: name + ' contains a cyclic structure' };
         }
         return { ok: true, value: cloned };
     }
@@ -356,7 +289,7 @@
     }
 
     // =========================================================================
-    // 5. NAME VALIDATION
+    // 6. NAME VALIDATION
     // =========================================================================
 
     function _validateName(data) {
@@ -377,15 +310,8 @@
     }
 
     // =========================================================================
-    // 6. FIELD VALIDATION TABLE
+    // 7. FIELD VALIDATION TABLE
     // =========================================================================
-    //
-    // Every entry validates and (where appropriate) normalises a
-    // character-owned field from caller input.
-    //
-    // Fields NOT in this table are ignored. Domain-owned fields (motherId,
-    // fatherId, professions, children, relationships, apprentices, etc.)
-    // are deliberately absent: the factory will not accept them.
 
     var FIELD_VALIDATORS = {
         // Identity
@@ -404,7 +330,7 @@
             }
             return { ok: true, value: v };
         },
-        'surnameRules': function (v) { return _validateSurnameRules(v); },
+        'surnameRules': function (v) { return _validateDeepObject(v, 'surnameRules'); },
         'surnameHistory': function (v) { return _validateSurnameHistory(v); },
 
         // Demographics
@@ -438,6 +364,7 @@
         'isDeceased': function (v) { return _validateOptionalBoolean(v, 'isDeceased'); },
         'deathYear': function (v) { return _validateOptionalYear(v, 'deathYear'); },
         'deathCause': function (v) { return _validateOptionalString(v, 'deathCause'); },
+        'deathNotes': function (v) { return _validateOptionalString(v, 'deathNotes'); },
 
         // Location and movement
         'birthplaceId': function (v) { return _validateOptionalId(v, 'birthplaceId'); },
@@ -448,32 +375,30 @@
 
         // Religion / culture
         'religionId': function (v) { return _validateOptionalId(v, 'religionId'); },
+        'religionHistory': function (v) { return _validateOptionalArray(v, 'religionHistory'); },
         'cultureId': function (v) { return _validateOptionalId(v, 'cultureId'); },
 
         // Presentation
         'epithet': function (v) { return _validateOptionalString(v, 'epithet'); },
         'notes': function (v) { return _validateOptionalString(v, 'notes'); },
-        'appearance': function (v) { return _validateAppearance(v); },
+        'appearance': function (v) { return _validateDeepObject(v, 'appearance'); },
 
-        // Rank identity (the id itself is character-owned; the assignment
-        // history is domain-owned and lives in rank-commands.js)
+        // Rank identity pointer
         'activeRankId': function (v) { return _validateOptionalId(v, 'activeRankId'); },
         'activeRankNumber': function (v) { return _validateActiveRankNumber(v); },
 
-        // Apprenticeship identity (just the flag/id pointers; the records
-        // themselves are domain-owned)
+        // Apprenticeship identity pointer
         'isMaster': function (v) { return _validateOptionalBoolean(v, 'isMaster'); },
         'masterId': function (v) { return _validateOptionalId(v, 'masterId'); },
         'masterProfessionId': function (v) { return _validateOptionalId(v, 'masterProfessionId'); },
-        'apprenticeshipDetails': function (v) { return _validateApprenticeshipDetails(v); },
+        'apprenticeshipDetails': function (v) { return _validateDeepObject(v, 'apprenticeshipDetails'); },
 
-        // Friendship details (id list is domain-owned; details blob is
-        // character-owned embedded data used by the friendship UI)
-        'friendshipDetails': function (v) { return _validateFriendshipDetails(v); }
+        // Friendship details blob
+        'friendshipDetails': function (v) { return _validateDeepObject(v, 'friendshipDetails'); }
     };
 
     // =========================================================================
-    // 7. DEFAULT APPLICATION
+    // 8. DEFAULT APPLICATION
     // =========================================================================
 
     function _applyDefaults(validated, id, currentYear) {
@@ -515,7 +440,7 @@
             isDeceased: _isMissing(validated.isDeceased) ? false : validated.isDeceased,
             deathYear: _isMissing(validated.deathYear) ? null : validated.deathYear,
             deathCause: _isMissing(validated.deathCause) ? '' : validated.deathCause,
-            deathNotes: '',
+            deathNotes: _isMissing(validated.deathNotes) ? '' : validated.deathNotes,
 
             // Location and movement
             birthplaceId: _isMissing(validated.birthplaceId) ? null : validated.birthplaceId,
@@ -528,7 +453,9 @@
 
             // Religion / culture
             religionId: _isMissing(validated.religionId) ? null : validated.religionId,
-            religionHistory: [],
+            religionHistory: _isMissing(validated.religionHistory)
+                ? []
+                : validated.religionHistory.slice(),
             cultureId: _isMissing(validated.cultureId) ? null : validated.cultureId,
 
             // Presentation
@@ -536,13 +463,13 @@
             notes: _isMissing(validated.notes) ? '' : validated.notes,
             appearance: _isMissing(validated.appearance) ? {} : validated.appearance,
 
-            // Rank identity (id pointers only; assignments are domain-owned)
+            // Rank identity pointer
             activeRankId: _isMissing(validated.activeRankId) ? null : validated.activeRankId,
             activeRankNumber: _isMissing(validated.activeRankNumber)
                 ? null
                 : validated.activeRankNumber,
 
-            // Apprenticeship identity (id pointers only; records are domain-owned)
+            // Apprenticeship identity pointer
             isMaster: _isMissing(validated.isMaster) ? false : validated.isMaster,
             masterId: _isMissing(validated.masterId) ? null : validated.masterId,
             masterProfessionId: _isMissing(validated.masterProfessionId)
@@ -552,22 +479,16 @@
                 ? {}
                 : validated.apprenticeshipDetails,
 
-            // Friendship details (the id list is domain-owned and starts empty)
+            // Friendship details blob
             friendshipDetails: _isMissing(validated.friendshipDetails)
                 ? {}
                 : validated.friendshipDetails,
 
-            // ---- Domain-owned embedded fields, constructed in their
-            // ---- neutral empty state. NEVER accepted from caller input.
+            // Domain-owned embedded fields: neutral empty state only.
             professions: [],
             rankAssignments: [],
             relationships: [],
             friends: [],
-            motherId: null,
-            fatherId: null,
-            children: [],
-            adoptedParents: [],
-            adoptedChildren: [],
             apprentices: [],
 
             // Soft delete
@@ -581,20 +502,9 @@
     }
 
     // =========================================================================
-    // 8. PUBLIC ENTRY POINT
+    // 9. PUBLIC ENTRY POINT
     // =========================================================================
 
-    /**
-     * Builds a canonical character object from caller-supplied data.
-     *
-     * @param {Object} data
-     * @param {Object} [options]
-     * @param {number} [options.currentYear] - required if data.birthYear is
-     *   omitted. Callers should pass getCurrentYear() explicitly rather than
-     *   relying on the factory to reach for global time.
-     *
-     * @returns {{ success: boolean, data?: Object, reason?: string }}
-     */
     function buildCharacter(data, options) {
         if (_isMissing(data)) data = {};
         if (!_isPlainObject(data)) {
@@ -605,11 +515,9 @@
             return { success: false, reason: 'Options must be a plain object' };
         }
 
-        // Required: name
         var nameResult = _validateName(data);
         if (!nameResult.ok) return { success: false, reason: nameResult.reason };
 
-        // Required when birthYear is absent: currentYear
         var currentYear;
         if (_isMissing(data.birthYear)) {
             if (!_isValidYear(options.currentYear)) {
@@ -623,7 +531,6 @@
             currentYear = options.currentYear;
         }
 
-        // Validate every recognised field. Unknown fields are ignored.
         var validated = { name: nameResult.value };
         var fieldNames = Object.keys(FIELD_VALIDATORS);
         for (var i = 0; i < fieldNames.length; i++) {
@@ -642,19 +549,15 @@
             }
         }
 
-        // Cross-field invariants
-
-        // isDeceased === true requires deathYear
         if (validated.isDeceased === true && _isMissing(validated.deathYear)) {
             return { success: false, reason: 'deathYear is required for a deceased character' };
         }
-        // isDeceased === false must not have deathYear
         if (validated.isDeceased === false && !_isMissing(validated.deathYear)) {
             return { success: false, reason: 'deathYear cannot be set on a living character' };
         }
-        // deathYear must not precede birthYear
-        if (!_isMissing(validated.isDeceased) && validated.isDeceased === true
-            && !_isMissing(validated.deathYear) && !_isMissing(validated.birthYear)
+        if (validated.isDeceased === true
+            && !_isMissing(validated.deathYear)
+            && !_isMissing(validated.birthYear)
             && validated.deathYear < validated.birthYear) {
             return { success: false, reason: 'deathYear cannot be before birthYear' };
         }
@@ -669,11 +572,10 @@
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 10. EXPORTS
     // =========================================================================
 
     window.buildCharacter = buildCharacter;
-
     window.CHARACTER_SCHEMA_FIELDS = Object.keys(FIELD_VALIDATORS);
 
     if (typeof module !== 'undefined' && module.exports) {
