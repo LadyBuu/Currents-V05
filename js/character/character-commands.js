@@ -3,59 +3,80 @@
  * STILL WATERS - CHARACTER COMMANDS (js/character/character-commands.js)
  * =============================================================================
  *
- * Mutation boundary for the character domain.
+ * Mutation boundary for character-owned state.
  *
  * SCOPE:
  *   - Character-owned field updates (name, gender, birthYear, isDeceased,
- *     location, household, religionId, cultureId, appearance, notes, etc.)
+ *     deathYear, deathCause, birthplaceId, currentLocationId, household,
+ *     notes, epithet, appearance, religionId, cultureId, moves,
+ *     householdHistory, activeRankId, activeRankNumber, isMaster, masterId,
+ *     masterProfessionId, apprenticeshipDetails, friendshipDetails)
  *   - Profession array management on the character record
- *     (add / update / remove / remove-from-all / lookup)
+ *   - Surname history mutations
+ *   - Religion assignment orchestration (delegates to ReligionCommands)
+ *   - Family relationship orchestration (delegates to FamilyCommands)
  *
  * OUT OF SCOPE:
- *   - Profession semantic rules (skill tiers, teaching thresholds, salary
- *     policy) → SkillUtils / RoleConstants / RoleRules
- *   - Role catalogue CRUD → RoleCommands / RoleState
- *   - Family graph mutations → FamilyCommands
- *   - Relationship / friendship / apprenticeship mutations → their own
- *     domain Commands
- *   - Persistence mechanics → CharacterState (via markDataDirty / storage)
- *   - Cross-domain events, toasts, activity log → caller
+ *   - Character creation           → character-creation-commands.js
+ *   - Character deletion           → character-deletion-commands.js
+ *   - Bulk character updates       → in this file (bulkUpdateCharactersFields)
+ *   - Family graph mutations       → family-commands.js (called via wrappers)
+ *   - Relationship mutations       → relationship-commands.js
+ *   - Rank assignment history      → rank-commands.js
+ *   - Apprenticeship records       → apprenticeship-commands.js
+ *   - Persistence mechanics        → character-state.js
+ *   - Cross-domain events, toasts  → caller
  *
  * OWNERSHIP:
  *   CharacterCommands owns `character.professions` as the sole writer.
- *   No other module may push to, splice, or reassign that array.
- *   RoleCommands orchestrates assignment decisions but delegates the actual
- *   array write to this module.
+ *   No other module may push to, splice, or reassign that array. RoleCommands
+ *   orchestrates assignment decisions but delegates the array write here.
  *
- *   CharacterCommands does NOT own the character record's storage. It
- *   delegates every mutation to CharacterState, which is the canonical
- *   runtime owner of character data.
+ *   CharacterCommands does NOT own the character record's storage. Every
+ *   mutation routes through CharacterState, which is the canonical runtime
+ *   owner of character data.
  *
- * WRITE PATH:
+ * WRITE PATHS:
  *   Character-owned field patch:
  *       CharacterCommands.updateCharacterFields(id, patch)
  *           → CharacterState.updateCharacter(id, patch)
  *
- *   Profession patch (embedded domain field):
+ *   Profession patch:
  *       CharacterCommands.addProfession(id, data)
  *           → CharacterState.applyDomainFieldPatch(id, { professions })
  *
- *   The domain-field path bypasses CharacterState's character-owned field
- *   gate, which is why only this module (and FamilyCommands) may use it.
+ *   Surname history patch:
+ *       CharacterCommands.recordCharacterSurnameChange(...)
+ *           → CharacterState.updateCharacter(id, { surname, surnameHistory })
+ *
+ *   Religion orchestration:
+ *       CharacterCommands.assignCharacterReligion(id, religionId, options)
+ *           → ReligionCommands.convertCharacter / assignReligionToCharacter
+ *           → CharacterState.updateCharacter(id, { religionId })
+ *
+ *   Family orchestration:
+ *       CharacterCommands.addChildToParent(childId, parentId, type, options)
+ *           → FamilyCommands.setParent(...)
+ *           (FamilyCommands writes through CharacterState.applyDomainFieldPatch)
+ *
+ * DEPENDENCIES (REQUIRED):
+ *   - character-state.js (window.CharacterState) with methods:
+ *       updateCharacter, updateCharacters, applyDomainFieldPatch,
+ *       _getLiveCharacterForMutation, getAllCharacters
+ *   - time.js: getCurrentYear, isValidYear
+ *
+ * DEPENDENCIES (OPTIONAL, called only when the feature is used):
+ *   - religion-commands.js (window.ReligionCommands)
+ *   - family-commands.js   (window.FamilyCommands)
  *
  * CONTRACT:
  *   - Every public command returns { success: boolean, reason?: string, ... }.
  *   - Input is validated before any mutation. Partial mutation on failure
  *     is not permitted.
  *   - No recursion guards. Commands may call other commands.
- *   - No fallbacks. If CharacterState is missing at load, this module throws.
- *
- * DEPENDENCIES (REQUIRED, load first):
- *   - character-state.js  (window.CharacterState)
- *
- * DEPENDENCIES (OPTIONAL):
- *   - None. This module never reaches into RoleState, FamilyState, or any
- *     other domain. Callers compose domain effects.
+ *   - No fallback dependencies. If a required state method is missing at
+ *     load, this module throws.
+ *   - CharacterCommands NEVER touches window.masterData directly.
  *
  * ICON POLICY: No emojis. No icons.
  *
@@ -80,7 +101,9 @@
     var _requiredStateMethods = [
         'updateCharacter',
         'updateCharacters',
-        'applyDomainFieldPatch'
+        'applyDomainFieldPatch',
+        '_getLiveCharacterForMutation',
+        'getAllCharacters'
     ];
     for (var _m = 0; _m < _requiredStateMethods.length; _m++) {
         var _methodName = _requiredStateMethods[_m];
@@ -91,6 +114,13 @@
                 'canonical mutation primitives.'
             );
         }
+    }
+
+    if (typeof window.getCurrentYear !== 'function') {
+        throw new Error('character-commands.js requires time.js (getCurrentYear).');
+    }
+    if (typeof window.isValidYear !== 'function') {
+        throw new Error('character-commands.js requires time.js (isValidYear).');
     }
 
     // =========================================================================
@@ -114,7 +144,7 @@
     }
 
     // =========================================================================
-    // 2. INPUT VALIDATION
+    // 2. INPUT VALIDATION HELPERS
     // =========================================================================
 
     function _isMissing(v) {
@@ -143,7 +173,7 @@
 
     function _isValidYearOrMissing(v) {
         if (_isMissing(v)) return true;
-        return typeof v === 'number' && Number.isFinite(v);
+        return window.isValidYear(v) === true;
     }
 
     function _isValidSalaryOrMissing(v) {
@@ -151,48 +181,47 @@
         return typeof v === 'number' && Number.isFinite(v) && v >= 0;
     }
 
+    function _resolveYear(value) {
+        if (_isMissing(value)) return window.getCurrentYear();
+        return value;
+    }
+
     // =========================================================================
-    // 3. CHARACTER-OWNED FIELD UPDATES
+    // 3. DOMAIN-OWNED FIELD GATE
     // =========================================================================
     //
-    // The generic character field path. Refuses to touch domain-owned embedded
-    // fields (professions, relationships, adoptedParents, apprenticeship
-    // fields, rank assignments). Those go through their own domain commands.
-    //
-    // This list is maintained here (not in CharacterState) because it is the
-    // domain-command gate: "what may a general character update write?".
-    // CharacterState has a complementary list (what may CharacterState accept
-    // through its own primitive?). The two lists overlap but are not the same:
-    // CharacterState accepts every character-owned field, including isDeleted
-    // and deletedAt, which generic commands must not set.
+    // The generic character field path refuses fields owned by other domains.
+    // Those go through their own commands (family-commands.js,
+    // relationship-commands.js, rank-commands.js, apprenticeship-commands.js)
+    // or through the profession API in this file.
 
     var _DOMAIN_OWNED_FIELDS = {
-        // Family-owned embedded fields
+        // Family
         motherId: true,
         fatherId: true,
         adoptedParents: true,
         adoptedChildren: true,
         children: true,
 
-        // Relationship / friendship owned
+        // Relationships / friendship
         relationships: true,
         friends: true,
         friendshipDetails: true,
 
-        // Profession / rank owned
+        // Professions / rank
         professions: true,
         rankAssignments: true,
         activeRankId: true,
         activeRankNumber: true,
 
-        // Apprenticeship owned
+        // Apprenticeship
         apprentices: true,
         masterId: true,
         isMaster: true,
         masterProfessionId: true,
         apprenticeshipDetails: true,
 
-        // Lifecycle owned
+        // Soft delete (owned by character-deletion-commands.js)
         isDeleted: true,
         deletedAt: true
     };
@@ -206,6 +235,10 @@
         return found;
     }
 
+    // =========================================================================
+    // 4. CHARACTER-OWNED FIELD UPDATES
+    // =========================================================================
+
     /**
      * Updates character-owned fields on a character.
      *
@@ -213,7 +246,7 @@
      * command for those.
      *
      * @param {string} characterId
-     * @param {Object} updates - partial character patch
+     * @param {Object} updates
      * @returns {{ success: boolean, reason?: string }}
      */
     function updateCharacterFields(characterId, updates) {
@@ -242,10 +275,17 @@
     }
 
     /**
+     * Alias for updateCharacterFields, kept for existing callers that
+     * expect CharacterCommands.updateCharacter(id, patch).
+     */
+    function updateCharacter(characterId, updates) {
+        return updateCharacterFields(characterId, updates);
+    }
+
+    /**
      * Batch variant of updateCharacterFields.
      *
      * @param {Array<{id: string, updates: Object}>} changes
-     * @returns {{ success: boolean, reason?: string }}
      */
     function updateCharactersFields(changes) {
         if (!Array.isArray(changes)) return _fail('changes must be an array.');
@@ -284,12 +324,11 @@
     }
 
     // =========================================================================
-    // 4. PROFESSION NORMALISATION
+    // 5. PROFESSION NORMALISATION
     // =========================================================================
     //
-    // CharacterCommands owns the canonical shape of a profession record. The
-    // shape is defined here, not in RoleState. RoleState produces the input
-    // facts (role id, name, base salary); this module assembles the record.
+    // CharacterCommands owns the canonical shape of a profession record.
+    // RoleState produces input facts; this module assembles the record.
 
     function _normaliseNewProfession(data) {
         return {
@@ -334,14 +373,12 @@
     }
 
     // =========================================================================
-    // 5. PROFESSION API
+    // 6. PROFESSION API
     // =========================================================================
 
     /**
      * Returns the character's profession record for a role, or null.
-     *
-     * This is a read, but it lives here because CharacterCommands owns the
-     * profession array and RoleCommands expects it on this surface.
+     * Live reference — callers must not mutate. Use getProfessions for a copy.
      */
     function getProfession(characterId, professionId) {
         if (!_hasId(characterId)) return null;
@@ -362,6 +399,7 @@
         if (!_hasId(characterId)) return [];
         var character = CS._getLiveCharacterForMutation(characterId);
         if (!character || !Array.isArray(character.professions)) return [];
+
         var out = [];
         for (var i = 0; i < character.professions.length; i++) {
             var p = character.professions[i];
@@ -370,7 +408,7 @@
                 id: p.id,
                 name: p.name,
                 skillLevel: p.skillLevel,
-                startYear: p.startYear,
+                startYear: _isMissing(p.startYear) ? null : p.startYear,
                 primary: p.primary === true,
                 notes: typeof p.notes === 'string' ? p.notes : '',
                 specs: Array.isArray(p.specs) ? p.specs.slice() : [],
@@ -391,12 +429,9 @@
     /**
      * Adds a profession to a character.
      *
-     * Required data fields: id, name, skillLevel.
+     * Required: id, name, skillLevel.
      * Optional: startYear, primary, notes, specs, baseSalary, customSalary,
      *           salaryHistory, salaryLastCalculated, paysSalary.
-     *
-     * Fails if the character already has a profession with this id.
-     * Fails if the character is soft-deleted or does not exist.
      */
     function addProfession(characterId, professionData) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
@@ -411,7 +446,7 @@
             return _fail('Skill level must be a number between 0 and 100.');
         }
         if (!_isValidYearOrMissing(professionData.startYear)) {
-            return _fail('startYear must be a number or omitted.');
+            return _fail('startYear must be a valid world year or omitted.');
         }
         if (!_isValidSalaryOrMissing(professionData.baseSalary)) {
             return _fail('baseSalary must be a non-negative number or omitted.');
@@ -449,14 +484,6 @@
 
     /**
      * Partially updates an existing profession on a character.
-     *
-     * Accepts any subset of:
-     *   name, skillLevel, startYear, primary, notes, specs,
-     *   baseSalary, customSalary, salaryHistory,
-     *   salaryLastCalculated, paysSalary
-     *
-     * Fields absent from `updates` are left unchanged.
-     * Present fields must pass validation.
      */
     function updateProfession(characterId, professionId, updates) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
@@ -476,26 +503,7 @@
         if (idx === -1) return _fail('Character does not have this profession.');
 
         var current = existing[idx];
-        var next = {
-            id: current.id,
-            name: current.name,
-            skillLevel: current.skillLevel,
-            startYear: _isMissing(current.startYear) ? null : current.startYear,
-            primary: current.primary === true,
-            notes: typeof current.notes === 'string' ? current.notes : '',
-            specs: Array.isArray(current.specs) ? current.specs.slice() : [],
-            baseSalary: typeof current.baseSalary === 'number' ? current.baseSalary : 0,
-            customSalary: _isMissing(current.customSalary) ? null : current.customSalary,
-            salaryHistory: Array.isArray(current.salaryHistory)
-                ? current.salaryHistory.slice()
-                : [],
-            salaryLastCalculated: _isMissing(current.salaryLastCalculated)
-                ? null
-                : current.salaryLastCalculated,
-            paysSalary: current.paysSalary === undefined
-                ? true
-                : current.paysSalary === true
-        };
+        var next = _normaliseNewProfession(current);
 
         if (updates.name !== undefined) {
             if (!_isNonEmptyString(updates.name)) {
@@ -503,64 +511,54 @@
             }
             next.name = updates.name.trim();
         }
-
         if (updates.skillLevel !== undefined) {
             if (!_isValidSkillLevel(updates.skillLevel)) {
                 return _fail('Skill level must be a number between 0 and 100.');
             }
             next.skillLevel = updates.skillLevel;
         }
-
         if (updates.startYear !== undefined) {
             if (!_isValidYearOrMissing(updates.startYear)) {
-                return _fail('startYear must be a number or null.');
+                return _fail('startYear must be a valid world year or null.');
             }
             next.startYear = updates.startYear;
         }
-
         if (updates.primary !== undefined) {
             next.primary = updates.primary === true;
         }
-
         if (updates.notes !== undefined) {
             next.notes = typeof updates.notes === 'string' ? updates.notes : '';
         }
-
         if (updates.specs !== undefined) {
             if (!Array.isArray(updates.specs)) {
                 return _fail('specs must be an array.');
             }
             next.specs = updates.specs.slice();
         }
-
         if (updates.baseSalary !== undefined) {
             if (!_isValidSalaryOrMissing(updates.baseSalary)) {
                 return _fail('baseSalary must be a non-negative number.');
             }
             next.baseSalary = updates.baseSalary;
         }
-
         if (updates.customSalary !== undefined) {
             if (!_isValidSalaryOrMissing(updates.customSalary)) {
                 return _fail('customSalary must be a non-negative number or null.');
             }
             next.customSalary = updates.customSalary;
         }
-
         if (updates.salaryHistory !== undefined) {
             if (!Array.isArray(updates.salaryHistory)) {
                 return _fail('salaryHistory must be an array.');
             }
             next.salaryHistory = updates.salaryHistory.slice();
         }
-
         if (updates.salaryLastCalculated !== undefined) {
             if (!_isValidYearOrMissing(updates.salaryLastCalculated)) {
-                return _fail('salaryLastCalculated must be a number or null.');
+                return _fail('salaryLastCalculated must be a valid world year or null.');
             }
             next.salaryLastCalculated = updates.salaryLastCalculated;
         }
-
         if (updates.paysSalary !== undefined) {
             next.paysSalary = updates.paysSalary === true;
         }
@@ -576,11 +574,6 @@
 
     /**
      * Removes a single profession from a character.
-     *
-     * If the removed profession was primary and other professions remain,
-     * no automatic promotion is performed. Primacy is a caller decision
-     * (RoleCommands / UI) and should be set explicitly via
-     * updateProfession(id, rid, { primary: true }).
      */
     function removeProfession(characterId, professionId) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
@@ -614,22 +607,17 @@
      * Removes a profession from every character that holds it.
      *
      * Returns { success: true, removedCount, characterIds }.
-     *
-     * Writes through CharacterState's batch primitive so persistence
-     * fires once. This is the operation RoleCommands.deleteRole uses to
-     * clean up assignments before deleting a role.
+     * Used by RoleCommands.deleteRole to clean up assignments before
+     * deleting a role.
      */
     function removeProfessionFromAll(professionId) {
         if (!_hasId(professionId)) return _fail('Profession id is required.');
 
-        var all = CS.getAllCharacters();
+        var projections = CS.getAllCharacters();
         var affectedIds = [];
 
-        for (var i = 0; i < all.length; i++) {
-            var projected = all[i];
-            // getAllCharacters returns projections that do NOT include
-            // professions. Use the live reference to inspect the array.
-            var live = CS._getLiveCharacterForMutation(projected.id);
+        for (var i = 0; i < projections.length; i++) {
+            var live = CS._getLiveCharacterForMutation(projections[i].id);
             if (!live) continue;
             if (!Array.isArray(live.professions)) continue;
             if (_findProfessionIndex(live.professions, professionId) === -1) continue;
@@ -640,10 +628,6 @@
             return _ok({ removedCount: 0, characterIds: [] });
         }
 
-        // Build and apply each patch. Each write is one applyDomainFieldPatch
-        // so persistence fires per character. The batch primitive in
-        // CharacterState.updateCharacters is character-owned only; we cannot
-        // route domain-owned field patches through it, so we loop.
         var applied = [];
         for (var j = 0; j < affectedIds.length; j++) {
             var id = affectedIds[j];
@@ -668,13 +652,8 @@
     }
 
     /**
-     * Replaces the entire profession array on a character.
-     *
-     * Reserved for import / migration paths that need to hand a canonical
-     * profession array directly to CharacterState. Ordinary callers must
-     * use addProfession / updateProfession / removeProfession.
-     *
-     * Validates each record's minimal shape.
+     * Replaces the entire profession array. Reserved for import / migration.
+     * Ordinary callers use add / update / remove.
      */
     function replaceProfessions(characterId, professions) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
@@ -715,15 +694,9 @@
     }
 
     // =========================================================================
-    // 6. PROFESSION PRIMACY
+    // 7. PROFESSION PRIMACY
     // =========================================================================
 
-    /**
-     * Sets a profession as primary and demotes all others.
-     *
-     * This is a character-commands concern because it writes professions.
-     * Callers (RoleCommands, UI) decide which profession should be primary.
-     */
     function setPrimaryProfession(characterId, professionId) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
         if (!_hasId(professionId)) return _fail('Profession id is required.');
@@ -737,17 +710,14 @@
         var existing = Array.isArray(character.professions)
             ? character.professions
             : [];
-
-        var targetIdx = _findProfessionIndex(existing, professionId);
-        if (targetIdx === -1) {
+        if (_findProfessionIndex(existing, professionId) === -1) {
             return _fail('Character does not have this profession.');
         }
 
         var nextProfessions = [];
         for (var i = 0; i < existing.length; i++) {
-            var p = existing[i];
-            var copy = _normaliseNewProfession(p);
-            copy.primary = (p.id === professionId);
+            var copy = _normaliseNewProfession(existing[i]);
+            copy.primary = (existing[i].id === professionId);
             nextProfessions.push(copy);
         }
 
@@ -757,9 +727,6 @@
         return _ok();
     }
 
-    /**
-     * Clears the primary flag on all professions.
-     */
     function clearPrimaryProfession(characterId) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
 
@@ -785,13 +752,312 @@
     }
 
     // =========================================================================
-    // 7. EXPORTS
+    // 8. SURNAME HISTORY
+    // =========================================================================
+
+    /**
+     * Records a surname change.
+     *
+     * @param {string} id
+     * @param {string} newSurname
+     * @param {number} [year]
+     * @param {string} [reason]
+     * @param {Object} [options]
+     * @param {string} [options.previousSurname]
+     * @param {string} [options.spouseId]
+     * @param {string} [options.notes]
+     */
+    function recordCharacterSurnameChange(id, newSurname, year, reason, options) {
+        if (!_hasId(id)) return _fail('Character id is required.');
+        if (typeof newSurname !== 'string') {
+            return _fail('New surname must be a string.');
+        }
+        if (_isMissing(options)) options = {};
+        if (!_isPlainObject(options)) {
+            return _fail('Options must be a plain object.');
+        }
+
+        var character = CS._getLiveCharacterForMutation(id);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        if (!_isValidYearOrMissing(year)) {
+            return _fail('year must be a valid world year or omitted.');
+        }
+        var changeYear = _resolveYear(year);
+
+        // Ensure surname history exists.
+        var history;
+        if (_isPlainObject(character.surnameHistory)) {
+            history = {
+                birthSurname: typeof character.surnameHistory.birthSurname === 'string'
+                    ? character.surnameHistory.birthSurname
+                    : (typeof character.surname === 'string' ? character.surname : ''),
+                entries: Array.isArray(character.surnameHistory.entries)
+                    ? character.surnameHistory.entries.slice()
+                    : [],
+                lastUpdated: _isMissing(character.surnameHistory.lastUpdated)
+                    ? _resolveYear(character.birthYear)
+                    : character.surnameHistory.lastUpdated
+            };
+        } else {
+            history = {
+                birthSurname: typeof character.surname === 'string' ? character.surname : '',
+                entries: [],
+                lastUpdated: _resolveYear(character.birthYear)
+            };
+        }
+
+        var previousSurname = _isMissing(options.previousSurname)
+            ? (typeof character.surname === 'string' ? character.surname : '')
+            : options.previousSurname;
+
+        var change = {
+            surname: newSurname,
+            year: changeYear,
+            reason: typeof reason === 'string' ? reason : 'custom',
+            previousSurname: previousSurname,
+            spouseId: _isMissing(options.spouseId) ? null : options.spouseId,
+            notes: _isMissing(options.notes) ? '' : options.notes
+        };
+
+        history.entries.push(change);
+        history.lastUpdated = changeYear;
+
+        var update = CS.updateCharacter(id, {
+            surname: newSurname,
+            surnameHistory: history
+        });
+        if (!update || update.success !== true) {
+            return _fail(update && update.reason
+                ? update.reason
+                : 'CharacterState refused the update.');
+        }
+
+        return _ok({ change: change });
+    }
+
+    /**
+     * Reverts the most recent surname change.
+     */
+    function revertCharacterSurnameChange(id) {
+        if (!_hasId(id)) return _fail('Character id is required.');
+
+        var character = CS._getLiveCharacterForMutation(id);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var history = character.surnameHistory;
+        if (!_isPlainObject(history)
+            || !Array.isArray(history.entries)
+            || history.entries.length === 0) {
+            return _fail('No surname changes to revert.');
+        }
+
+        var entries = history.entries.slice();
+        var lastChange = entries.pop();
+
+        var restoredSurname = lastChange.previousSurname
+            || history.birthSurname
+            || '';
+
+        var nextHistory = {
+            birthSurname: typeof history.birthSurname === 'string' ? history.birthSurname : '',
+            entries: entries,
+            lastUpdated: entries.length > 0
+                ? entries[entries.length - 1].year
+                : _resolveYear(character.birthYear)
+        };
+
+        var update = CS.updateCharacter(id, {
+            surname: restoredSurname,
+            surnameHistory: nextHistory
+        });
+        if (!update || update.success !== true) {
+            return _fail(update && update.reason
+                ? update.reason
+                : 'CharacterState refused the update.');
+        }
+
+        return _ok({ reverted: lastChange });
+    }
+
+    // =========================================================================
+    // 9. RELIGION ORCHESTRATION
+    // =========================================================================
+    //
+    // Delegates the religion record mutation to ReligionCommands if loaded,
+    // and commits the character-side religionId through CharacterState.
+    // ReligionCommands is expected to update character.religionId as part
+    // of its own transaction; this wrapper is retained so callers who
+    // invoke CharacterCommands.assignCharacterReligion keep working.
+
+    function _requireReligionCommands() {
+        if (typeof window.ReligionCommands === 'undefined') {
+            return { ok: false, reason: 'ReligionCommands module is not loaded.' };
+        }
+        return { ok: true };
+    }
+
+    /**
+     * Assigns a religion to a character.
+     * If the character already has a different religion, converts instead.
+     */
+    function assignCharacterReligion(characterId, religionId, options) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (!_hasId(religionId)) return _fail('Religion id is required.');
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        if (character.religionId === religionId) {
+            return _ok({ character: character, unchanged: true });
+        }
+
+        if (_isMissing(options)) options = {};
+        if (!_isPlainObject(options)) {
+            return _fail('Options must be a plain object.');
+        }
+
+        var deps = _requireReligionCommands();
+        if (!deps.ok) return _fail(deps.reason);
+
+        var yearResult = _isValidYearOrMissing(options.year);
+        if (!yearResult) {
+            return _fail('year must be a valid world year or omitted.');
+        }
+
+        var resolvedYear = _resolveYear(options.year);
+        var result;
+
+        if (_hasId(character.religionId)) {
+            result = window.ReligionCommands.convertCharacter(characterId, religionId, {
+                year: resolvedYear,
+                reason: _isMissing(options.reason) ? 'personal' : options.reason,
+                notes: _isMissing(options.notes) ? '' : options.notes
+            });
+        } else {
+            result = window.ReligionCommands.assignReligionToCharacter(characterId, religionId, {
+                year: resolvedYear,
+                reason: _isMissing(options.reason) ? 'assignment' : options.reason,
+                notes: _isMissing(options.notes) ? '' : options.notes
+            });
+        }
+
+        if (!result || result.success !== true) {
+            return _fail(result && result.reason
+                ? result.reason
+                : 'Religion mutation failed.');
+        }
+        return _ok(result);
+    }
+
+    /**
+     * Removes a character's religion.
+     */
+    function removeCharacterReligion(characterId) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        if (!_hasId(character.religionId)) {
+            return _fail('Character has no religion.');
+        }
+
+        var deps = _requireReligionCommands();
+        if (!deps.ok) return _fail(deps.reason);
+
+        var result = window.ReligionCommands.removeReligionFromCharacter(characterId);
+        if (!result || result.success !== true) {
+            return _fail(result && result.reason
+                ? result.reason
+                : 'Religion removal failed.');
+        }
+        return _ok(result);
+    }
+
+    // =========================================================================
+    // 10. FAMILY ORCHESTRATION
+    // =========================================================================
+    //
+    // Thin wrappers so existing callers that invoke
+    // CharacterCommands.addChildToParent / removeChildFromParent keep
+    // working. FamilyCommands is the canonical owner of the family graph.
+
+    function _requireFamilyCommands() {
+        if (typeof window.FamilyCommands === 'undefined') {
+            return { ok: false, reason: 'FamilyCommands module is not loaded.' };
+        }
+        return { ok: true };
+    }
+
+    /**
+     * Sets a parent relationship. Delegates to FamilyCommands.setParent.
+     */
+    function addChildToParent(childId, parentId, parentType, options) {
+        if (!_hasId(childId)) return _fail('childId is required.');
+        if (!_hasId(parentId)) return _fail('parentId is required.');
+
+        var deps = _requireFamilyCommands();
+        if (!deps.ok) return _fail(deps.reason);
+
+        if (_isMissing(options)) options = {};
+        if (!_isPlainObject(options)) {
+            return _fail('Options must be a plain object.');
+        }
+
+        var result = window.FamilyCommands.setParent(childId, parentId, parentType, {
+            biological: options.biological !== false,
+            startYear: _resolveYear(options.startYear),
+            notes: _isMissing(options.notes) ? '' : options.notes
+        });
+
+        if (!result || result.success !== true) {
+            return _fail(result && result.reason
+                ? result.reason
+                : 'Family mutation failed.');
+        }
+        return _ok(result);
+    }
+
+    /**
+     * Removes a parent relationship. Delegates to FamilyCommands.removeParent.
+     */
+    function removeChildFromParent(childId, parentType) {
+        if (!_hasId(childId)) return _fail('childId is required.');
+
+        var deps = _requireFamilyCommands();
+        if (!deps.ok) return _fail(deps.reason);
+
+        var result = window.FamilyCommands.removeParent(childId, parentType);
+        if (!result || result.success !== true) {
+            return _fail(result && result.reason
+                ? result.reason
+                : 'Family mutation failed.');
+        }
+        return _ok(result);
+    }
+
+    // =========================================================================
+    // 11. EXPORTS
     // =========================================================================
 
     window.CharacterCommands = {
         // Character-owned field updates
         updateCharacterFields: updateCharacterFields,
         updateCharactersFields: updateCharactersFields,
+        updateCharacter: updateCharacter,
 
         // Profession reads
         getProfession: getProfession,
@@ -806,7 +1072,19 @@
 
         // Profession primacy
         setPrimaryProfession: setPrimaryProfession,
-        clearPrimaryProfession: clearPrimaryProfession
+        clearPrimaryProfession: clearPrimaryProfession,
+
+        // Surname history
+        recordCharacterSurnameChange: recordCharacterSurnameChange,
+        revertCharacterSurnameChange: revertCharacterSurnameChange,
+
+        // Religion orchestration
+        assignCharacterReligion: assignCharacterReligion,
+        removeCharacterReligion: removeCharacterReligion,
+
+        // Family orchestration
+        addChildToParent: addChildToParent,
+        removeChildFromParent: removeChildFromParent
     };
 
     if (typeof module !== 'undefined' && module.exports) {
