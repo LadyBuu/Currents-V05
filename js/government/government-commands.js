@@ -1,7 +1,11 @@
 /**
  * government-commands.js
- * Write layer. Single transaction boundary per command. No toasts. No cross-domain mutation.
+ * Write layer. Single transaction boundary per command. No toasts.
  * Result contract: { success: true, data } | { success: false, reason, code? }
+ *
+ * Cross-domain mutations (leader, place government, justice, watch, salary
+ * payment) delegate to the owning domain. This module does not write to
+ * Location, Settlement, Household, or Character canonical data directly.
  */
 (function() {
     'use strict';
@@ -11,6 +15,7 @@
     var _LocationQueries     = window.LocationQueries;
     var _LocationCommands    = window.LocationCommands;
     var _HouseholdCommands   = window.HouseholdCommands;
+    var _HouseholdQueries    = window.HouseholdQueries;
     var _SettlementQueries   = window.SettlementQueries;
     var _SettlementGovCmds   = window.SettlementGovernmentCommands;
     var _Rules               = window.GovernmentRules;
@@ -42,6 +47,68 @@
 
     function _log(category, type, message, subjects) {
         if (typeof window.logEvent === 'function') window.logEvent(category, type, message, subjects || []);
+    }
+
+    var _warnedMissingHousehold = false;
+    function _warnHouseholdOnce() {
+        if (_warnedMissingHousehold) return;
+        _warnedMissingHousehold = true;
+        if (typeof console !== 'undefined' && console.warn) {
+            console.warn('government-commands.js: HouseholdCommands/HouseholdQueries not loaded; salary payment skipped.');
+        }
+    }
+
+    // ---- Salary payment (cross-domain delegation) ----------------------------
+    // Called immediately after a successful assignment. Salary is a cross-domain
+    // side effect, not a validity condition: if Household is unavailable the
+    // assignment still succeeds; the salary is skipped and logged once.
+    //
+    // Returns { paid: bool, amount?: number, householdId?: string, reason?: string }
+    // so the caller can include the outcome in the assignment result.
+
+    function _payAssignmentSalary(characterId, position, dept) {
+        if (!_HouseholdCommands || !_HouseholdQueries) {
+            _warnHouseholdOnce();
+            return { paid: false, reason: 'household-modules-unavailable' };
+        }
+        if (!window.GovernmentEconomy ||
+            typeof window.GovernmentEconomy.calculatePositionSalary !== 'function') {
+            return { paid: false, reason: 'economy-unavailable' };
+        }
+
+        var salary = window.GovernmentEconomy.calculatePositionSalary(dept.id, position.id);
+        if (salary == null || salary <= 0) {
+            return { paid: false, reason: 'no-salary' };
+        }
+
+        var household = _HouseholdQueries.getCharacterHousehold(characterId);
+        if (!household) {
+            return { paid: false, reason: 'no-household' };
+        }
+
+        var reason = 'Government salary: ' + position.name + ' (' + dept.name + ')';
+        var result = null;
+
+        if (typeof _HouseholdCommands.adjustWealth === 'function') {
+            result = _HouseholdCommands.adjustWealth(household.id, salary, { reason: reason });
+        } else if (typeof _HouseholdCommands.creditWealth === 'function') {
+            result = _HouseholdCommands.creditWealth(household.id, salary, reason);
+        } else {
+            return { paid: false, reason: 'no-wealth-command' };
+        }
+
+        if (!result || result.success === false) {
+            _log('economy', 'government_salary_failed',
+                'Failed to pay salary to ' + characterId + ': ' +
+                ((result && result.reason) || 'unknown'), []);
+            return { paid: false, reason: (result && result.reason) || 'command-failed' };
+        }
+
+        _log('economy', 'government_salary_paid',
+            'Salary ' + salary + ' gold paid to household "' + household.name + '" for ' + position.name,
+            []);
+
+        return { paid: true, amount: salary, householdId: household.id };
     }
 
     // ---- Department commands -------------------------------------------------
@@ -218,6 +285,16 @@
         _commit();
         _emitAssignmentEvent(result.data);
 
+        // Salary payment is a cross-domain side effect. It runs after the
+        // assignment commit so a salary failure cannot leave a half-applied
+        // assignment. The outcome is included in the result.
+        var salaryOutcome = _payAssignmentSalary(
+            characterId,
+            State._getPositionRecord(departmentId, positionId),
+            State._getDepartmentRecord(departmentId)
+        );
+        result.data.salary = salaryOutcome;
+
         return result;
     }
 
@@ -363,10 +440,19 @@
             return _fail('Bulk assignment aborted: ' + failures.length + ' invalid input(s)', 'ATOMIC_ABORT');
         }
 
+        var dept = State._getDepartmentRecord(departmentId);
+        var pos = State._getPositionRecord(departmentId, positionId);
+
         for (var j = 0; j < plans.length; j++) {
             var res = _applyAssignmentPlan(departmentId, positionId, plans[j].data);
-            if (res.success) applied.push(res.data);
-            else failures.push({ input: plans[j].input, reason: res.reason, code: res.code });
+            if (res.success) {
+                applied.push(res.data);
+                // Pay salary per successful assignment.
+                var salary = _payAssignmentSalary(plans[j].data.characterId, pos, dept);
+                res.data.salary = salary;
+            } else {
+                failures.push({ input: plans[j].input, reason: res.reason, code: res.code });
+            }
         }
 
         if (applied.length > 0) _commit();
@@ -562,7 +648,6 @@
     }
 
     function assignGovernmentToPlace(placeId, govTypeId, govStyle) {
-        // LocationCommands exposes the canonical command as assignGovernment.
         var result = _LocationCommands.assignGovernment(placeId, govTypeId, govStyle);
         if (result && result.success !== false) {
             _log('government', 'assigned_to_place', 'Government assigned to ' + placeId, []);
@@ -570,10 +655,6 @@
         return _wrapLocationResult(result);
     }
 
-    /**
-     * LocationCommands currently return `true` or throw. Wrap into the
-     * Government result contract.
-     */
     function _wrapLocationResult(result) {
         if (result === true || (result && result.success !== false)) {
             return _ok(result === true ? null : result.data || null);
@@ -634,12 +715,12 @@
         updateGovernmentType: updateGovernmentType,
         deleteGovernmentType: deleteGovernmentType,
 
-        // Leader / place government (delegated to LocationCommands)
+        // Leader / place government (delegated)
         assignLeader: assignLeader,
         endLeaderTerm: endLeaderTerm,
         assignGovernmentToPlace: assignGovernmentToPlace,
 
-        // Justice (delegated to SettlementGovernmentCommands)
+        // Justice (delegated)
         updateJusticeSeverity: updateJusticeSeverity,
         updateWatch: updateWatch,
 
