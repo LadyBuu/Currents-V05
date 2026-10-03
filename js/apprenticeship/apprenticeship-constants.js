@@ -19,7 +19,7 @@
  * APPRENTICESHIP_STAGES vs SKILL_LEVELS:
  *   These are DELIBERATELY DIFFERENT TAXONOMIES.
  *   - SKILL_LEVELS describes competence (Untrained → Master, 0-100).
- *   - APPRENTICESHIP_STAGES describes training relationship stage
+ *   - APPRENTICESHIP_STAGES describes training-relationship stage
  *     (Novice → Master, 0-100), with requiredYears attached.
  *   A character at skill 80 is an "Expert" by competence and a "Master"
  *   by apprenticeship stage. That is intentional.
@@ -41,7 +41,7 @@ const APPRENTICESHIP_STATUS = {
 };
 
 const APPRENTICESHIP_ROLES = {
-    MASTER:    'master',
+    MASTER:     'master',
     APPRENTICE: 'apprentice'
 };
 
