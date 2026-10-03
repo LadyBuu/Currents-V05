@@ -19,21 +19,27 @@
  *   facade and is consulted only at initial load.
  *
  *   CharacterState does NOT own:
- *     - family semantics            → family-queries.js / family-rules.js
- *     - professional semantics      → professional-queries.js / role-*
- *     - relationship semantics      → relationship-*
- *     - location movement history   → location-*
- *     - rank semantics              → rank-*
- *     - lifecycle policy            → mortality-rules.js
- *     - domain rule validation      → each domain's own rules module
+ *     - family semantics            -> family-rules.js / family-queries.js
+ *     - professional semantics      -> future professional-* domain
+ *     - relationship semantics      -> future relationship-* domain
+ *     - location movement history   -> location-*
+ *     - rank semantics              -> rank-*
+ *     - lifecycle policy            -> mortality-rules.js
+ *     - domain rule validation      -> each domain's own rules module
  *
  *   CharacterState indexes embedded fields because they live on the
  *   character record. Indexing a field does not mean owning its meaning.
  *
+ * REMOVED FIELDS:
+ *   The parent-child compatibility mirrors (motherId, fatherId, children,
+ *   adoptedParents, adoptedChildren) are no longer part of the character
+ *   record. Family relationships live in FamilyState (family-state.js).
+ *   The fields are neither indexed nor accepted by any write primitive.
+ *
  * MUTATION PRIMITIVES:
  *   - updateCharacter(id, patch)          character-owned field patch
  *   - updateCharacters(changes)           batch character-owned field patch
- *   - applyDomainFieldPatch(id, patch)    domain-owned embedded field patch
+ *   - applyDomainFieldPatch(id, patch)    embedded domain field write
  *   - addCharacter(character)             append a fully-built character
  *   - addCharacters(characters)           append many fully-built characters
  *   - removeCharacter(id)                 delete from collection
@@ -46,20 +52,14 @@
  *     - dispatch exactly one characterChanged event
  *     - never call saveMasterData directly
  *
- *   updateCharacter / updateCharacters gate on character-owned fields.
- *   applyDomainFieldPatch bypasses that gate and is reserved for domain
- *   commands that own an embedded character field (family-commands.js for
- *   motherId/fatherId/adoptedParents, role-commands orchestration via
- *   character-commands.js for professions).
- *
  * READ CONTRACT:
  *   Public reads return defensive projections or IDs. No public read
  *   returns a live canonical character object. Authorized mutation code
  *   calls _getLiveCharacterForMutation(id).
  *
  * SEMANTIC RULES:
- *   - Missing data is not fabricated. Missing character → null.
- *     Missing collection → [].
+ *   - Missing data is not fabricated. Missing character -> null.
+ *     Missing collection -> [].
  *   - Year 0 is preserved.
  *   - isDeceased === undefined means living. Any other non-boolean value
  *     is malformed and excluded from byStatus.
@@ -128,12 +128,21 @@
         birthplaceId: true,
         currentLocationId: true,
         household: true,
+        householdHistory: true,
+        moves: true,
         notes: true,
         epithet: true,
         appearance: true,
         religionId: true,
         religionHistory: true,
         cultureId: true,
+        activeRankId: true,
+        activeRankNumber: true,
+        isMaster: true,
+        masterId: true,
+        masterProfessionId: true,
+        apprenticeshipDetails: true,
+        friendshipDetails: true,
         isDeleted: true,
         deletedAt: true,
         createdAt: true,
@@ -420,6 +429,7 @@
             household: _isMissing(c.household) ? null : c.household,
             religionId: _isMissing(c.religionId) ? null : c.religionId,
             cultureId: _isMissing(c.cultureId) ? null : c.cultureId,
+            activeRankId: _isMissing(c.activeRankId) ? null : c.activeRankId,
             epithet: _isMissing(c.epithet) ? '' : c.epithet,
             notes: _isMissing(c.notes) ? '' : c.notes,
             appearance: c.appearance && typeof c.appearance === 'object'
@@ -441,7 +451,7 @@
     }
 
     // =========================================================================
-    // 10. PUBLIC API — COLLECTION READ
+    // 10. PUBLIC API - COLLECTION READ
     // =========================================================================
 
     function getAllCharacters() {
@@ -469,7 +479,7 @@
     }
 
     // =========================================================================
-    // 11. PUBLIC API — INDEX QUERIES (PROJECTIONS)
+    // 11. PUBLIC API - INDEX QUERIES (PROJECTIONS)
     // =========================================================================
 
     function getCharactersByCurrentLocation(locationId) {
@@ -576,7 +586,7 @@
     }
 
     // =========================================================================
-    // 12. WRITE PRIMITIVES — VALIDATION
+    // 12. WRITE PRIMITIVES - VALIDATION
     // =========================================================================
 
     function _isCharacterOwnedField(key) {
@@ -632,13 +642,9 @@
     }
 
     // =========================================================================
-    // 13. WRITE PRIMITIVES — CHARACTER-OWNED FIELD UPDATES
+    // 13. WRITE PRIMITIVES - CHARACTER-OWNED FIELD UPDATES
     // =========================================================================
 
-    /**
-     * Merges a character-owned patch into a canonical record.
-     * Shallow merge. Nested fields are replacement values.
-     */
     function updateCharacter(characterId, updates) {
         if (!_hasId(characterId)) {
             return { success: false, reason: 'Character id is required.' };
@@ -665,9 +671,6 @@
         return { success: true };
     }
 
-    /**
-     * Batch character-owned patch. Rejects duplicate ids and unknown fields.
-     */
     function updateCharacters(changes) {
         if (!Array.isArray(changes)) {
             return { success: false, reason: 'changes must be an array.' };
@@ -724,13 +727,6 @@
         return { success: true };
     }
 
-    /**
-     * Domain-owned embedded field write.
-     *
-     * Reserved for FamilyCommands (motherId / fatherId / adoptedParents)
-     * and RoleCommands orchestration via CharacterCommands for professions.
-     * The calling command is responsible for domain rule validation.
-     */
     function applyDomainFieldPatch(characterId, updates) {
         if (!_hasId(characterId)) {
             return { success: false, reason: 'Character id is required.' };
@@ -758,16 +754,9 @@
     }
 
     // =========================================================================
-    // 14. WRITE PRIMITIVES — COLLECTION MEMBERSHIP
+    // 14. WRITE PRIMITIVES - COLLECTION MEMBERSHIP
     // =========================================================================
 
-    /**
-     * Appends a fully-built character (from CharacterFactory) to the
-     * canonical collection. Rejects characters missing an id or name, and
-     * rejects duplicate ids.
-     *
-     * This is the entry point used by character-creation-commands.js.
-     */
     function addCharacter(character) {
         if (!_isPlainObject(character)) {
             return { success: false, reason: 'Character must be a plain object.' };
@@ -791,9 +780,6 @@
         return { success: true, character: character };
     }
 
-    /**
-     * Appends many characters. Validates all first, then commits once.
-     */
     function addCharacters(characters) {
         if (!Array.isArray(characters)) {
             return { success: false, reason: 'characters must be an array.' };
@@ -840,11 +826,6 @@
         return { success: true, characterIds: addedIds };
     }
 
-    /**
-     * Removes a character from the canonical collection.
-     * Does not clean up cross-domain references; that is the caller's
-     * responsibility (see character-deletion-commands.js).
-     */
     function removeCharacter(id) {
         if (!_hasId(id)) {
             return { success: false, reason: 'Character id is required.' };
@@ -865,9 +846,6 @@
         return { success: true, character: removed };
     }
 
-    /**
-     * Removes many characters. Validates all ids first, then commits once.
-     */
     function removeCharacters(ids) {
         if (!Array.isArray(ids)) {
             return { success: false, reason: 'ids must be an array.' };
@@ -931,17 +909,14 @@
     // =========================================================================
 
     window.CharacterState = {
-        // Subscriptions
         subscribe: subscribe,
 
-        // Collection reads (projections)
         getAllCharacters: getAllCharacters,
         getTotalCharacterCount: getTotalCharacterCount,
         getCharacter: getCharacter,
         getCharacterId: getCharacterId,
         hasCharacter: hasCharacter,
 
-        // Index reads (projections)
         getCharactersByCurrentLocation: getCharactersByCurrentLocation,
         getCharactersByBirthplace: getCharactersByBirthplace,
         getCharactersByHousehold: getCharactersByHousehold,
@@ -956,23 +931,17 @@
         getCharactersByCulture: getCharactersByCulture,
         searchByName: searchByName,
 
-        // Character-owned field writes
         updateCharacter: updateCharacter,
         updateCharacters: updateCharacters,
-
-        // Domain-owned embedded field write
         applyDomainFieldPatch: applyDomainFieldPatch,
 
-        // Collection membership writes
         addCharacter: addCharacter,
         addCharacters: addCharacters,
         removeCharacter: removeCharacter,
         removeCharacters: removeCharacters,
 
-        // Internal live-reference access (authorized mutation only)
         _getLiveCharacterForMutation: _getLiveCharacterForMutation,
 
-        // Transitional
         refresh: refresh
     };
 
