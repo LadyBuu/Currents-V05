@@ -1,67 +1,80 @@
 /**
- * =============================================================================
- * STILL WATERS - EDUCATION COMMANDS (education-commands.js)
- * =============================================================================
- * 
- * This file contains ALL write operations for education:
- * - Institution CRUD
- * - Teacher management (NO SKILL CHECKS)
- * - Student management
- * - Headmaster management
- * - Reputation management
- * - Institutions needing teachers
- * - Tuition management
- * - SCHOOL OWNERSHIP AND FUNDING
- * - GRADUATION WITH ROLE GRANTING
- * - SETTLEMENT BUDGET RECEIPT
- * - SETTLEMENT FUNDING SUMMARY
- * - DEMOLISH INSTITUTION
- * - REBUILD INSTITUTION
- * - RELIGIOUS SCHOOL CREATION
- * 
- * DEPENDENCIES:
- *   - education-state.js (EducationState)
- *   - education-constants.js (INSTITUTION_TYPES, EDUCATION_LEVELS)
- *   - education-history.js (recordTeacherHired, recordTeacherLeft, etc.)
- *   - accessors.js (getCharacterById, getCharacters, getPlaceById)
- *   - ids.js (generateId)
- *   - time.js (getCurrentYearSafe)
- *   - roles/role-state.js (RoleState)
- *   - roles/role-queries.js (RoleQueries)
- *   - roles/role-commands.js (RoleCommands)
- * 
- * =============================================================================
+ * STILL WATERS - EDUCATION COMMANDS
+ * All write operations for education. Commands mutate state via
+ * EducationState._* primitives and return results. No persistence, no toasts,
+ * no history saves. Callers own the save boundary.
  */
 
 (function() {
     'use strict';
 
-    // =========================================================================
-    // 1. RECURSION GUARDS
-    // =========================================================================
+    // --- Dependencies: required unless noted ---
 
-    var _processingCommand = false;
+    function _requireFn(name, getter) {
+        var fn = getter();
+        if (typeof fn !== 'function') {
+            throw new Error('education-commands.js requires ' + name);
+        }
+        return fn;
+    }
 
-    // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
-    // =========================================================================
+    function _state() {
+        if (typeof window.EducationState === 'undefined') {
+            throw new Error('education-commands.js requires EducationState');
+        }
+        return window.EducationState;
+    }
+
+    function _rules() {
+        if (typeof window.EducationRules === 'undefined') {
+            throw new Error('education-commands.js requires EducationRules');
+        }
+        return window.EducationRules;
+    }
+
+    function _history() {
+        if (typeof window.EducationHistory === 'undefined') {
+            throw new Error('education-commands.js requires EducationHistory');
+        }
+        return window.EducationHistory;
+    }
+
+    function _learning() {
+        if (typeof window.EducationLearning === 'undefined') {
+            throw new Error('education-commands.js requires EducationLearning');
+        }
+        return window.EducationLearning;
+    }
 
     function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(id);
-        }
-        return null;
+        return _requireFn('getCharacterById', function() { return window.getCharacterById; })(id);
     }
 
     function _getCharacters() {
-        if (typeof window.getCharacters === 'function') {
-            return window.getCharacters();
+        return _requireFn('getCharacters', function() { return window.getCharacters; })();
+    }
+
+    function _getPlaceById(id) {
+        return _requireFn('getPlaceById', function() { return window.getPlaceById; })(id);
+    }
+
+    function _getCurrentYear() {
+        return _requireFn('getCurrentYearSafe', function() { return window.getCurrentYearSafe; })();
+    }
+
+    function _generateId(prefix) {
+        return _requireFn('generateId', function() { return window.generateId; })(prefix);
+    }
+
+    function _persist() {
+        if (typeof window.saveMasterData !== 'function') {
+            throw new Error('education-commands.js requires saveMasterData');
         }
-        return [];
+        window.saveMasterData();
     }
 
     function _getRoleById(id) {
-        if (typeof window.RoleState !== 'undefined' && window.RoleState.getRole) {
+        if (typeof window.RoleState !== 'undefined' && typeof window.RoleState.getRole === 'function') {
             return window.RoleState.getRole(id);
         }
         if (typeof window.getRoleById === 'function') {
@@ -70,28 +83,81 @@
         return null;
     }
 
-    function _getRoles() {
-        if (typeof window.RoleState !== 'undefined' && window.RoleState.getAllRoles) {
-            return window.RoleState.getAllRoles();
+    function _getReligionById(id) {
+        if (typeof window.ReligionState !== 'undefined' &&
+            typeof window.ReligionState.getReligion === 'function') {
+            return window.ReligionState.getReligion(id);
         }
-        if (typeof window.getRoles === 'function') {
-            return window.getRoles();
-        }
-        return [];
+        return null;
     }
 
-    function _getCharactersWithRoleDetails(roleId) {
-        if (typeof window.RoleQueries !== 'undefined' && window.RoleQueries.getCharactersWithRoleDetails) {
-            return window.RoleQueries.getCharactersWithRoleDetails(roleId);
+    function _getHousehold(id) {
+        if (typeof window.HouseholdState !== 'undefined' &&
+            typeof window.HouseholdState.getHousehold === 'function') {
+            return window.HouseholdState.getHousehold(id);
         }
-        if (typeof window.getCharactersWithRoleDetails === 'function') {
-            return window.getCharactersWithRoleDetails(roleId);
+        return null;
+    }
+
+    function _getCharacterHousehold(characterId) {
+        if (typeof window.getCharacterHousehold === 'function') {
+            return window.getCharacterHousehold(characterId);
         }
-        return [];
+        if (typeof window.HouseholdState !== 'undefined' &&
+            typeof window.HouseholdState.getCharacterHousehold === 'function') {
+            return window.HouseholdState.getCharacterHousehold(characterId);
+        }
+        return null;
+    }
+
+    function _getHouseholdWealth(householdId) {
+        if (typeof window.HouseholdEconomy !== 'undefined' &&
+            typeof window.HouseholdEconomy.getHouseholdWealth === 'function') {
+            return window.HouseholdEconomy.getHouseholdWealth(householdId);
+        }
+        var h = _getHousehold(householdId);
+        return h ? (h.wealth || 0) : 0;
+    }
+
+    function _updateHouseholdWealth(householdId, delta, reason) {
+        if (typeof window.HouseholdEconomy !== 'undefined' &&
+            typeof window.HouseholdEconomy.updateHouseholdWealth === 'function') {
+            return window.HouseholdEconomy.updateHouseholdWealth(householdId, delta, reason);
+        }
+        if (typeof window.updateHouseholdWealth === 'function') {
+            return window.updateHouseholdWealth(householdId, delta, reason);
+        }
+        throw new Error('education-commands.js requires a household wealth updater');
+    }
+
+    function _trackTuitionExpense(householdId, tuition, institutionId, studentId) {
+        if (typeof window.HouseholdEconomy !== 'undefined' &&
+            typeof window.HouseholdEconomy.trackTuitionExpense === 'function') {
+            return window.HouseholdEconomy.trackTuitionExpense(householdId, tuition, institutionId, studentId);
+        }
+        return false;
+    }
+
+    function _getSettlementProsperity(locationId) {
+        if (typeof window.SettlementQueries !== 'undefined' &&
+            typeof window.SettlementQueries.getSettlementSummary === 'function') {
+            var summary = window.SettlementQueries.getSettlementSummary(locationId);
+            return summary ? (summary.prosperity || 50) : 50;
+        }
+        return 50;
+    }
+
+    function _updateSettlementWealth(locationId, delta, reason) {
+        if (typeof window.SettlementCommands !== 'undefined' &&
+            typeof window.SettlementCommands.updateWealth === 'function') {
+            return window.SettlementCommands.updateWealth(locationId, delta, reason);
+        }
+        return false;
     }
 
     function _assignRoleToCharacter(characterId, roleId, options) {
-        if (typeof window.RoleCommands !== 'undefined' && window.RoleCommands.assignRoleToCharacter) {
+        if (typeof window.RoleCommands !== 'undefined' &&
+            typeof window.RoleCommands.assignRoleToCharacter === 'function') {
             return window.RoleCommands.assignRoleToCharacter(characterId, roleId, options);
         }
         if (typeof window.assignRoleToCharacter === 'function') {
@@ -100,1984 +166,1548 @@
         return null;
     }
 
-    function _getPlaceById(id) {
-        if (typeof window.getPlaceById === 'function') {
-            return window.getPlaceById(id);
+    function _updateProfessionSkill(characterId, roleId, level) {
+        if (typeof window.RoleCommands !== 'undefined' &&
+            typeof window.RoleCommands.updateProfessionSkill === 'function') {
+            return window.RoleCommands.updateProfessionSkill(characterId, roleId, level);
+        }
+        if (typeof window.updateProfessionSkill === 'function') {
+            return window.updateProfessionSkill(characterId, roleId, level);
         }
         return null;
     }
 
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
-    function _generateId(prefix) {
-        if (typeof window.generateId === 'function') {
-            return window.generateId(prefix);
-        }
-        return prefix + '_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
-    }
-
-    function _logEvent(category, type, message, subjects) {
-        if (typeof window.logEvent === 'function') {
-            window.logEvent(category, type, message, subjects);
-        }
-    }
-
-    function _showToast(message, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(message, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(message, type);
-        }
-    }
-
-    function _recordTeacherHired(institutionId, teacherId, subjectId, year, notes) {
-        if (typeof window.recordTeacherHired === 'function') {
-            return window.recordTeacherHired(institutionId, teacherId, subjectId, year, notes);
-        }
-        return false;
-    }
-
-    function _recordTeacherLeft(institutionId, teacherId, year, reason, notes) {
-        if (typeof window.recordTeacherLeft === 'function') {
-            return window.recordTeacherLeft(institutionId, teacherId, year, reason, notes);
-        }
-        return false;
-    }
-
-    function _recordStudentEnrolled(institutionId, studentId, year, notes) {
-        if (typeof window.recordStudentEnrolled === 'function') {
-            return window.recordStudentEnrolled(institutionId, studentId, year, notes);
-        }
-        return false;
-    }
-
-    function _recordStudentGraduated(institutionId, studentId, year, notes) {
-        if (typeof window.recordStudentGraduated === 'function') {
-            return window.recordStudentGraduated(institutionId, studentId, year, notes);
-        }
-        return false;
-    }
-
-    function _recordStudentWithdrew(institutionId, studentId, year, reason, notes) {
-        if (typeof window.recordStudentWithdrew === 'function') {
-            return window.recordStudentWithdrew(institutionId, studentId, year, reason, notes);
-        }
-        return false;
-    }
-
-    function _recordHeadmasterAppointed(institutionId, characterId, title, year, notes) {
-        if (typeof window.recordHeadmasterAppointed === 'function') {
-            return window.recordHeadmasterAppointed(institutionId, characterId, title, year, notes);
-        }
-        return false;
-    }
-
-    function _recordHeadmasterEnded(institutionId, characterId, year, reason, notes) {
-        if (typeof window.recordHeadmasterEnded === 'function') {
-            return window.recordHeadmasterEnded(institutionId, characterId, year, reason, notes);
-        }
-        return false;
-    }
-
-    function _recordInstitutionRenamed(institutionId, oldName, newName, year, reason) {
-        if (typeof window.recordInstitutionRenamed === 'function') {
-            return window.recordInstitutionRenamed(institutionId, oldName, newName, year, reason);
-        }
-        return false;
-    }
-
-    function _getInstitutionTypes() {
-        if (typeof window.INSTITUTION_TYPES !== 'undefined') {
-            return window.INSTITUTION_TYPES;
-        }
-        return {};
-    }
-
-    function _getReligion(religionId) {
-        if (typeof window.ReligionState !== 'undefined' &&
-            typeof window.ReligionState.getReligion === 'function') {
-            return window.ReligionState.getReligion(religionId);
+    function _getCharactersWithRoleDetails(roleId) {
+        if (typeof window.RoleQueries !== 'undefined' &&
+            typeof window.RoleQueries.getCharactersWithRoleDetails === 'function') {
+            return window.RoleQueries.getCharactersWithRoleDetails(roleId);
         }
         return null;
     }
 
-    // =========================================================================
-    // 3. TUITION HELPERS
-    // =========================================================================
+    // --- Result helper ---
 
-    function _getTuitionTypeMultiplier(typeId) {
-        return window.TUITION_TYPE_MULTIPLIERS?.[typeId] || 1.0;
+    function _ok(extra) {
+        return Object.assign({ success: true }, extra || {});
+    }
+    function _fail(reason, extra) {
+        return Object.assign({ success: false, reason: reason }, extra || {});
     }
 
-    function _calculateTuitionAmount(institution, year) {
-        if (!institution) return { success: false, reason: 'Institution not found' };
+    // --- Tuition calculation ---
 
-        // PUBLIC SCHOOLS: tuition is always 0
+    function _calculateTuition(institution, year) {
+        var TYPES = window.INSTITUTION_TYPES;
+        var TUITION = window.TUITION_DEFAULTS;
+        var MULTIPLIERS = window.TUITION_TYPE_MULTIPLIERS;
+        if (!TYPES || !TUITION || !MULTIPLIERS) {
+            throw new Error('education-commands.js requires education constants for tuition');
+        }
+
+        var typeDef = TYPES[(institution.type || '').toUpperCase()] || null;
+        if (!typeDef && institution.type) {
+            // Try lookup by id, not uppercase key
+            for (var k in TYPES) {
+                if (TYPES[k].id === institution.type) { typeDef = TYPES[k]; break; }
+            }
+        }
+        var baseTuition = typeDef
+            ? typeDef.baseTuition
+            : TUITION.defaultTuition;
+
+        // Public: always free.
         if (institution.ownershipType === 'public') {
             return {
                 success: true,
                 tuition: 0,
                 breakdown: {
-                    baseTuition: institution.tuitionPerYear || 10,
-                    reason: 'Public school - free tuition',
-                    ownershipType: 'public'
+                    ownershipType: 'public',
+                    baseTuition: baseTuition,
+                    reason: 'Public school - free tuition'
                 },
                 manualOverride: 0
             };
         }
 
-        // RELIGIOUS SCHOOLS: tuition is often lower or waived
-        if (institution.ownershipType === 'religious') {
-            var baseTuition = institution.tuitionPerYear || 10;
-            // Religious schools often charge less
-            var religiousDiscount = 0.7; // 30% discount for religious schools
-            var tuition = Math.max(0, Math.round(baseTuition * religiousDiscount));
-
-            // Check for waiver
-            if (institution.waiveTuition === true) {
-                return {
-                    success: true,
-                    tuition: 0,
-                    breakdown: {
-                        baseTuition: baseTuition,
-                        reason: 'Religious school - tuition waived',
-                        ownershipType: 'religious'
-                    },
-                    manualOverride: 0
-                };
-            }
-
-            return {
-                success: true,
-                tuition: tuition,
-                breakdown: {
-                    baseTuition: baseTuition,
-                    reason: 'Religious school - discounted tuition',
-                    ownershipType: 'religious',
-                    discount: religiousDiscount
-                },
-                manualOverride: null
-            };
-        }
-
-        // PRIVATE SCHOOLS: check for manual override
+        // Manual override (private or religious).
         if (institution.customTuition !== null && institution.customTuition !== undefined) {
             return {
                 success: true,
                 tuition: Math.max(0, institution.customTuition),
                 breakdown: {
-                    baseTuition: institution.tuitionPerYear || 10,
+                    ownershipType: institution.ownershipType,
+                    baseTuition: baseTuition,
                     customOverride: institution.customTuition,
-                    reason: 'Manual override applied',
-                    ownershipType: 'private'
+                    reason: 'Manual override applied'
                 },
                 manualOverride: institution.customTuition
             };
         }
 
-        // Check if tuition is waived (only for private)
+        // Waiver.
         if (institution.waiveTuition === true) {
             return {
                 success: true,
                 tuition: 0,
                 breakdown: {
-                    baseTuition: institution.tuitionPerYear || 10,
-                    reason: 'Tuition waived',
-                    ownershipType: 'private'
+                    ownershipType: institution.ownershipType,
+                    baseTuition: baseTuition,
+                    reason: 'Tuition waived'
                 },
                 manualOverride: 0
             };
         }
 
-        var baseTuition = institution.tuitionPerYear || window.DEFAULT_TUITION || 10;
+        // Religious: 30% discount.
+        if (institution.ownershipType === 'religious') {
+            var religiousTuition = Math.max(0, Math.round(baseTuition * 0.7));
+            return {
+                success: true,
+                tuition: religiousTuition,
+                breakdown: {
+                    ownershipType: 'religious',
+                    baseTuition: baseTuition,
+                    discount: 0.7,
+                    reason: 'Religious school - discounted tuition'
+                },
+                manualOverride: null
+            };
+        }
 
-        // Reputation modifier: 0.75 to 1.25 based on reputation (0-100)
-        var reputation = institution.reputation || 50;
-        var neutral = window.TUITION_REPUTATION_NEUTRAL || 50;
-        var minMod = window.TUITION_REPUTATION_MODIFIER_MIN || 0.75;
-        var maxMod = window.TUITION_REPUTATION_MODIFIER_MAX || 1.25;
+        // Private: reputation modifier and type multiplier.
+        var reputation = (institution.reputation !== undefined) ? institution.reputation : TUITION.reputationNeutral;
+        var neutral = TUITION.reputationNeutral;
+        var minMod = TUITION.reputationModifierMin;
+        var maxMod = TUITION.reputationModifierMax;
 
         var repModifier;
         if (reputation <= neutral) {
-            repModifier = minMod + (reputation / neutral) * (1.0 - minMod);
+            repModifier = neutral > 0
+                ? minMod + (reputation / neutral) * (1.0 - minMod)
+                : minMod;
         } else {
             repModifier = 1.0 + ((reputation - neutral) / (100 - neutral)) * (maxMod - 1.0);
         }
         repModifier = Math.min(maxMod, Math.max(minMod, repModifier));
 
-        var typeMultiplier = _getTuitionTypeMultiplier(institution.type);
-
-        var tuition = baseTuition * repModifier * typeMultiplier;
-        tuition = Math.max(0, Math.round(tuition));
+        var typeMultiplier = MULTIPLIERS[institution.type] || 1.0;
+        var tuition = Math.max(0, Math.round(baseTuition * repModifier * typeMultiplier));
 
         return {
             success: true,
             tuition: tuition,
             breakdown: {
+                ownershipType: 'private',
                 baseTuition: baseTuition,
                 reputation: reputation,
                 repModifier: Math.round(repModifier * 100) / 100,
                 typeMultiplier: typeMultiplier,
-                customOverride: null,
-                ownershipType: 'private'
+                customOverride: null
             },
             manualOverride: null
         };
     }
 
-    function _getCharacterHousehold(characterId) {
-        if (typeof window.getCharacterHousehold === 'function') {
-            return window.getCharacterHousehold(characterId);
+    // =====================================================================
+    // Institution CRUD
+    // =====================================================================
+
+    /**
+     * Create an institution.
+     * Accepts a single options object: { name, typeId, locationId, ... }
+     * Also accepts positional (name, typeId, locationId, options) for legacy.
+     */
+    function createInstitution(arg1, arg2, arg3, arg4) {
+        var opts;
+        if (typeof arg1 === 'object' && arg1 !== null) {
+            opts = arg1;
+        } else {
+            opts = Object.assign({}, arg4 || {}, {
+                name: arg1,
+                typeId: arg2,
+                locationId: arg3
+            });
         }
-        if (typeof window.HouseholdState !== 'undefined' && window.HouseholdState.getCharacterHousehold) {
-            return window.HouseholdState.getCharacterHousehold(characterId);
+
+        if (!opts.name || typeof opts.name !== 'string' || opts.name.trim() === '') {
+            return _fail('Institution name is required');
         }
-        return null;
+
+        var TYPES = window.INSTITUTION_TYPES;
+        if (!TYPES) throw new Error('education-commands.js requires INSTITUTION_TYPES');
+
+        var typeDef = null;
+        var typeKey = (opts.typeId || '').toString().toUpperCase();
+        if (TYPES[typeKey]) typeDef = TYPES[typeKey];
+        else {
+            for (var k in TYPES) {
+                if (TYPES[k].id === opts.typeId) { typeDef = TYPES[k]; break; }
+            }
+        }
+        if (!typeDef) return _fail('Invalid institution type: ' + opts.typeId);
+
+        var location = _getPlaceById(opts.locationId);
+        if (!location) return _fail('Location not found: ' + opts.locationId);
+
+        // Religion: optional. If provided, must exist.
+        var religionId = opts.religionId || null;
+        var religionName = null;
+        var isReligiousSchool = opts.isReligiousSchool === true;
+        if (religionId) {
+            var religion = _getReligionById(religionId);
+            if (!religion) return _fail('Religion not found: ' + religionId);
+            religionName = religion.name;
+            // A school with a religion is a religious school unless explicitly told otherwise.
+            if (opts.isReligiousSchool === undefined) isReligiousSchool = true;
+        }
+
+        // Ownership. Default public.
+        var ownershipType = opts.ownershipType || 'public';
+        var ownerId = opts.ownerId || null;
+        var ownerType = opts.ownerType || null;
+        var ownerName = opts.ownerName || null;
+
+        // Religious ownership requires a religion.
+        if (ownershipType === 'religious' && !religionId) {
+            return _fail('Religious ownership requires a religionId');
+        }
+        // Private ownership requires an owner.
+        if (ownershipType === 'private' && !ownerId) {
+            return _fail('Private institutions require an ownerId');
+        }
+
+        // Validate owner if provided.
+        if (ownerId) {
+            if (ownerType === 'character') {
+                var ownerChar = _getCharacterById(ownerId);
+                if (!ownerChar) return _fail('Owner character not found: ' + ownerId);
+                if (!ownerName) ownerName = ownerChar.name + (ownerChar.surname ? ' ' + ownerChar.surname : '');
+            } else if (ownerType === 'household') {
+                var ownerHousehold = _getHousehold(ownerId);
+                if (!ownerHousehold) return _fail('Owner household not found: ' + ownerId);
+                if (!ownerName) ownerName = ownerHousehold.name;
+            } else if (ownerType === 'religion') {
+                var ownerReligion = _getReligionById(ownerId);
+                if (!ownerReligion) return _fail('Owner religion not found: ' + ownerId);
+                if (!ownerName) ownerName = ownerReligion.name;
+            } else {
+                return _fail('Invalid ownerType: ' + ownerType);
+            }
+        }
+
+        var currentYear = _getCurrentYear();
+        var curriculum = opts.curriculum || [
+            { type: 'subject', id: 'literacy',   name: 'Literacy',          icon: '⌇', baseLearnRate: 15 },
+            { type: 'subject', id: 'basic_math', name: 'Basic Mathematics', icon: '⌇', baseLearnRate: 10 }
+        ];
+
+        var institution = {
+            id: _generateId('edu'),
+            name: opts.name.trim(),
+            type: typeDef.id,
+            typeName: typeDef.name,
+            icon: typeDef.icon,
+            locationId: opts.locationId,
+            locationName: location.displayName,
+            students: [],
+            graduates: [],
+            teachers: [],
+            foundedYear: opts.foundedYear !== undefined ? opts.foundedYear : currentYear,
+            curriculum: curriculum,
+            taughtRoles: opts.taughtRoles || [],
+            isSpecialized: !!(opts.specializationCategory && (opts.taughtRoles || []).length > 0),
+            specializationCategory: opts.specializationCategory || null,
+            reputation: opts.reputation !== undefined ? opts.reputation : typeDef.baseReputation,
+            maxStudents: opts.maxStudents || typeDef.maxStudents,
+            description: opts.description || typeDef.description,
+            requiredYears: opts.requiredYears || typeDef.requiredYears,
+            skillGainPerYear: opts.skillGainPerYear || typeDef.skillGainPerYear,
+            notes: opts.notes || '',
+            headmaster: null,
+            headmasterHistory: [],
+            history: [],
+
+            baseTuition: typeDef.baseTuition,
+            tuitionPerYear: (opts.tuitionPerYear !== undefined) ? opts.tuitionPerYear : typeDef.baseTuition,
+            customTuition: null,
+            tuitionHistory: [],
+            waiveTuition: opts.waiveTuition === true,
+
+            ownershipType: ownershipType,
+            ownerId: ownerId,
+            ownerType: ownerType,
+            ownerName: ownerName,
+
+            governmentFunding: 0,
+            governmentFundingHistory: [],
+            annualIncome: 0,
+            annualExpenses: 0,
+            netProfit: 0,
+            profitHistory: [],
+
+            status: 'active',
+            demolishedAt: null,
+            demolishedReason: null,
+            destroyedBy: null,
+            disasterId: null,
+            demolishedRecord: null,
+
+            religionId: religionId,
+            religionName: religionName,
+            isReligiousSchool: isReligiousSchool,
+            clergyHeadId: opts.clergyHeadId || null,
+            teachesDoctrine: opts.teachesDoctrine === true,
+            hasMandatoryWorship: opts.hasMandatoryWorship === true
+        };
+
+        _state()._addInstitution(institution);
+
+        return _ok({ institutionId: institution.id, institution: institution });
     }
-
-    function _getHouseholdWealth(householdId) {
-        if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.getHouseholdWealth) {
-            return window.HouseholdEconomy.getHouseholdWealth(householdId);
-        }
-        var household = _getHousehold(householdId);
-        return household ? household.wealth || 0 : 0;
-    }
-
-    function _getHousehold(householdId) {
-        if (typeof window.HouseholdState !== 'undefined' && window.HouseholdState.getHousehold) {
-            return window.HouseholdState.getHousehold(householdId);
-        }
-        return null;
-    }
-
-    function _updateHouseholdWealth(householdId, delta, reason) {
-        if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.updateHouseholdWealth) {
-            return window.HouseholdEconomy.updateHouseholdWealth(householdId, delta, reason);
-        }
-        if (typeof window.updateHouseholdWealth === 'function') {
-            return window.updateHouseholdWealth(householdId, delta, reason);
-        }
-        return 0;
-    }
-
-    function _trackTuitionExpense(householdId, tuition, institutionId, studentId) {
-        if (typeof window.HouseholdEconomy !== 'undefined' && window.HouseholdEconomy.trackTuitionExpense) {
-            return window.HouseholdEconomy.trackTuitionExpense(householdId, tuition, institutionId, studentId);
-        }
-        return false;
-    }
-
-    // =========================================================================
-    // 4. SETTLEMENT HELPERS
-    // =========================================================================
-
-    function _getSettlementData(locationId) {
-        if (typeof window.SettlementState !== 'undefined' && window.SettlementState.getSettlementData) {
-            return window.SettlementState.getSettlementData(locationId);
-        }
-        return null;
-    }
-
-    function _updateSettlementWealth(locationId, delta, reason) {
-        if (typeof window.SettlementCommands !== 'undefined' && window.SettlementCommands.updateWealth) {
-            return window.SettlementCommands.updateWealth(locationId, delta, reason);
-        }
-        return false;
-    }
-
-    function _getSettlementProsperity(locationId) {
-        if (typeof window.SettlementQueries !== 'undefined' && window.SettlementQueries.getSettlementSummary) {
-            var summary = window.SettlementQueries.getSettlementSummary(locationId);
-            return summary ? summary.prosperity || 50 : 50;
-        }
-        return 50;
-    }
-
-    // =========================================================================
-    // 5. SETTLEMENT BUDGET RECEIPT
-    // =========================================================================
-
-    function receiveSettlementBudget(locationId, amount, year) {
-        if (_processingCommand) {
-            return { success: false, reason: 'Command already processing' };
-        }
-        _processingCommand = true;
-
-        try {
-            var institutions = EducationState.getInstitutionsByLocation(locationId);
-            var currentYear = year || _getCurrentYear();
-            var totalBudget = amount || 0;
-
-            if (institutions.length === 0) {
-                _logEvent('education', 'budget_stored_no_institutions',
-                    'Education budget of ' + totalBudget + ' gold stored for ' + locationId + 
-                    ' (no institutions to fund)',
-                    []);
-                return { 
-                    success: true, 
-                    institutions: 0, 
-                    total: totalBudget,
-                    message: 'No institutions to fund, budget stored'
-                };
-            }
-
-            var perInstitution = totalBudget / institutions.length;
-
-            for (var i = 0; i < institutions.length; i++) {
-                var inst = institutions[i];
-                inst.governmentFunding = perInstitution;
-                inst.governmentFundingYear = currentYear;
-                inst.lastFunded = currentYear;
-
-                EducationState._updateInstitution(inst.id, {
-                    governmentFunding: perInstitution,
-                    governmentFundingYear: currentYear,
-                    lastFunded: currentYear
-                });
-            }
-
-            _showToast('Distributed ' + totalBudget + ' gold to ' + institutions.length + ' institutions', 'success');
-
-            return { 
-                success: true, 
-                institutions: institutions.length, 
-                total: totalBudget,
-                perInstitution: perInstitution,
-                year: currentYear
-            };
-
-        } finally {
-            _processingCommand = false;
-        }
-    }
-
-    function getSettlementFundingSummary(locationId, year) {
-        if (_processingCommand) {
-            return { total: 0, institutions: [] };
-        }
-        _processingCommand = true;
-
-        try {
-            var institutions = EducationState.getInstitutionsByLocation(locationId);
-            var currentYear = year || _getCurrentYear();
-            var total = 0;
-            var details = [];
-
-            for (var i = 0; i < institutions.length; i++) {
-                var inst = institutions[i];
-                var funding = inst.governmentFunding || 0;
-                var fundingYear = inst.governmentFundingYear || 0;
-
-                if (fundingYear === currentYear || !year) {
-                    total += funding;
-                    details.push({
-                        institutionId: inst.id,
-                        institutionName: inst.name,
-                        funding: funding,
-                        year: fundingYear
-                    });
-                }
-            }
-
-            return {
-                locationId: locationId,
-                year: currentYear,
-                total: total,
-                institutions: details,
-                count: details.length
-            };
-
-        } finally {
-            _processingCommand = false;
-        }
-    }
-
-    // =========================================================================
-    // 6. INSTITUTION MANAGEMENT (with religion support)
-    // =========================================================================
-
-    function createInstitution(name, typeId, locationId, options) {
-        if (_processingCommand) {
-            return null;
-        }
-        _processingCommand = true;
-
-        try {
-            options = options || {};
-
-            if (!name || typeof name !== 'string' || name.trim() === '') {
-                _showToast('Institution name is required', 'error');
-                return null;
-            }
-
-            var types = _getInstitutionTypes();
-            var type = types[typeId.toUpperCase()];
-            if (!type) {
-                _showToast('Invalid institution type', 'error');
-                return null;
-            }
-
-            var location = _getPlaceById(locationId);
-            if (!location) {
-                _showToast('Location not found', 'error');
-                return null;
-            }
-
-            var currentYear = _getCurrentYear();
-
-            var curriculum = options.curriculum || [
-                { type: 'subject', id: 'literacy', name: 'Literacy', icon: '⌇', baseLearnRate: 15 },
-                { type: 'subject', id: 'basic_math', name: 'Basic Mathematics', icon: '⌇', baseLearnRate: 10 }
-            ];
-
-            // Tuition fields
-            var tuitionPerYear = options.tuitionPerYear;
-            if (tuitionPerYear === undefined || tuitionPerYear === null) {
-                tuitionPerYear = window.DEFAULT_TUITION_BY_TYPE?.[type.id] || window.DEFAULT_TUITION || 10;
-            }
-
-            // Religion fields
-            var religionId = options.religionId || null;
-            var religionName = null;
-            var isReligiousSchool = false;
-
-            if (religionId) {
-                var religion = _getReligion(religionId);
-                if (religion) {
-                    religionName = religion.name;
-                    isReligiousSchool = true;
-                } else {
-                    _showToast('Religion not found', 'error');
-                    return null;
-                }
-            }
-
-            // Ownership fields
-            var ownershipType = options.ownershipType || 'public';
-            
-            // If religionId is provided but ownershipType is not 'religious', force it
-            if (religionId && ownershipType !== 'religious') {
-                ownershipType = 'religious';
-            }
-
-            var ownerId = options.ownerId || null;
-            var ownerType = options.ownerType || null;
-            var ownerName = options.ownerName || null;
-
-            // For religious schools, the religion is the owner
-            if (ownershipType === 'religious' && religionId) {
-                ownerType = 'religion';
-                ownerId = religionId;
-                ownerName = religionName || 'Religious Institution';
-            }
-
-            // Validate owner exists for private schools
-            if (ownershipType === 'private' && !ownerId) {
-                _showToast('Private schools must have an owner', 'error');
-                return null;
-            }
-
-            if (ownerId) {
-                if (ownerType === 'character') {
-                    var char = _getCharacterById(ownerId);
-                    if (!char) {
-                        _showToast('Owner character not found', 'error');
-                        return null;
-                    }
-                    if (!ownerName) ownerName = char.name + (char.surname ? ' ' + char.surname : '');
-                } else if (ownerType === 'household') {
-                    var household = _getHousehold(ownerId);
-                    if (!household) {
-                        _showToast('Owner household not found', 'error');
-                        return null;
-                    }
-                    if (!ownerName) ownerName = household.name;
-                } else if (ownerType === 'religion') {
-                    // Owner is a religion - validated above
-                } else {
-                    _showToast('Invalid owner type', 'error');
-                    return null;
-                }
-            }
-
-            // Specialization fields
-            var specializationCategory = options.specializationCategory || null;
-            var taughtRoles = options.taughtRoles || [];
-            var isSpecialized = !!specializationCategory && taughtRoles.length > 0;
-
-            var institution = {
-                id: _generateId('edu'),
-                name: name.trim(),
-                type: type.id,
-                typeName: type.name,
-                icon: type.icon,
-                locationId: locationId,
-                locationName: location.displayName,
-                students: [],
-                graduates: [],
-                teachers: [],
-                foundedYear: options.foundedYear || currentYear,
-                curriculum: curriculum,
-                taughtRoles: taughtRoles,
-                isSpecialized: isSpecialized,
-                specializationCategory: specializationCategory,
-                costPerYear: type.costPerYear,
-                reputation: options.reputation !== undefined ? options.reputation : type.baseReputation,
-                maxStudents: options.maxStudents || type.maxStudents,
-                description: options.description || type.description,
-                requiredYears: options.requiredYears || type.requiredYears,
-                skillGainPerYear: options.skillGainPerYear || type.skillGainPerYear,
-                notes: options.notes || '',
-                headmaster: options.headmaster || null,
-                headmasterHistory: options.headmasterHistory || [],
-                history: options.history || [],
-                // Tuition fields
-                tuitionPerYear: Math.max(0, tuitionPerYear),
-                customTuition: null,
-                tuitionHistory: [],
-                waiveTuition: options.waiveTuition || false,
-                // Ownership and funding fields
-                ownershipType: ownershipType,
-                ownerId: ownerId,
-                ownerType: ownerType,
-                ownerName: ownerName,
-                governmentFunding: 0,
-                governmentFundingHistory: [],
-                annualIncome: 0,
-                annualExpenses: 0,
-                netProfit: 0,
-                profitHistory: [],
-                studentCount: 0,
-                // Demolition fields
-                status: 'active',
-                demolishedAt: null,
-                demolishedReason: null,
-                destroyedBy: null,
-                disasterId: null,
-                demolishedRecord: null,
-                // Religion fields
-                religionId: religionId,
-                religionName: religionName,
-                isReligiousSchool: isReligiousSchool,
-                clergyHeadId: options.clergyHeadId || null,
-                teachesDoctrine: options.teachesDoctrine || false,
-                hasMandatoryWorship: options.hasMandatoryWorship || false
-            };
-
-            var result = EducationState._addInstitution(institution);
-
-            var ownershipMsg = ownershipType === 'public' ? ' (Public)' : 
-                               (ownershipType === 'religious' ? ' (Religious - ' + (religionName || '') + ')' :
-                               ' (Private, owner: ' + ownerName + ')');
-            var specializationMsg = isSpecialized ? ' · Specialized: ' + specializationCategory : '';
-            _showToast('Created institution: ' + institution.name + ownershipMsg + specializationMsg, 'success');
-
-            _logEvent('education', 'Institution Founded',
-                institution.name + ' (' + type.name + ') founded in ' + location.displayName + ownershipMsg + specializationMsg,
-                []);
-
-            return result;
-
-        } finally {
-            _processingCommand = false;
-        }
-    }
-
-    // =========================================================================
-    // 7. CREATE RELIGIOUS SCHOOL
-    // =========================================================================
 
     function createReligiousSchool(religionId, name, locationId, options) {
-        if (_processingCommand) {
-            return null;
+        if (!religionId) return _fail('religionId is required');
+        var religion = _getReligionById(religionId);
+        if (!religion) return _fail('Religion not found: ' + religionId);
+
+        options = options || {};
+
+        var curriculum = options.curriculum || [
+            { type: 'subject', id: 'literacy',   name: 'Literacy',          icon: '⌇', baseLearnRate: 15 },
+            { type: 'subject', id: 'basic_math', name: 'Basic Mathematics', icon: '⌇', baseLearnRate: 10 },
+            { type: 'subject', id: 'theology',   name: 'Theology',          icon: '⌆', baseLearnRate: 12 }
+        ];
+
+        // Ensure theology is present.
+        var hasTheology = false;
+        for (var i = 0; i < curriculum.length; i++) {
+            if (curriculum[i].id === 'theology') { hasTheology = true; break; }
         }
-        _processingCommand = true;
-
-        try {
-            var religion = _getReligion(religionId);
-            if (!religion) {
-                _showToast('Religion not found', 'error');
-                return null;
-            }
-
-            if (religion.isDeprecated) {
-                _showToast('Cannot create school for deprecated religion', 'error');
-                return null;
-            }
-
-            options = options || {};
-
-            // Determine school type
-            var typeId = options.typeId || 'religious_seminary';
-            var types = _getInstitutionTypes();
-            var type = types[typeId.toUpperCase()];
-            if (!type) {
-                _showToast('Invalid institution type', 'error');
-                return null;
-            }
-
-            // Set religion-specific options
-            options.religionId = religionId;
-            options.ownershipType = 'religious';
-            options.ownerId = religionId;
-            options.ownerType = 'religion';
-            options.ownerName = religion.name;
-            options.description = options.description || 
-                'Religious school of ' + religion.name + ' - providing religious education and clergy training';
-
-            // Add theology to curriculum if not present
-            var curriculum = options.curriculum || [
-                { type: 'subject', id: 'literacy', name: 'Literacy', icon: '⌇', baseLearnRate: 15 },
-                { type: 'subject', id: 'basic_math', name: 'Basic Mathematics', icon: '⌇', baseLearnRate: 10 },
+        if (!hasTheology) {
+            curriculum = curriculum.concat([
                 { type: 'subject', id: 'theology', name: 'Theology', icon: '⌆', baseLearnRate: 12 }
-            ];
-
-            // Add doctrine teaching if requested
-            var teachesDoctrine = options.teachesDoctrine !== false;
-            var hasMandatoryWorship = options.hasMandatoryWorship || false;
-
-            // Check if theology is already in curriculum
-            var hasTheology = curriculum.some(function(item) {
-                return item.id === 'theology';
-            });
-            if (!hasTheology) {
-                curriculum.push({ type: 'subject', id: 'theology', name: 'Theology', icon: '⌆', baseLearnRate: 12 });
-            }
-
-            options.curriculum = curriculum;
-            options.teachesDoctrine = teachesDoctrine;
-            options.hasMandatoryWorship = hasMandatoryWorship;
-
-            // If a clergy head is specified, set it
-            if (options.clergyHeadId) {
-                var clergyHead = _getCharacterById(options.clergyHeadId);
-                if (clergyHead) {
-                    options.headmaster = {
-                        characterId: clergyHead.id,
-                        name: clergyHead.name,
-                        title: 'Clergy Head',
-                        startYear: _getCurrentYear()
-                    };
-                }
-            }
-
-            var result = createInstitution(name, typeId, locationId, options);
-
-            if (result) {
-                _logEvent('education', 'Religious School Created',
-                    'Religious school "' + name + '" created for religion ' + religion.name,
-                    []);
-                _showToast('Religious school "' + name + '" created for ' + religion.name, 'success');
-            }
-
-            return result;
-
-        } finally {
-            _processingCommand = false;
+            ]);
         }
+
+        var opts = Object.assign({}, options, {
+            name: name,
+            typeId: options.typeId || 'town_school',
+            locationId: locationId,
+            curriculum: curriculum,
+            religionId: religionId,
+            isReligiousSchool: true,
+            ownershipType: options.ownershipType || 'religious',
+            ownerId: religionId,
+            ownerType: 'religion',
+            ownerName: religion.name
+        });
+
+        return createInstitution(opts);
     }
-
-    // =========================================================================
-    // 8. GET RELIGIOUS SCHOOLS
-    // =========================================================================
-
-    function getReligiousSchools(religionId, locationId) {
-        if (_processingCommand) {
-            return [];
-        }
-        _processingCommand = true;
-
-        try {
-            var institutions = EducationState.getAllInstitutions();
-            var result = [];
-
-            for (var i = 0; i < institutions.length; i++) {
-                var inst = institutions[i];
-                if (inst.ownershipType !== 'religious') continue;
-                if (religionId && inst.religionId !== religionId) continue;
-                if (locationId && inst.locationId !== locationId) continue;
-                result.push(inst);
-            }
-
-            return result;
-
-        } finally {
-            _processingCommand = false;
-        }
-    }
-
-    // =========================================================================
-    // 9. UPDATE INSTITUTION (with religion support)
-    // =========================================================================
 
     function updateInstitution(institutionId, updates) {
-        if (_processingCommand) {
-            return false;
+        if (!institutionId) return _fail('institutionId is required');
+        if (!updates || typeof updates !== 'object') return _fail('updates object is required');
+
+        var inst = _state()._getInstitutionCanonical(institutionId);
+        if (!inst) return _fail('Institution not found');
+
+        var patch = Object.assign({}, updates);
+        var year = _getCurrentYear();
+
+        // Name change → history.
+        if (patch.name !== undefined && patch.name !== inst.name) {
+            _history().recordInstitutionRenamed(institutionId, inst.name, patch.name, year, 'Renamed');
         }
-        _processingCommand = true;
 
-        try {
-            var institution = EducationState.getInstitution(institutionId);
-            if (!institution) {
-                _showToast('Institution not found', 'error');
-                return false;
+        // Location change → history + locationName resolution.
+        if (patch.locationId !== undefined && patch.locationId !== inst.locationId) {
+            var newPlace = _getPlaceById(patch.locationId);
+            if (!newPlace) return _fail('New location not found: ' + patch.locationId);
+            _history().recordInstitutionMoved(institutionId, inst.locationName, newPlace.displayName, year, 'Moved');
+            patch.locationName = newPlace.displayName;
+        }
+
+        // Type change → resolve typeName + icon.
+        if (patch.type !== undefined && patch.type !== inst.type) {
+            var TYPES = window.INSTITUTION_TYPES;
+            var typeDef = null;
+            for (var k in TYPES) {
+                if (TYPES[k].id === patch.type) { typeDef = TYPES[k]; break; }
             }
-
-            if (updates.name !== undefined && updates.name !== institution.name) {
-                var oldName = institution.name;
-                _recordInstitutionRenamed(institutionId, oldName, updates.name, _getCurrentYear(), 'Renamed');
+            if (typeDef) {
+                patch.typeName = typeDef.name;
+                patch.icon = typeDef.icon;
             }
+        }
 
-            if (updates.locationId !== undefined && updates.locationId !== institution.locationId) {
-                var location = _getPlaceById(updates.locationId);
-                if (location) {
-                    updates.locationName = location.displayName;
-                }
+        // Religion change.
+        if (patch.religionId !== undefined) {
+            if (patch.religionId) {
+                var religion = _getReligionById(patch.religionId);
+                if (!religion) return _fail('Religion not found: ' + patch.religionId);
+                patch.religionName = religion.name;
+                if (patch.isReligiousSchool === undefined) patch.isReligiousSchool = true;
+            } else {
+                patch.religionName = null;
             }
+        }
 
-            if (updates.type !== undefined && updates.type !== institution.type) {
-                var types = _getInstitutionTypes();
-                var type = types[updates.type.toUpperCase()];
-                if (type) {
-                    updates.typeName = type.name;
-                    updates.icon = type.icon;
-                }
-            }
-
-            // Religion update handling
-            if (updates.religionId !== undefined) {
-                if (updates.religionId) {
-                    var religion = _getReligion(updates.religionId);
-                    if (!religion) {
-                        _showToast('Religion not found', 'error');
-                        return false;
-                    }
-                    updates.religionName = religion.name;
-                    updates.isReligiousSchool = true;
-                    // If ownership type is not set, set to religious
-                    if (updates.ownershipType === undefined && institution.ownershipType !== 'religious') {
-                        updates.ownershipType = 'religious';
-                        updates.ownerId = religion.id;
-                        updates.ownerType = 'religion';
-                        updates.ownerName = religion.name;
-                    }
+        // Ownership change.
+        if (patch.ownershipType !== undefined && patch.ownershipType !== inst.ownershipType) {
+            if (patch.ownershipType === 'private') {
+                var ownerId = patch.ownerId || inst.ownerId;
+                var ownerType = patch.ownerType || inst.ownerType;
+                if (!ownerId) return _fail('Private ownership requires an ownerId');
+                var ownerName = patch.ownerName || null;
+                if (ownerType === 'character') {
+                    var c = _getCharacterById(ownerId);
+                    if (!c) return _fail('Owner character not found');
+                    if (!ownerName) ownerName = c.name + (c.surname ? ' ' + c.surname : '');
+                } else if (ownerType === 'household') {
+                    var h = _getHousehold(ownerId);
+                    if (!h) return _fail('Owner household not found');
+                    if (!ownerName) ownerName = h.name;
                 } else {
-                    // Removing religion
-                    updates.religionName = null;
-                    updates.isReligiousSchool = false;
+                    return _fail('Invalid ownerType for private ownership');
                 }
+                patch.ownerId = ownerId;
+                patch.ownerType = ownerType;
+                patch.ownerName = ownerName;
+            } else if (patch.ownershipType === 'public') {
+                patch.ownerId = null;
+                patch.ownerType = null;
+                patch.ownerName = null;
+            } else if (patch.ownershipType === 'religious') {
+                var religionId = patch.religionId || inst.religionId;
+                if (!religionId) return _fail('Religious ownership requires a religionId');
+                var rel = _getReligionById(religionId);
+                if (!rel) return _fail('Religion not found');
+                patch.ownerId = rel.id;
+                patch.ownerType = 'religion';
+                patch.ownerName = rel.name;
+                patch.religionId = rel.id;
+                patch.religionName = rel.name;
+                patch.isReligiousSchool = true;
             }
-
-            // Handle ownership changes with religion
-            if (updates.ownershipType !== undefined && updates.ownershipType === 'religious') {
-                // If setting to religious, need a religion
-                var religionId = updates.religionId || institution.religionId;
-                if (!religionId) {
-                    _showToast('Religion ID is required for religious schools', 'error');
-                    return false;
-                }
-                var religion = _getReligion(religionId);
-                if (!religion) {
-                    _showToast('Religion not found', 'error');
-                    return false;
-                }
-                updates.religionName = religion.name;
-                updates.isReligiousSchool = true;
-                updates.ownerId = religion.id;
-                updates.ownerType = 'religion';
-                updates.ownerName = religion.name;
-            }
-
-            // Specialization updates
-            if (updates.specializationCategory !== undefined) {
-                updates.isSpecialized = !!updates.specializationCategory && 
-                    (updates.taughtRoles || institution.taughtRoles || []).length > 0;
-            }
-
-            if (updates.taughtRoles !== undefined) {
-                var taughtRoles = updates.taughtRoles || [];
-                if (institution.specializationCategory) {
-                    var validRoles = taughtRoles.filter(function(roleId) {
-                        var role = _getRoleById(roleId);
-                        return role && role.category === institution.specializationCategory;
-                    });
-                    if (validRoles.length !== taughtRoles.length) {
-                        _showToast('Some roles do not belong to the specialization category', 'warning');
-                        updates.taughtRoles = validRoles;
-                    }
-                }
-                updates.isSpecialized = !!institution.specializationCategory && taughtRoles.length > 0;
-            }
-
-            // Tuition update handling
-            if (updates.tuitionPerYear !== undefined && updates.tuitionPerYear !== institution.tuitionPerYear) {
-                var oldTuition = institution.tuitionPerYear;
-                var newTuition = Math.max(0, updates.tuitionPerYear);
-                updates.tuitionPerYear = newTuition;
-
-                if (!institution.tuitionHistory) institution.tuitionHistory = [];
-                institution.tuitionHistory.push({
-                    year: _getCurrentYear(),
-                    oldAmount: oldTuition,
-                    newAmount: newTuition,
-                    reason: updates.tuitionReason || 'Updated'
-                });
-                if (institution.tuitionHistory.length > 20) {
-                    institution.tuitionHistory = institution.tuitionHistory.slice(-20);
-                }
-            }
-
-            if (updates.customTuition !== undefined) {
-                updates.customTuition = updates.customTuition !== null ? Math.max(0, updates.customTuition) : null;
-            }
-
-            if (updates.waiveTuition !== undefined) {
-                updates.waiveTuition = !!updates.waiveTuition;
-            }
-
-            // Ownership update handling
-            if (updates.ownershipType !== undefined && updates.ownershipType !== institution.ownershipType) {
-                if (updates.ownershipType === 'private') {
-                    var ownerId = updates.ownerId || institution.ownerId;
-                    var ownerType = updates.ownerType || institution.ownerType;
-                    if (!ownerId) {
-                        _showToast('Private schools must have an owner', 'error');
-                        return false;
-                    }
-                    if (ownerType === 'character') {
-                        var char = _getCharacterById(ownerId);
-                        if (!char) {
-                            _showToast('Owner character not found', 'error');
-                            return false;
-                        }
-                        updates.ownerName = char.name + (char.surname ? ' ' + char.surname : '');
-                    } else if (ownerType === 'household') {
-                        var household = _getHousehold(ownerId);
-                        if (!household) {
-                            _showToast('Owner household not found', 'error');
-                            return false;
-                        }
-                        updates.ownerName = household.name;
-                    } else if (ownerType === 'religion') {
-                        var religion = _getReligion(ownerId);
-                        if (!religion) {
-                            _showToast('Religion not found', 'error');
-                            return false;
-                        }
-                        updates.ownerName = religion.name;
-                        updates.religionId = religion.id;
-                        updates.religionName = religion.name;
-                        updates.isReligiousSchool = true;
-                    }
-                } else if (updates.ownershipType === 'public') {
-                    updates.ownerId = null;
-                    updates.ownerType = null;
-                    updates.ownerName = null;
-                } else if (updates.ownershipType === 'religious') {
-                    var religionId = updates.religionId || institution.religionId;
-                    if (!religionId) {
-                        _showToast('Religion ID is required for religious schools', 'error');
-                        return false;
-                    }
-                    var religion = _getReligion(religionId);
-                    if (!religion) {
-                        _showToast('Religion not found', 'error');
-                        return false;
-                    }
-                    updates.ownerId = religion.id;
-                    updates.ownerType = 'religion';
-                    updates.ownerName = religion.name;
-                    updates.religionName = religion.name;
-                    updates.isReligiousSchool = true;
-                }
-            }
-
-            // Handle owner updates for private schools
-            if (institution.ownershipType === 'private') {
-                if (updates.ownerId !== undefined && updates.ownerId !== institution.ownerId) {
-                    var ownerId = updates.ownerId;
-                    var ownerType = updates.ownerType || institution.ownerType || 'character';
-                    if (!ownerId) {
-                        _showToast('Owner ID is required', 'error');
-                        return false;
-                    }
-                    if (ownerType === 'character') {
-                        var char = _getCharacterById(ownerId);
-                        if (!char) {
-                            _showToast('Owner character not found', 'error');
-                            return false;
-                        }
-                        updates.ownerName = char.name + (char.surname ? ' ' + char.surname : '');
-                    } else if (ownerType === 'household') {
-                        var household = _getHousehold(ownerId);
-                        if (!household) {
-                            _showToast('Owner household not found', 'error');
-                            return false;
-                        }
-                        updates.ownerName = household.name;
-                    } else if (ownerType === 'religion') {
-                        var religion = _getReligion(ownerId);
-                        if (!religion) {
-                            _showToast('Religion not found', 'error');
-                            return false;
-                        }
-                        updates.ownerName = religion.name;
-                        updates.religionId = religion.id;
-                        updates.religionName = religion.name;
-                        updates.isReligiousSchool = true;
-                    }
-                }
-            }
-
-            var result = EducationState._updateInstitution(institutionId, updates);
-
-            if (result) {
-                _showToast('Institution updated: ' + result.name, 'success');
-                return true;
-            }
-
-            return false;
-
-        } finally {
-            _processingCommand = false;
         }
-    }
 
-    // =========================================================================
-    // 10. DELETE INSTITUTION
-    // =========================================================================
+        // Specialization coherence.
+        if (patch.specializationCategory !== undefined || patch.taughtRoles !== undefined) {
+            var cat = patch.specializationCategory !== undefined ? patch.specializationCategory : inst.specializationCategory;
+            var roles = patch.taughtRoles !== undefined ? patch.taughtRoles : (inst.taughtRoles || []);
+            patch.isSpecialized = !!cat && roles.length > 0;
+        }
+
+        // Tuition change → history.
+        if (patch.tuitionPerYear !== undefined && patch.tuitionPerYear !== inst.tuitionPerYear) {
+            var bounded = Math.max(0, patch.tuitionPerYear);
+            var history = (inst.tuitionHistory || []).slice();
+            history.push({
+                year: year,
+                oldAmount: inst.tuitionPerYear,
+                newAmount: bounded,
+                reason: patch.tuitionReason || 'Updated'
+            });
+            patch.tuitionPerYear = bounded;
+            patch.tuitionHistory = history;
+            delete patch.tuitionReason;
+        }
+
+        if (patch.customTuition !== undefined) {
+            patch.customTuition = patch.customTuition !== null ? Math.max(0, patch.customTuition) : null;
+        }
+
+        _state()._updateInstitution(institutionId, patch);
+        return _ok({ institutionId: institutionId });
+    }
 
     function deleteInstitution(institutionId, cascade) {
-        if (_processingCommand) {
-            return false;
+        if (!institutionId) return _fail('institutionId is required');
+        var inst = _state()._getInstitutionCanonical(institutionId);
+        if (!inst) return _fail('Institution not found');
+
+        if (cascade) {
+            var students = (inst.students || []).slice();
+            for (var i = 0; i < students.length; i++) {
+                withdrawStudent(institutionId, students[i].studentId, 'Institution deleted');
+            }
+            var teachers = (inst.teachers || []).slice();
+            for (var i = 0; i < teachers.length; i++) {
+                fireTeacher(institutionId, teachers[i].teacherId, 'Institution deleted');
+            }
+            if (inst.headmaster) {
+                endHeadmasterTerm(institutionId, _getCurrentYear(), 'Institution deleted');
+            }
         }
-        _processingCommand = true;
 
-        try {
-            var institution = EducationState.getInstitution(institutionId);
-            if (!institution) {
-                _showToast('Institution not found', 'error');
-                return false;
-            }
-
-            // If cascade is true, remove all students and teachers first
-            if (cascade) {
-                // Remove all students
-                if (institution.students) {
-                    var students = institution.students.slice();
-                    for (var i = 0; i < students.length; i++) {
-                        try {
-                            withdrawStudent(institutionId, students[i].studentId, 'Institution deleted');
-                        } catch (e) {
-                            // Continue with others
-                        }
-                    }
-                }
-
-                // Remove all teachers
-                if (institution.teachers) {
-                    var teachers = institution.teachers.slice();
-                    for (var i = 0; i < teachers.length; i++) {
-                        try {
-                            fireTeacher(institutionId, teachers[i].teacherId, 'Institution deleted');
-                        } catch (e) {
-                            // Continue with others
-                        }
-                    }
-                }
-
-                // End headmaster term
-                if (institution.headmaster) {
-                    try {
-                        endHeadmasterTerm(institutionId, _getCurrentYear(), 'Institution deleted');
-                    } catch (e) {
-                        // Continue
-                    }
-                }
-            }
-
-            var result = EducationState._deleteInstitution(institutionId);
-            
-            if (result) {
-                _logEvent('education', 'Institution Deleted',
-                    'Institution "' + institution.name + '" deleted',
-                    []);
-                _showToast('Institution "' + institution.name + '" deleted', 'info');
-                return true;
-            }
-
-            return false;
-
-        } finally {
-            _processingCommand = false;
-        }
+        _state()._removeInstitution(institutionId);
+        return _ok({ institutionId: institutionId });
     }
 
-    // =========================================================================
-    // 11. TEACHER MANAGEMENT
-    // =========================================================================
+    function updateReputation(institutionId, delta) {
+        if (!institutionId) return _fail('institutionId is required');
+        if (typeof delta !== 'number' || !isFinite(delta)) return _fail('delta must be a finite number');
+
+        var inst = _state()._getInstitutionCanonical(institutionId);
+        if (!inst) return _fail('Institution not found');
+
+        var oldRep = (inst.reputation !== undefined) ? inst.reputation : 50;
+        var newRep = Math.min(100, Math.max(0, oldRep + delta));
+
+        _state()._updateInstitution(institutionId, { reputation: newRep });
+        _history().recordReputationChanged(institutionId, oldRep, newRep, _getCurrentYear(), 'Adjusted by ' + delta);
+
+        return _ok({ institutionId: institutionId, reputation: newRep });
+    }
+
+    // =====================================================================
+    // Teacher management
+    // =====================================================================
 
     function hireTeacher(institutionId, teacherId, subjectId) {
-        if (_processingCommand) {
-            return false;
+        if (!institutionId || !teacherId || !subjectId) {
+            return _fail('institutionId, teacherId, and subjectId are required');
         }
-        _processingCommand = true;
 
-        try {
-            var institution = EducationState.getInstitution(institutionId);
-            var teacher = _getCharacterById(teacherId);
+        var inst = _state()._getInstitutionCanonical(institutionId);
+        if (!inst) return _fail('Institution not found');
 
-            if (!institution || !teacher) {
-                _showToast('Institution or teacher not found', 'error');
-                return false;
+        var teacher = _getCharacterById(teacherId);
+        if (!teacher) return _fail('Teacher not found');
+        if (teacher.isDeceased) return _fail('Teacher is deceased');
+
+        if (inst.teachers && inst.teachers.some(function(t) { return t.teacherId === teacherId; })) {
+            return _fail('Already a teacher at this institution');
+        }
+
+        var curriculumItem = null;
+        if (inst.curriculum) {
+            for (var i = 0; i < inst.curriculum.length; i++) {
+                if (inst.curriculum[i].id === subjectId) { curriculumItem = inst.curriculum[i]; break; }
             }
+        }
+        if (!curriculumItem) return _fail('Subject not found in curriculum: ' + subjectId);
 
-            if (institution.teachers && institution.teachers.some(function(t) { return t.teacherId === teacherId; })) {
-                _showToast(teacher.name + ' is already a teacher at this institution', 'error');
-                return false;
-            }
-
-            var curriculumItem = null;
-            if (institution.curriculum) {
-                for (var i = 0; i < institution.curriculum.length; i++) {
-                    if (institution.curriculum[i].id === subjectId) {
-                        curriculumItem = institution.curriculum[i];
-                        break;
-                    }
-                }
-            }
-
-            if (!curriculumItem) {
-                _showToast('Subject "' + subjectId + '" not found in curriculum', 'error');
-                return false;
-            }
-
-            // Role check for role-type subjects
-            if (curriculumItem.type === 'role') {
-                var roleId = subjectId;
-                var role = _getRoleById(roleId);
-                if (!role) {
-                    _showToast('Role "' + subjectId + '" not found', 'error');
-                    return false;
-                }
-
-                var roleDetails = _getCharactersWithRoleDetails(roleId);
+        // Role-type subject requires the teacher to hold the role.
+        if (curriculumItem.type === 'role') {
+            var roleDetails = _getCharactersWithRoleDetails(subjectId);
+            if (roleDetails) {
                 var hasRole = roleDetails.some(function(d) {
                     return d.character && d.character.id === teacherId;
                 });
-
                 if (!hasRole) {
-                    _showToast(teacher.name + ' does not have the required role "' + role.name + '"', 'error');
-                    return false;
+                    var role = _getRoleById(subjectId);
+                    return _fail('Teacher does not have required role: ' + (role ? role.name : subjectId));
                 }
             }
-
-            if (!institution.teachers) institution.teachers = [];
-
-            var teacherEntry = {
-                teacherId: teacherId,
-                teacherName: teacher.name,
-                subjectId: subjectId,
-                subjectName: curriculumItem.name,
-                subjectType: curriculumItem.type,
-                hiredYear: _getCurrentYear()
-            };
-
-            institution.teachers.push(teacherEntry);
-            EducationState._updateInstitution(institutionId, { teachers: institution.teachers });
-
-            _logEvent('education', 'Teacher Hired',
-                teacher.name + ' hired as ' + curriculumItem.name + ' teacher at ' + institution.name,
-                [teacher]);
-
-            _recordTeacherHired(institutionId, teacherId, subjectId, _getCurrentYear(), 'Hired as teacher');
-
-            _showToast(teacher.name + ' hired as ' + curriculumItem.name + ' teacher', 'success');
-            return true;
-
-        } finally {
-            _processingCommand = false;
         }
+
+        var year = _getCurrentYear();
+        var teachers = (inst.teachers || []).slice();
+        teachers.push({
+            teacherId: teacherId,
+            teacherName: teacher.name,
+            subjectId: subjectId,
+            subjectName: curriculumItem.name,
+            subjectType: curriculumItem.type,
+            hiredYear: year
+        });
+
+        _state()._updateInstitution(institutionId, { teachers: teachers });
+        _history().recordTeacherHired(institutionId, teacherId, subjectId, year, null, 'Hired as teacher');
+
+        return _ok({
+            institutionId: institutionId,
+            teacherId: teacherId,
+            subjectId: subjectId
+        });
     }
 
     function fireTeacher(institutionId, teacherId, reason) {
-        if (_processingCommand) {
-            return false;
+        if (!institutionId || !teacherId) return _fail('institutionId and teacherId are required');
+
+        var inst = _state()._getInstitutionCanonical(institutionId);
+        if (!inst || !inst.teachers) return _fail('Institution or teachers not found');
+
+        var idx = -1;
+        for (var i = 0; i < inst.teachers.length; i++) {
+            if (inst.teachers[i].teacherId === teacherId) { idx = i; break; }
         }
-        _processingCommand = true;
+        if (idx === -1) return _fail('Teacher not found at this institution');
 
-        try {
-            var institution = EducationState.getInstitution(institutionId);
-            if (!institution || !institution.teachers) {
-                _showToast('Institution not found', 'error');
-                return false;
-            }
+        var teachers = inst.teachers.slice();
+        teachers.splice(idx, 1);
 
-            var index = -1;
-            var teacherEntry = null;
-            for (var i = 0; i < institution.teachers.length; i++) {
-                if (institution.teachers[i].teacherId === teacherId) {
-                    index = i;
-                    teacherEntry = institution.teachers[i];
-                    break;
-                }
-            }
+        _state()._updateInstitution(institutionId, { teachers: teachers });
+        _history().recordTeacherDeparted(institutionId, teacherId, _getCurrentYear(), reason || 'Dismissed', '');
 
-            if (index === -1) {
-                _showToast('Teacher not found', 'error');
-                return false;
-            }
-
-            institution.teachers.splice(index, 1);
-            EducationState._updateInstitution(institutionId, { teachers: institution.teachers });
-
-            _logEvent('education', 'Teacher Fired',
-                teacherEntry.teacherName + ' fired from ' + institution.name,
-                []);
-
-            _recordTeacherLeft(institutionId, teacherId, _getCurrentYear(), reason || 'Fired', '');
-
-            _showToast(teacherEntry.teacherName + ' fired from ' + institution.name, 'info');
-            return true;
-
-        } finally {
-            _processingCommand = false;
-        }
+        return _ok({ institutionId: institutionId, teacherId: teacherId });
     }
 
-    // =========================================================================
-    // 12. STUDENT MANAGEMENT
-    // =========================================================================
+    // =====================================================================
+    // Student management
+    // =====================================================================
 
     function enrollStudent(institutionId, studentId, startYear) {
-        if (_processingCommand) {
-            return false;
+        if (!institutionId || !studentId) return _fail('institutionId and studentId are required');
+
+        var inst = _state()._getInstitutionCanonical(institutionId);
+        if (!inst) return _fail('Institution not found');
+
+        var student = _getCharacterById(studentId);
+        if (!student) return _fail('Student not found');
+        if (student.isDeceased) return _fail('Student is deceased');
+
+        if (inst.students && inst.students.length >= inst.maxStudents) {
+            return _fail('Institution at capacity');
         }
-        _processingCommand = true;
+        if (inst.students && inst.students.some(function(s) { return s.studentId === studentId && !s.graduated; })) {
+            return _fail('Student already enrolled');
+        }
 
-        try {
-            var institution = EducationState.getInstitution(institutionId);
-            var student = _getCharacterById(studentId);
+        var year = startYear !== undefined ? startYear : _getCurrentYear();
 
-            if (!institution || !student) {
-                _showToast('Institution or student not found', 'error');
-                return false;
-            }
-
-            if (student.isDeceased) {
-                _showToast('Student is deceased', 'error');
-                return false;
-            }
-
-            if (institution.students && institution.students.length >= institution.maxStudents) {
-                _showToast(institution.name + ' is at capacity', 'error');
-                return false;
-            }
-
-            if (institution.students && institution.students.some(function(s) { return s.studentId === studentId; })) {
-                _showToast('Student already enrolled', 'error');
-                return false;
-            }
-
-            // Tuition check
-            var tuitionPaid = 0;
-            var tuitionResult = _calculateTuitionAmount(institution, startYear || _getCurrentYear());
-            
-            if (tuitionResult.success && tuitionResult.tuition > 0) {
-                var household = _getCharacterHousehold(studentId);
-                if (household) {
-                    var wealth = _getHouseholdWealth(household.id);
-                    if (wealth < tuitionResult.tuition) {
-                        _showToast('Household cannot afford tuition (' + tuitionResult.tuition + ' gold)', 'error');
-                        return false;
-                    }
-                    _updateHouseholdWealth(household.id, -tuitionResult.tuition,
-                        'Tuition for ' + institution.name + ' - ' + student.name);
-                    _trackTuitionExpense(household.id, tuitionResult.tuition, institutionId, studentId);
-                    tuitionPaid = tuitionResult.tuition;
+        // Tuition.
+        var tuitionResult = _calculateTuition(inst, year);
+        var tuitionPaid = 0;
+        if (tuitionResult.success && tuitionResult.tuition > 0) {
+            var household = _getCharacterHousehold(studentId);
+            if (household) {
+                var wealth = _getHouseholdWealth(household.id);
+                if (wealth < tuitionResult.tuition) {
+                    return _fail('Household cannot afford tuition (' + tuitionResult.tuition + ' gold)');
                 }
+                _updateHouseholdWealth(household.id, -tuitionResult.tuition,
+                    'Tuition for ' + inst.name + ' - ' + student.name);
+                _trackTuitionExpense(household.id, tuitionResult.tuition, institutionId, studentId);
+                tuitionPaid = tuitionResult.tuition;
             }
-
-            if (!institution.students) institution.students = [];
-
-            var enrollmentYear = startYear || _getCurrentYear();
-
-            institution.students.push({
-                studentId: studentId,
-                studentName: student.name,
-                enrollmentYear: enrollmentYear,
-                progress: {},
-                graduated: false,
-                graduationYear: null,
-                attendance: 100,
-                notes: '',
-                tuitionPaid: tuitionPaid,
-                tuitionYear: enrollmentYear,
-                tuitionWaived: institution.waiveTuition || institution.ownershipType === 'public'
-            });
-
-            institution.studentCount = institution.students.filter(function(s) { return !s.graduated; }).length;
-
-            EducationState._updateInstitution(institutionId, {
-                students: institution.students,
-                studentCount: institution.studentCount
-            });
-
-            if (typeof window._initCharacterEducationFields === 'function') {
-                window._initCharacterEducationFields(student);
-            }
-
-            if (student.education) {
-                student.education[institutionId] = {
-                    institutionName: institution.name,
-                    institutionType: institution.type,
-                    enrolledYear: enrollmentYear,
-                    graduated: false
-                };
-            }
-
-            var ownershipMsg = institution.ownershipType === 'public' ? ' (Public - Free)' :
-                               institution.ownershipType === 'religious' ? ' (Religious School)' :
-                               ' (Private - Tuition: ' + tuitionPaid + ' gold)';
-            _logEvent('education', 'Student Enrolled',
-                student.name + ' enrolled at ' + institution.name + ownershipMsg,
-                [student]);
-
-            _recordStudentEnrolled(institutionId, studentId, enrollmentYear, 'Enrolled');
-
-            var tuitionMsg = institution.ownershipType === 'public' ?
-                ' (Free)' :
-                (tuitionPaid > 0 ? ' (Tuition: ' + tuitionPaid + ' gold)' : ' (Tuition waived)');
-            _showToast(student.name + ' enrolled' + tuitionMsg, 'success');
-            return true;
-
-        } finally {
-            _processingCommand = false;
+            // If no household, tuition is unpaid but enrollment proceeds.
+            // (Change this to a hard failure if households are mandatory.)
         }
+
+        var students = (inst.students || []).slice();
+        students.push({
+            studentId: studentId,
+            studentName: student.name,
+            enrollmentYear: year,
+            progress: {},
+            graduated: false,
+            graduationYear: null,
+            attendance: 100,
+            notes: '',
+            tuitionPaid: tuitionPaid,
+            tuitionYear: year,
+            tuitionWaived: inst.waiveTuition === true || inst.ownershipType === 'public'
+        });
+
+        _state()._updateInstitution(institutionId, { students: students });
+
+        // Ensure the student has education record fields.
+        _learning().ensureCharacterEducationRecord(student);
+
+        // Mirror on the character.
+        if (!student.education) student.education = {};
+        student.education[institutionId] = {
+            institutionName: inst.name,
+            institutionType: inst.type,
+            enrolledYear: year,
+            graduated: false
+        };
+
+        _history().recordStudentEnrolled(institutionId, studentId, year, 'Enrolled');
+
+        return _ok({
+            institutionId: institutionId,
+            studentId: studentId,
+            tuitionPaid: tuitionPaid
+        });
     }
 
-    // =========================================================================
-    // 13. GRADUATION WITH ROLE GRANTING
-    // =========================================================================
-
     function graduateStudent(institutionId, studentId, graduationYear, selectedRoleId) {
-        if (_processingCommand) {
-            return false;
+        if (!institutionId || !studentId) return _fail('institutionId and studentId are required');
+
+        var inst = _state()._getInstitutionCanonical(institutionId);
+        if (!inst || !inst.students) return _fail('Institution or students not found');
+
+        var idx = -1;
+        for (var i = 0; i < inst.students.length; i++) {
+            if (inst.students[i].studentId === studentId) { idx = i; break; }
         }
-        _processingCommand = true;
+        if (idx === -1) return _fail('Student not enrolled');
+        if (inst.students[idx].graduated) return _fail('Student already graduated');
 
-        try {
-            var institution = EducationState.getInstitution(institutionId);
-            if (!institution || !institution.students) {
-                _showToast('Institution not found', 'error');
-                return false;
+        var year = graduationYear !== undefined ? graduationYear : _getCurrentYear();
+
+        // Role selection.
+        var taughtRoles = inst.taughtRoles || [];
+        var roleToGrant = null;
+
+        if (taughtRoles.length === 1) {
+            roleToGrant = taughtRoles[0];
+        } else if (taughtRoles.length > 1) {
+            if (!selectedRoleId) {
+                return _fail('Role selection required', { availableRoles: taughtRoles.slice() });
             }
-
-            var index = -1;
-            var studentRecord = null;
-            for (var i = 0; i < institution.students.length; i++) {
-                if (institution.students[i].studentId === studentId) {
-                    index = i;
-                    studentRecord = institution.students[i];
-                    break;
-                }
+            if (taughtRoles.indexOf(selectedRoleId) === -1) {
+                return _fail('Selected role not taught by this institution', { availableRoles: taughtRoles.slice() });
             }
+            roleToGrant = selectedRoleId;
+        }
 
-            if (index === -1) {
-                _showToast('Student not found', 'error');
-                return false;
-            }
-
-            if (studentRecord.graduated) {
-                _showToast('Student already graduated', 'error');
-                return false;
-            }
-
-            var gradYear = graduationYear || _getCurrentYear();
-
-            // Role granting
-            var taughtRoles = institution.taughtRoles || [];
-            var roleToGrant = null;
-
-            if (taughtRoles.length === 0) {
-                // No roles to grant - just graduate
-                _showToast('No roles to grant for this institution', 'warning');
-            } else if (taughtRoles.length === 1) {
-                roleToGrant = taughtRoles[0];
-            } else if (selectedRoleId) {
-                if (taughtRoles.indexOf(selectedRoleId) !== -1) {
-                    roleToGrant = selectedRoleId;
-                } else {
-                    _showToast('Selected role is not taught by this institution', 'error');
-                    return false;
-                }
-            } else {
-                _showToast('Please select a role to grant', 'error');
-                return { success: false, reason: 'Role selection required', availableRoles: taughtRoles };
-            }
-
-            if (roleToGrant) {
-                var role = _getRoleById(roleToGrant);
-                if (role) {
-                    var result = _assignRoleToCharacter(studentId, roleToGrant, {
-                        skillLevel: 100,
-                        primary: false,
-                        startYear: studentRecord.enrollmentYear,
-                        notes: 'Graduated from ' + institution.name + ' as ' + role.name,
-                        learnedVia: 'institution',
-                        institutionId: institutionId
-                    });
-
-                    if (result && result.success) {
-                        _showToast('Granted role "' + role.name + '" to ' + studentRecord.studentName, 'success');
-                    } else {
-                        _showToast('Failed to grant role: ' + (result?.reason || 'Unknown error'), 'error');
-                    }
-                }
-            }
-
-            // Graduation record
-            studentRecord.graduated = true;
-            studentRecord.graduationYear = gradYear;
-            studentRecord.grantedRole = roleToGrant;
-
-            if (!institution.graduates) institution.graduates = [];
-            institution.graduates.push({
-                studentId: studentId,
-                studentName: studentRecord.studentName,
-                graduationYear: gradYear,
-                grantedRole: roleToGrant
+        // Grant role if any.
+        if (roleToGrant) {
+            var role = _getRoleById(roleToGrant);
+            var roleResult = _assignRoleToCharacter(studentId, roleToGrant, {
+                skillLevel: 100,
+                primary: false,
+                startYear: inst.students[idx].enrollmentYear,
+                notes: 'Graduated from ' + inst.name,
+                learnedVia: 'institution',
+                institutionId: institutionId
             });
+            if (roleResult && roleResult.success === false) {
+                // Role grant failed but graduation proceeds; caller sees the reason.
+                // (Alternative: hard-fail. Left as warn for now.)
+                if (typeof console !== 'undefined' && console.warn) {
+                    console.warn('Role grant failed during graduation:', roleResult.reason);
+                }
+            }
+        }
 
-            institution.students.splice(index, 1);
+        // Update institution.
+        var students = inst.students.slice();
+        var record = Object.assign({}, students[idx], {
+            graduated: true,
+            graduationYear: year,
+            grantedRole: roleToGrant
+        });
+        students.splice(idx, 1);
 
-            institution.studentCount = institution.students.filter(function(s) { return !s.graduated; }).length;
+        var graduates = (inst.graduates || []).slice();
+        graduates.push({
+            studentId: studentId,
+            studentName: record.studentName,
+            graduationYear: year,
+            grantedRole: roleToGrant
+        });
 
-            EducationState._updateInstitution(institutionId, {
-                students: institution.students,
-                graduates: institution.graduates,
-                studentCount: institution.studentCount
-            });
+        _state()._updateInstitution(institutionId, {
+            students: students,
+            graduates: graduates
+        });
 
-            // Update character record
-            var student = _getCharacterById(studentId);
-            if (student && student.education && student.education[institutionId]) {
+        // Update character record.
+        var student = _getCharacterById(studentId);
+        if (student) {
+            if (student.education && student.education[institutionId]) {
                 student.education[institutionId].graduated = true;
-                student.education[institutionId].graduationYear = gradYear;
+                student.education[institutionId].graduationYear = year;
                 student.education[institutionId].grantedRole = roleToGrant;
+            }
+            if (!student.educationHistory) student.educationHistory = [];
+            student.educationHistory.push({
+                institutionId: institutionId,
+                institutionName: inst.name,
+                institutionType: inst.type,
+                enrolledYear: record.enrollmentYear,
+                graduationYear: year,
+                grantedRole: roleToGrant,
+                taughtRoles: (inst.taughtRoles || []).slice(),
+                curriculum: (inst.curriculum || []).map(function(c) { return c.name; })
+            });
 
-                if (!student.educationHistory) student.educationHistory = [];
-                student.educationHistory.push({
-                    institutionId: institutionId,
-                    institutionName: institution.name,
-                    institutionType: institution.type,
-                    enrolledYear: studentRecord.enrollmentYear,
-                    graduationYear: gradYear,
-                    grantedRole: roleToGrant,
-                    taughtRoles: institution.taughtRoles || [],
-                    curriculum: institution.curriculum ? institution.curriculum.map(function(c) { return c.name; }) : []
-                });
-
-                if (student.subjectProgress && institution.curriculum) {
-                    for (var i = 0; i < institution.curriculum.length; i++) {
-                        var item = institution.curriculum[i];
-                        var key = item.type === 'role' ? 'role_' + item.id : item.id;
-                        if (student.subjectProgress[key]) {
-                            student.subjectProgress[key].level = 100;
-                        }
+            // Cap curriculum proficiencies to 100.
+            if (student.subjectProgress && inst.curriculum) {
+                for (var k = 0; k < inst.curriculum.length; k++) {
+                    var key = _rules().progressKeyFor(inst.curriculum[k]);
+                    if (student.subjectProgress[key]) {
+                        student.subjectProgress[key].level = 100;
                     }
                 }
             }
-
-            updateReputation(institutionId, 2);
-
-            _logEvent('education', 'Student Graduated',
-                studentRecord.studentName + ' graduated from ' + institution.name +
-                (roleToGrant ? ' with role: ' + (_getRoleById(roleToGrant)?.name || roleToGrant) : ''),
-                [student]);
-
-            _recordStudentGraduated(institutionId, studentId, gradYear, 
-                'Graduated' + (roleToGrant ? ' as ' + (_getRoleById(roleToGrant)?.name || roleToGrant) : ''));
-
-            var roleMsg = roleToGrant ? ' with role: ' + (_getRoleById(roleToGrant)?.name || roleToGrant) : '';
-            _showToast(studentRecord.studentName + ' graduated' + roleMsg, 'success');
-            return true;
-
-        } finally {
-            _processingCommand = false;
         }
+
+        _history().recordStudentGraduated(institutionId, studentId, year,
+            'Graduated' + (roleToGrant ? ' as ' + (_getRoleById(roleToGrant) || {}).name : ''));
+        updateReputation(institutionId, 2);
+
+        return _ok({
+            institutionId: institutionId,
+            studentId: studentId,
+            grantedRole: roleToGrant,
+            graduationYear: year
+        });
     }
 
     function withdrawStudent(institutionId, studentId, reason) {
-        if (_processingCommand) {
-            return false;
+        if (!institutionId || !studentId) return _fail('institutionId and studentId are required');
+
+        var inst = _state()._getInstitutionCanonical(institutionId);
+        if (!inst || !inst.students) return _fail('Institution or students not found');
+
+        var idx = -1;
+        for (var i = 0; i < inst.students.length; i++) {
+            if (inst.students[i].studentId === studentId) { idx = i; break; }
         }
-        _processingCommand = true;
+        if (idx === -1) return _fail('Student not enrolled');
 
-        try {
-            var institution = EducationState.getInstitution(institutionId);
-            if (!institution || !institution.students) {
-                _showToast('Institution not found', 'error');
-                return false;
-            }
+        var students = inst.students.slice();
+        students.splice(idx, 1);
 
-            var index = -1;
-            var studentRecord = null;
-            for (var i = 0; i < institution.students.length; i++) {
-                if (institution.students[i].studentId === studentId) {
-                    index = i;
-                    studentRecord = institution.students[i];
-                    break;
-                }
-            }
+        _state()._updateInstitution(institutionId, { students: students });
 
-            if (index === -1) {
-                _showToast('Student not found', 'error');
-                return false;
-            }
-
-            institution.students.splice(index, 1);
-
-            institution.studentCount = institution.students.filter(function(s) { return !s.graduated; }).length;
-
-            EducationState._updateInstitution(institutionId, {
-                students: institution.students,
-                studentCount: institution.studentCount
-            });
-
-            var student = _getCharacterById(studentId);
-            if (student && student.education && student.education[institutionId]) {
-                student.education[institutionId].withdrawn = true;
-                student.education[institutionId].withdrawnReason = reason || 'Withdrew';
-                student.education[institutionId].withdrawnYear = _getCurrentYear();
-            }
-
-            updateReputation(institutionId, -1);
-
-            _recordStudentWithdrew(institutionId, studentId, _getCurrentYear(), reason || 'Withdrew', '');
-
-            _showToast((student ? student.name : 'Student') + ' withdrew', 'info');
-            return true;
-
-        } finally {
-            _processingCommand = false;
+        var student = _getCharacterById(studentId);
+        if (student && student.education && student.education[institutionId]) {
+            student.education[institutionId].withdrawn = true;
+            student.education[institutionId].withdrawnReason = reason || 'Withdrew';
+            student.education[institutionId].withdrawnYear = _getCurrentYear();
         }
+
+        _history().recordStudentWithdrew(institutionId, studentId, _getCurrentYear(), reason || 'Withdrew', '');
+        updateReputation(institutionId, -1);
+
+        return _ok({ institutionId: institutionId, studentId: studentId });
     }
 
-    // =========================================================================
-    // 14. HEADMASTER MANAGEMENT
-    // =========================================================================
+    // =====================================================================
+    // Learning
+    // =====================================================================
+
+    function advanceLearning(characterId, curriculumItem, progress) {
+        if (!characterId) return _fail('characterId is required');
+        if (!curriculumItem || !curriculumItem.id || !curriculumItem.type) {
+            return _fail('curriculumItem with id and type is required');
+        }
+
+        var character = _getCharacterById(characterId);
+        if (!character) return _fail('Character not found');
+        if (character.isDeceased) return _fail('Character is deceased');
+
+        _learning().ensureCharacterEducationRecord(character);
+
+        var key = _rules().progressKeyFor(curriculumItem);
+        if (!character.subjectProgress[key]) {
+            character.subjectProgress[key] = {
+                level: 0,
+                lastStudied: _getCurrentYear(),
+                source: 'institution',
+                type: curriculumItem.type,
+                roleId: curriculumItem.type === 'role' ? curriculumItem.id : null
+            };
+        }
+
+        var subject = character.subjectProgress[key];
+        var result;
+        try {
+            result = _rules().calculateLearningResult(subject.level || 0, progress);
+        } catch (e) {
+            return _fail(e.message || 'Invalid learning calculation');
+        }
+
+        subject.level = result.newLevel;
+        subject.lastStudied = _getCurrentYear();
+
+        // Role sync (best-effort, single owner).
+        if (curriculumItem.type === 'role' && result.increased > 0) {
+            var syncResult = _updateProfessionSkill(characterId, curriculumItem.id, result.newLevel);
+            if (syncResult === null && !advanceLearning._warnedSync) {
+                advanceLearning._warnedSync = true;
+                if (typeof console !== 'undefined' && console.warn) {
+                    console.warn('education-commands: role skill sync unavailable (updateProfessionSkill missing)');
+                }
+            }
+        }
+
+        // Literacy milestone.
+        if (curriculumItem.id === _rules().LITERACY_SUBJECT_ID) {
+            var wasLiterate = character.isLiterate === true;
+            var nowLiterate = _rules().isLiterateAtLevel(result.newLevel);
+            if (nowLiterate && !wasLiterate) {
+                character.isLiterate = true;
+                // Emit a history event only if we know a current institution.
+                // Look up the character's most recent enrollment.
+                var institutions = _state()._getAllInstitutionsCanonical();
+                for (var i = 0; i < institutions.length; i++) {
+                    var inst = institutions[i];
+                    if (!inst.students) continue;
+                    for (var j = 0; j < inst.students.length; j++) {
+                        if (inst.students[j].studentId === characterId && !inst.students[j].graduated) {
+                            _history().addEvent(inst, {
+                                type: window.HISTORY_EVENT_TYPES.STUDENT_BECAME_LITERATE,
+                                year: _getCurrentYear(),
+                                entityId: characterId,
+                                entityName: character.name + (character.surname ? ' ' + character.surname : ''),
+                                details: 'Became literate at ' + inst.name
+                            });
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        return _ok({
+            characterId: characterId,
+            subjectId: key,
+            subjectName: curriculumItem.name,
+            oldLevel: result.oldLevel,
+            newLevel: result.newLevel,
+            increased: result.increased
+        });
+    }
+
+    // =====================================================================
+    // Headmaster management
+    // =====================================================================
 
     function setHeadmaster(institutionId, characterId, title, startYear) {
-        if (_processingCommand) {
-            return false;
+        if (!institutionId || !characterId) return _fail('institutionId and characterId are required');
+
+        var inst = _state()._getInstitutionCanonical(institutionId);
+        if (!inst) return _fail('Institution not found');
+
+        var character = _getCharacterById(characterId);
+        if (!character) return _fail('Character not found');
+        if (character.isDeceased) return _fail('Character is deceased');
+
+        var year = startYear !== undefined ? startYear : _getCurrentYear();
+        var displayTitle = title || 'Headmaster';
+
+        // If an existing headmaster is being replaced, record their term ending.
+        if (inst.headmaster && inst.headmaster.characterId !== characterId) {
+            _history().recordHeadmasterEnded(institutionId, inst.headmaster.characterId,
+                year - 1, 'Replaced', '');
         }
-        _processingCommand = true;
 
-        try {
-            var institution = EducationState.getInstitution(institutionId);
-            var character = _getCharacterById(characterId);
-
-            if (!institution || !character) {
-                _showToast('Institution or character not found', 'error');
-                return false;
-            }
-
-            if (institution.headmaster && institution.headmaster.characterId !== characterId) {
-                if (!institution.headmasterHistory) institution.headmasterHistory = [];
-                institution.headmasterHistory.push({
-                    characterId: institution.headmaster.characterId,
-                    name: institution.headmaster.name,
-                    title: institution.headmaster.title,
-                    startYear: institution.headmaster.startYear,
-                    endYear: (startYear || _getCurrentYear()) - 1,
-                    reason: 'Replaced'
-                });
-            }
-
-            var appointmentYear = startYear || _getCurrentYear();
-
-            institution.headmaster = {
+        _state()._updateInstitution(institutionId, {
+            headmaster: {
                 characterId: characterId,
                 name: character.name,
-                title: title || 'Headmaster',
-                startYear: appointmentYear
-            };
+                title: displayTitle,
+                startYear: year
+            }
+        });
 
-            EducationState._updateInstitution(institutionId, {
-                headmaster: institution.headmaster,
-                headmasterHistory: institution.headmasterHistory
-            });
+        _history().recordHeadmasterAppointed(institutionId, characterId, displayTitle, year, '');
 
-            _logEvent('education', 'Headmaster Appointed',
-                character.name + ' appointed as ' + (title || 'Headmaster') + ' of ' + institution.name,
-                [character]);
-
-            _recordHeadmasterAppointed(institutionId, characterId, title || 'Headmaster', appointmentYear, '');
-
-            _showToast(character.name + ' appointed as ' + (title || 'Headmaster'), 'success');
-            return true;
-
-        } finally {
-            _processingCommand = false;
-        }
+        return _ok({ institutionId: institutionId, characterId: characterId });
     }
 
     function endHeadmasterTerm(institutionId, endYear, reason) {
-        if (_processingCommand) {
-            return false;
-        }
-        _processingCommand = true;
+        if (!institutionId) return _fail('institutionId is required');
 
-        try {
-            var institution = EducationState.getInstitution(institutionId);
-            if (!institution || !institution.headmaster) {
-                _showToast('No headmaster to remove', 'error');
-                return false;
-            }
+        var inst = _state()._getInstitutionCanonical(institutionId);
+        if (!inst || !inst.headmaster) return _fail('No headmaster to remove');
 
-            if (!institution.headmasterHistory) institution.headmasterHistory = [];
+        var year = endYear !== undefined ? endYear : _getCurrentYear();
+        var former = inst.headmaster;
 
-            var endYearValue = endYear || _getCurrentYear();
+        _state()._updateInstitution(institutionId, { headmaster: null });
+        _history().recordHeadmasterEnded(institutionId, former.characterId, year, reason || 'Term ended', '');
 
-            institution.headmasterHistory.push({
-                characterId: institution.headmaster.characterId,
-                name: institution.headmaster.name,
-                title: institution.headmaster.title,
-                startYear: institution.headmaster.startYear,
-                endYear: endYearValue,
-                reason: reason || 'Term ended'
-            });
-
-            var formerHeadmaster = institution.headmaster;
-            institution.headmaster = null;
-
-            EducationState._updateInstitution(institutionId, {
-                headmaster: institution.headmaster,
-                headmasterHistory: institution.headmasterHistory
-            });
-
-            _logEvent('education', 'Headmaster Term Ended',
-                formerHeadmaster.name + ' ended their term as ' + formerHeadmaster.title + ' of ' + institution.name,
-                []);
-
-            _recordHeadmasterEnded(institutionId, formerHeadmaster.characterId, endYearValue, reason || 'Term ended', '');
-
-            _showToast(formerHeadmaster.name + "'s term ended", 'info');
-            return true;
-
-        } finally {
-            _processingCommand = false;
-        }
+        return _ok({ institutionId: institutionId, formerHeadmasterId: former.characterId });
     }
 
-    // =========================================================================
-    // 15. INSTITUTIONS NEEDING TEACHERS
-    // =========================================================================
+    // =====================================================================
+    // Tuition
+    // =====================================================================
 
-    function getInstitutionsNeedingTeachers(maxReputation, minStudents) {
-        if (_processingCommand) {
-            return [];
+    function calculateTuition(institutionId, year) {
+        var inst = _state()._getInstitutionCanonical(institutionId);
+        if (!inst) return _fail('Institution not found');
+        return _calculateTuition(inst, year);
+    }
+
+    function updateTuition(institutionId, newTuition, reason) {
+        if (!institutionId) return _fail('institutionId is required');
+
+        var inst = _state()._getInstitutionCanonical(institutionId);
+        if (!inst) return _fail('Institution not found');
+
+        if (inst.ownershipType === 'public') {
+            return _fail('Public schools have free tuition and cannot set a custom rate');
         }
-        _processingCommand = true;
 
-        try {
-            maxReputation = maxReputation || 70;
-            minStudents = minStudents || 0;
+        if (newTuition === null) {
+            _state()._updateInstitution(institutionId, { customTuition: null });
+            return _ok({ institutionId: institutionId, tuition: null, mode: 'calculated' });
+        }
 
-            var institutions = EducationState.getAllInstitutions();
-            var needing = [];
+        var bounded = Math.max(0, newTuition);
+        var oldAmount = inst.customTuition !== null ? inst.customTuition : inst.tuitionPerYear;
 
-            for (var i = 0; i < institutions.length; i++) {
-                var inst = institutions[i];
-                if (inst.reputation > maxReputation) continue;
-                if (minStudents > 0 && (inst.students?.length || 0) < minStudents) continue;
+        var history = (inst.tuitionHistory || []).slice();
+        history.push({
+            year: _getCurrentYear(),
+            oldAmount: oldAmount,
+            newAmount: bounded,
+            reason: reason || 'Manual override'
+        });
 
-                var subjectsTaught = {};
-                if (inst.teachers) {
-                    for (var j = 0; j < inst.teachers.length; j++) {
-                        subjectsTaught[inst.teachers[j].subjectId] = true;
+        _state()._updateInstitution(institutionId, {
+            customTuition: bounded,
+            tuitionHistory: history
+        });
+
+        return _ok({ institutionId: institutionId, tuition: bounded, mode: 'manual' });
+    }
+
+    function updateTuitionWaiver(institutionId, waiveTuition, reason) {
+        if (!institutionId) return _fail('institutionId is required');
+
+        var inst = _state()._getInstitutionCanonical(institutionId);
+        if (!inst) return _fail('Institution not found');
+
+        if (inst.ownershipType === 'public') {
+            return _fail('Public schools already have free tuition');
+        }
+
+        _state()._updateInstitution(institutionId, { waiveTuition: !!waiveTuition });
+        return _ok({ institutionId: institutionId, waiveTuition: !!waiveTuition });
+    }
+
+    function getTuitionHistory(institutionId, limit) {
+        var inst = _state()._getInstitutionCanonical(institutionId);
+        if (!inst || !inst.tuitionHistory) return [];
+        var history = inst.tuitionHistory.slice();
+        history.sort(function(a, b) { return (b.year || 0) - (a.year || 0); });
+        if (limit && limit > 0) history = history.slice(0, limit);
+        return history;
+    }
+
+    // =====================================================================
+    // Ownership
+    // =====================================================================
+
+    function setSchoolOwnership(institutionId, ownershipType, ownerId, ownerType) {
+        if (!institutionId) return _fail('institutionId is required');
+        if (!ownershipType) return _fail('ownershipType is required');
+
+        var inst = _state()._getInstitutionCanonical(institutionId);
+        if (!inst) return _fail('Institution not found');
+
+        var patch = { ownershipType: ownershipType };
+
+        if (ownershipType === 'public') {
+            patch.ownerId = null;
+            patch.ownerType = null;
+            patch.ownerName = null;
+            patch.waiveTuition = false;
+            patch.customTuition = null;
+            // Religion is orthogonal to ownership; do not clear.
+        } else if (ownershipType === 'private') {
+            if (!ownerId) return _fail('ownerId is required for private ownership');
+            var name = null;
+            if (ownerType === 'character') {
+                var c = _getCharacterById(ownerId);
+                if (!c) return _fail('Owner character not found');
+                name = c.name + (c.surname ? ' ' + c.surname : '');
+            } else if (ownerType === 'household') {
+                var h = _getHousehold(ownerId);
+                if (!h) return _fail('Owner household not found');
+                name = h.name;
+            } else {
+                return _fail('ownerType must be "character" or "household" for private ownership');
+            }
+            patch.ownerId = ownerId;
+            patch.ownerType = ownerType;
+            patch.ownerName = name;
+        } else if (ownershipType === 'religious') {
+            var religionId = ownerId || inst.religionId;
+            if (!religionId) return _fail('religionId is required for religious ownership');
+            var rel = _getReligionById(religionId);
+            if (!rel) return _fail('Religion not found');
+            patch.ownerId = rel.id;
+            patch.ownerType = 'religion';
+            patch.ownerName = rel.name;
+            patch.religionId = rel.id;
+            patch.religionName = rel.name;
+            patch.isReligiousSchool = true;
+        } else {
+            return _fail('Unknown ownershipType: ' + ownershipType);
+        }
+
+        _state()._updateInstitution(institutionId, patch);
+        return _ok({ institutionId: institutionId, ownershipType: ownershipType });
+    }
+
+    function setSchoolOwner(institutionId, ownerId, ownerType) {
+        if (!institutionId) return _fail('institutionId is required');
+
+        var inst = _state()._getInstitutionCanonical(institutionId);
+        if (!inst) return _fail('Institution not found');
+
+        if (inst.ownershipType === 'public') {
+            return _fail('Public schools have no owner');
+        }
+
+        if (inst.ownershipType === 'religious') {
+            var rel = _getReligionById(ownerId);
+            if (!rel) return _fail('Religion not found');
+            _state()._updateInstitution(institutionId, {
+                ownerId: rel.id,
+                ownerType: 'religion',
+                ownerName: rel.name,
+                religionId: rel.id,
+                religionName: rel.name,
+                isReligiousSchool: true
+            });
+            return _ok({ institutionId: institutionId });
+        }
+
+        // Private.
+        if (!ownerId) return _fail('ownerId is required');
+        var ownerName = null;
+        if (ownerType === 'character') {
+            var c = _getCharacterById(ownerId);
+            if (!c) return _fail('Owner character not found');
+            ownerName = c.name + (c.surname ? ' ' + c.surname : '');
+        } else if (ownerType === 'household') {
+            var h = _getHousehold(ownerId);
+            if (!h) return _fail('Owner household not found');
+            ownerName = h.name;
+        } else {
+            return _fail('ownerType must be "character" or "household"');
+        }
+
+        _state()._updateInstitution(institutionId, {
+            ownerId: ownerId,
+            ownerType: ownerType,
+            ownerName: ownerName
+        });
+
+        return _ok({ institutionId: institutionId });
+    }
+
+    // =====================================================================
+    // Finance
+    // =====================================================================
+
+    function calculatePublicSchoolFunding(institutionId, year) {
+        var inst = _state()._getInstitutionCanonical(institutionId);
+        if (!inst) return _fail('Institution not found');
+        if (inst.ownershipType !== 'public') return _fail('Only public schools receive government funding');
+
+        var y = year !== undefined ? year : _getCurrentYear();
+        var studentCount = (inst.students || []).filter(function(s) { return !s.graduated; }).length;
+
+        var costPerStudent = 10;
+        if (inst.type === 'university') costPerStudent = 20;
+        else if (inst.type === 'grand_university') costPerStudent = 25;
+        else if (inst.type === 'college') costPerStudent = 15;
+        else if (inst.type === 'academy') costPerStudent = 12;
+        else if (inst.type === 'town_school') costPerStudent = 8;
+        else if (inst.type === 'small_school') costPerStudent = 5;
+        else if (inst.type === 'hut_school') costPerStudent = 2;
+
+        var prosperity = _getSettlementProsperity(inst.locationId);
+        var prosperityModifier = 0.8 + (prosperity / 100) * 0.4;
+
+        var funding = Math.round(studentCount * costPerStudent * prosperityModifier);
+
+        return _ok({
+            institutionId: institutionId,
+            year: y,
+            funding: funding,
+            studentCount: studentCount,
+            costPerStudent: costPerStudent,
+            prosperityModifier: prosperityModifier
+        });
+    }
+
+    function applyGovernmentFunding(institutionId, year) {
+        var inst = _state()._getInstitutionCanonical(institutionId);
+        if (!inst) return _fail('Institution not found');
+        if (inst.ownershipType !== 'public') return _fail('Only public schools receive government funding');
+
+        var calc = calculatePublicSchoolFunding(institutionId, year);
+        if (!calc.success) return calc;
+
+        var y = calc.year;
+        var funding = calc.funding;
+
+        var history = (inst.governmentFundingHistory || []).slice();
+        history.push({ year: y, amount: funding, students: calc.studentCount });
+        if (history.length > 40) history = history.slice(-40);
+
+        _state()._updateInstitution(institutionId, {
+            governmentFunding: funding,
+            governmentFundingYear: y,
+            lastFunded: y,
+            governmentFundingHistory: history
+        });
+
+        _updateSettlementWealth(inst.locationId, -funding,
+            'Education funding for ' + inst.name + ' (' + calc.studentCount + ' students)');
+
+        return _ok({ institutionId: institutionId, year: y, funding: funding, studentCount: calc.studentCount });
+    }
+
+    function calculatePrivateSchoolProfit(institutionId, year) {
+        var inst = _state()._getInstitutionCanonical(institutionId);
+        if (!inst) return _fail('Institution not found');
+        if (inst.ownershipType !== 'private') return _fail('Only private schools generate profit');
+
+        var y = year !== undefined ? year : _getCurrentYear();
+        var tuitionResult = _calculateTuition(inst, y);
+        var tuition = tuitionResult.success ? tuitionResult.tuition : 0;
+        var students = (inst.students || []).filter(function(s) { return !s.graduated; }).length;
+        var income = tuition * students;
+
+        var teacherCount = inst.teachers ? inst.teachers.length : 0;
+        var teacherCost = teacherCount * 15;
+        var maintenance = Math.round(students * 2);
+        var specializationCost = inst.isSpecialized ? Math.round(students * 1) : 0;
+        var expenses = teacherCost + maintenance + specializationCost;
+        var profit = income - expenses;
+
+        return _ok({
+            institutionId: institutionId,
+            year: y,
+            tuition: tuition,
+            studentCount: students,
+            teacherCount: teacherCount,
+            income: income,
+            expenses: expenses,
+            profit: profit,
+            breakdown: {
+                teacherCost: teacherCost,
+                maintenance: maintenance,
+                specializationCost: specializationCost
+            }
+        });
+    }
+
+    function processPrivateSchoolProfit(institutionId, year) {
+        var inst = _state()._getInstitutionCanonical(institutionId);
+        if (!inst) return _fail('Institution not found');
+        if (inst.ownershipType !== 'private') return _fail('Only private schools generate profit');
+        if (!inst.ownerId) return _fail('Private school has no owner');
+
+        var calc = calculatePrivateSchoolProfit(institutionId, year);
+        if (!calc.success) return calc;
+
+        var history = (inst.profitHistory || []).slice();
+        history.push({
+            year: calc.year,
+            profit: calc.profit,
+            income: calc.income,
+            expenses: calc.expenses,
+            students: calc.studentCount
+        });
+        if (history.length > 40) history = history.slice(-40);
+
+        _state()._updateInstitution(institutionId, {
+            annualIncome: calc.income,
+            annualExpenses: calc.expenses,
+            netProfit: calc.profit,
+            profitHistory: history
+        });
+
+        // Pay owner.
+        if (inst.ownerType === 'character') {
+            var owner = _getCharacterById(inst.ownerId);
+            if (owner) {
+                var household = _getCharacterHousehold(owner.id);
+                if (household) {
+                    _updateHouseholdWealth(household.id, calc.profit, 'Profit from ' + inst.name);
+                }
+            }
+        } else if (inst.ownerType === 'household') {
+            _updateHouseholdWealth(inst.ownerId, calc.profit, 'Profit from ' + inst.name);
+        }
+
+        return _ok({
+            institutionId: institutionId,
+            year: calc.year,
+            profit: calc.profit,
+            ownerId: inst.ownerId,
+            ownerType: inst.ownerType
+        });
+    }
+
+    function processAllSchoolFinances(year) {
+        var y = year !== undefined ? year : _getCurrentYear();
+        var institutions = _state()._getAllInstitutionsCanonical();
+
+        var publicFunding = [];
+        var privateProfits = [];
+        var errors = [];
+        var totalFunding = 0;
+        var totalProfit = 0;
+
+        for (var i = 0; i < institutions.length; i++) {
+            var inst = institutions[i];
+            try {
+                if (inst.ownershipType === 'public') {
+                    var fr = applyGovernmentFunding(inst.id, y);
+                    if (fr.success) {
+                        publicFunding.push({
+                            institutionId: inst.id,
+                            institutionName: inst.name,
+                            funding: fr.funding,
+                            students: fr.studentCount
+                        });
+                        totalFunding += fr.funding;
+                    } else {
+                        errors.push({ institutionId: inst.id, institutionName: inst.name, error: fr.reason });
+                    }
+                } else if (inst.ownershipType === 'private') {
+                    var pr = processPrivateSchoolProfit(inst.id, y);
+                    if (pr.success) {
+                        privateProfits.push({
+                            institutionId: inst.id,
+                            institutionName: inst.name,
+                            profit: pr.profit,
+                            ownerId: pr.ownerId,
+                            ownerType: pr.ownerType
+                        });
+                        totalProfit += pr.profit;
+                    } else {
+                        errors.push({ institutionId: inst.id, institutionName: inst.name, error: pr.reason });
                     }
                 }
-
-                var curriculumSubjects = inst.curriculum || [];
-                var missingSubjects = [];
-                for (var j = 0; j < curriculumSubjects.length; j++) {
-                    if (!subjectsTaught[curriculumSubjects[j].id]) {
-                        missingSubjects.push(curriculumSubjects[j]);
-                    }
-                }
-
-                if (missingSubjects.length > 0) {
-                    needing.push({
-                        institution: inst,
-                        missingSubjects: missingSubjects,
-                        teacherCount: inst.teachers ? inst.teachers.length : 0,
-                        studentCount: inst.students ? inst.students.length : 0,
-                        teacherStudentRatio: (inst.students?.length || 0) / Math.max(1, inst.teachers?.length || 0),
-                        priority: Math.floor((100 - inst.reputation) / 10)
-                    });
-                }
+            } catch (e) {
+                errors.push({ institutionId: inst.id, institutionName: inst.name, error: e.message || 'Unknown error' });
             }
+        }
 
-            needing.sort(function(a, b) {
-                return b.priority - a.priority || b.missingSubjects.length - a.missingSubjects.length;
+        return _ok({
+            year: y,
+            publicFunding: publicFunding,
+            privateProfits: privateProfits,
+            errors: errors,
+            totalFunding: totalFunding,
+            totalProfit: totalProfit
+        });
+    }
+
+    // =====================================================================
+    // Settlement budget
+    // =====================================================================
+
+    function receiveSettlementBudget(locationId, amount, year) {
+        if (!locationId) return _fail('locationId is required');
+
+        var y = year !== undefined ? year : _getCurrentYear();
+        var totalBudget = amount || 0;
+        var institutions = _state().getInstitutionsByLocation(locationId);
+
+        if (institutions.length === 0) {
+            return _ok({ locationId: locationId, year: y, institutions: 0, total: totalBudget, message: 'No institutions to fund' });
+        }
+
+        var perInstitution = totalBudget / institutions.length;
+
+        for (var i = 0; i < institutions.length; i++) {
+            _state()._updateInstitution(institutions[i].id, {
+                governmentFunding: perInstitution,
+                governmentFundingYear: y,
+                lastFunded: y
             });
-
-            return needing;
-
-        } finally {
-            _processingCommand = false;
         }
+
+        return _ok({
+            locationId: locationId,
+            year: y,
+            institutions: institutions.length,
+            total: totalBudget,
+            perInstitution: perInstitution
+        });
     }
 
-    // =========================================================================
-    // 16. UPDATE REPUTATION
-    // =========================================================================
+    function getSettlementFundingSummary(locationId, year) {
+        if (!locationId) return _fail('locationId is required');
+        var y = year !== undefined ? year : _getCurrentYear();
+        var institutions = _state().getInstitutionsByLocation(locationId);
 
-    function updateReputation(institutionId, delta) {
-        if (_processingCommand) {
-            return 0;
-        }
-        _processingCommand = true;
-
-        try {
-            var institution = EducationState.getInstitution(institutionId);
-            if (!institution) return 0;
-
-            var oldReputation = institution.reputation || 50;
-            var newReputation = Math.min(100, Math.max(0, oldReputation + delta));
-
-            EducationState._updateInstitution(institutionId, { reputation: newReputation });
-
-            if (typeof window.recordReputationChanged === 'function') {
-                window.recordReputationChanged(institutionId, oldReputation, newReputation, _getCurrentYear(), 'Manual adjustment');
+        var total = 0;
+        var details = [];
+        for (var i = 0; i < institutions.length; i++) {
+            var inst = institutions[i];
+            var funding = inst.governmentFunding || 0;
+            var fundingYear = inst.governmentFundingYear || 0;
+            if (fundingYear === y || year === undefined) {
+                total += funding;
+                details.push({
+                    institutionId: inst.id,
+                    institutionName: inst.name,
+                    funding: funding,
+                    year: fundingYear
+                });
             }
-
-            return newReputation;
-
-        } finally {
-            _processingCommand = false;
         }
+
+        return _ok({
+            locationId: locationId,
+            year: y,
+            total: total,
+            institutions: details,
+            count: details.length
+        });
     }
 
-    // =========================================================================
-    // 17. DEMOLISH INSTITUTION
-    // =========================================================================
+    // =====================================================================
+    // Demolish / rebuild
+    // =====================================================================
 
     function demolishInstitution(institutionId, reason, year, options) {
-        if (_processingCommand) {
-            return { success: false, error: 'Command already in progress' };
+        options = options || {};
+        if (!institutionId) return _fail('institutionId is required');
+
+        var inst = _state()._getInstitutionCanonical(institutionId);
+        if (!inst) return _fail('Institution not found');
+        if (inst.status === 'demolished') return _fail('Already demolished');
+
+        var demolishYear = year !== undefined ? year : _getCurrentYear();
+        var demolishReason = reason || 'Demolished';
+
+        var record = {
+            institutionId: inst.id,
+            institutionName: inst.name,
+            type: inst.type,
+            typeName: inst.typeName,
+            locationId: inst.locationId,
+            locationName: inst.locationName,
+            demolishedYear: demolishYear,
+            demolishedReason: demolishReason,
+            destroyedBy: options.destroyedBy || 'manual',
+            disasterId: options.disasterId || null,
+            previousReputation: inst.reputation !== undefined ? inst.reputation : 50,
+            previousStudents: (inst.students || []).length,
+            previousTeachers: (inst.teachers || []).length,
+            previousMaxStudents: inst.maxStudents || 0,
+            headmasterId: inst.headmaster ? inst.headmaster.characterId : null,
+            headmasterName: inst.headmaster ? inst.headmaster.name : null,
+            ownershipType: inst.ownershipType,
+            ownerId: inst.ownerId,
+            ownerName: inst.ownerName,
+            religionId: inst.religionId,
+            religionName: inst.religionName,
+            timestamp: Date.now()
+        };
+
+        var removedStudents = 0;
+        if (options.removeStudents !== false) {
+            var students = (inst.students || []).slice();
+            for (var i = 0; i < students.length; i++) {
+                if (!students[i].graduated) {
+                    var res = withdrawStudent(institutionId, students[i].studentId, 'Institution demolished');
+                    if (res.success) removedStudents++;
+                }
+            }
         }
-        _processingCommand = true;
 
-        try {
-            var state = EducationState;
-            if (!state) {
-                return { success: false, error: 'Education state not available' };
+        var removedTeachers = 0;
+        if (options.removeTeachers !== false) {
+            var teachers = (inst.teachers || []).slice();
+            for (var i = 0; i < teachers.length; i++) {
+                var res = fireTeacher(institutionId, teachers[i].teacherId, 'Institution demolished');
+                if (res.success) removedTeachers++;
             }
-
-            var institution = state.getInstitution(institutionId);
-            if (!institution) {
-                return { success: false, error: 'Institution not found' };
-            }
-
-            if (institution.status === 'demolished') {
-                return { success: false, error: 'Institution already demolished' };
-            }
-
-            options = options || {};
-            var demolishYear = year || _getCurrentYear();
-            var demolishReason = reason || 'Demolished';
-
-            var demolitionRecord = {
-                institutionId: institution.id,
-                institutionName: institution.name,
-                type: institution.type || 'unknown',
-                typeName: institution.typeName || institution.type || 'Unknown',
-                locationId: institution.locationId,
-                locationName: institution.locationName || 'Unknown',
-                demolishedYear: demolishYear,
-                demolishedReason: demolishReason,
-                destroyedBy: options.destroyedBy || 'manual',
-                disasterId: options.disasterId || null,
-                previousReputation: institution.reputation || 50,
-                previousStudents: (institution.students || []).length,
-                previousTeachers: (institution.teachers || []).length,
-                previousMaxStudents: institution.maxStudents || 0,
-                headmasterId: institution.headmaster ? institution.headmaster.characterId : null,
-                headmasterName: institution.headmaster ? institution.headmaster.name : null,
-                ownershipType: institution.ownershipType || 'public',
-                ownerId: institution.ownerId || null,
-                ownerName: institution.ownerName || null,
-                religionId: institution.religionId || null,
-                religionName: institution.religionName || null,
-                timestamp: Date.now()
-            };
-
-            // Remove all students
-            var removedStudents = [];
-            if (options.removeStudents !== false) {
-                var students = (institution.students || []).slice();
-                for (var i = 0; i < students.length; i++) {
-                    var student = students[i];
-                    if (!student.graduated) {
-                        try {
-                            var result = withdrawStudent(institutionId, student.studentId, 'Institution demolished');
-                            if (result) {
-                                removedStudents.push(student.studentId);
-                            }
-                        } catch (e) {
-                            // Continue with other students
-                        }
-                    }
-                }
-            }
-
-            // Remove all teachers
-            var removedTeachers = [];
-            if (options.removeTeachers !== false) {
-                var teachers = (institution.teachers || []).slice();
-                for (var i = 0; i < teachers.length; i++) {
-                    var teacher = teachers[i];
-                    if (!teacher.fired) {
-                        try {
-                            var result = fireTeacher(institutionId, teacher.teacherId, 'Institution demolished');
-                            if (result) {
-                                removedTeachers.push(teacher.teacherId);
-                            }
-                        } catch (e) {
-                            // Continue with other teachers
-                        }
-                    }
-                }
-            }
-
-            // End headmaster term
-            if (institution.headmaster && !institution.headmaster.endedYear) {
-                try {
-                    endHeadmasterTerm(institutionId, demolishYear, 'Institution demolished');
-                } catch (e) {
-                    // Continue
-                }
-            }
-
-            var updates = {
-                status: 'demolished',
-                demolishedAt: demolishYear,
-                demolishedReason: demolishReason,
-                destroyedBy: options.destroyedBy || 'manual',
-                disasterId: options.disasterId || null,
-                demolishedRecord: demolitionRecord,
-                students: [],
-                teachers: [],
-                headmaster: null,
-                reputation: Math.max(0, (institution.reputation || 50) - 30),
-                maxStudents: 0,
-                updatedAt: Date.now()
-            };
-
-            var result = state._updateInstitution(institutionId, updates);
-
-            if (!result) {
-                return { success: false, error: 'Failed to update institution' };
-            }
-
-            if (typeof window.EducationHistory !== 'undefined' && 
-                window.EducationHistory.addEducationHistoryEvent) {
-                window.EducationHistory.addEducationHistoryEvent(institutionId, {
-                    type: 'institution_demolished',
-                    year: demolishYear,
-                    entityId: institutionId,
-                    entityName: institution.name,
-                    details: 'Demolished: ' + demolishReason,
-                    extra: {
-                        destroyedBy: options.destroyedBy || 'manual',
-                        disasterId: options.disasterId || null
-                    }
-                });
-            }
-
-            state.invalidateCache();
-
-            _logEvent('education', 'Institution Demolished',
-                'Institution "' + institution.name + '" demolished: ' + demolishReason,
-                []);
-
-            if (!options.silent) {
-                _showToast('Institution "' + institution.name + '" demolished', 'info');
-            }
-
-            return {
-                success: true,
-                demolitionRecord: demolitionRecord,
-                institution: state.getInstitution(institutionId),
-                removedStudents: removedStudents.length,
-                removedTeachers: removedTeachers.length
-            };
-
-        } finally {
-            _processingCommand = false;
         }
+
+        if (inst.headmaster) {
+            endHeadmasterTerm(institutionId, demolishYear, 'Institution demolished');
+        }
+
+        _state()._updateInstitution(institutionId, {
+            status: 'demolished',
+            demolishedAt: demolishYear,
+            demolishedReason: demolishReason,
+            destroyedBy: options.destroyedBy || 'manual',
+            disasterId: options.disasterId || null,
+            demolishedRecord: record,
+            students: [],
+            teachers: [],
+            headmaster: null,
+            reputation: Math.max(0, (inst.reputation || 50) - 30),
+            maxStudents: 0
+        });
+
+        _state()._indexesRebuild();
+
+        _history().addEvent(_state()._getInstitutionCanonical(institutionId), {
+            type: 'institution_demolished', // not in canonical vocabulary yet; validation will fail
+            year: demolishYear,
+            details: 'Demolished: ' + demolishReason
+        });
+
+        return _ok({
+            institutionId: institutionId,
+            demolitionRecord: record,
+            removedStudents: removedStudents,
+            removedTeachers: removedTeachers
+        });
     }
-
-    // =========================================================================
-    // 18. REBUILD INSTITUTION
-    // =========================================================================
 
     function rebuildInstitution(institutionId, rebuildYear, options) {
-        if (_processingCommand) {
-            return { success: false, error: 'Command already in progress' };
+        options = options || {};
+        if (!institutionId) return _fail('institutionId is required');
+
+        var inst = _state()._getInstitutionCanonical(institutionId);
+        if (!inst) return _fail('Institution not found');
+        if (inst.status !== 'demolished') return _fail('Institution is not demolished');
+
+        var record = inst.demolishedRecord;
+        if (!record) return _fail('No demolition record');
+
+        var y = rebuildYear !== undefined ? rebuildYear : _getCurrentYear();
+
+        var TYPES = window.INSTITUTION_TYPES;
+        var typeDef = null;
+        for (var k in TYPES) {
+            if (TYPES[k].id === inst.type) { typeDef = TYPES[k]; break; }
         }
-        _processingCommand = true;
+        var maxStudents = options.maxStudents || (typeDef ? typeDef.maxStudents : 30);
 
-        try {
-            var state = EducationState;
-            if (!state) {
-                return { success: false, error: 'Education state not available' };
-            }
+        _state()._updateInstitution(institutionId, {
+            status: 'active',
+            demolishedAt: null,
+            demolishedReason: null,
+            destroyedBy: null,
+            disasterId: null,
+            demolishedRecord: null,
+            reputation: options.initialReputation !== undefined
+                ? options.initialReputation
+                : Math.max(20, Math.floor((record.previousReputation || 50) / 2)),
+            maxStudents: maxStudents,
+            students: [],
+            teachers: [],
+            headmaster: null
+        });
 
-            var institution = state.getInstitution(institutionId);
-            if (!institution) {
-                return { success: false, error: 'Institution not found' };
-            }
+        _state()._indexesRebuild();
 
-            if (institution.status !== 'demolished') {
-                return { success: false, error: 'Institution is not demolished' };
-            }
-
-            options = options || {};
-            var rebuildYearValue = rebuildYear || _getCurrentYear();
-
-            var record = institution.demolishedRecord;
-            if (!record) {
-                return { success: false, error: 'No demolition record found' };
-            }
-
-            var maxStudents = options.maxStudents;
-            if (!maxStudents) {
-                var typeDef = null;
-                if (typeof window.EducationConstants !== 'undefined' && 
-                    window.EducationConstants.INSTITUTION_TYPES) {
-                    typeDef = window.EducationConstants.INSTITUTION_TYPES[institution.type];
-                }
-                maxStudents = typeDef ? typeDef.maxStudents : 30;
-            }
-
-            var updates = {
-                status: 'active',
-                demolishedAt: null,
-                demolishedReason: null,
-                destroyedBy: null,
-                disasterId: null,
-                demolishedRecord: null,
-                reputation: options.initialReputation || Math.max(20, Math.floor((record.previousReputation || 50) / 2)),
-                maxStudents: maxStudents,
-                students: [],
-                teachers: [],
-                headmaster: null,
-                // Preserve religion fields
-                religionId: record.religionId || institution.religionId || null,
-                religionName: record.religionName || institution.religionName || null,
-                isReligiousSchool: !!(record.religionId || institution.religionId),
-                updatedAt: Date.now()
-            };
-
-            var result = state._updateInstitution(institutionId, updates);
-
-            if (!result) {
-                return { success: false, error: 'Failed to update institution' };
-            }
-
-            if (typeof window.EducationHistory !== 'undefined' && 
-                window.EducationHistory.addEducationHistoryEvent) {
-                window.EducationHistory.addEducationHistoryEvent(institutionId, {
-                    type: 'institution_rebuilt',
-                    year: rebuildYearValue,
-                    entityId: institutionId,
-                    entityName: institution.name,
-                    details: 'Rebuilt: ' + (options.reason || 'After destruction')
-                });
-            }
-
-            state.invalidateCache();
-
-            _logEvent('education', 'Institution Rebuilt',
-                'Institution "' + institution.name + '" rebuilt: ' + (options.reason || 'Unknown'),
-                []);
-
-            if (!options.silent) {
-                _showToast('Institution "' + institution.name + '" rebuilt', 'success');
-            }
-
-            return {
-                success: true,
-                institution: state.getInstitution(institutionId),
-                rebuiltAt: rebuildYearValue
-            };
-
-        } finally {
-            _processingCommand = false;
-        }
+        return _ok({ institutionId: institutionId, rebuiltAt: y });
     }
 
-    // =========================================================================
-    // 19. DEMOLISHED INSTITUTION QUERIES
-    // =========================================================================
-
     function getDemolishedInstitutions(options) {
-        try {
-            var state = EducationState;
-            if (!state) return [];
+        options = options || {};
+        var all = _state()._getAllInstitutionsCanonical();
+        var out = [];
 
-            options = options || {};
-            var all = state.getAllInstitutions();
-            var filtered = all.filter(function(i) {
-                return i.status === 'demolished';
-            });
-
-            if (options.locationId) {
-                filtered = filtered.filter(function(i) {
-                    return i.locationId === options.locationId;
-                });
-            }
-
-            if (options.destroyedBy) {
-                filtered = filtered.filter(function(i) {
-                    return i.destroyedBy === options.destroyedBy;
-                });
-            }
-
-            if (options.type) {
-                filtered = filtered.filter(function(i) {
-                    return i.type === options.type || i.typeName === options.type;
-                });
-            }
-
-            if (!options.includeRecords) {
-                filtered = filtered.map(function(i) {
-                    var result = { ...i };
-                    delete result.demolishedRecord;
-                    return result;
-                });
-            }
-
-            return filtered;
-        } catch (e) {
-            return [];
+        for (var i = 0; i < all.length; i++) {
+            var inst = all[i];
+            if (inst.status !== 'demolished') continue;
+            if (options.locationId && inst.locationId !== options.locationId) continue;
+            if (options.destroyedBy && inst.destroyedBy !== options.destroyedBy) continue;
+            if (options.type && inst.type !== options.type && inst.typeName !== options.type) continue;
+            out.push(inst);
         }
+
+        return out;
     }
 
     function getInstitutionDemolitionStats(locationId) {
+        var demolished = getDemolishedInstitutions({
+            locationId: locationId
+        });
+
         var stats = {
-            totalDemolished: 0,
+            totalDemolished: demolished.length,
             byDestroyedBy: {},
             byType: {},
             totalReputationLost: 0,
@@ -2086,882 +1716,111 @@
             recentDemolitions: []
         };
 
-        try {
-            var demolished = getDemolishedInstitutions({
-                locationId: locationId,
-                includeRecords: true
-            });
+        for (var i = 0; i < demolished.length; i++) {
+            var inst = demolished[i];
+            var rec = inst.demolishedRecord;
 
-            stats.totalDemolished = demolished.length;
+            var by = inst.destroyedBy || 'unknown';
+            stats.byDestroyedBy[by] = (stats.byDestroyedBy[by] || 0) + 1;
 
-            for (var i = 0; i < demolished.length; i++) {
-                var inst = demolished[i];
-                var record = inst.demolishedRecord;
+            var type = inst.typeName || inst.type || 'unknown';
+            stats.byType[type] = (stats.byType[type] || 0) + 1;
 
-                var destroyedBy = inst.destroyedBy || 'unknown';
-                if (!stats.byDestroyedBy[destroyedBy]) {
-                    stats.byDestroyedBy[destroyedBy] = 0;
-                }
-                stats.byDestroyedBy[destroyedBy]++;
-
-                var type = inst.typeName || inst.type || 'unknown';
-                if (!stats.byType[type]) {
-                    stats.byType[type] = 0;
-                }
-                stats.byType[type]++;
-
-                if (record && record.previousReputation) {
-                    stats.totalReputationLost += record.previousReputation;
-                }
-
-                if (record && record.previousStudents) {
-                    stats.totalStudentsLost += record.previousStudents;
-                }
-
-                if (record && record.previousTeachers) {
-                    stats.totalTeachersLost += record.previousTeachers;
-                }
-
-                if (stats.recentDemolitions.length < 5) {
-                    stats.recentDemolitions.push({
-                        name: inst.name,
-                        type: inst.typeName || inst.type,
-                        destroyedAt: inst.demolishedAt,
-                        destroyedBy: inst.destroyedBy,
-                        reason: inst.demolishedReason
-                    });
-                }
+            if (rec) {
+                stats.totalReputationLost += rec.previousReputation || 0;
+                stats.totalStudentsLost += rec.previousStudents || 0;
+                stats.totalTeachersLost += rec.previousTeachers || 0;
             }
 
-            stats.recentDemolitions.sort(function(a, b) {
-                return (b.destroyedAt || 0) - (a.destroyedAt || 0);
-            });
-
-        } catch (e) {
-            // Error getting stats
+            if (stats.recentDemolitions.length < 5) {
+                stats.recentDemolitions.push({
+                    name: inst.name,
+                    type: inst.typeName || inst.type,
+                    destroyedAt: inst.demolishedAt,
+                    destroyedBy: inst.destroyedBy,
+                    reason: inst.demolishedReason
+                });
+            }
         }
+
+        stats.recentDemolitions.sort(function(a, b) {
+            return (b.destroyedAt || 0) - (a.destroyedAt || 0);
+        });
 
         return stats;
     }
 
-    // =========================================================================
-    // 20. EXPORTS
-    // =========================================================================
+    // --- Persistence boundary ---
+
+    /**
+     * Persist current state. Callers invoke this once after a batch of commands
+     * that should be atomic (annual run, modal submission, etc.).
+     */
+    function persist() {
+        _persist();
+        return true;
+    }
+
+    // =====================================================================
+    // Exports
+    // =====================================================================
 
     window.EducationCommands = {
         // Institution CRUD
         createInstitution: createInstitution,
+        createReligiousSchool: createReligiousSchool,
         updateInstitution: updateInstitution,
         deleteInstitution: deleteInstitution,
         updateReputation: updateReputation,
 
-        // Teacher management
+        // Teachers
         hireTeacher: hireTeacher,
         fireTeacher: fireTeacher,
 
-        // Student management
+        // Students
         enrollStudent: enrollStudent,
         graduateStudent: graduateStudent,
         withdrawStudent: withdrawStudent,
 
-        // Headmaster management
+        // Learning
+        advanceLearning: advanceLearning,
+
+        // Headmaster
         setHeadmaster: setHeadmaster,
         endHeadmasterTerm: endHeadmasterTerm,
 
-        // Institutions needing teachers
-        getInstitutionsNeedingTeachers: getInstitutionsNeedingTeachers,
-
-        // Tuition functions
-        calculateTuition: function(institutionId, year) {
-            var institution = EducationState.getInstitution(institutionId);
-            if (!institution) return { success: false, reason: 'Institution not found' };
-            return _calculateTuitionAmount(institution, year);
-        },
-        updateTuition: function(institutionId, newTuition, reason) {
-            if (_processingCommand) {
-                return { success: false, reason: 'Already processing' };
-            }
-            _processingCommand = true;
-
-            try {
-                var institution = EducationState.getInstitution(institutionId);
-                if (!institution) {
-                    return { success: false, reason: 'Institution not found' };
-                }
-
-                if (institution.ownershipType === 'public') {
-                    _showToast('Public schools have free tuition (0 gold)', 'warning');
-                    return { success: false, reason: 'Public schools cannot charge tuition' };
-                }
-
-                var boundedTuition = newTuition !== null ? Math.max(0, newTuition) : null;
-
-                if (boundedTuition === null) {
-                    institution.customTuition = null;
-                    EducationState._updateInstitution(institutionId, { customTuition: null });
-                    _showToast('Tuition now uses calculated value', 'info');
-                    return { success: true, tuition: null, mode: 'calculated' };
-                }
-
-                var oldTuition = institution.customTuition !== null ? institution.customTuition : institution.tuitionPerYear;
-                institution.customTuition = boundedTuition;
-
-                if (!institution.tuitionHistory) institution.tuitionHistory = [];
-                institution.tuitionHistory.push({
-                    year: _getCurrentYear(),
-                    oldAmount: oldTuition,
-                    newAmount: boundedTuition,
-                    reason: reason || 'Manual override'
-                });
-                if (institution.tuitionHistory.length > 20) {
-                    institution.tuitionHistory = institution.tuitionHistory.slice(-20);
-                }
-
-                EducationState._updateInstitution(institutionId, {
-                    customTuition: boundedTuition,
-                    tuitionHistory: institution.tuitionHistory
-                });
-
-                var reasonMsg = reason ? ' (' + reason + ')' : '';
-                _showToast('Tuition set to ' + boundedTuition + ' gold/year' + reasonMsg, 'success');
-
-                return {
-                    success: true,
-                    tuition: boundedTuition,
-                    mode: 'manual'
-                };
-
-            } finally {
-                _processingCommand = false;
-            }
-        },
-        updateTuitionWaiver: function(institutionId, waiveTuition, reason) {
-            if (_processingCommand) {
-                return { success: false, reason: 'Already processing' };
-            }
-            _processingCommand = true;
-
-            try {
-                var institution = EducationState.getInstitution(institutionId);
-                if (!institution) {
-                    return { success: false, reason: 'Institution not found' };
-                }
-
-                if (institution.ownershipType === 'public') {
-                    _showToast('Public schools already have free tuition', 'info');
-                    return { success: false, reason: 'Public schools already have free tuition' };
-                }
-
-                waiveTuition = !!waiveTuition;
-                institution.waiveTuition = waiveTuition;
-
-                EducationState._updateInstitution(institutionId, { waiveTuition: waiveTuition });
-
-                var statusMsg = waiveTuition ? 'Tuition waived for ' + institution.name : 'Tuition no longer waived for ' + institution.name;
-                var reasonMsg = reason ? ' (' + reason + ')' : '';
-                _showToast(statusMsg + reasonMsg, 'success');
-
-                return {
-                    success: true,
-                    waiveTuition: waiveTuition,
-                    institutionId: institutionId,
-                    institutionName: institution.name
-                };
-
-            } finally {
-                _processingCommand = false;
-            }
-        },
-        getTuitionHistory: function(institutionId, limit) {
-            var institution = EducationState.getInstitution(institutionId);
-            if (!institution || !institution.tuitionHistory) {
-                return [];
-            }
-            var history = institution.tuitionHistory.slice();
-            history.sort(function(a, b) {
-                return (b.year || 0) - (a.year || 0);
-            });
-            if (limit && limit > 0) {
-                history = history.slice(0, limit);
-            }
-            return history;
-        },
-
-        // School ownership functions
-        setSchoolOwnership: function(institutionId, ownershipType, ownerId, ownerType) {
-            if (_processingCommand) {
-                return { success: false, reason: 'Already processing' };
-            }
-            _processingCommand = true;
-
-            try {
-                var institution = EducationState.getInstitution(institutionId);
-                if (!institution) {
-                    return { success: false, reason: 'Institution not found' };
-                }
-
-                var updates = { ownershipType: ownershipType };
-
-                if (ownershipType === 'public') {
-                    updates.ownerId = null;
-                    updates.ownerType = null;
-                    updates.ownerName = null;
-                    updates.waiveTuition = false;
-                    updates.customTuition = null;
-                    updates.religionId = null;
-                    updates.religionName = null;
-                    updates.isReligiousSchool = false;
-                } else if (ownershipType === 'private') {
-                    if (!ownerId) {
-                        return { success: false, reason: 'Owner ID is required for private schools' };
-                    }
-                    var ownerName = '';
-                    if (ownerType === 'character') {
-                        var char = _getCharacterById(ownerId);
-                        if (!char) {
-                            return { success: false, reason: 'Owner character not found' };
-                        }
-                        ownerName = char.name + (char.surname ? ' ' + char.surname : '');
-                    } else if (ownerType === 'household') {
-                        var household = _getHousehold(ownerId);
-                        if (!household) {
-                            return { success: false, reason: 'Owner household not found' };
-                        }
-                        ownerName = household.name;
-                    } else {
-                        return { success: false, reason: 'Invalid owner type. Use "character" or "household"' };
-                    }
-                    updates.ownerId = ownerId;
-                    updates.ownerType = ownerType;
-                    updates.ownerName = ownerName;
-                    // Remove religion fields for private schools
-                    updates.religionId = null;
-                    updates.religionName = null;
-                    updates.isReligiousSchool = false;
-                } else if (ownershipType === 'religious') {
-                    if (!ownerId) {
-                        return { success: false, reason: 'Religion ID is required for religious schools' };
-                    }
-                    var religion = _getReligion(ownerId);
-                    if (!religion) {
-                        return { success: false, reason: 'Religion not found' };
-                    }
-                    updates.ownerId = ownerId;
-                    updates.ownerType = 'religion';
-                    updates.ownerName = religion.name;
-                    updates.religionId = religion.id;
-                    updates.religionName = religion.name;
-                    updates.isReligiousSchool = true;
-                    // Religious schools should have tuition waived by default
-                    if (institution.waiveTuition === undefined || institution.waiveTuition === false) {
-                        updates.waiveTuition = true;
-                    }
-                }
-
-                var result = EducationState._updateInstitution(institutionId, updates);
-
-                if (result) {
-                    var msg = 'School ownership updated to ' + ownershipType;
-                    if (ownershipType === 'private') {
-                        msg += ' (Owner: ' + (updates.ownerName || '') + ')';
-                    } else if (ownershipType === 'religious') {
-                        msg += ' (Religion: ' + (updates.religionName || '') + ')';
-                    } else {
-                        msg += ' - Free tuition enabled';
-                    }
-                    _showToast(msg, 'success');
-                    _logEvent('education', 'School Ownership Changed',
-                        institution.name + ' changed to ' + ownershipType + 
-                        (ownershipType === 'private' ? ' (Owner: ' + (updates.ownerName || '') + ')' : '') +
-                        (ownershipType === 'religious' ? ' (Religion: ' + (updates.religionName || '') + ')' : ''),
-                        []);
-                    return { success: true, institution: result };
-                }
-
-                return { success: false, reason: 'Failed to update ownership' };
-
-            } finally {
-                _processingCommand = false;
-            }
-        },
-        setSchoolOwner: function(institutionId, ownerId, ownerType) {
-            if (_processingCommand) {
-                return { success: false, reason: 'Already processing' };
-            }
-            _processingCommand = true;
-
-            try {
-                var institution = EducationState.getInstitution(institutionId);
-                if (!institution) {
-                    return { success: false, reason: 'Institution not found' };
-                }
-
-                if (institution.ownershipType === 'public') {
-                    return { success: false, reason: 'Public schools have no owner' };
-                }
-
-                if (institution.ownershipType === 'religious') {
-                    // For religious schools, owner is the religion
-                    var religion = _getReligion(ownerId);
-                    if (!religion) {
-                        return { success: false, reason: 'Religion not found' };
-                    }
-                    var updates = {
-                        ownerId: religion.id,
-                        ownerType: 'religion',
-                        ownerName: religion.name,
-                        religionId: religion.id,
-                        religionName: religion.name
-                    };
-                    var result = EducationState._updateInstitution(institutionId, updates);
-                    if (result) {
-                        _showToast('School owner updated to ' + religion.name, 'success');
-                        return { success: true, institution: result };
-                    }
-                    return { success: false, reason: 'Failed to update owner' };
-                }
-
-                // Private school owner
-                if (!ownerId) {
-                    return { success: false, reason: 'Owner ID is required' };
-                }
-
-                var ownerName = '';
-                if (ownerType === 'character') {
-                    var char = _getCharacterById(ownerId);
-                    if (!char) {
-                        return { success: false, reason: 'Owner character not found' };
-                    }
-                    ownerName = char.name + (char.surname ? ' ' + char.surname : '');
-                } else if (ownerType === 'household') {
-                    var household = _getHousehold(ownerId);
-                    if (!household) {
-                        return { success: false, reason: 'Owner household not found' };
-                    }
-                    ownerName = household.name;
-                } else {
-                    return { success: false, reason: 'Invalid owner type. Use "character" or "household"' };
-                }
-
-                var result = EducationState._updateInstitution(institutionId, {
-                    ownerId: ownerId,
-                    ownerType: ownerType,
-                    ownerName: ownerName
-                });
-
-                if (result) {
-                    _showToast('School owner updated to ' + ownerName, 'success');
-                    _logEvent('education', 'School Owner Changed',
-                        institution.name + ' owner changed to ' + ownerName,
-                        []);
-                    return { success: true, institution: result };
-                }
-
-                return { success: false, reason: 'Failed to update owner' };
-
-            } finally {
-                _processingCommand = false;
-            }
-        },
-
-        // School funding and profit functions
-        calculatePublicSchoolFunding: function(institutionId, year) {
-            if (_processingCommand) {
-                return { success: false, reason: 'Already processing' };
-            }
-            _processingCommand = true;
-
-            try {
-                var institution = EducationState.getInstitution(institutionId);
-                if (!institution) {
-                    return { success: false, reason: 'Institution not found' };
-                }
-
-                if (institution.ownershipType !== 'public') {
-                    return { success: false, reason: 'Only public schools receive government funding' };
-                }
-
-                var currentYear = year || _getCurrentYear();
-                var studentCount = institution.students ? institution.students.filter(function(s) { return !s.graduated; }).length : 0;
-
-                var costPerStudent = 10;
-                if (institution.type === 'university') costPerStudent = 20;
-                else if (institution.type === 'military_academy') costPerStudent = 15;
-                else if (institution.type === 'cathedral_school') costPerStudent = 12;
-                else if (institution.type === 'guild_hall') costPerStudent = 12;
-                else if (institution.type === 'court_tutor') costPerStudent = 25;
-                else if (institution.type === 'specialized_school') costPerStudent = 14;
-                else if (institution.type === 'village_school') costPerStudent = 5;
-                else if (institution.type === 'religious_seminary') costPerStudent = 12;
-                else if (institution.type === 'monastic_school') costPerStudent = 8;
-
-                var prosperity = _getSettlementProsperity(institution.locationId);
-                var prosperityModifier = 0.8 + (prosperity / 100) * 0.4;
-
-                var funding = Math.round(studentCount * costPerStudent * prosperityModifier);
-
-                return {
-                    success: true,
-                    funding: funding,
-                    studentCount: studentCount,
-                    costPerStudent: costPerStudent,
-                    prosperityModifier: prosperityModifier,
-                    breakdown: {
-                        students: studentCount,
-                        costPerStudent: costPerStudent,
-                        prosperity: prosperity,
-                        prosperityModifier: prosperityModifier
-                    }
-                };
-
-            } finally {
-                _processingCommand = false;
-            }
-        },
-        applyGovernmentFunding: function(institutionId, year) {
-            if (_processingCommand) {
-                return { success: false, reason: 'Already processing' };
-            }
-            _processingCommand = true;
-
-            try {
-                var institution = EducationState.getInstitution(institutionId);
-                if (!institution) {
-                    return { success: false, reason: 'Institution not found' };
-                }
-
-                if (institution.ownershipType !== 'public') {
-                    return { success: false, reason: 'Only public schools receive government funding' };
-                }
-
-                var currentYear = year || _getCurrentYear();
-                var fundingResult = this.calculatePublicSchoolFunding(institutionId, currentYear);
-
-                if (!fundingResult.success) {
-                    return fundingResult;
-                }
-
-                var funding = fundingResult.funding;
-
-                institution.governmentFunding = funding;
-                if (!institution.governmentFundingHistory) {
-                    institution.governmentFundingHistory = [];
-                }
-                institution.governmentFundingHistory.push({
-                    year: currentYear,
-                    amount: funding,
-                    students: fundingResult.studentCount
-                });
-                if (institution.governmentFundingHistory.length > 20) {
-                    institution.governmentFundingHistory = institution.governmentFundingHistory.slice(-20);
-                }
-
-                _updateSettlementWealth(
-                    institution.locationId,
-                    -funding,
-                    'Education funding for ' + institution.name + ' (' + fundingResult.studentCount + ' students)'
-                );
-
-                EducationState._updateInstitution(institutionId, {
-                    governmentFunding: funding,
-                    governmentFundingHistory: institution.governmentFundingHistory
-                });
-
-                _logEvent('education', 'Government Funding',
-                    institution.name + ' received ' + funding + ' gold funding for ' + fundingResult.studentCount + ' students',
-                    []);
-
-                return {
-                    success: true,
-                    funding: funding,
-                    studentCount: fundingResult.studentCount,
-                    year: currentYear
-                };
-
-            } finally {
-                _processingCommand = false;
-            }
-        },
-        calculatePrivateSchoolProfit: function(institutionId, year) {
-            if (_processingCommand) {
-                return { success: false, reason: 'Already processing' };
-            }
-            _processingCommand = true;
-
-            try {
-                var institution = EducationState.getInstitution(institutionId);
-                if (!institution) {
-                    return { success: false, reason: 'Institution not found' };
-                }
-
-                if (institution.ownershipType !== 'private') {
-                    return { success: false, reason: 'Only private schools have profit' };
-                }
-
-                var currentYear = year || _getCurrentYear();
-                var tuitionResult = _calculateTuitionAmount(institution, currentYear);
-                var tuition = tuitionResult.success ? tuitionResult.tuition : 0;
-
-                var students = institution.students ? institution.students.filter(function(s) { return !s.graduated; }).length : 0;
-                var income = tuition * students;
-
-                var teacherCount = institution.teachers ? institution.teachers.length : 0;
-                var avgTeacherSalary = 15;
-                var teacherCost = teacherCount * avgTeacherSalary;
-
-                var maintenance = Math.round(students * 2);
-
-                var expenses = teacherCost + maintenance;
-
-                if (institution.isSpecialized) {
-                    expenses += Math.round(students * 1);
-                }
-
-                var profit = income - expenses;
-
-                return {
-                    success: true,
-                    profit: profit,
-                    income: income,
-                    expenses: expenses,
-                    tuition: tuition,
-                    studentCount: students,
-                    teacherCount: teacherCount,
-                    breakdown: {
-                        tuition: tuition,
-                        students: students,
-                        teacherCost: teacherCost,
-                        maintenance: maintenance,
-                        specializationBonus: institution.isSpecialized ? Math.round(students * 1) : 0
-                    }
-                };
-
-            } finally {
-                _processingCommand = false;
-            }
-        },
-        processPrivateSchoolProfit: function(institutionId, year) {
-            if (_processingCommand) {
-                return { success: false, reason: 'Already processing' };
-            }
-            _processingCommand = true;
-
-            try {
-                var institution = EducationState.getInstitution(institutionId);
-                if (!institution) {
-                    return { success: false, reason: 'Institution not found' };
-                }
-
-                if (institution.ownershipType !== 'private') {
-                    return { success: false, reason: 'Only private schools have profit' };
-                }
-
-                if (!institution.ownerId) {
-                    return { success: false, reason: 'Private school has no owner' };
-                }
-
-                var currentYear = year || _getCurrentYear();
-                var profitResult = this.calculatePrivateSchoolProfit(institutionId, currentYear);
-
-                if (!profitResult.success) {
-                    return profitResult;
-                }
-
-                var profit = profitResult.profit;
-
-                institution.annualIncome = profitResult.income;
-                institution.annualExpenses = profitResult.expenses;
-                institution.netProfit = profit;
-
-                if (!institution.profitHistory) {
-                    institution.profitHistory = [];
-                }
-                institution.profitHistory.push({
-                    year: currentYear,
-                    profit: profit,
-                    income: profitResult.income,
-                    expenses: profitResult.expenses,
-                    students: profitResult.studentCount
-                });
-                if (institution.profitHistory.length > 20) {
-                    institution.profitHistory = institution.profitHistory.slice(-20);
-                }
-
-                EducationState._updateInstitution(institutionId, {
-                    annualIncome: profitResult.income,
-                    annualExpenses: profitResult.expenses,
-                    netProfit: profit,
-                    profitHistory: institution.profitHistory
-                });
-
-                if (institution.ownerType === 'character') {
-                    var owner = _getCharacterById(institution.ownerId);
-                    if (owner) {
-                        var household = _getCharacterHousehold(owner.id);
-                        if (household) {
-                            _updateHouseholdWealth(household.id, profit, 'Profit from ' + institution.name);
-                            _logEvent('education', 'Private School Profit',
-                                institution.name + ' sent ' + profit + ' gold profit to ' + owner.name,
-                                [owner]);
-                        }
-                    }
-                } else if (institution.ownerType === 'household') {
-                    var household = _getHousehold(institution.ownerId);
-                    if (household) {
-                        _updateHouseholdWealth(institution.ownerId, profit, 'Profit from ' + institution.name);
-                        _logEvent('education', 'Private School Profit',
-                            institution.name + ' sent ' + profit + ' gold profit to household ' + household.name,
-                            []);
-                    }
-                }
-
-                var profitMsg = profit >= 0 ? 'Profit of ' + profit + ' gold' : 'Loss of ' + Math.abs(profit) + ' gold';
-                _showToast(institution.name + ': ' + profitMsg, profit >= 0 ? 'success' : 'warning');
-
-                return {
-                    success: true,
-                    profit: profit,
-                    income: profitResult.income,
-                    expenses: profitResult.expenses,
-                    year: currentYear,
-                    ownerId: institution.ownerId,
-                    ownerType: institution.ownerType,
-                    studentCount: profitResult.studentCount
-                };
-
-            } finally {
-                _processingCommand = false;
-            }
-        },
-        processAllSchoolFinances: function(year) {
-            if (_processingCommand) {
-                return { success: false, reason: 'Already processing' };
-            }
-            _processingCommand = true;
-
-            try {
-                var currentYear = year || _getCurrentYear();
-                var institutions = EducationState.getAllInstitutions();
-                var results = {
-                    year: currentYear,
-                    publicFunding: [],
-                    privateProfits: [],
-                    errors: []
-                };
-
-                for (var i = 0; i < institutions.length; i++) {
-                    var inst = institutions[i];
-                    try {
-                        if (inst.ownershipType === 'public') {
-                            var fundingResult = this.applyGovernmentFunding(inst.id, currentYear);
-                            if (fundingResult.success) {
-                                results.publicFunding.push({
-                                    institutionId: inst.id,
-                                    institutionName: inst.name,
-                                    funding: fundingResult.funding,
-                                    students: fundingResult.studentCount
-                                });
-                            } else {
-                                results.errors.push({
-                                    institutionId: inst.id,
-                                    institutionName: inst.name,
-                                    error: fundingResult.reason || 'Unknown error'
-                                });
-                            }
-                        } else if (inst.ownershipType === 'private') {
-                            var profitResult = this.processPrivateSchoolProfit(inst.id, currentYear);
-                            if (profitResult.success) {
-                                results.privateProfits.push({
-                                    institutionId: inst.id,
-                                    institutionName: inst.name,
-                                    profit: profitResult.profit,
-                                    income: profitResult.income,
-                                    expenses: profitResult.expenses,
-                                    ownerId: profitResult.ownerId,
-                                    ownerType: profitResult.ownerType
-                                });
-                            } else {
-                                results.errors.push({
-                                    institutionId: inst.id,
-                                    institutionName: inst.name,
-                                    error: profitResult.reason || 'Unknown error'
-                                });
-                            }
-                        }
-                    } catch (e) {
-                        results.errors.push({
-                            institutionId: inst.id,
-                            institutionName: inst.name,
-                            error: e.message || 'Unknown error'
-                        });
-                    }
-                }
-
-                var totalFunding = 0;
-                for (var i = 0; i < results.publicFunding.length; i++) {
-                    totalFunding += results.publicFunding[i].funding;
-                }
-
-                var totalProfit = 0;
-                for (var i = 0; i < results.privateProfits.length; i++) {
-                    totalProfit += results.privateProfits[i].profit;
-                }
-
-                _logEvent('education', 'School Finances Processed',
-                    'Processed school finances for ' + institutions.length + ' schools. ' +
-                    'Public funding: ' + totalFunding + ' gold, Private profit: ' + totalProfit + ' gold',
-                    []);
-
-                if (results.errors.length === 0) {
-                    _showToast('Processed ' + institutions.length + ' school finances', 'success');
-                } else {
-                    _showToast('Processed school finances with ' + results.errors.length + ' errors', 'warning');
-                }
-
-                return {
-                    success: true,
-                    results: results,
-                    totalFunding: totalFunding,
-                    totalProfit: totalProfit
-                };
-
-            } finally {
-                _processingCommand = false;
-            }
-        },
-
-        // Settlement budget receipt
+        // Tuition
+        calculateTuition: calculateTuition,
+        updateTuition: updateTuition,
+        updateTuitionWaiver: updateTuitionWaiver,
+        getTuitionHistory: getTuitionHistory,
+
+        // Ownership
+        setSchoolOwnership: setSchoolOwnership,
+        setSchoolOwner: setSchoolOwner,
+
+        // Finance
+        calculatePublicSchoolFunding: calculatePublicSchoolFunding,
+        applyGovernmentFunding: applyGovernmentFunding,
+        calculatePrivateSchoolProfit: calculatePrivateSchoolProfit,
+        processPrivateSchoolProfit: processPrivateSchoolProfit,
+        processAllSchoolFinances: processAllSchoolFinances,
+
+        // Settlement budget
         receiveSettlementBudget: receiveSettlementBudget,
         getSettlementFundingSummary: getSettlementFundingSummary,
 
-        // Religious school functions
-        createReligiousSchool: createReligiousSchool,
-        getReligiousSchools: getReligiousSchools,
-
-        // Demolish functions
+        // Demolish / rebuild
         demolishInstitution: demolishInstitution,
         rebuildInstitution: rebuildInstitution,
         getDemolishedInstitutions: getDemolishedInstitutions,
-        getInstitutionDemolitionStats: getInstitutionDemolitionStats
-    };
+        getInstitutionDemolitionStats: getInstitutionDemolitionStats,
 
-    // Legacy aliases
-    window._createEducationalInstitution = function(name, typeId, locationId, options) {
-        return createInstitution(name, typeId, locationId, options);
+        // Persistence boundary
+        persist: persist
     };
-    window._updateEducationalInstitution = updateInstitution;
-    window._deleteEducationalInstitution = deleteInstitution;
-    window._updateInstitutionReputation = updateReputation;
-    window._hireTeacher = hireTeacher;
-    window._fireTeacher = fireTeacher;
-    window._enrollStudent = enrollStudent;
-    window._graduateStudent = graduateStudent;
-    window._withdrawStudent = withdrawStudent;
-    window._setHeadmaster = setHeadmaster;
-    window._endHeadmasterTerm = endHeadmasterTerm;
-    window._getInstitutionsNeedingTeachers = getInstitutionsNeedingTeachers;
-    window._calculateTuition = function(institutionId, year) {
-        var institution = EducationState.getInstitution(institutionId);
-        if (!institution) return { success: false, reason: 'Institution not found' };
-        return _calculateTuitionAmount(institution, year);
-    };
-    window._updateTuition = function(institutionId, newTuition, reason) {
-        return EducationCommands.updateTuition(institutionId, newTuition, reason);
-    };
-    window._updateTuitionWaiver = function(institutionId, waiveTuition, reason) {
-        return EducationCommands.updateTuitionWaiver(institutionId, waiveTuition, reason);
-    };
-    window._getTuitionHistory = function(institutionId, limit) {
-        return EducationCommands.getTuitionHistory(institutionId, limit);
-    };
-    window._setSchoolOwnership = function(institutionId, ownershipType, ownerId, ownerType) {
-        return EducationCommands.setSchoolOwnership(institutionId, ownershipType, ownerId, ownerType);
-    };
-    window._setSchoolOwner = function(institutionId, ownerId, ownerType) {
-        return EducationCommands.setSchoolOwner(institutionId, ownerId, ownerType);
-    };
-    window._calculatePublicSchoolFunding = function(institutionId, year) {
-        return EducationCommands.calculatePublicSchoolFunding(institutionId, year);
-    };
-    window._applyGovernmentFunding = function(institutionId, year) {
-        return EducationCommands.applyGovernmentFunding(institutionId, year);
-    };
-    window._calculatePrivateSchoolProfit = function(institutionId, year) {
-        return EducationCommands.calculatePrivateSchoolProfit(institutionId, year);
-    };
-    window._processPrivateSchoolProfit = function(institutionId, year) {
-        return EducationCommands.processPrivateSchoolProfit(institutionId, year);
-    };
-    window._processAllSchoolFinances = function(year) {
-        return EducationCommands.processAllSchoolFinances(year);
-    };
-    window._receiveSettlementBudget = receiveSettlementBudget;
-    window._getSettlementFundingSummary = getSettlementFundingSummary;
-    window._createReligiousSchool = createReligiousSchool;
-    window._getReligiousSchools = getReligiousSchools;
-    window._demolishInstitution = demolishInstitution;
-    window._rebuildInstitution = rebuildInstitution;
-    window._getDemolishedInstitutions = getDemolishedInstitutions;
-    window._getInstitutionDemolitionStats = getInstitutionDemolitionStats;
 
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            createInstitution: createInstitution,
-            updateInstitution: updateInstitution,
-            deleteInstitution: deleteInstitution,
-            updateReputation: updateReputation,
-            hireTeacher: hireTeacher,
-            fireTeacher: fireTeacher,
-            enrollStudent: enrollStudent,
-            graduateStudent: graduateStudent,
-            withdrawStudent: withdrawStudent,
-            setHeadmaster: setHeadmaster,
-            endHeadmasterTerm: endHeadmasterTerm,
-            getInstitutionsNeedingTeachers: getInstitutionsNeedingTeachers,
-            calculateTuition: function(institutionId, year) {
-                var institution = EducationState.getInstitution(institutionId);
-                if (!institution) return { success: false, reason: 'Institution not found' };
-                return _calculateTuitionAmount(institution, year);
-            },
-            updateTuition: function(institutionId, newTuition, reason) {
-                return EducationCommands.updateTuition(institutionId, newTuition, reason);
-            },
-            updateTuitionWaiver: function(institutionId, waiveTuition, reason) {
-                return EducationCommands.updateTuitionWaiver(institutionId, waiveTuition, reason);
-            },
-            getTuitionHistory: function(institutionId, limit) {
-                return EducationCommands.getTuitionHistory(institutionId, limit);
-            },
-            setSchoolOwnership: function(institutionId, ownershipType, ownerId, ownerType) {
-                return EducationCommands.setSchoolOwnership(institutionId, ownershipType, ownerId, ownerType);
-            },
-            setSchoolOwner: function(institutionId, ownerId, ownerType) {
-                return EducationCommands.setSchoolOwner(institutionId, ownerId, ownerType);
-            },
-            calculatePublicSchoolFunding: function(institutionId, year) {
-                return EducationCommands.calculatePublicSchoolFunding(institutionId, year);
-            },
-            applyGovernmentFunding: function(institutionId, year) {
-                return EducationCommands.applyGovernmentFunding(institutionId, year);
-            },
-            calculatePrivateSchoolProfit: function(institutionId, year) {
-                return EducationCommands.calculatePrivateSchoolProfit(institutionId, year);
-            },
-            processPrivateSchoolProfit: function(institutionId, year) {
-                return EducationCommands.processPrivateSchoolProfit(institutionId, year);
-            },
-            processAllSchoolFinances: function(year) {
-                return EducationCommands.processAllSchoolFinances(year);
-            },
-            receiveSettlementBudget: receiveSettlementBudget,
-            getSettlementFundingSummary: getSettlementFundingSummary,
-            createReligiousSchool: createReligiousSchool,
-            getReligiousSchools: getReligiousSchools,
-            demolishInstitution: demolishInstitution,
-            rebuildInstitution: rebuildInstitution,
-            getDemolishedInstitutions: getDemolishedInstitutions,
-            getInstitutionDemolitionStats: getInstitutionDemolitionStats
-        };
+        module.exports = window.EducationCommands;
     }
-
 })();
