@@ -3,784 +3,700 @@
  * STILL WATERS - FAMILY COMMANDS (js/character/family-commands.js)
  * =============================================================================
  *
- * Canonical mutation boundary for the family relationship graph.
+ * Mutation boundary for the family domain.
  *
  * SCOPE:
- *   - Setting and clearing biological parent relationships
- *   - Setting and clearing adoptive parent relationships
- *   - Recording adoption metadata (type, year, status)
- *   - Removing all references to a character (used by character deletion)
+ *   - setParent(childId, parentId, options)       create a parent_child edge
+ *   - removeParent(childId, parentId, options)    end a parent_child edge
+ *   - createAdoption(childId, adopterId, options) create a legal parent edge
+ *   - removeAdoption(childId, adopterId, options) end a legal parent edge
+ *   - changeParentType(edgeId, newType)           reclassify an edge
+ *   - handleCharacterDeath(characterId, year)     end family edges for a deceased character
+ *   - removeAllReferencesTo(characterId)          cleanup on hard delete
  *
  * OUT OF SCOPE:
- *   - Reading the family graph → FamilyAccessors
- *   - Answering semantic family questions → family-statistics.js
- *   - Persistence mechanics → storage.js
- *   - UI notifications → caller
- *   - Character creation/lifecycle orchestration → CharacterCommands,
- *     CharacterLifecycle (which call into this module)
+ *   - Edge validity policy           → family-rules.js
+ *   - Projections and traversal      → family-queries.js
+ *   - Aggregation                    → family-statistics.js
+ *   - Storage format                 → family-state.js + storage.js
+ *   - Events beyond familyChanged    → caller
  *
- * SEMANTIC RULES:
- *   - Missing (undefined/null) optional arguments use documented defaults.
- *   - Invalid explicit arguments are rejected. No silent coercion.
- *   - Year 0 is preserved wherever a year is stored.
- *   - All mutations are performed as a single commit: one markDataDirty,
- *     one familyChanged event.
- *   - This module mutates the canonical character objects owned by
- *     masterData.data.characters. It does not own the collection itself.
- *   - Mutation is idempotent: setting a parent that is already set is a
- *     no-op (returns success). Clearing a parent that is not set is a no-op.
- *   - Parent links are stored on the child. Removing the child's reference
- *     removes the graph edge. The parent's `children` array (if present in
- *     legacy data) is updated to stay consistent.
+ * CONTRACT:
+ *   - Every command returns { success, reason?, ... }.
+ *   - Validation happens before any mutation. Partial mutation on failure
+ *     is not permitted.
+ *   - One command = one commit = one familyChanged event.
+ *   - No lock. Commands are synchronous. No public command calls another
+ *     public command. Internal primitives compose.
+ *   - No fallback dependencies. If FamilyState, FamilyRules, FamilyQueries,
+ *     CharacterState, ids.js, or time.js is missing at load, throw.
  *
  * DEPENDENCIES (REQUIRED):
- *   - storage.js:   masterData, markDataDirty
- *   - accessors.js: getCharacterById, getCharacters
- *   - time.js:      getCurrentYear, isValidYear
+ *   - family-state.js:    FamilyState
+ *   - family-rules.js:    FamilyRules
+ *   - family-queries.js:  FamilyQueries
+ *   - character-state.js: CharacterState (existence check + dirty marker)
+ *   - ids.js:             generateId
+ *   - time.js:            getCurrentYear
+ *
+ * DEPENDENCIES (OPTIONAL):
+ *   - event-log.js (logEvent) — called if present, no fallback
  *
  * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
     // 0. DEPENDENCY GUARDS
     // =========================================================================
 
-    function _requireDependencies() {
-        var required = [
-            'masterData',
-            'markDataDirty',
-            'getCharacterById',
-            'getCharacters',
-            'getCurrentYear',
-            'isValidYear'
-        ];
-        var missing = [];
-        for (var i = 0; i < required.length; i++) {
-            if (typeof window[required[i]] === 'undefined') {
-                missing.push(required[i]);
+    var _required = [
+        'FamilyState',
+        'FamilyRules',
+        'FamilyQueries',
+        'CharacterState',
+        'generateId',
+        'getCurrentYear'
+    ];
+    var _missing = [];
+    for (var i = 0; i < _required.length; i++) {
+        if (typeof window[_required[i]] === 'undefined') {
+            _missing.push(_required[i]);
+        }
+    }
+    if (_missing.length > 0) {
+        throw new Error(
+            'family-commands.js: missing required dependencies: ' +
+            _missing.join(', ')
+        );
+    }
+
+    var FS = window.FamilyState;
+    var FR = window.FamilyRules;
+    var FQ = window.FamilyQueries;
+    var CS = window.CharacterState;
+
+    // =========================================================================
+    // 1. RESULT HELPERS
+    // =========================================================================
+
+    function _ok(data) {
+        var result = { success: true };
+        if (data && typeof data === 'object') {
+            for (var key in data) {
+                if (Object.prototype.hasOwnProperty.call(data, key)) {
+                    result[key] = data[key];
+                }
             }
         }
-        if (missing.length > 0) {
-            throw new Error(
-                'family-commands.js: missing required dependencies: ' +
-                missing.join(', ')
-            );
-        }
+        return result;
     }
 
-    _requireDependencies();
-
-    // =========================================================================
-    // 1. INTERNAL STATE
-    // =========================================================================
-
-    // Mutation lock. Public commands acquire it; internal primitives assume
-    // the lock is held. Public commands MUST NOT call other public commands.
-    var _mutationLocked = false;
-
-    function _acquireLock() {
-        if (_mutationLocked) return false;
-        _mutationLocked = true;
-        return true;
-    }
-
-    function _releaseLock() {
-        _mutationLocked = false;
-    }
-
-    function _alreadyProcessing() {
-        return { success: false, reason: 'Another family mutation is in progress' };
+    function _fail(reason) {
+        return { success: false, reason: reason };
     }
 
     // =========================================================================
-    // 2. INTERNAL HELPERS
+    // 2. HELPERS
     // =========================================================================
-
-    function _isMissing(v) {
-        return v === undefined || v === null;
-    }
 
     function _hasId(v) {
         return typeof v === 'string' && v.length > 0;
     }
 
-    /**
-     * Commits a single mutation. Emits exactly one familyChanged event
-     * carrying the affected character IDs.
-     */
-    function _commit(action, characterIds) {
-        window.markDataDirty();
-        window.dispatchEvent(new CustomEvent('familyChanged', {
-            detail: {
-                action: action,
-                characterIds: characterIds || []
-            }
-        }));
+    function _isMissing(v) {
+        return v === undefined || v === null;
     }
 
-    function _resolveCharacter(id) {
-        if (!_hasId(id)) return null;
-        return window.getCharacterById(id);
+    function _isPlainObject(v) {
+        if (v === null || typeof v !== 'object') return false;
+        var proto = Object.getPrototypeOf(v);
+        return proto === Object.prototype || proto === null;
     }
 
-    /**
-     * Validates that parentType is one of the accepted values.
-     * Returns the canonical string, or null if invalid.
-     */
-    function _normalizeParentType(parentType) {
-        if (parentType === 'mother') return 'mother';
-        if (parentType === 'father') return 'father';
-        return null;
-    }
-
-    /**
-     * Returns the field name on the child that stores the biological
-     * parent's ID, or null if the parent type is invalid.
-     */
-    function _biologicalFieldFor(parentType) {
-        if (parentType === 'mother') return 'motherId';
-        if (parentType === 'father') return 'fatherId';
-        return null;
-    }
-
-    /**
-     * Returns the opposite parent type.
-     */
-    function _oppositeParentType(parentType) {
-        if (parentType === 'mother') return 'father';
-        if (parentType === 'father') return 'mother';
-        return null;
-    }
-
-    /**
-     * Ensures parent.children exists as an array. Legacy data may not have
-     * this field; the graph edge is authoritative on the child, but the
-     * parent-side array is maintained for compatibility.
-     */
-    function _ensureParentChildrenArray(parent) {
-        if (!Array.isArray(parent.children)) parent.children = [];
-    }
-
-    /**
-     * Adds a child ID to the parent's children array if it is not already
-     * present. Returns true if a change was made.
-     */
-    function _addChildToParentArray(parent, childId) {
-        _ensureParentChildrenArray(parent);
-        if (parent.children.indexOf(childId) === -1) {
-            parent.children.push(childId);
-            return true;
+    function _isValidYear(v) {
+        if (_isMissing(v)) return false;
+        if (typeof v !== 'number' || !Number.isFinite(v) || !Number.isInteger(v)) {
+            return false;
         }
-        return false;
-    }
-
-    /**
-     * Removes a child ID from the parent's children array if it is present.
-     * Returns true if a change was made.
-     */
-    function _removeChildFromParentArray(parent, childId) {
-        if (!Array.isArray(parent.children)) return false;
-        var index = parent.children.indexOf(childId);
-        if (index === -1) return false;
-        parent.children.splice(index, 1);
+        if (typeof window.isValidYear === 'function') {
+            return window.isValidYear(v) === true;
+        }
         return true;
     }
 
-    /**
-     * Resolves a year argument, falling back to the current year when the
-     * argument is missing. Year 0 is preserved.
-     */
     function _resolveYear(value) {
         if (_isMissing(value)) return window.getCurrentYear();
         return value;
     }
 
-    /**
-     * Validates a year argument.
-     */
-    function _validateYear(value, name) {
-        if (_isMissing(value)) return { ok: true, value: null };
-        if (!window.isValidYear(value)) {
-            return { ok: false, reason: name + ' must be a valid world year' };
-        }
-        return { ok: true, value: value };
+    function _characterExists(id) {
+        if (!_hasId(id)) return false;
+        if (typeof CS.hasCharacter === 'function') return CS.hasCharacter(id);
+        return CS.getCharacter(id) !== null;
     }
 
     /**
-     * Validates that a parentType is one of the accepted values, and returns
-     * it normalized. Returns { ok: true, value } or { ok: false, reason }.
+     * Projects a character to a minimal shape used only for age checks
+     * inside canSetParent. CharacterState projections carry birthYear,
+     * isDeceased, and deathYear.
      */
-    function _validateParentType(parentType) {
-        var normalized = _normalizeParentType(parentType);
-        if (normalized === null) {
-            return {
-                ok: false,
-                reason: 'parentType must be "mother" or "father"'
-            };
-        }
-        return { ok: true, value: normalized };
+    function _getBirthYear(id) {
+        if (!_hasId(id)) return null;
+        var c = CS.getCharacter(id);
+        if (!c) return null;
+        return typeof c.birthYear === 'number' ? c.birthYear : null;
     }
 
-    /**
-     * Returns the index of an adoptive-parent record in a child's
-     * adoptedParents array. Returns -1 if not found.
-     */
-    function _findAdoptiveIndex(adoptedParents, parentId) {
-        if (!Array.isArray(adoptedParents)) return -1;
-        for (var i = 0; i < adoptedParents.length; i++) {
-            if (adoptedParents[i] && adoptedParents[i].parentId === parentId) {
-                return i;
-            }
-        }
-        return -1;
+    function _ageAtYear(birthYear, year) {
+        if (typeof birthYear !== 'number') return null;
+        if (typeof year !== 'number') return null;
+        var age = year - birthYear;
+        return age >= 0 ? age : 0;
     }
 
     // =========================================================================
-    // 3. INTERNAL PRIMITIVES
+    // 3. PERSISTENCE AND NOTIFICATION
     // =========================================================================
-    //
-    // These assume the lock is held. They perform raw graph mutations and
-    // return { ok: true, changed: boolean, reason? } or { ok: false, reason }.
-    //
-    // "changed: false" is a legitimate no-op result and does not indicate
-    // failure. Public commands decide whether to emit an event based on
-    // whether any primitive reported changed: true.
 
     /**
-     * Sets a biological parent on a child.
+     * Writes the current edge snapshot to masterData and marks data dirty.
      *
-     * Idempotent: if the field is already set to the requested parent,
-     * returns ok with changed: false.
-     *
-     * @private
+     * CharacterState owns the dirty flag. This command does not call
+     * saveMasterData directly; storage decides when to flush.
      */
-    function _setBiologicalParentInternal(childId, parentId, parentType) {
-        var child = _resolveCharacter(childId);
-        if (!child) return { ok: false, reason: 'Child not found' };
-
-        var parent = _resolveCharacter(parentId);
-        if (!parent) return { ok: false, reason: 'Parent not found' };
-
-        if (childId === parentId) {
-            return { ok: false, reason: 'A character cannot be their own parent' };
+    function _commit() {
+        if (!window.masterData || !window.masterData.data) {
+            return false;
         }
-
-        var field = _biologicalFieldFor(parentType);
-        if (!field) return { ok: false, reason: 'Invalid parent type' };
-
-        if (child[field] === parentId) {
-            return { ok: true, changed: false };
+        window.masterData.data.parentChildEdges = FS.snapshot();
+        if (typeof window.markDataDirty === 'function') {
+            window.markDataDirty();
         }
-
-        // Cycle detection: refuse if parentId is a descendant of childId.
-        if (_wouldCreateCycle(childId, parentId)) {
-            return { ok: false, reason: 'Setting this parent would create a genealogy cycle' };
-        }
-
-        // If the previous parent reference existed, remove this child from
-        // their children array.
-        var previousParentId = child[field];
-        if (_hasId(previousParentId)) {
-            var previous = _resolveCharacter(previousParentId);
-            if (previous) _removeChildFromParentArray(previous, childId);
-        }
-
-        child[field] = parentId;
-        _addChildToParentArray(parent, childId);
-
-        child.updatedAt = Date.now();
-        parent.updatedAt = Date.now();
-        return { ok: true, changed: true };
+        return true;
     }
 
-    /**
-     * Clears a biological parent reference on a child.
-     *
-     * Idempotent: if the field is already empty, returns ok with changed: false.
-     *
-     * @private
-     */
-    function _removeBiologicalParentInternal(childId, parentType) {
-        var child = _resolveCharacter(childId);
-        if (!child) return { ok: false, reason: 'Child not found' };
-
-        var field = _biologicalFieldFor(parentType);
-        if (!field) return { ok: false, reason: 'Invalid parent type' };
-
-        var parentId = child[field];
-        if (!_hasId(parentId)) {
-            return { ok: true, changed: false };
-        }
-
-        var parent = _resolveCharacter(parentId);
-        if (parent) _removeChildFromParentArray(parent, childId);
-
-        child[field] = null;
-        child.updatedAt = Date.now();
-        if (parent) parent.updatedAt = Date.now();
-
-        return { ok: true, changed: true };
-    }
-
-    /**
-     * Sets an adoptive-parent record on a child.
-     *
-     * If an active record for this parent already exists, the call is a
-     * no-op unless the caller explicitly updates the metadata.
-     *
-     * @private
-     */
-    function _setAdoptiveParentInternal(childId, parentId, options) {
-        var child = _resolveCharacter(childId);
-        if (!child) return { ok: false, reason: 'Child not found' };
-
-        var parent = _resolveCharacter(parentId);
-        if (!parent) return { ok: false, reason: 'Parent not found' };
-
-        if (childId === parentId) {
-            return { ok: false, reason: 'A character cannot be their own parent' };
-        }
-
-        if (_wouldCreateCycle(childId, parentId)) {
-            return { ok: false, reason: 'Setting this adoptive parent would create a genealogy cycle' };
-        }
-
-        if (!Array.isArray(child.adoptedParents)) child.adoptedParents = [];
-
-        var existing = _findAdoptiveIndex(child.adoptedParents, parentId);
-        if (existing !== -1) {
-            var record = child.adoptedParents[existing];
-            // Update metadata if explicitly supplied.
-            var updated = false;
-            if (!_isMissing(options.parentType) && options.parentType !== record.parentType) {
-                record.parentType = options.parentType;
-                updated = true;
-            }
-            if (!_isMissing(options.type) && options.type !== record.type) {
-                record.type = options.type;
-                updated = true;
-            }
-            if (!_isMissing(options.year) && options.year !== record.year) {
-                record.year = options.year;
-                updated = true;
-            }
-            if (!_isMissing(options.notes) && options.notes !== record.notes) {
-                record.notes = options.notes;
-                updated = true;
-            }
-            if (record.status === 'ended' && options.reopen !== true) {
-                return { ok: false, reason: 'Adoption record is ended; pass reopen: true to reactivate' };
-            }
-            if (record.status === 'ended') {
-                record.status = 'ongoing';
-                updated = true;
-            }
-            return { ok: true, changed: updated };
-        }
-
-        var newRecord = {
-            parentId: parentId,
-            status: 'ongoing',
-            year: _resolveYear(options.year)
-        };
-        if (!_isMissing(options.parentType)) newRecord.parentType = options.parentType;
-        if (!_isMissing(options.type)) newRecord.type = options.type;
-        if (!_isMissing(options.notes)) newRecord.notes = options.notes;
-
-        child.adoptedParents.push(newRecord);
-        child.updatedAt = Date.now();
-        parent.updatedAt = Date.now();
-
-        return { ok: true, changed: true };
-    }
-
-    /**
-     * Ends an adoptive-parent record on a child.
-     *
-     * Idempotent: if no matching active record exists, returns ok with
-     * changed: false.
-     *
-     * @private
-     */
-    function _removeAdoptiveParentInternal(childId, parentId) {
-        var child = _resolveCharacter(childId);
-        if (!child) return { ok: false, reason: 'Child not found' };
-
-        if (!Array.isArray(child.adoptedParents)) {
-            return { ok: true, changed: false };
-        }
-
-        var index = _findAdoptiveIndex(child.adoptedParents, parentId);
-        if (index === -1) {
-            return { ok: true, changed: false };
-        }
-
-        // We remove the record entirely rather than marking it ended.
-        // Historical adoption data is the domain of the adoption history,
-        // not of the current graph. If you want ended records preserved,
-        // change this to set status: 'ended' instead of splicing.
-        child.adoptedParents.splice(index, 1);
-        child.updatedAt = Date.now();
-
-        var parent = _resolveCharacter(parentId);
-        if (parent) parent.updatedAt = Date.now();
-
-        return { ok: true, changed: true };
-    }
-
-    /**
-     * Cycle check: returns true if setting `candidateAncestorId` as parent
-     * of `childId` would create a cycle. Walks up from the candidate
-     * ancestor; if the child is reachable, the edge would cycle.
-     *
-     * Bounded by a visited Set. No depth limit.
-     *
-     * @private
-     */
-    function _wouldCreateCycle(childId, candidateAncestorId) {
-        var visited = new Set();
-        var stack = [candidateAncestorId];
-
-        while (stack.length > 0) {
-            var currentId = stack.pop();
-            if (currentId === childId) return true;
-            if (visited.has(currentId)) continue;
-            visited.add(currentId);
-
-            var current = _resolveCharacter(currentId);
-            if (!current) continue;
-
-            if (_hasId(current.fatherId)) stack.push(current.fatherId);
-            if (_hasId(current.motherId)) stack.push(current.motherId);
-
-            // Adoptive parents participate in cycle detection as well.
-            if (Array.isArray(current.adoptedParents)) {
-                for (var i = 0; i < current.adoptedParents.length; i++) {
-                    var ap = current.adoptedParents[i];
-                    if (ap && ap.status !== 'ended' && _hasId(ap.parentId)) {
-                        stack.push(ap.parentId);
-                    }
+    function _notify(action, characterIds) {
+        try {
+            window.dispatchEvent(new CustomEvent('familyChanged', {
+                detail: {
+                    action: action,
+                    characterIds: characterIds || []
                 }
+            }));
+        } catch (e) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error('family-commands.js: familyChanged dispatch failed:', e);
             }
         }
+    }
 
-        return false;
+    function _logEvent(category, type, message, subjects) {
+        if (typeof window.logEvent === 'function') {
+            window.logEvent(category, type, message, subjects);
+        }
+    }
+
+    function _commitAndNotify(action, characterIds) {
+        _commit();
+        _notify(action, characterIds);
     }
 
     // =========================================================================
-    // 4. PUBLIC COMMANDS
+    // 4. BIOLOGICAL CYCLE CHECK
     // =========================================================================
 
     /**
-     * Sets a biological parent on a child.
+     * FamilyRules.wouldCreateBiologicalCycle needs a provider. The provider
+     * must NOT be the live graph while we are testing whether the graph
+     * with the proposed edge would cycle. We construct a provider that
+     * already includes the proposed edge.
+     */
+    function _providerWithProposedBiologicalEdge(childId, parentId) {
+        return function (characterId) {
+            if (!_hasId(characterId)) return null;
+            var parents = FQ.getBiologicalParentIds(characterId);
+            if (characterId === childId && parents.indexOf(parentId) === -1) {
+                parents = parents.slice();
+                parents.push(parentId);
+            }
+            return { id: characterId, parents: parents };
+        };
+    }
+
+    // =========================================================================
+    // 5. SET PARENT
+    // =========================================================================
+
+    /**
+     * Creates a parent_child edge.
      *
      * @param {string} childId
      * @param {string} parentId
-     * @param {string} parentType - 'mother' | 'father'
-     * @param {Object} [options]
-     * @param {number} [options.startYear] - reserved for future use; recorded
-     *   on the parent-child relationship if your schema supports it
+     * @param {Object} options
+     * @param {string} options.parentType  'biological' | 'legal' | 'social'
+     * @param {string} options.parentRole  'father' | 'mother' | 'parent'
+     * @param {number} [options.startYear]
      * @param {string} [options.notes]
-     * @returns {{ success: boolean, changed?: boolean, reason?: string }}
+     * @param {boolean} [options.allowReplace]  permit replacing an existing
+     *                                          biological parent at the same role
+     * @returns {{ success: boolean, edgeId?: string, reason?: string }}
      */
-    function setBiologicalParent(childId, parentId, parentType, options) {
-        if (!_acquireLock()) return _alreadyProcessing();
-        try {
-            if (_isMissing(options)) options = {};
-            if (typeof options !== 'object' || Array.isArray(options)) {
-                return { success: false, reason: 'Options must be an object' };
-            }
+    function setParent(childId, parentId, options) {
+        if (!_hasId(childId)) return _fail('childId is required.');
+        if (!_hasId(parentId)) return _fail('parentId is required.');
+        if (childId === parentId) return _fail('A character cannot be their own parent.');
+        if (_isMissing(options)) options = {};
+        if (!_isPlainObject(options)) return _fail('options must be a plain object.');
 
-            if (!_hasId(childId)) {
-                return { success: false, reason: 'childId must be a non-empty string' };
-            }
-            if (!_hasId(parentId)) {
-                return { success: false, reason: 'parentId must be a non-empty string' };
-            }
+        if (!_characterExists(childId)) return _fail('Child not found.');
+        if (!_characterExists(parentId)) return _fail('Parent not found.');
 
-            var typeResult = _validateParentType(parentType);
-            if (!typeResult.ok) return { success: false, reason: typeResult.reason };
-
-            var yearResult = _validateYear(options.startYear, 'startYear');
-            if (!yearResult.ok) return { success: false, reason: yearResult.reason };
-
-            var result = _setBiologicalParentInternal(
-                childId,
-                parentId,
-                typeResult.value
-            );
-            if (!result.ok) return { success: false, reason: result.reason };
-
-            if (result.changed) {
-                _commit('setBiologicalParent', [childId, parentId]);
-            }
-            return { success: true, changed: result.changed };
-        } finally {
-            _releaseLock();
+        var parentType = options.parentType;
+        if (!FR.isValidParentType(parentType)) {
+            return _fail('parentType must be biological, legal, or social.');
         }
-    }
 
-    /**
-     * Clears a biological parent reference on a child.
-     *
-     * @param {string} childId
-     * @param {string} parentType - 'mother' | 'father'
-     * @returns {{ success: boolean, changed?: boolean, reason?: string }}
-     */
-    function removeBiologicalParent(childId, parentType) {
-        if (!_acquireLock()) return _alreadyProcessing();
-        try {
-            if (!_hasId(childId)) {
-                return { success: false, reason: 'childId must be a non-empty string' };
-            }
+        var roleResult = FR.normalizeParentRole(options.parentRole, options.parentGender);
+        if (!roleResult.ok) return _fail(roleResult.reason);
+        var parentRole = roleResult.value;
 
-            var typeResult = _validateParentType(parentType);
-            if (!typeResult.ok) return { success: false, reason: typeResult.reason };
-
-            var result = _removeBiologicalParentInternal(childId, typeResult.value);
-            if (!result.ok) return { success: false, reason: result.reason };
-
-            if (result.changed) {
-                _commit('removeBiologicalParent', [childId]);
-            }
-            return { success: true, changed: result.changed };
-        } finally {
-            _releaseLock();
+        if (!_isMissing(options.startYear) && !_isValidYear(options.startYear)) {
+            return _fail('startYear must be a valid world year.');
         }
+        var startYear = _resolveYear(options.startYear);
+
+        // Idempotency: if an active edge already exists with the same
+        // (child, parent, type, role), return it.
+        var existing = FQ.getEdgesForChild(childId, { status: 'ongoing' });
+        for (var i = 0; i < existing.length; i++) {
+            var e = existing[i];
+            if (e.parentId !== parentId) continue;
+            if (e.parentType !== parentType) continue;
+            if (e.parentRole !== parentRole) continue;
+            return _ok({ edgeId: e.id, unchanged: true });
+        }
+
+        // Collect existing biological parents at this role, excluding the
+        // proposed parent.
+        var existingBioAtRole = [];
+        if (parentType === FR.PARENT_TYPE.BIOLOGICAL) {
+            for (var j = 0; j < existing.length; j++) {
+                var cur = existing[j];
+                if (cur.parentType !== FR.PARENT_TYPE.BIOLOGICAL) continue;
+                if (cur.parentRole !== parentRole) continue;
+                if (cur.parentId === parentId) continue;
+                existingBioAtRole.push(cur.parentId);
+            }
+        }
+
+        var childBirthYear = _getBirthYear(childId);
+        var parentBirthYear = _getBirthYear(parentId);
+        var yearForAge = startYear;
+
+        var validation = FR.canSetParent({
+            childId: childId,
+            parentId: parentId,
+            parentType: parentType,
+            parentRole: parentRole,
+            childAgeAtStart: _ageAtYear(childBirthYear, yearForAge),
+            parentAgeAtStart: _ageAtYear(parentBirthYear, yearForAge),
+            existingBiologicalParentsAtSameRole: existingBioAtRole,
+            allowReplace: options.allowReplace === true
+        });
+        if (!validation.valid) {
+            return _fail(validation.errors.join('; '));
+        }
+
+        // Biological cycle prevention (unbounded traversal).
+        if (parentType === FR.PARENT_TYPE.BIOLOGICAL) {
+            var provider = _providerWithProposedBiologicalEdge(childId, parentId);
+            var cycle = FR.wouldCreateBiologicalCycle(childId, parentId, provider);
+            if (cycle) return _fail('Setting this parent would create a genealogy cycle.');
+        }
+
+        // If replacing a biological parent at the same role, end the old edge.
+        if (parentType === FR.PARENT_TYPE.BIOLOGICAL
+            && options.allowReplace === true
+            && existingBioAtRole.length > 0) {
+            for (var k = 0; k < existing.length; k++) {
+                var old = existing[k];
+                if (old.parentType !== FR.PARENT_TYPE.BIOLOGICAL) continue;
+                if (old.parentRole !== parentRole) continue;
+                if (existingBioAtRole.indexOf(old.parentId) === -1) continue;
+                FS._update(old.id, {
+                    status: 'ended',
+                    endYear: startYear
+                });
+            }
+        }
+
+        var edgeId = window.generateId('fedge');
+        if (!_hasId(edgeId)) return _fail('Edge id generation failed.');
+
+        var now = Date.now();
+        var edge = {
+            id: edgeId,
+            parentId: parentId,
+            childId: childId,
+            parentType: parentType,
+            parentRole: parentRole,
+            startYear: startYear,
+            endYear: null,
+            status: 'ongoing',
+            notes: typeof options.notes === 'string' ? options.notes : '',
+            createdAt: now,
+            updatedAt: now
+        };
+
+        FS._insert(edge);
+        _commitAndNotify('setParent', [childId, parentId]);
+
+        _logEvent('family', 'Parent Set',
+            'Parent edge set: ' + parentId + ' -> ' + childId + ' (' + parentType + ', ' + parentRole + ')',
+            [childId, parentId]);
+
+        return _ok({ edgeId: edgeId });
     }
 
+    // =========================================================================
+    // 6. REMOVE PARENT
+    // =========================================================================
+
     /**
-     * Sets a biological parent, choosing the field based on parentType.
-     * This is the primary entry point used by CharacterCommands during
-     * character creation and updates.
+     * Ends a specific parent edge.
      *
-     * @param {string} childId
-     * @param {string} parentId
-     * @param {string} parentType - 'mother' | 'father'
+     * @param {string} edgeId
      * @param {Object} [options]
-     * @returns {{ success: boolean, changed?: boolean, reason?: string }}
+     * @param {number} [options.endYear]
+     * @param {string} [options.reason]
+     * @returns {{ success: boolean, reason?: string }}
      */
-    function setParent(childId, parentId, parentType, options) {
-        return setBiologicalParent(childId, parentId, parentType, options);
+    function removeParent(edgeId, options) {
+        if (!_hasId(edgeId)) return _fail('edgeId is required.');
+        if (_isMissing(options)) options = {};
+        if (!_isPlainObject(options)) return _fail('options must be a plain object.');
+
+        var edge = FS.getEdgeCopy(edgeId);
+        if (!edge) return _fail('Parent edge not found.');
+        if (edge.status !== 'ongoing') {
+            return _fail('Parent edge is not active.');
+        }
+
+        if (!_isMissing(options.endYear) && !_isValidYear(options.endYear)) {
+            return _fail('endYear must be a valid world year.');
+        }
+        var endYear = _resolveYear(options.endYear);
+
+        FS._update(edgeId, {
+            status: 'ended',
+            endYear: endYear,
+            notes: (typeof options.reason === 'string' && options.reason.length > 0)
+                ? (edge.notes ? edge.notes + ' | ' + options.reason : options.reason)
+                : edge.notes
+        });
+
+        _commitAndNotify('removeParent', [edge.childId, edge.parentId]);
+        return _ok();
     }
 
     /**
-     * Removes a biological parent, choosing the field based on parentType.
-     *
-     * @param {string} childId
-     * @param {string} parentType - 'mother' | 'father'
-     * @returns {{ success: boolean, changed?: boolean, reason?: string }}
+     * Ends the active biological parent edge for a child and role, if any.
+     * Convenience wrapper used by role-based callers.
      */
-    function removeParent(childId, parentType) {
-        return removeBiologicalParent(childId, parentType);
+    function removeBiologicalParentAtRole(childId, parentRole, options) {
+        if (!_hasId(childId)) return _fail('childId is required.');
+        if (!FR.isValidParentRole(parentRole)) {
+            return _fail('parentRole must be father, mother, or parent.');
+        }
+        options = options || {};
+
+        var edges = FQ.getEdgesForChild(childId, { status: 'ongoing' });
+        for (var i = 0; i < edges.length; i++) {
+            var e = edges[i];
+            if (e.parentType !== FR.PARENT_TYPE.BIOLOGICAL) continue;
+            if (e.parentRole !== parentRole) continue;
+            return removeParent(e.id, options);
+        }
+        return _fail('No active biological parent at this role.');
     }
 
+    // =========================================================================
+    // 7. ADOPTION
+    // =========================================================================
+
     /**
-     * Sets an adoptive-parent record on a child.
+     * Creates a legal parent edge representing an adoption.
      *
      * @param {string} childId
-     * @param {string} parentId
-     * @param {Object} [options]
-     * @param {string} [options.parentType] - 'mother' | 'father' | undefined
-     * @param {string} [options.type] - 'legal' | 'guardianship' | 'foster'
-     * @param {number} [options.year]
+     * @param {string} adopterId
+     * @param {Object} options
+     * @param {string} [options.parentRole]  'father' | 'mother' | 'parent'
+     * @param {number} [options.startYear]
      * @param {string} [options.notes]
-     * @param {boolean} [options.reopen] - reopen an ended record
-     * @returns {{ success: boolean, changed?: boolean, reason?: string }}
+     * @param {boolean} [options.bypassConsent]  caller asserts consent
+     * @param {boolean} [options.allowReplace]   permit replacing existing legal at role
+     * @returns {{ success: boolean, edgeId?: string, reason?: string }}
      */
-    function setAdoptiveParent(childId, parentId, options) {
-        if (!_acquireLock()) return _alreadyProcessing();
-        try {
-            if (_isMissing(options)) options = {};
-            if (typeof options !== 'object' || Array.isArray(options)) {
-                return { success: false, reason: 'Options must be an object' };
-            }
+    function createAdoption(childId, adopterId, options) {
+        if (!_hasId(childId)) return _fail('childId is required.');
+        if (!_hasId(adopterId)) return _fail('adopterId is required.');
+        if (childId === adopterId) return _fail('A character cannot adopt themselves.');
+        if (_isMissing(options)) options = {};
+        if (!_isPlainObject(options)) return _fail('options must be a plain object.');
 
-            if (!_hasId(childId)) {
-                return { success: false, reason: 'childId must be a non-empty string' };
-            }
-            if (!_hasId(parentId)) {
-                return { success: false, reason: 'parentId must be a non-empty string' };
-            }
+        if (!_characterExists(childId)) return _fail('Child not found.');
+        if (!_characterExists(adopterId)) return _fail('Adopter not found.');
 
-            if (!_isMissing(options.parentType)
-                && options.parentType !== 'mother'
-                && options.parentType !== 'father') {
-                return { success: false, reason: 'parentType must be "mother" or "father" if provided' };
-            }
+        var roleResult = FR.normalizeParentRole(options.parentRole, options.parentGender);
+        if (!roleResult.ok) return _fail(roleResult.reason);
+        var parentRole = roleResult.value;
 
-            var yearResult = _validateYear(options.year, 'year');
-            if (!yearResult.ok) return { success: false, reason: yearResult.reason };
-
-            var result = _setAdoptiveParentInternal(childId, parentId, {
-                parentType: options.parentType,
-                type: options.type,
-                year: yearResult.value,
-                notes: options.notes,
-                reopen: options.reopen === true
-            });
-            if (!result.ok) return { success: false, reason: result.reason };
-
-            if (result.changed) {
-                _commit('setAdoptiveParent', [childId, parentId]);
-            }
-            return { success: true, changed: result.changed };
-        } finally {
-            _releaseLock();
+        if (!_isMissing(options.startYear) && !_isValidYear(options.startYear)) {
+            return _fail('startYear must be a valid world year.');
         }
+        var startYear = _resolveYear(options.startYear);
+
+        // Consent facts.
+        var livingBio = FQ.getBiologicalParentIds(childId);
+        var childHasLivingBioParents = livingBio.length > 0;
+
+        // Conflict: is there already an active legal parent at this role?
+        var legalEdges = FQ.getEdgesForChild(childId, {
+            status: 'ongoing',
+            parentType: FR.PARENT_TYPE.LEGAL,
+            parentRole: parentRole
+        });
+        var conflict = legalEdges.length > 0;
+
+        var validation = FR.canCreateAdoption({
+            childId: childId,
+            adopterIds: [adopterId],
+            childHasLivingBiologicalParents: childHasLivingBioParents,
+            biologicalParentsConsent: options.biologicalParentsConsent === true,
+            bypassConsent: options.bypassConsent === true,
+            conflictWithExistingLegalParentAtRole: conflict,
+            allowReplace: options.allowReplace === true
+        });
+        if (!validation.valid) {
+            return _fail(validation.errors.join('; '));
+        }
+
+        // Idempotency: existing active legal edge at same role for same adopter.
+        for (var i = 0; i < legalEdges.length; i++) {
+            if (legalEdges[i].parentId === adopterId) {
+                return _ok({ edgeId: legalEdges[i].id, unchanged: true });
+            }
+        }
+
+        // End conflicting legal edges if allowReplace.
+        if (conflict && options.allowReplace === true) {
+            for (var j = 0; j < legalEdges.length; j++) {
+                FS._update(legalEdges[j].id, {
+                    status: 'ended',
+                    endYear: startYear
+                });
+            }
+        }
+
+        var edgeId = window.generateId('fedge');
+        if (!_hasId(edgeId)) return _fail('Edge id generation failed.');
+
+        var now = Date.now();
+        var edge = {
+            id: edgeId,
+            parentId: adopterId,
+            childId: childId,
+            parentType: FR.PARENT_TYPE.LEGAL,
+            parentRole: parentRole,
+            startYear: startYear,
+            endYear: null,
+            status: 'ongoing',
+            notes: typeof options.notes === 'string' ? options.notes : 'adoption',
+            createdAt: now,
+            updatedAt: now
+        };
+
+        FS._insert(edge);
+        _commitAndNotify('createAdoption', [childId, adopterId]);
+
+        _logEvent('family', 'Adoption Created',
+            'Adoption: ' + adopterId + ' -> ' + childId,
+            [childId, adopterId]);
+
+        return _ok({ edgeId: edgeId });
     }
 
     /**
-     * Ends an adoptive-parent record on a child.
-     *
-     * @param {string} childId
-     * @param {string} parentId
-     * @returns {{ success: boolean, changed?: boolean, reason?: string }}
+     * Ends the active legal parent edge between adopter and child, if any.
      */
-    function removeAdoptiveParent(childId, parentId) {
-        if (!_acquireLock()) return _alreadyProcessing();
-        try {
-            if (!_hasId(childId)) {
-                return { success: false, reason: 'childId must be a non-empty string' };
-            }
-            if (!_hasId(parentId)) {
-                return { success: false, reason: 'parentId must be a non-empty string' };
-            }
+    function removeAdoption(childId, adopterId, options) {
+        if (!_hasId(childId)) return _fail('childId is required.');
+        if (!_hasId(adopterId)) return _fail('adopterId is required.');
+        options = options || {};
 
-            var result = _removeAdoptiveParentInternal(childId, parentId);
-            if (!result.ok) return { success: false, reason: result.reason };
-
-            if (result.changed) {
-                _commit('removeAdoptiveParent', [childId, parentId]);
+        var edges = FQ.getEdgesForChild(childId, {
+            status: 'ongoing',
+            parentType: FR.PARENT_TYPE.LEGAL
+        });
+        for (var i = 0; i < edges.length; i++) {
+            if (edges[i].parentId === adopterId) {
+                return removeParent(edges[i].id, options);
             }
-            return { success: true, changed: result.changed };
-        } finally {
-            _releaseLock();
         }
+        return _fail('No active adoption found.');
     }
 
+    // =========================================================================
+    // 8. RECLASSIFY
+    // =========================================================================
+
     /**
-     * Removes every family reference to a character.
+     * Reclassifies an edge between biological and legal (rare; used for
+     * legitimization, if your world later adds it).
      *
-     * Called by CharacterCommands during character deletion. Walks the
-     * canonical collection once and clears:
-     *   - biological parent references on any child
-     *   - adoptive parent records that name this character
-     *   - this character's own parent references
-     *   - the character's children array
-     *
-     * Does NOT remove the character from the collection; that is
-     * CharacterCommands' responsibility.
+     * This command does not implement legitimization. It is the primitive
+     * that legitimization would call.
+     */
+    function changeParentType(edgeId, newType, options) {
+        if (!_hasId(edgeId)) return _fail('edgeId is required.');
+        if (!FR.isValidParentType(newType)) {
+            return _fail('newType must be biological, legal, or social.');
+        }
+        options = options || {};
+
+        var edge = FS.getEdgeCopy(edgeId);
+        if (!edge) return _fail('Parent edge not found.');
+        if (edge.status !== 'ongoing') return _fail('Parent edge is not active.');
+        if (edge.parentType === newType) return _ok({ unchanged: true });
+
+        // If transitioning to biological, run cycle check against the
+        // current graph with the edge already present.
+        if (newType === FR.PARENT_TYPE.BIOLOGICAL) {
+            var provider = FQ.getAncestorProvider();
+            var cycle = FR.wouldCreateBiologicalCycle(edge.childId, edge.parentId, provider);
+            if (cycle) return _fail('Reclassification would create a genealogy cycle.');
+        }
+
+        FS._update(edgeId, {
+            parentType: newType,
+            updatedAt: Date.now()
+        });
+        _commitAndNotify('changeParentType', [edge.childId, edge.parentId]);
+        return _ok();
+    }
+
+    // =========================================================================
+    // 9. DEATH HANDLING
+    // =========================================================================
+
+    /**
+     * Ends every active edge in which the deceased character is either
+     * parent or child. Called by character-lifecycle.js after a death
+     * transition.
      *
      * @param {string} characterId
-     * @returns {{ success: boolean, changed: boolean, reason?: string }}
+     * @param {number} [year]
+     * @returns {{ success: boolean, endedCount: number, reason?: string }}
      */
-    function removeAllReferencesTo(characterId) {
-        if (!_acquireLock()) return _alreadyProcessing();
-        try {
-            if (!_hasId(characterId)) {
-                return { success: false, changed: false, reason: 'characterId must be a non-empty string' };
-            }
-
-            var characters = window.getCharacters();
-            var changed = false;
-            var affectedIds = [];
-
-            for (var i = 0; i < characters.length; i++) {
-                var c = characters[i];
-                if (!c || !_hasId(c.id)) continue;
-
-                var characterChanged = false;
-
-                // Clear this character's biological parent refs to the target
-                if (c.fatherId === characterId) {
-                    c.fatherId = null;
-                    characterChanged = true;
-                }
-                if (c.motherId === characterId) {
-                    c.motherId = null;
-                    characterChanged = true;
-                }
-
-                // Remove adoptive-parent records naming the target
-                if (Array.isArray(c.adoptedParents)) {
-                    var filtered = [];
-                    for (var j = 0; j < c.adoptedParents.length; j++) {
-                        var ap = c.adoptedParents[j];
-                        if (ap && ap.parentId === characterId) {
-                            characterChanged = true;
-                            continue;
-                        }
-                        filtered.push(ap);
-                    }
-                    if (characterChanged) c.adoptedParents = filtered;
-                }
-
-                // Clear this character's own children array entries pointing
-                // at the target
-                if (Array.isArray(c.children) && c.children.indexOf(characterId) !== -1) {
-                    c.children = c.children.filter(function(cid) {
-                        return cid !== characterId;
-                    });
-                    characterChanged = true;
-                }
-
-                // Clear the target's own children array entries if this
-                // character was the target (handled below via the target
-                // lookup, but doing it here keeps the loop single-pass)
-                if (c.id === characterId) {
-                    if (Array.isArray(c.children) && c.children.length > 0) {
-                        c.children = [];
-                        characterChanged = true;
-                    }
-                    if (Array.isArray(c.adoptedParents) && c.adoptedParents.length > 0) {
-                        c.adoptedParents = [];
-                        characterChanged = true;
-                    }
-                    if (Array.isArray(c.adoptedChildren) && c.adoptedChildren.length > 0) {
-                        c.adoptedChildren = [];
-                        characterChanged = true;
-                    }
-                }
-
-                if (characterChanged) {
-                    c.updatedAt = Date.now();
-                    changed = true;
-                    affectedIds.push(c.id);
-                }
-            }
-
-            if (changed) {
-                _commit('removeAllReferences', affectedIds);
-            }
-            return { success: true, changed: changed };
-        } finally {
-            _releaseLock();
+    function handleCharacterDeath(characterId, year) {
+        if (!_hasId(characterId)) {
+            return _fail('characterId is required.');
         }
+        if (!_isMissing(year) && !_isValidYear(year)) {
+            return _fail('year must be a valid world year.');
+        }
+        var endYear = _resolveYear(year);
+
+        var touched = 0;
+        var affectedCharacters = {};
+
+        var asParent = FQ.getEdgesForParent(characterId, { status: 'ongoing' });
+        for (var i = 0; i < asParent.length; i++) {
+            var e = asParent[i];
+            FS._update(e.id, { status: 'ended', endYear: endYear });
+            touched++;
+            affectedCharacters[e.childId] = true;
+        }
+
+        var asChild = FQ.getEdgesForChild(characterId, { status: 'ongoing' });
+        for (var j = 0; j < asChild.length; j++) {
+            var c = asChild[j];
+            FS._update(c.id, { status: 'ended', endYear: endYear });
+            touched++;
+            affectedCharacters[c.parentId] = true;
+        }
+
+        if (touched > 0) {
+            var ids = Object.keys(affectedCharacters);
+            ids.push(characterId);
+            _commitAndNotify('handleCharacterDeath', ids);
+        }
+
+        return { success: true, endedCount: touched };
     }
 
     // =========================================================================
-    // 5. EXPORTS
+    // 10. REFERENCE CLEANUP
+    // =========================================================================
+
+    /**
+     * Removes every edge in which characterId appears as parent or child.
+     * Used by character-deletion-commands.js after hard delete.
+     *
+     * @param {string} characterId
+     * @returns {{ success: boolean, removedCount: number }}
+     */
+    function removeAllReferencesTo(characterId) {
+        if (!_hasId(characterId)) {
+            return _fail('characterId is required.');
+        }
+
+        var allIds = FS.allIds();
+        var removed = 0;
+        var affected = {};
+
+        for (var i = 0; i < allIds.length; i++) {
+            var edge = FS.getEdgeCopy(allIds[i]);
+            if (!edge) continue;
+            if (edge.parentId !== characterId && edge.childId !== characterId) continue;
+            if (edge.parentId !== characterId) affected[edge.parentId] = true;
+            if (edge.childId !== characterId) affected[edge.childId] = true;
+            FS._remove(edge.id);
+            removed++;
+        }
+
+        if (removed > 0) {
+            var ids = Object.keys(affected);
+            _commitAndNotify('removeAllReferences', ids);
+        }
+
+        return { success: true, removedCount: removed };
+    }
+
+    // =========================================================================
+    // 11. EXPORTS
     // =========================================================================
 
     window.FamilyCommands = {
-        // Primary entry points
         setParent: setParent,
         removeParent: removeParent,
-        setAdoptiveParent: setAdoptiveParent,
-        removeAdoptiveParent: removeAdoptiveParent,
+        removeBiologicalParentAtRole: removeBiologicalParentAtRole,
 
-        // Named variants (for callers that want to be explicit)
-        setBiologicalParent: setBiologicalParent,
-        removeBiologicalParent: removeBiologicalParent,
+        createAdoption: createAdoption,
+        removeAdoption: removeAdoption,
 
-        // Cleanup
+        changeParentType: changeParentType,
+
+        handleCharacterDeath: handleCharacterDeath,
         removeAllReferencesTo: removeAllReferencesTo
     };
 
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.FamilyCommands;
+    }
 })();
