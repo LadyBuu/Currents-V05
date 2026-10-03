@@ -16,11 +16,25 @@
  *   { success: true,  data: {...} }
  *   { success: false, code: '...', reason: '...' }
  *
+ * Ownership:
+ *   This module owns the apprenticeship relationship (its lifecycle, its
+ *   metadata, its status transitions). It does NOT own:
+ *
+ *     character.professions   → CharacterCommands (profession fields)
+ *     role.specializations    → RoleCommands (role catalogue)
+ *     role records            → RoleState
+ *
+ *   Skill progression and profession specialization learning are written
+ *   through CharacterCommands.updateProfession and
+ *   CharacterCommands.addProfessionSpecialization respectively.
+ *
+ *   ApprenticeshipCommands orchestrates; CharacterCommands owns the data.
+ *
  * NOT permitted in this file:
  *   - window.masterData direct manipulation
+ *   - Direct writes to character.professions
  *   - Math.random() (roll is injected from a canonical RNG)
  *   - Fallback dependencies
- *   - Cross-domain state mutation (use orchestrator for that)
  * =============================================================================
  */
 
@@ -41,6 +55,7 @@
         }
         return fn;
     }
+
     function _getCharacterById(id)     { return _dep('getCharacterById', window.getCharacterById)(id); }
     function _getRoleById(id)          { return _dep('getRoleById', window.getRoleById)(id); }
     function _getCurrentYear()         { return _dep('getCurrentYearSafe', window.getCurrentYearSafe)(); }
@@ -48,14 +63,25 @@
     function _updateRelationship(id,u) { return _dep('updateRelationship', window.updateRelationship)(id,u); }
     function _endRelationship(id,y,r)  { return _dep('endRelationship', window.endRelationship)(id,y,r); }
     function _saveMasterData()         { return _dep('saveMasterData', window.saveMasterData)(); }
-    function _assignRoleToCharacter(cid, rid, opts) {
-        return _dep('RoleCommands.assignRoleToCharacter',
-                    window.RoleCommands && window.RoleCommands.assignRoleToCharacter)(cid, rid, opts);
+
+    // CharacterCommands — the owner of character.professions
+    function _addProfession(cid, data) {
+        return _dep('CharacterCommands.addProfession',
+            window.CharacterCommands && window.CharacterCommands.addProfession)(cid, data);
     }
-    function _updateRoleSkill(cid, rid, level) {
-        return _dep('RoleCommands.setSkillLevel',
-                    window.RoleCommands && window.RoleCommands.setSkillLevel)(cid, rid, level);
+    function _updateProfession(cid, rid, updates) {
+        return _dep('CharacterCommands.updateProfession',
+            window.CharacterCommands && window.CharacterCommands.updateProfession)(cid, rid, updates);
     }
+    function _getProfession(cid, rid) {
+        return _dep('CharacterCommands.getProfession',
+            window.CharacterCommands && window.CharacterCommands.getProfession)(cid, rid);
+    }
+    function _addProfessionSpecialization(cid, rid, spec) {
+        return _dep('CharacterCommands.addProfessionSpecialization',
+            window.CharacterCommands && window.CharacterCommands.addProfessionSpecialization)(cid, rid, spec);
+    }
+
     function _roll() {
         // Canonical RNG — the simulation engine provides it.
         if (typeof window.RNG !== 'undefined' && typeof window.RNG.next === 'function') {
@@ -84,7 +110,7 @@
     // 3. RESULT HELPERS
     // =========================================================================
 
-    function ok(data)         { return { success: true, data: data }; }
+    function ok(data)           { return { success: true, data: data }; }
     function fail(code, reason) { return { success: false, code: code, reason: reason }; }
 
     // =========================================================================
@@ -120,30 +146,74 @@
             ? args.initialSkill
             : TEACH.DEFAULT_INITIAL_SKILL;
 
+        // If the apprentice already holds the role at a higher level, start
+        // from the higher level. ApprenticeshipRules.validateCreation resolves
+        // this and returns resolvedInitialSkill.
+        var apprenticeProfession = _getProfession(apprentice.id, role.id);
+        var apprenticeExistingSkill = apprenticeProfession && typeof apprenticeProfession.skillLevel === 'number'
+            ? apprenticeProfession.skillLevel
+            : 0;
+
         var validation = window.ApprenticeshipRules.validateCreation({
-            master: { id: master.id, name: master.name, isDeceased: !!master.isDeceased, skillLevel: masterSkill },
-            apprentice: { id: apprentice.id, name: apprentice.name, isDeceased: !!apprentice.isDeceased },
+            master: {
+                id: master.id,
+                name: master.name,
+                isDeceased: !!master.isDeceased,
+                skillLevel: masterSkill
+            },
+            apprentice: {
+                id: apprentice.id,
+                name: apprentice.name,
+                isDeceased: !!apprentice.isDeceased,
+                existingSkill: apprenticeExistingSkill
+            },
             role: { id: role.id, name: role.name },
             initialSkill: initialSkill,
             existsActiveForRole: !!existingForRole
         });
         if (!validation.valid) return fail(validation.code, validation.reason);
 
+        var resolvedInitialSkill = validation.resolvedInitialSkill;
         var startYear = args.startYear != null ? args.startYear : _getCurrentYear();
-        var initialStage = window.ApprenticeshipRules.getStageForSkill(initialSkill);
+        var initialStage = window.ApprenticeshipRules.getStageForSkill(resolvedInitialSkill);
 
-        // ---- Cross-domain: assign role first (so failure aborts cleanly) ----
-        var assignResult = _assignRoleToCharacter(apprentice.id, role.id, {
-            skillLevel: initialSkill,
-            startYear: startYear,
-            primary: false,
-            notes: 'Apprenticeship under ' + master.name + (args.notes ? ' (' + args.notes + ')' : '')
-        });
-        if (!assignResult || !assignResult.success) {
-            return fail(
-                'ROLE_ASSIGNMENT_FAILED',
-                (assignResult && assignResult.reason) || 'Failed to assign role to apprentice'
-            );
+        // ---- Cross-domain: ensure the apprentice holds the profession ----
+        // If they already hold it, update the skill to the resolved level.
+        // If they don't, add it. Either way, CharacterCommands owns the write.
+        if (apprenticeProfession) {
+            if (apprenticeProfession.skillLevel !== resolvedInitialSkill) {
+                var updateResult = _updateProfession(apprentice.id, role.id, {
+                    skillLevel: resolvedInitialSkill
+                });
+                if (!updateResult || !updateResult.success) {
+                    return fail(
+                        'PROFESSION_UPDATE_FAILED',
+                        (updateResult && updateResult.reason) || 'Failed to update apprentice profession'
+                    );
+                }
+            }
+        } else {
+            var addResult = _addProfession(apprentice.id, {
+                id: role.id,
+                name: role.name,
+                skillLevel: resolvedInitialSkill,
+                startYear: startYear,
+                primary: false,
+                notes: 'Apprenticeship under ' + master.name +
+                       (args.notes ? ' (' + args.notes + ')' : ''),
+                specs: [],
+                baseSalary: role.baseSalary,
+                customSalary: null,
+                salaryHistory: [],
+                salaryLastCalculated: null,
+                paysSalary: true
+            });
+            if (!addResult || !addResult.success) {
+                return fail(
+                    'PROFESSION_ADD_FAILED',
+                    (addResult && addResult.reason) || 'Failed to add profession to apprentice'
+                );
+            }
         }
 
         // ---- Relationship ----
@@ -155,8 +225,8 @@
             metadata: {
                 roleId: role.id,
                 roleName: role.name,
-                startSkill: initialSkill,
-                skillLevel: initialSkill,   // cache
+                startSkill: resolvedInitialSkill,
+                skillLevel: resolvedInitialSkill,   // cache
                 stage: initialStage.id,
                 specializationsTaught: [],
                 teachingHistory: [],
@@ -177,8 +247,7 @@
         return ok({
             apprenticeship: window.ApprenticeshipQueries.getApprenticeshipDetails(
                 master.id, apprentice.id, role.id
-            ),
-            roleAssignment: assignResult
+            )
         });
     }
 
@@ -200,18 +269,26 @@
         var meta = Object.assign({}, rel.metadata || {});
         var patch = {};
 
-        if (updates.notes !== undefined)      meta.notes = updates.notes;
+        if (updates.notes !== undefined) meta.notes = updates.notes;
         if (updates.specializationsTaught !== undefined) {
             meta.specializationsTaught = (updates.specializationsTaught || []).slice();
         }
 
         if (updates.skillLevel !== undefined) {
-            // Manual skill change is a role-command, not metadata-only.
+            // Manual skill change goes through CharacterCommands.
             var roleId = meta.roleId;
             if (!roleId) return fail('NO_ROLE', 'Cannot update skill without a role');
-            var setResult = _updateRoleSkill(apprenticeId, roleId, updates.skillLevel);
-            if (!setResult || !setResult.success) {
-                return fail('SKILL_UPDATE_FAILED', (setResult && setResult.reason) || 'Skill update failed');
+            if (!window.ApprenticeshipRules.isSkillInRange(updates.skillLevel)) {
+                return fail('INVALID_SKILL', 'Skill must be 0-100');
+            }
+            var updateResult = _updateProfession(apprenticeId, roleId, {
+                skillLevel: updates.skillLevel
+            });
+            if (!updateResult || !updateResult.success) {
+                return fail(
+                    'SKILL_UPDATE_FAILED',
+                    (updateResult && updateResult.reason) || 'Skill update failed'
+                );
             }
             meta.skillLevel = updates.skillLevel;
             meta.stage = window.ApprenticeshipRules.getStageForSkill(updates.skillLevel).id;
@@ -229,11 +306,13 @@
             roleId: meta.roleId
         });
 
-        return ok(window.ApprenticeshipQueries.getApprenticeshipDetails(masterId, apprenticeId, meta.roleId));
+        return ok(window.ApprenticeshipQueries.getApprenticeshipDetails(
+            masterId, apprenticeId, meta.roleId
+        ));
     }
 
     // =========================================================================
-    // 6. PROGRESS (skill +5 style)
+    // 6. PROGRESS (skill +N)
     // =========================================================================
 
     function progressApprenticeship(masterId, apprenticeId, amount) {
@@ -247,12 +326,19 @@
         if (!roleId) return fail('NO_ROLE', 'Apprenticeship has no role');
 
         var currentSkill = window.ApprenticeshipQueries.getSkillLevel(apprenticeId, roleId);
+        if (currentSkill === null) currentSkill = 0;
+
         var newSkill = window.ApprenticeshipRules.clampSkill(currentSkill + amount);
         var newStage = window.ApprenticeshipRules.getStageForSkill(newSkill);
 
-        var skillResult = _updateRoleSkill(apprenticeId, roleId, newSkill);
-        if (!skillResult || !skillResult.success) {
-            return fail('SKILL_UPDATE_FAILED', 'Failed to update role skill');
+        var updateResult = _updateProfession(apprenticeId, roleId, {
+            skillLevel: newSkill
+        });
+        if (!updateResult || !updateResult.success) {
+            return fail(
+                'SKILL_UPDATE_FAILED',
+                (updateResult && updateResult.reason) || 'Failed to update profession skill'
+            );
         }
 
         meta.skillLevel = newSkill;
@@ -310,6 +396,8 @@
         if (!method) return fail('UNKNOWN_METHOD', 'Unknown teaching method: ' + methodId);
 
         var currentSkill = window.ApprenticeshipQueries.getSkillLevel(apprenticeId, roleId);
+        if (currentSkill === null) currentSkill = 0;
+
         var outcome = window.ApprenticeshipRules.calculateTeachingOutcome({
             currentSkill: currentSkill,
             method: method,
@@ -317,9 +405,14 @@
         });
 
         if (outcome.success) {
-            var skillResult = _updateRoleSkill(apprenticeId, roleId, outcome.newSkill);
-            if (!skillResult || !skillResult.success) {
-                return fail('SKILL_UPDATE_FAILED', 'Failed to update role skill');
+            var updateResult = _updateProfession(apprenticeId, roleId, {
+                skillLevel: outcome.newSkill
+            });
+            if (!updateResult || !updateResult.success) {
+                return fail(
+                    'SKILL_UPDATE_FAILED',
+                    (updateResult && updateResult.reason) || 'Failed to update profession skill'
+                );
             }
             meta.skillLevel = outcome.newSkill;
             meta.stage = window.ApprenticeshipRules.getStageForSkill(outcome.newSkill).id;
@@ -356,8 +449,15 @@
     }
 
     // =========================================================================
-    // 8. TEACH SPECIALIZATION (stored on the profession record)
+    // 8. TEACH SPECIALIZATION
     // =========================================================================
+    //
+    // The specialization is written to the apprentice's profession record
+    // (`profession.specs`), not to the role catalogue.
+    //
+    // The role catalogue (`role.specializations`) is the authority on which
+    // specializations exist for a role. ApprenticeshipRules.validateSpecialization
+    // enforces that the taught specialization is on the catalogue.
 
     function teachSpecialization(masterId, apprenticeId, specialization) {
         var rel = window.ApprenticeshipQueries.getApprenticeship(masterId, apprenticeId, null);
@@ -368,13 +468,20 @@
         var roleId = meta.roleId;
         if (!roleId) return fail('NO_ROLE', 'Apprenticeship has no role');
 
-        if (typeof window.RoleCommands === 'undefined' ||
-            typeof window.RoleCommands.addSpecialization !== 'function') {
-            return fail('MISSING_DEPENDENCY', 'RoleCommands.addSpecialization not available');
+        var role = _getRoleById(roleId);
+        if (!role) return fail('ROLE_NOT_FOUND', 'Role not found: ' + roleId);
+
+        var specValidation = window.ApprenticeshipRules.validateSpecialization(role, specialization);
+        if (!specValidation.valid) {
+            return fail(specValidation.code, specValidation.reason);
         }
-        var addResult = window.RoleCommands.addSpecialization(apprenticeId, roleId, specialization);
+
+        var addResult = _addProfessionSpecialization(apprenticeId, roleId, specialization);
         if (!addResult || !addResult.success) {
-            return fail('SPECIALIZATION_ADD_FAILED', (addResult && addResult.reason) || 'Failed to add specialization');
+            return fail(
+                'SPECIALIZATION_ADD_FAILED',
+                (addResult && addResult.reason) || 'Failed to add specialization'
+            );
         }
 
         if (!meta.specializationsTaught) meta.specializationsTaught = [];
@@ -408,6 +515,7 @@
 
         var meta = rel.metadata || {};
         var currentSkill = window.ApprenticeshipQueries.getSkillLevel(apprenticeId, meta.roleId);
+        if (currentSkill === null) currentSkill = 0;
 
         var canComplete = window.ApprenticeshipRules.canComplete({
             status: rel.status,
@@ -432,7 +540,9 @@
             roleId: meta.roleId
         });
 
-        return ok(window.ApprenticeshipQueries.getApprenticeshipDetails(masterId, apprenticeId, meta.roleId));
+        return ok(window.ApprenticeshipQueries.getApprenticeshipDetails(
+            masterId, apprenticeId, meta.roleId
+        ));
     }
 
     // =========================================================================
@@ -487,7 +597,10 @@
 
     /**
      * Advance every active apprenticeship by one year of training.
-     * Applies as ONE transaction.
+     *
+     * Each skill write goes through CharacterCommands.updateProfession.
+     * The relationship metadata is updated once per apprenticeship. The
+     * commit-and-notify fires once at the end of the batch.
      */
     function advanceApprenticeshipSkills(year) {
         year = year != null ? year : _getCurrentYear();
@@ -500,6 +613,7 @@
             var masterSkill = window.ApprenticeshipQueries.getSkillLevel(
                 projected.masterId, projected.roleId
             );
+            if (masterSkill === null) masterSkill = 0;
 
             var progress = window.ApprenticeshipRules.calculateAnnualProgress({
                 masterSkill: masterSkill,
@@ -507,12 +621,13 @@
             });
             if (progress.gain <= 0) continue;
 
-            var skillResult = _updateRoleSkill(
-                projected.apprenticeId, projected.roleId, progress.newSkill
-            );
-            if (!skillResult || !skillResult.success) continue;
+            var updateResult = _updateProfession(projected.apprenticeId, projected.roleId, {
+                skillLevel: progress.newSkill
+            });
+            if (!updateResult || !updateResult.success) continue;
 
             var rel = window.ApprenticeshipQueries.getApprenticeshipById(projected.id);
+            if (!rel) continue;
             var meta = Object.assign({}, rel.metadata || {});
             meta.skillLevel = progress.newSkill;
             meta.stage = window.ApprenticeshipRules.getStageForSkill(progress.newSkill).id;
@@ -538,7 +653,11 @@
         }
 
         if (advanced.length > 0) {
-            _commitAndNotify({ action: 'advanceApprenticeshipSkills', year: year, count: advanced.length });
+            _commitAndNotify({
+                action: 'advanceApprenticeshipSkills',
+                year: year,
+                count: advanced.length
+            });
         }
         return ok({ year: year, advanced: advanced });
     }
