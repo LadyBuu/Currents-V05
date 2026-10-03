@@ -11,47 +11,49 @@
  *   - Surname history mutations
  *   - Religion assignment orchestration (delegates to ReligionCommands)
  *   - Bulk character-owned field updates
+ *   - Death transition (markDeceased) — the single canonical writer of
+ *     isDeceased and its associated fields
  *
  * OUT OF SCOPE:
  *   - Character creation           -> character-creation-commands.js
  *   - Character deletion           -> character-deletion-commands.js
  *   - Family mutations             -> family-commands.js
- *   - Relationship mutations       -> future relationship domain
- *   - Rank assignment history      -> future rank domain
- *   - Apprenticeship records       -> future apprenticeship domain
+ *   - Mortality policy             -> mortality-rules.js
+ *   - Lifecycle orchestration      -> character-lifecycle.js
  *   - Persistence mechanics        -> character-state.js
  *   - Cross-domain events, toasts  -> caller
  *
- * OWNERSHIP:
- *   CharacterCommands owns `character.professions` as the sole writer.
- *   No other module may push to, splice, or reassign that array.
+ * DEATH TRANSITION (markDeceased):
+ *   markDeceased(characterId, deathData) is the ONLY function that writes
+ *   isDeceased = true and the associated death fields. It validates via
+ *   MortalityRules.validateDeath, then calls CharacterState.updateCharacter
+ *   once. It does not dispatch family/relationship/rank/succession
+ *   consequences; the caller (CharacterLifecycle.killCharacter or a UI
+ *   command) is responsible for that.
  *
- *   CharacterCommands does NOT own the character record's storage. Every
- *   mutation routes through CharacterState.
- *
- * WRITE PATHS:
- *   Character-owned field patch:
- *       CharacterCommands.updateCharacterFields(id, patch)
- *           -> CharacterState.updateCharacter(id, patch)
- *
- *   Profession patch:
- *       CharacterCommands.addProfession(id, data)
- *           -> CharacterState.applyDomainFieldPatch(id, { professions })
- *
- *   Surname history patch:
- *       CharacterCommands.recordCharacterSurnameChange(...)
- *           -> CharacterState.updateCharacter(id, { surname, surnameHistory })
- *
- *   Religion orchestration:
- *       CharacterCommands.assignCharacterReligion(id, religionId, options)
- *           -> ReligionCommands.convertCharacter / assignReligionToCharacter
+ *   deathData is a plain object:
+ *   {
+ *     deathYear,             number, required
+ *     deathCause,            string, required; stable id
+ *     deathCauseDetail,      string, optional
+ *     deathNotes,            string, optional
+ *     isMurder,              boolean, optional
+ *     killerId,              string, optional; required when isMurder
+ *     murderMotive,          string, optional
+ *     murderMethod,          string, optional
+ *     isExecution,           boolean, optional
+ *     executionReason,       string, optional; required when isExecution
+ *     executionMethod,       string, optional
+ *     executionLocation,     string, optional
+ *   }
  *
  * DEPENDENCIES (REQUIRED):
- *   - character-state.js (window.CharacterState)
+ *   - character-state.js: CharacterState
  *   - time.js: getCurrentYear, isValidYear
  *
  * DEPENDENCIES (OPTIONAL, called only when the feature is used):
- *   - religion-commands.js (window.ReligionCommands)
+ *   - religion-commands.js (ReligionCommands)
+ *   - mortality-rules.js (MortalityRules) — required for markDeceased only
  *
  * CONTRACT:
  *   - Every public command returns { success: boolean, reason?: string, ... }.
@@ -257,7 +259,110 @@
     }
 
     // =========================================================================
-    // 5. PROFESSION NORMALISATION
+    // 5. DEATH TRANSITION (markDeceased)
+    // =========================================================================
+
+    function _requireMortalityRules() {
+        if (typeof window.MortalityRules === 'undefined') {
+            return { ok: false, reason: 'mortality-rules.js is not loaded.' };
+        }
+        if (typeof window.MortalityRules.validateDeath !== 'function') {
+            return { ok: false, reason: 'MortalityRules.validateDeath is required.' };
+        }
+        return { ok: true };
+    }
+
+    /**
+     * Marks a character as deceased. The single canonical death writer.
+     *
+     * Returns { success, reason?, deathRecord? }.
+     */
+    function markDeceased(characterId, deathData) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (!_isPlainObject(deathData)) {
+            return _fail('deathData must be a plain object.');
+        }
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeceased === true) {
+            return _fail('Character is already deceased.');
+        }
+
+        var deps = _requireMortalityRules();
+        if (!deps.ok) return _fail(deps.reason);
+
+        var currentYear = window.getCurrentYear();
+
+        // Build the facts MortalityRules.validateDeath needs.
+        var validationFacts = {
+            characterId: characterId,
+            isDeceased: character.isDeceased === true,
+            birthYear: character.birthYear,
+            deathYear: deathData.deathYear,
+            currentYear: currentYear,
+            deathCause: deathData.deathCause,
+            isMurder: deathData.isMurder === true,
+            killerId: _isMissing(deathData.killerId) ? null : deathData.killerId,
+            isExecution: deathData.isExecution === true,
+            executionReason: _isMissing(deathData.executionReason)
+                ? null
+                : deathData.executionReason
+        };
+
+        var validation = window.MortalityRules.validateDeath(validationFacts);
+        if (!validation.valid) {
+            return _fail(validation.errors.join('; '));
+        }
+
+        // Build the update patch.
+        var patch = {
+            isDeceased: true,
+            deathYear: deathData.deathYear,
+            deathCause: deathData.deathCause,
+            deathCauseDetail: _isMissing(deathData.deathCauseDetail)
+                ? ''
+                : String(deathData.deathCauseDetail),
+            deathNotes: _isMissing(deathData.deathNotes)
+                ? ''
+                : String(deathData.deathNotes),
+            isMurder: deathData.isMurder === true,
+            killerId: _isMissing(deathData.killerId) ? null : deathData.killerId,
+            murderMotive: _isMissing(deathData.murderMotive)
+                ? null
+                : String(deathData.murderMotive),
+            murderMethod: _isMissing(deathData.murderMethod)
+                ? null
+                : String(deathData.murderMethod),
+            isExecution: deathData.isExecution === true,
+            executionReason: _isMissing(deathData.executionReason)
+                ? null
+                : String(deathData.executionReason),
+            executionMethod: _isMissing(deathData.executionMethod)
+                ? null
+                : String(deathData.executionMethod),
+            executionLocation: _isMissing(deathData.executionLocation)
+                ? null
+                : String(deathData.executionLocation),
+            updatedAt: Date.now()
+        };
+
+        var writeResult = CS.updateCharacter(characterId, patch);
+        if (!writeResult || writeResult.success !== true) {
+            return _fail(writeResult && writeResult.reason
+                ? writeResult.reason
+                : 'CharacterState refused the death write.');
+        }
+
+        return _ok({
+            characterId: characterId,
+            deathYear: deathData.deathYear,
+            deathCause: deathData.deathCause
+        });
+    }
+
+    // =========================================================================
+    // 6. PROFESSION NORMALISATION
     // =========================================================================
 
     function _normaliseNewProfession(data) {
@@ -303,7 +408,7 @@
     }
 
     // =========================================================================
-    // 6. PROFESSION API
+    // 7. PROFESSION API
     // =========================================================================
 
     function getProfession(characterId, professionId) {
@@ -593,7 +698,7 @@
     }
 
     // =========================================================================
-    // 7. PROFESSION PRIMACY
+    // 8. PROFESSION PRIMACY
     // =========================================================================
 
     function setPrimaryProfession(characterId, professionId) {
@@ -651,7 +756,7 @@
     }
 
     // =========================================================================
-    // 8. SURNAME HISTORY
+    // 9. SURNAME HISTORY
     // =========================================================================
 
     function recordCharacterSurnameChange(id, newSurname, year, reason, options) {
@@ -770,7 +875,7 @@
     }
 
     // =========================================================================
-    // 9. RELIGION ORCHESTRATION
+    // 10. RELIGION ORCHESTRATION
     // =========================================================================
 
     function _requireReligionCommands() {
@@ -857,13 +962,15 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 11. EXPORTS
     // =========================================================================
 
     window.CharacterCommands = {
         updateCharacterFields: updateCharacterFields,
         updateCharactersFields: updateCharactersFields,
         updateCharacter: updateCharacter,
+
+        markDeceased: markDeceased,
 
         getProfession: getProfession,
         getProfessions: getProfessions,
