@@ -2,59 +2,18 @@
  * =============================================================================
  * STILL WATERS - HOUSEHOLD STAFF POSITION MODALS (modals-household-staff.js)
  * =============================================================================
- * 
- * LOCATION: js/systems/household/modals-household-staff.js
- * 
- * PURPOSE
- * -------
- * Modal entry points for household staff position management:
- * 
- *   - openCreateHouseholdPositionModal(householdId, onSuccess)
- *   - openEditHouseholdPositionModal(householdId, positionId, onSuccess)
- *   - openDeleteHouseholdPositionModal(householdId, positionId, onSuccess)
- *   - openViewHouseholdPositionsModal(householdId, onSelect)
- *   - openViewStaffAssignmentsModal(householdId)
- *   - openStaffManagementModal(householdId, onSuccess)
- * 
- * This file ALSO provides the assignment commands used by the old
- * modals-assign-staff.js:
- * 
- *   - openAssignStaffToHouseholdPositionModal(...)
- *   - openRemoveHouseholdAssignmentModal(...)
- *   - openHouseholdAssignmentHistoryModal(...)
- *   - openBulkHouseholdAssignModal(...)
- *   - openViewHouseholdStaffAssignmentsModal(...)
- * 
- * modals-assign-staff.js becomes a thin re-export shim pointing at
- * these functions.
- * 
- * OWNERSHIP
- * ---------
- *   Reads:  HouseholdQueries (positions, assignments, staff, roles-by-id)
- *           RoleQueries (role lookups)
- *   Writes: HouseholdCommands (position CRUD, assignment CRUD)
- *   UI:     modals-core, selectors, icons
- * 
- * WHAT THIS FILE DOES NOT DO
- * --------------------------
- *   - No HouseholdState access
- *   - No RoleState access
- *   - No live household/role/character object leaks
- *   - No emoji icons
- *   - No setTimeout(100)
- *   - No fabricated 1250
- *   - No fabricated defaultSkillLevel (uses a named constant or command default)
- *   - No mutation of canonical records
- * 
+ *
+ * Modal entry points for household staff position management.
+ *
+ * Reads:  HouseholdQueries, RoleQueries
+ * Writes: HouseholdCommands
+ * UI:     modals-core, selectors, icons
+ *
  * =============================================================================
  */
 
 (function() {
     'use strict';
-
-    // =========================================================================
-    // 1. DEPENDENCY ACCESS
-    // =========================================================================
 
     function _openModal(options) {
         if (typeof window.openModal === 'function') return window.openModal(options);
@@ -159,17 +118,10 @@
         return Math.floor(n);
     }
 
-    // =========================================================================
-    // 2. CONSTANTS
-    // =========================================================================
-
-    // Default skill level assigned when a required role is auto-added on
-    // assignment. This is a UI-presented default; the command validates it.
-    // If/when the domain owns this policy, we can read it from Rules.
     var DEFAULT_SKILL_LEVEL = 10;
 
     // =========================================================================
-    // 3. ROLE OPTIONS BUILDER
+    // Role options builder
     // =========================================================================
 
     function _buildRoleOptions(selectedId, emptyLabel) {
@@ -184,7 +136,6 @@
                    typeof window.RoleQueries.getAllRoles === 'function') {
             roles = window.RoleQueries.getAllRoles();
         }
-
         if (!Array.isArray(roles)) return html;
 
         for (var i = 0; i < roles.length; i++) {
@@ -201,7 +152,26 @@
     }
 
     // =========================================================================
-    // 4. CREATE HOUSEHOLD POSITION MODAL
+    // Department options builder
+    // =========================================================================
+
+    function _buildDepartmentOptions(householdId, selectedId) {
+        var html = '<option value="">None</option>';
+        var queries = _queries();
+        var departments = queries.getHouseholdDepartments(householdId);
+        if (!Array.isArray(departments)) return html;
+
+        for (var i = 0; i < departments.length; i++) {
+            var d = departments[i];
+            var selected = (d.id === selectedId) ? ' selected' : '';
+            html += '<option value="' + _escapeHtml(d.id) + '"' + selected + '>' +
+                _escapeHtml(d.name) + '</option>';
+        }
+        return html;
+    }
+
+    // =========================================================================
+    // CREATE POSITION MODAL
     // =========================================================================
 
     function openCreateHouseholdPositionModal(householdId, onSuccess) {
@@ -214,27 +184,7 @@
             return null;
         }
 
-        // Department options
-        var departmentOptionsHtml = '<option value="">None</option>';
-        var departments = queries.getHouseholdPositions &&
-            queries.getHouseholdPositions({ householdId: householdId });
-        // We need the raw departments list; use the household details projection.
-        var details = queries.getHouseholdDetails(householdId);
-        if (details && details.household && details.household.departmentCount > 0) {
-            // getHousehold does not return departments; we need them from
-            // the household record via Queries.  Use the dedicated helper.
-        }
-        // Departments belong to the household record; we read them via
-        // the details projection.
-        var householdRecord = _getHouseholdRecordViaQueries(householdId);
-        if (householdRecord && Array.isArray(householdRecord.departments)) {
-            for (var d = 0; d < householdRecord.departments.length; d++) {
-                var dept = householdRecord.departments[d];
-                departmentOptionsHtml += '<option value="' + _escapeHtml(dept.id) + '">' +
-                    _escapeHtml(dept.name) + '</option>';
-            }
-        }
-
+        var departmentOptionsHtml = _buildDepartmentOptions(householdId, null);
         var roleOptionsHtml = _buildRoleOptions(null, 'No role required');
 
         var content =
@@ -299,10 +249,7 @@
                 if (!root) return false;
 
                 var name = ((root.querySelector('[data-field="name"]') || {}).value || '').trim();
-                if (!name) {
-                    _showToast('Position name is required', 'error');
-                    return false;
-                }
+                if (!name) { _showToast('Position name is required', 'error'); return false; }
 
                 var departmentId = (root.querySelector('[data-field="departmentId"]') || {}).value || null;
                 var requiredRoleId = (root.querySelector('[data-field="requiredRoleId"]') || {}).value || null;
@@ -337,27 +284,8 @@
         });
     }
 
-    /**
-     * Helper: fetch the household's raw departments list. HouseholdQueries
-     * does not (yet) expose departments directly; we read from the details
-     * projection or fall back to a full record read via _queries.
-     */
-    function _getHouseholdRecordViaQueries(householdId) {
-        var queries = _queries();
-        var details = queries.getHouseholdDetails(householdId);
-        if (details && details.household) {
-            // HouseholdDetails doesn't expose departments; use State
-            // internal via Queries... but Queries does not expose that.
-            // Fall through to reading from the household projection if
-            // we later add departments there.
-        }
-        // Until HouseholdQueries exposes departments, we return what we can:
-        // an empty object so callers do not crash.
-        return null;
-    }
-
     // =========================================================================
-    // 5. EDIT HOUSEHOLD POSITION MODAL
+    // EDIT POSITION MODAL
     // =========================================================================
 
     function openEditHouseholdPositionModal(householdId, positionId, onSuccess) {
@@ -365,18 +293,13 @@
         var commands = _commands();
 
         var household = queries.getHousehold(householdId);
-        if (!household) {
-            _showToast('Household not found', 'error');
-            return null;
-        }
+        if (!household) { _showToast('Household not found', 'error'); return null; }
 
         var position = queries.getHouseholdPosition(positionId);
-        if (!position) {
-            _showToast('Position not found', 'error');
-            return null;
-        }
+        if (!position) { _showToast('Position not found', 'error'); return null; }
 
         var roleOptionsHtml = _buildRoleOptions(position.requiredRoleId, 'No role required');
+        var departmentOptionsHtml = _buildDepartmentOptions(householdId, position.departmentId);
 
         var content =
             '<div style="margin-bottom:16px;">' +
@@ -388,6 +311,13 @@
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Position Name *</label>' +
                     '<input type="text" data-field="name" value="' + _escapeHtml(position.name) +
                         '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                '</div>' +
+
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Department</label>' +
+                    '<select data-field="departmentId" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                        departmentOptionsHtml +
+                    '</select>' +
                 '</div>' +
 
                 '<div style="margin-bottom:12px;">' +
@@ -429,11 +359,9 @@
                 if (!root) return false;
 
                 var name = ((root.querySelector('[data-field="name"]') || {}).value || '').trim();
-                if (!name) {
-                    _showToast('Position name is required', 'error');
-                    return false;
-                }
+                if (!name) { _showToast('Position name is required', 'error'); return false; }
 
+                var departmentId = (root.querySelector('[data-field="departmentId"]') || {}).value || null;
                 var requiredRoleId = (root.querySelector('[data-field="requiredRoleId"]') || {}).value || null;
 
                 var minSkillLevel = _parseIntOrNull((root.querySelector('[data-field="minSkillLevel"]') || {}).value);
@@ -446,6 +374,7 @@
 
                 var result = commands.updatePosition(positionId, {
                     name: name,
+                    departmentId: departmentId,
                     requiredRoleId: requiredRoleId,
                     minSkillLevel: minSkillLevel,
                     priority: priority,
@@ -465,7 +394,7 @@
     }
 
     // =========================================================================
-    // 6. DELETE HOUSEHOLD POSITION MODAL
+    // DELETE POSITION MODAL
     // =========================================================================
 
     function openDeleteHouseholdPositionModal(householdId, positionId, onSuccess) {
@@ -554,7 +483,7 @@
     }
 
     // =========================================================================
-    // 7. ASSIGN STAFF TO POSITION MODAL
+    // ASSIGN STAFF MODAL
     // =========================================================================
 
     function openAssignStaffToHouseholdPositionModal(householdId, positionId, onSuccess) {
@@ -578,7 +507,6 @@
             assignedIds[existingAssignments[i].characterId] = true;
         }
 
-        // Candidates = household members not already assigned to this position
         var candidates = [];
         for (var m = 0; m < members.length; m++) {
             var mem = members[m];
@@ -615,7 +543,6 @@
             : 'None';
 
         var candidatesHtml = _buildCandidateList(candidates, position);
-
         var history = queries.getAssignmentsForPosition(positionId, false);
         var historyHtml = _buildRecentHistory(history, 5);
 
@@ -734,7 +661,7 @@
         });
 
         setTimeout(_attachOnOpen(function(root) {
-            _wireCandidateSelection(root, householdId, positionId, onSuccess);
+            _wireCandidateSelection(root, householdId, positionId, position, onSuccess);
         }), 0);
 
         return handle;
@@ -759,9 +686,7 @@
                 ? '<span style="font-size:0.45rem;color:var(--accent);">(Skill: ' +
                     c.skillLevel + ')</span>'
                 : '';
-            var ageText = (c.age !== null && c.age !== undefined)
-                ? c.age + 'y'
-                : '—';
+            var ageText = (c.age !== null && c.age !== undefined) ? c.age + 'y' : '—';
 
             html += '<div class="staff-candidate" data-character-id="' +
                 _escapeHtml(c.characterId) +
@@ -816,12 +741,11 @@
                 '</span>' +
             '</div>';
         }
-
         html += '</div></div>';
         return html;
     }
 
-    function _wireCandidateSelection(root, householdId, positionId, onSuccess) {
+    function _wireCandidateSelection(root, householdId, positionId, position, onSuccess) {
         var candidates = root.querySelectorAll('.staff-candidate');
         for (var i = 0; i < candidates.length; i++) {
             (function(el) {
@@ -857,12 +781,9 @@
                     return;
                 }
                 window.openCharacterSelector({
-                    title: 'Select Character for ' + positionId,
+                    title: 'Select Character for ' + (position ? position.name : 'position'),
                     onSelect: function(character) {
                         if (!character) return;
-                        // Reopen the modal with the selected character
-                        // pre-selected. The simplest way is to close and
-                        // reopen; the selection is passed via options.
                         _closeTopModal();
                         setTimeout(function() {
                             openAssignStaffToHouseholdPositionModal(
@@ -876,7 +797,7 @@
     }
 
     // =========================================================================
-    // 8. REMOVE / END ASSIGNMENT MODAL
+    // REMOVE / END ASSIGNMENT MODAL
     // =========================================================================
 
     function openRemoveHouseholdAssignmentModal(householdId, assignmentId, onSuccess) {
@@ -884,16 +805,10 @@
         var commands = _commands();
 
         var household = queries.getHousehold(householdId);
-        if (!household) {
-            _showToast('Household not found', 'error');
-            return null;
-        }
+        if (!household) { _showToast('Household not found', 'error'); return null; }
 
         var assignment = queries.getHouseholdAssignment(assignmentId);
-        if (!assignment) {
-            _showToast('Assignment not found', 'error');
-            return null;
-        }
+        if (!assignment) { _showToast('Assignment not found', 'error'); return null; }
 
         var position = queries.getHouseholdPosition(assignment.positionId);
         var roleName = assignment.roleIdAtAssignment
@@ -995,7 +910,7 @@
     }
 
     // =========================================================================
-    // 9. ASSIGNMENT HISTORY MODAL
+    // ASSIGNMENT HISTORY MODAL
     // =========================================================================
 
     function openHouseholdAssignmentHistoryModal(householdId, positionId, characterId) {
@@ -1003,16 +918,10 @@
 
         var history;
         try {
-            if (positionId) {
-                history = queries.getAssignmentsForPosition(positionId, false);
-            } else if (characterId) {
-                history = queries.getAssignmentsForCharacter(characterId, false);
-            } else if (householdId) {
-                history = queries.getAssignmentsForHousehold(householdId, false);
-            } else {
-                _showToast('No filter provided', 'error');
-                return null;
-            }
+            if (positionId) history = queries.getAssignmentsForPosition(positionId, false);
+            else if (characterId) history = queries.getAssignmentsForCharacter(characterId, false);
+            else if (householdId) history = queries.getAssignmentsForHousehold(householdId, false);
+            else { _showToast('No filter provided', 'error'); return null; }
         } catch (e) {
             _showToast('Failed to load assignment history', 'error');
             return null;
@@ -1040,7 +949,7 @@
             content: content,
             confirmText: 'Close',
             cancelText: '',
-            onConfirm: function() { /* close only */ }
+            onConfirm: function() {}
         });
     }
 
@@ -1059,7 +968,6 @@
 
         var html = '<div style="margin-bottom:16px;">';
 
-        // Summary
         html += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:16px;">';
         html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:0.55rem;">';
         html += '<div><span style="color:var(--dim);">Total</span><br>' +
@@ -1072,7 +980,6 @@
             withRoles + '</span></div>';
         html += '</div></div>';
 
-        // List
         html += '<div style="max-height:350px;overflow-y:auto;">';
         html += '<div style="font-size:0.65rem;color:var(--dim);margin-bottom:8px;">' +
             sorted.length + ' assignment(s) found (most recent first)' +
@@ -1111,7 +1018,7 @@
     }
 
     // =========================================================================
-    // 10. BULK ASSIGN MODAL
+    // BULK ASSIGN MODAL
     // =========================================================================
 
     function openBulkHouseholdAssignModal(householdId, positionId, onSuccess) {
@@ -1355,17 +1262,14 @@
     }
 
     // =========================================================================
-    // 11. VIEW POSITIONS MODAL
+    // VIEW POSITIONS MODAL
     // =========================================================================
 
     function openViewHouseholdPositionsModal(householdId, onSelect) {
         var queries = _queries();
 
         var household = queries.getHousehold(householdId);
-        if (!household) {
-            _showToast('Household not found', 'error');
-            return null;
-        }
+        if (!household) { _showToast('Household not found', 'error'); return null; }
 
         var positions = queries.getHouseholdPositions({ householdId: householdId });
         var assignments = queries.getAssignmentsForHousehold(householdId, true);
@@ -1380,8 +1284,7 @@
         var rows = '';
         if (positions.length === 0) {
             rows = '<div style="color:var(--dim);text-align:center;padding:40px;font-size:0.6rem;">' +
-                'No positions created yet' +
-            '</div>';
+                'No positions created yet</div>';
         } else {
             rows = '<div style="display:flex;flex-direction:column;gap:6px;">';
             for (var p = 0; p < positions.length; p++) {
@@ -1438,7 +1341,7 @@
             content: content,
             confirmText: 'Close',
             cancelText: '',
-            onConfirm: function() { /* close only */ }
+            onConfirm: function() {}
         });
 
         setTimeout(_attachOnOpen(function(root) {
@@ -1466,7 +1369,7 @@
     }
 
     // =========================================================================
-    // 12. VIEW STAFF ASSIGNMENTS MODAL
+    // VIEW STAFF ASSIGNMENTS MODAL
     // =========================================================================
 
     function openViewStaffAssignmentsModal(householdId) {
@@ -1474,10 +1377,7 @@
         var commands = _commands();
 
         var household = queries.getHousehold(householdId);
-        if (!household) {
-            _showToast('Household not found', 'error');
-            return null;
-        }
+        if (!household) { _showToast('Household not found', 'error'); return null; }
 
         var assignments = queries.getAssignmentsForHousehold(householdId, true);
         var positions = queries.getHouseholdPositions({ householdId: householdId });
@@ -1489,8 +1389,7 @@
         var rows = '';
         if (assignments.length === 0) {
             rows = '<div style="color:var(--dim);text-align:center;padding:40px;font-size:0.6rem;">' +
-                'No staff assignments' +
-            '</div>';
+                'No staff assignments</div>';
         } else {
             rows = '<div style="display:flex;flex-direction:column;gap:4px;">';
             for (var a = 0; a < assignments.length; a++) {
@@ -1540,7 +1439,7 @@
             content: content,
             confirmText: 'Close',
             cancelText: '',
-            onConfirm: function() { /* close only */ }
+            onConfirm: function() {}
         });
 
         setTimeout(_attachOnOpen(function(root) {
@@ -1569,7 +1468,7 @@
                                     openViewStaffAssignmentsModal(householdId);
                                 }, 0);
                             },
-                            function() { /* cancelled */ }
+                            function() {}
                         );
                     };
                 })(btns[b]);
@@ -1580,17 +1479,14 @@
     }
 
     // =========================================================================
-    // 13. COMBINED STAFF MANAGEMENT MODAL
+    // COMBINED STAFF MANAGEMENT MODAL
     // =========================================================================
 
     function openStaffManagementModal(householdId, onSuccess) {
         var queries = _queries();
 
         var household = queries.getHousehold(householdId);
-        if (!household) {
-            _showToast('Household not found', 'error');
-            return null;
-        }
+        if (!household) { _showToast('Household not found', 'error'); return null; }
 
         var positions = queries.getHouseholdPositions({ householdId: householdId });
         var assignments = queries.getAssignmentsForHousehold(householdId, true);
@@ -1605,8 +1501,7 @@
         var rows = '';
         if (positions.length === 0) {
             rows = '<div style="color:var(--dim);text-align:center;padding:20px;font-size:0.6rem;">' +
-                'No positions created yet' +
-            '</div>';
+                'No positions created yet</div>';
         } else {
             rows = '<div style="display:flex;flex-direction:column;gap:4px;">';
             for (var p = 0; p < positions.length; p++) {
@@ -1746,7 +1641,7 @@
     }
 
     // =========================================================================
-    // 14. EXPORTS
+    // EXPORTS
     // =========================================================================
 
     window.openCreateHouseholdPositionModal = openCreateHouseholdPositionModal;
