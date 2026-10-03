@@ -31,18 +31,17 @@
  *       - validation
  *       - orchestration across multiple character mutations
  *
- * The profession API required by role-commands.js:
+ * Profession API:
  *   - addProfession(characterId, professionData)
  *   - updateProfession(characterId, professionId, updates)
  *   - removeProfession(characterId, professionId)
  *   - removeProfessionFromAll(professionId)
- *   - getProfession(characterId, professionId)   ← read, but colocated here
- *                                                  because it lives on the
- *                                                  character record.
+ *   - getProfession(characterId, professionId)
+ *   - addProfessionSpecialization(characterId, professionId, spec)
+ *   - removeProfessionSpecialization(characterId, professionId, spec)
  *
  * DEPENDENCIES (must be loaded first):
  *   - character-state.js  (CharacterState)
- *   - storage.js          (saveMasterData) — reached via CharacterState
  *
  * =============================================================================
  */
@@ -62,7 +61,6 @@
 
     var CS = window.CharacterState;
 
-    // Required CharacterState methods. Fail loudly at load if any are absent.
     var requiredStateMethods = [
         'getCharacter',
         'getAllCharacters',
@@ -129,11 +127,6 @@
     // =========================================================================
     // 4. PROFESSION NORMALISATION
     // =========================================================================
-    //
-    // A profession record is embedded in a character. This function produces
-    // a canonical shape for new professions and for updates. It does not
-    // reach outside to RoleState — profession fields that mirror a role
-    // (name, baseSalary) are supplied by the caller.
 
     function _normaliseNewProfession(data) {
         return {
@@ -167,15 +160,6 @@
     // 5. PROFESSION API
     // =========================================================================
 
-    /**
-     * Adds a profession to a character.
-     *
-     * Required data fields: id, name, skillLevel.
-     * Optional: startYear, primary, notes, specs, baseSalary, customSalary,
-     *           salaryHistory, salaryLastCalculated, paysSalary.
-     *
-     * Fails if the character already has a profession with this id.
-     */
     function addProfession(characterId, professionData) {
         if (!_validId(characterId)) return _fail('Character id is required.');
         if (!professionData || typeof professionData !== 'object') {
@@ -221,17 +205,6 @@
         return _ok({ profession: newProfession });
     }
 
-    /**
-     * Partially updates an existing profession on a character.
-     *
-     * Accepts any subset of:
-     *   name, skillLevel, startYear, primary, notes, specs,
-     *   baseSalary, customSalary, salaryHistory,
-     *   salaryLastCalculated, paysSalary
-     *
-     * Fields absent from `updates` are left unchanged. Fields present must
-     * pass validation.
-     */
     function updateProfession(characterId, professionId, updates) {
         if (!_validId(characterId)) return _fail('Character id is required.');
         if (!_validId(professionId)) return _fail('Profession id is required.');
@@ -344,9 +317,6 @@
         return _ok({ profession: next });
     }
 
-    /**
-     * Removes a single profession from a character.
-     */
     function removeProfession(characterId, professionId) {
         if (!_validId(characterId)) return _fail('Character id is required.');
         if (!_validId(professionId)) return _fail('Profession id is required.');
@@ -370,15 +340,6 @@
         return _ok({ characterId: characterId, professionId: professionId });
     }
 
-    /**
-     * Removes a profession from every character that holds it.
-     *
-     * Returns { success: true, removedCount, characterIds }.
-     *
-     * This is the operation RoleCommands.deleteRole uses to clean up
-     * assignments before deleting a role. It writes through CharacterState
-     * in a single batch so persistence fires once.
-     */
     function removeProfessionFromAll(professionId) {
         if (!_validId(professionId)) return _fail('Profession id is required.');
 
@@ -416,13 +377,6 @@
         });
     }
 
-    /**
-     * Returns the profession record from a character, or null.
-     *
-     * This is a read, but it lives here rather than in a separate query
-     * module because it is a direct accessor on a character record and is
-     * used by role-commands.js's assignment path.
-     */
     function getProfession(characterId, professionId) {
         if (!_validId(characterId)) return null;
         if (!_validId(professionId)) return null;
@@ -436,13 +390,100 @@
     }
 
     // =========================================================================
-    // 6. GENERIC CHARACTER UPDATE (thin wrapper for other domains)
+    // 6. PROFESSION SPECIALIZATION API
     // =========================================================================
     //
-    // Other role-side or UI code sometimes needs to update a character field
-    // that is not a profession (name change, status change, location change).
-    // This is the sanctioned entry point. It refuses to touch `professions`
-    // so that the profession API remains the sole writer of that array.
+    // Specializations live on the profession record as `specs`. They describe
+    // which specializations of the role this character has actually learned.
+    //
+    // They are distinct from `role.specializations`, which is the catalogue
+    // of specializations the role offers. A character can only learn a
+    // specialization that appears on the role's catalogue; that invariant is
+    // enforced by the caller (typically ApprenticeshipRules.validateSpecialization)
+    // because the character domain has no business reading role records.
+
+    function addProfessionSpecialization(characterId, professionId, specialization) {
+        if (!_validId(characterId)) return _fail('Character id is required.');
+        if (!_validId(professionId)) return _fail('Profession id is required.');
+        if (!_validString(specialization)) return _fail('Specialization is required.');
+
+        var character = CS.getCharacter(characterId);
+        if (!character) return _fail('Character not found.');
+
+        var idx = _findProfessionIndex(character, professionId);
+        if (idx === -1) return _fail('Character does not have this profession.');
+
+        var current = character.professions[idx];
+        var existing = Array.isArray(current.specs) ? current.specs.slice() : [];
+        var spec = specialization.trim();
+
+        if (existing.indexOf(spec) !== -1) {
+            return _fail('Specialization already present on this profession.');
+        }
+
+        existing.push(spec);
+
+        var nextProfessions = character.professions.slice();
+        nextProfessions[idx] = Object.assign({}, current, { specs: existing });
+
+        var update = CS.updateCharacter(characterId, { professions: nextProfessions });
+        if (!update || update.success !== true) {
+            return _fail(update && update.reason
+                ? update.reason
+                : 'CharacterState refused the update.');
+        }
+
+        return _ok({
+            characterId: characterId,
+            professionId: professionId,
+            specialization: spec,
+            specs: existing
+        });
+    }
+
+    function removeProfessionSpecialization(characterId, professionId, specialization) {
+        if (!_validId(characterId)) return _fail('Character id is required.');
+        if (!_validId(professionId)) return _fail('Profession id is required.');
+        if (!_validString(specialization)) return _fail('Specialization is required.');
+
+        var character = CS.getCharacter(characterId);
+        if (!character) return _fail('Character not found.');
+
+        var idx = _findProfessionIndex(character, professionId);
+        if (idx === -1) return _fail('Character does not have this profession.');
+
+        var current = character.professions[idx];
+        var existing = Array.isArray(current.specs) ? current.specs.slice() : [];
+        var spec = specialization.trim();
+
+        var specIdx = existing.indexOf(spec);
+        if (specIdx === -1) {
+            return _fail('Specialization not present on this profession.');
+        }
+
+        existing.splice(specIdx, 1);
+
+        var nextProfessions = character.professions.slice();
+        nextProfessions[idx] = Object.assign({}, current, { specs: existing });
+
+        var update = CS.updateCharacter(characterId, { professions: nextProfessions });
+        if (!update || update.success !== true) {
+            return _fail(update && update.reason
+                ? update.reason
+                : 'CharacterState refused the update.');
+        }
+
+        return _ok({
+            characterId: characterId,
+            professionId: professionId,
+            specialization: spec,
+            specs: existing
+        });
+    }
+
+    // =========================================================================
+    // 7. GENERIC CHARACTER UPDATE
+    // =========================================================================
 
     function updateCharacterFields(characterId, updates) {
         if (!_validId(characterId)) return _fail('Character id is required.');
@@ -471,16 +512,20 @@
     }
 
     // =========================================================================
-    // 7. EXPORTS
+    // 8. EXPORTS
     // =========================================================================
 
     window.CharacterCommands = {
-        // Profession API (required by role-commands.js)
+        // Profession API
         addProfession: addProfession,
         updateProfession: updateProfession,
         removeProfession: removeProfession,
         removeProfessionFromAll: removeProfessionFromAll,
         getProfession: getProfession,
+
+        // Profession specializations
+        addProfessionSpecialization: addProfessionSpecialization,
+        removeProfessionSpecialization: removeProfessionSpecialization,
 
         // Generic character field updates (never touches professions)
         updateCharacterFields: updateCharacterFields
