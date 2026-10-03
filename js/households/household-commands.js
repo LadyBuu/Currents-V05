@@ -2,64 +2,25 @@
  * =============================================================================
  * STILL WATERS - HOUSEHOLD COMMANDS (household-commands.js)
  * =============================================================================
- * 
- * LOCATION: js/systems/household/household-commands.js
- * 
- * PURPOSE
- * -------
- * Canonical mutation API for household data. This module owns:
- * 
- *   - Household creation and deletion
- *   - Household status changes
- *   - Household field updates (name, location, notes, founded year, etc.)
- *   - Household event recording
- *   - Member add/remove/update/transfer
- *   - Head selection
- *   - Department management
- *   - Name-period mutations
- *   - Residence association mutations
- *   - Position CRUD
- *   - Assignment create/end/delete
- *   - Salary and tuition recording on behalf of the household
- *   - Household repair operations
- * 
- * CONTRACT
- * --------
- * Every command:
- *   1. Validates input
- *   2. Reads via HouseholdState._internal
- *   3. Mutates the record in-place via a single _commit() call
- *   4. Persists via HouseholdState._internal.replaceHouseholds()
- *   5. Returns a structured result
- * 
+ *
+ * Canonical mutation API for household data.
+ *
  * Result shape:
  *   { success: true,  data: ... }
  *   { success: false, code: 'SOME_CODE', reason: 'human message' }
- * 
- * EXPLICITLY NOT OWNED BY THIS MODULE
- * -----------------------------------
- *   - Semantic reads                    → HouseholdQueries
- *   - Domain policy thresholds          → HouseholdRules
- *   - Enterprise canonical ownership    → IndustryCommands
- *   - Residence canonical occupancy     → ResidenceCommands
- *   - Toasts / icons / colours          → UI layer
- *   - family accessors                  → CharacterQueries
- * 
- * PERSISTENCE BOUNDARY
- * --------------------
- * Every command that touches the household array performs exactly ONE
- * _commit() which performs exactly ONE _replaceHouseholds(). No command
- * calls _replaceHouseholds() more than once.
- * 
- * Guards: NONE. Commands compose freely.
- * 
- * DEPENDENCIES (required)
- * -----------------------
- *   - HouseholdState
- *   - getCharacterById
- *   - generateId
- *   - getCurrentYearSafe
- * 
+ *
+ * Persistence: exactly one _commit() per public command. Individual helpers
+ * mutate the record in place; the outer command commits.
+ *
+ * Cross-domain rules:
+ *   - Enterprise ownership         → IndustryCommands
+ *   - Residence occupancy          → ResidenceSystem (ResidenceCommands)
+ *   - Character reverse index      → this module, via HouseholdCommands
+ *
+ * When a household is deleted while occupying a residence, the residence
+ * command must run FIRST (to clear unit occupancy and the household's
+ * reverse index) before the household record is removed.
+ *
  * =============================================================================
  */
 
@@ -108,6 +69,12 @@
         }
     }
 
+    function _residenceSystem() {
+        return typeof window.ResidenceSystem !== 'undefined'
+            ? window.ResidenceSystem
+            : null;
+    }
+
     // =========================================================================
     // 2. RESULT HELPERS
     // =========================================================================
@@ -115,22 +82,12 @@
     function _ok(data) {
         return { success: true, data: data === undefined ? null : data };
     }
-
     function _fail(code, reason) {
         return { success: false, code: code, reason: reason || code };
     }
 
     // =========================================================================
     // 3. LOW-LEVEL COMMIT
-    // =========================================================================
-    //
-    // Every household mutation must go through this. It:
-    //   - reads the current array snapshot
-    //   - swaps the record in place (callers must have already mutated it)
-    //   - calls replaceHouseholds() exactly once
-    //
-    // Because _getHouseholdRecord returns the LIVE object, callers mutate
-    // the record directly and then call _commit() to persist + notify.
     // =========================================================================
 
     function _commit() {
@@ -143,12 +100,8 @@
     // =========================================================================
 
     function _resolveYear(value) {
-        if (value === undefined || value === null) {
-            return _currentYear();
-        }
-        if (typeof value !== 'number' || !isFinite(value)) {
-            return null;
-        }
+        if (value === undefined || value === null) return _currentYear();
+        if (typeof value !== 'number' || !isFinite(value)) return null;
         return value;
     }
 
@@ -162,22 +115,6 @@
     // 5. HOUSEHOLD CREATION AND DELETION
     // =========================================================================
 
-    /**
-     * Creates a new household.
-     * 
-     * Required:
-     *   data.name (non-empty string)
-     * 
-     * Optional:
-     *   data.locationId, data.locationName
-     *   data.wealth, data.reputation, data.debt, data.powerScore
-     *   data.foundedYear
-     *   data.notes
-     *   data.headId — character to install as head
-     * 
-     * Returns:
-     *   { success: true, data: { householdId } }
-     */
     function createHousehold(data) {
         if (!data || typeof data !== 'object') {
             return _fail('INVALID_INPUT', 'Household data is required');
@@ -187,9 +124,7 @@
         }
 
         var year = _resolveYear(data.foundedYear);
-        if (year === null) {
-            return _fail('INVALID_YEAR', 'Invalid founded year');
-        }
+        if (year === null) return _fail('INVALID_YEAR', 'Invalid founded year');
 
         var householdId = _generateId('house');
         var locationId = data.locationId || null;
@@ -234,7 +169,6 @@
             updatedAt: Date.now()
         };
 
-        // Install head if provided
         if (data.headId) {
             var head = _getCharacterById(data.headId);
             if (head) {
@@ -250,6 +184,8 @@
                     headSince: year,
                     notes: 'Founding head of household'
                 });
+                head.household = householdId;
+                head.householdId = householdId;
             }
         }
 
@@ -265,21 +201,59 @@
 
     /**
      * Deletes a household permanently.
-     * 
-     * Removes it from the household array. Also clears the reverse reference
-     * on any member characters if options.removeFromCharacters is true.
-     * 
-     * Enterprise ownership transfer must be handled by the caller via
-     * IndustryCommands before or after this call.
+     *
+     * Order of operations:
+     *   1. If the household is occupying a residence, tell ResidenceSystem
+     *      to mark that unit vacant. This clears canonical occupancy AND
+     *      updates the household reverse index.
+     *   2. Optionally clear the householdId on each member character.
+     *   3. Remove the household from the canonical array.
+     *
+     * If ResidenceSystem is unavailable and the household is occupying a
+     * residence, we log a warning but proceed. Callers who care about
+     * residence integrity should ensure ResidenceSystem is loaded.
      */
     function deleteHousehold(householdId, options) {
         options = options || {};
         var household = _internal().getHouseholdRecord(householdId);
-        if (!household) {
-            return _fail('NOT_FOUND', 'Household not found');
+        if (!household) return _fail('NOT_FOUND', 'Household not found');
+
+        // Step 1: disassociate residence occupancy (canonical side)
+        var residenceId = household.residenceId || null;
+        var unitNumber = household.residenceUnitNumber;
+        if (residenceId) {
+            var rs = _residenceSystem();
+            if (rs) {
+                var year = _currentYear();
+                var vacateResult = null;
+                try {
+                    if (unitNumber !== null && unitNumber !== undefined) {
+                        vacateResult = rs.markUnitVacant(
+                            residenceId, unitNumber,
+                            'Household deleted', year
+                        );
+                    } else {
+                        vacateResult = rs.markResidenceVacant(
+                            residenceId,
+                            'Household deleted', year
+                        );
+                    }
+                } catch (e) {
+                    vacateResult = null;
+                }
+                if (!vacateResult || vacateResult.success === false) {
+                    _logEvent('household', 'Delete Residence Cleanup Failed',
+                        'Could not clear residence occupancy for ' +
+                        household.name + ' (' + residenceId + ')', []);
+                }
+            } else if (typeof console !== 'undefined' && console.warn) {
+                console.warn('HouseholdCommands.deleteHousehold: ResidenceSystem ' +
+                    'not available; residence occupancy for ' +
+                    household.name + ' will be stale.');
+            }
         }
 
-        // Remove from characters if requested
+        // Step 2: clear character-side reverse index
         if (options.removeFromCharacters === true && Array.isArray(household.members)) {
             for (var i = 0; i < household.members.length; i++) {
                 var character = null;
@@ -289,17 +263,17 @@
                     character = null;
                 }
                 if (character) {
-                    if (character.household === householdId) {
-                        character.household = '';
-                        character.householdId = '';
-                    }
+                    if (character.household === householdId) character.household = '';
+                    if (character.householdId === householdId) character.householdId = '';
                 }
             }
+            // Character writes are outside our commit boundary. Persist once.
             if (typeof window.saveMasterData === 'function') {
                 window.saveMasterData();
             }
         }
 
+        // Step 3: remove the household record
         var all = _internal().getAllHouseholdRecords({ includeDeprecated: true });
         var next = [];
         for (var j = 0; j < all.length; j++) {
@@ -319,18 +293,13 @@
 
     function _updateHouseholdFields(householdId, updates) {
         var household = _internal().getHouseholdRecord(householdId);
-        if (!household) {
-            return _fail('NOT_FOUND', 'Household not found');
-        }
+        if (!household) return _fail('NOT_FOUND', 'Household not found');
 
         var year = _currentYear();
 
-        // Name change with history
         if (updates.name !== undefined && updates.name !== null) {
             var newName = String(updates.name).trim();
-            if (newName === '') {
-                return _fail('INVALID_NAME', 'Household name cannot be empty');
-            }
+            if (newName === '') return _fail('INVALID_NAME', 'Household name cannot be empty');
             if (newName !== household.name) {
                 if (!Array.isArray(household.nameHistory)) household.nameHistory = [];
                 household.nameHistory.push({
@@ -347,7 +316,6 @@
             }
         }
 
-        // Location
         if (updates.locationId !== undefined) {
             household.locationId = updates.locationId || null;
             if (updates.locationName !== undefined) {
@@ -355,16 +323,11 @@
             }
         }
 
-        // Simple scalar fields
-        var scalarFields = [
-            'reputation', 'wealth', 'debt', 'powerScore',
-            'foundedYear', 'notes'
-        ];
+        var scalarFields = ['reputation', 'wealth', 'debt', 'powerScore',
+            'foundedYear', 'notes'];
         for (var i = 0; i < scalarFields.length; i++) {
             var key = scalarFields[i];
-            if (updates[key] !== undefined) {
-                household[key] = updates[key];
-            }
+            if (updates[key] !== undefined) household[key] = updates[key];
         }
 
         household.updatedAt = Date.now();
@@ -376,18 +339,10 @@
         return _ok({ householdId: householdId });
     }
 
-    /**
-     * Sets the household status.
-     * 
-     * Primitive that lets assignment / economy stop reaching into
-     * household.status directly.
-     */
     function setStatus(householdId, status, options) {
         options = options || {};
         var household = _internal().getHouseholdRecord(householdId);
-        if (!household) {
-            return _fail('NOT_FOUND', 'Household not found');
-        }
+        if (!household) return _fail('NOT_FOUND', 'Household not found');
         if (typeof status !== 'string' || status === '') {
             return _fail('INVALID_STATUS', 'Status must be a non-empty string');
         }
@@ -415,17 +370,9 @@
         return _ok({ householdId: householdId, status: status, previousStatus: oldStatus });
     }
 
-    /**
-     * Records an event in a household's event log.
-     * 
-     * Primitive that lets assignment / economy stop reaching into
-     * household.eventLog directly.
-     */
     function recordEvent(householdId, event) {
         var household = _internal().getHouseholdRecord(householdId);
-        if (!household) {
-            return _fail('NOT_FOUND', 'Household not found');
-        }
+        if (!household) return _fail('NOT_FOUND', 'Household not found');
         if (!event || typeof event !== 'object') {
             return _fail('INVALID_INPUT', 'Event must be an object');
         }
@@ -439,8 +386,6 @@
             amount: event.amount !== undefined ? event.amount : null,
             timestamp: Date.now()
         });
-
-        // Keep last 200
         if (household.eventLog.length > 200) {
             household.eventLog = household.eventLog.slice(-200);
         }
@@ -462,15 +407,6 @@
         return -1;
     }
 
-    /**
-     * Adds a member to a household.
-     * 
-     * Required:
-     *   householdId, characterId, type ('family' | 'staff')
-     * 
-     * Returns NOT_FOUND if the household or character does not exist.
-     * Returns ALREADY_MEMBER if the character is already a member.
-     */
     function addMember(householdId, characterId, type, options) {
         options = options || {};
         var household = _internal().getHouseholdRecord(householdId);
@@ -482,7 +418,6 @@
         if (type !== 'family' && type !== 'staff') {
             return _fail('INVALID_TYPE', 'Member type must be "family" or "staff"');
         }
-
         if (_findMember(household, characterId) !== -1) {
             return _fail('ALREADY_MEMBER', 'Character is already a member');
         }
@@ -493,14 +428,11 @@
         var role = options.role || (type === 'family' ? 'Family Member' : 'Staff');
         var isHead = options.isHead === true;
 
-        if (isHead) {
-            // Demote current head
-            if (Array.isArray(household.members)) {
-                for (var i = 0; i < household.members.length; i++) {
-                    if (household.members[i].isHead) {
-                        household.members[i].isHead = false;
-                        household.members[i].headSince = null;
-                    }
+        if (isHead && Array.isArray(household.members)) {
+            for (var i = 0; i < household.members.length; i++) {
+                if (household.members[i].isHead) {
+                    household.members[i].isHead = false;
+                    household.members[i].headSince = null;
                 }
             }
         }
@@ -519,7 +451,6 @@
             notes: options.notes || ''
         });
 
-        // Character-side reverse index
         character.household = householdId;
         character.householdId = householdId;
 
@@ -537,10 +468,6 @@
             });
         }
 
-        if (typeof window.saveMasterData === 'function') {
-            window.saveMasterData();
-        }
-
         household.updatedAt = Date.now();
         _commit();
 
@@ -552,9 +479,6 @@
         });
     }
 
-    /**
-     * Removes a member from a household.
-     */
     function removeMember(householdId, characterId, options) {
         options = options || {};
         var household = _internal().getHouseholdRecord(householdId);
@@ -575,7 +499,6 @@
 
         household.members.splice(idx, 1);
 
-        // Character side
         if (character.household === householdId) {
             character.household = '';
             character.householdId = '';
@@ -593,22 +516,17 @@
             }
         }
 
-        if (typeof window.saveMasterData === 'function') {
-            window.saveMasterData();
-        }
-
         household.updatedAt = Date.now();
-        _commit();
 
-        // Auto-succession: if the removed member was head, promote the
-        // oldest living family member.
         if (wasHead) {
             var nextHeadId = _pickSuccessor(household);
             if (nextHeadId) {
-                _setHeadInternal(household, nextHeadId, year, 'Succession after removal');
-                _commit();
+                _setHeadInternal(household, nextHeadId, year,
+                    'Succession after removal');
             }
         }
+
+        _commit();
 
         return _ok({
             householdId: householdId,
@@ -670,41 +588,26 @@
         });
     }
 
-    /**
-     * Transfers a member between households.
-     * 
-     * Atomic: either both the removal and addition succeed, or neither does.
-     * Implemented by validating up-front, then performing both mutations,
-     * then a single _commit().
-     */
     function transferMember(characterId, targetHouseholdId, options) {
         options = options || {};
         var character = _getCharacterById(characterId);
         if (!character) return _fail('CHARACTER_NOT_FOUND', 'Character not found');
-        if (character.isDeceased) {
-            return _fail('CHARACTER_DECEASED', 'Cannot transfer deceased character');
-        }
+        if (character.isDeceased) return _fail('CHARACTER_DECEASED', 'Cannot transfer deceased character');
 
         var target = _internal().getHouseholdRecord(targetHouseholdId);
         if (!target) return _fail('TARGET_NOT_FOUND', 'Target household not found');
 
-        // Find current household
         var all = _internal().getAllHouseholdRecords({ includeDeprecated: true });
         var current = null;
         var currentIdx = -1;
         for (var i = 0; i < all.length; i++) {
             var idx = _findMember(all[i], characterId);
-            if (idx !== -1) {
-                current = all[i];
-                currentIdx = idx;
-                break;
-            }
+            if (idx !== -1) { current = all[i]; currentIdx = idx; break; }
         }
 
         if (current && current.id === targetHouseholdId) {
             return _fail('ALREADY_MEMBER', 'Character is already in the target household');
         }
-
         if (_findMember(target, characterId) !== -1) {
             return _fail('ALREADY_MEMBER', 'Character is already in the target household');
         }
@@ -713,10 +616,8 @@
         if (year === null) return _fail('INVALID_YEAR', 'Invalid transfer year');
         var reason = options.reason || 'Transferred';
 
-        // Capture existing role for role continuity
         var carriedRole = options.role || null;
         var carriedType = options.type || null;
-        var carriedJoinedYear = null;
         var carriedDepartmentId = options.departmentId || null;
         var carriedIsHead = options.isHead === true;
 
@@ -724,13 +625,10 @@
             var member = current.members[currentIdx];
             if (!carriedRole) carriedRole = member.role;
             if (!carriedType) carriedType = member.type;
-            carriedJoinedYear = member.joinedYear;
         }
-
         if (!carriedType) carriedType = 'family';
         if (!carriedRole) carriedRole = carriedType === 'family' ? 'Family Member' : 'Staff';
 
-        // Remove from current
         if (current) {
             var wasHead = current.members[currentIdx].isHead === true;
             current.members.splice(currentIdx, 1);
@@ -748,7 +646,6 @@
                 }
             }
 
-            // Auto-succession in source
             if (wasHead) {
                 var nextHeadId = _pickSuccessor(current);
                 if (nextHeadId) {
@@ -758,14 +655,11 @@
             }
         }
 
-        // Add to target
-        if (carriedIsHead) {
-            if (Array.isArray(target.members)) {
-                for (var t = 0; t < target.members.length; t++) {
-                    if (target.members[t].isHead) {
-                        target.members[t].isHead = false;
-                        target.members[t].headSince = null;
-                    }
+        if (carriedIsHead && Array.isArray(target.members)) {
+            for (var t = 0; t < target.members.length; t++) {
+                if (target.members[t].isHead) {
+                    target.members[t].isHead = false;
+                    target.members[t].headSince = null;
                 }
             }
         }
@@ -785,7 +679,6 @@
         });
         target.updatedAt = Date.now();
 
-        // Character reverse index
         character.household = targetHouseholdId;
         character.householdId = targetHouseholdId;
 
@@ -803,11 +696,6 @@
             });
         }
 
-        if (typeof window.saveMasterData === 'function') {
-            window.saveMasterData();
-        }
-
-        // Single commit
         _commit();
 
         return _ok({
@@ -824,13 +712,9 @@
     // 8. HEAD MANAGEMENT
     // =========================================================================
 
-    /**
-     * Internal: sets head without persisting. Caller must call _commit().
-     */
     function _setHeadInternal(household, characterId, year, reason) {
         if (!Array.isArray(household.members)) return false;
 
-        // Demote all current heads
         for (var i = 0; i < household.members.length; i++) {
             if (household.members[i].isHead) {
                 household.members[i].isHead = false;
@@ -839,7 +723,6 @@
             }
         }
 
-        // Promote target
         for (var j = 0; j < household.members.length; j++) {
             if (household.members[j].characterId === characterId) {
                 household.members[j].isHead = true;
@@ -859,10 +742,6 @@
         return false;
     }
 
-    /**
-     * Pick the next head: oldest living family member.
-     * Returns characterId or null.
-     */
     function _pickSuccessor(household) {
         if (!Array.isArray(household.members)) return null;
 
@@ -885,18 +764,11 @@
                     ? character.birthYear : 9999
             });
         }
-
         if (candidates.length === 0) return null;
-
         candidates.sort(function(a, b) { return a.birthYear - b.birthYear; });
         return candidates[0].id;
     }
 
-    /**
-     * Sets the head of a household.
-     * 
-     * If characterId is null, removes the current head without replacement.
-     */
     function setHead(householdId, characterId, options) {
         options = options || {};
         var household = _internal().getHouseholdRecord(householdId);
@@ -923,7 +795,6 @@
             return _ok({ householdId: householdId, previousHeadId: oldHeadId });
         }
 
-        // Add as member if not already present
         if (_findMember(household, characterId) === -1) {
             var addResult = addMember(householdId, characterId, 'family', {
                 role: 'Head of Household',
@@ -937,9 +808,7 @@
         }
 
         var ok = _setHeadInternal(household, characterId, year, reason);
-        if (!ok) {
-            return _fail('MEMBER_NOT_FOUND', 'Character is not a member');
-        }
+        if (!ok) return _fail('MEMBER_NOT_FOUND', 'Character is not a member');
 
         household.updatedAt = Date.now();
         _commit();
@@ -951,9 +820,6 @@
         });
     }
 
-    /**
-     * Auto-assigns a successor after a head dies or leaves.
-     */
     function autoAssignHead(householdId, options) {
         options = options || {};
         var household = _internal().getHouseholdRecord(householdId);
@@ -961,15 +827,10 @@
 
         var successorId = _pickSuccessor(household);
         if (!successorId) {
-            // No successors: mark vacant
             household.status = 'vacant';
             household.updatedAt = Date.now();
             _commit();
-            return _ok({
-                householdId: householdId,
-                successorId: null,
-                vacant: true
-            });
+            return _ok({ householdId: householdId, successorId: null, vacant: true });
         }
 
         var year = _resolveYear(options.year);
@@ -980,11 +841,7 @@
         household.updatedAt = Date.now();
         _commit();
 
-        return _ok({
-            householdId: householdId,
-            successorId: successorId,
-            vacant: false
-        });
+        return _ok({ householdId: householdId, successorId: successorId, vacant: false });
     }
 
     // =========================================================================
@@ -1046,7 +903,6 @@
         }
         if (idx === -1) return _fail('NOT_FOUND', 'Department not found');
 
-        // Clear members' department assignment
         if (options.transferMembers !== false && Array.isArray(household.members)) {
             for (var j = 0; j < household.members.length; j++) {
                 if (household.members[j].departmentId === departmentId) {
@@ -1117,12 +973,9 @@
         var allowed = ['oldName', 'newName', 'year', 'periodEnd', 'reason', 'changedBy'];
         for (var i = 0; i < allowed.length; i++) {
             var key = allowed[i];
-            if (updates[key] !== undefined) {
-                period[key] = updates[key];
-            }
+            if (updates[key] !== undefined) period[key] = updates[key];
         }
 
-        // If this is the current period, update the household name too
         var isCurrent = (periodIndex === history.length - 1);
         if (isCurrent && updates.newName) {
             household.name = updates.newName;
@@ -1166,13 +1019,6 @@
     // 11. RESIDENCE ASSOCIATION MUTATIONS
     // =========================================================================
 
-    /**
-     * Associate a household with a residence (reverse index).
-     * 
-     * NOTE: The canonical household/unit association belongs to Residence.
-     * This command only updates the reverse index on the household record.
-     * ResidenceCommands is responsible for calling this command.
-     */
     function associateWithResidence(householdId, residenceId, options) {
         options = options || {};
         var household = _internal().getHouseholdRecord(householdId);
@@ -1315,11 +1161,8 @@
 
         var character = _getCharacterById(characterId);
         if (!character) return _fail('CHARACTER_NOT_FOUND', 'Character not found');
-        if (character.isDeceased) {
-            return _fail('CHARACTER_DECEASED', 'Character is deceased');
-        }
+        if (character.isDeceased) return _fail('CHARACTER_DECEASED', 'Character is deceased');
 
-        // Check for duplicate active assignment on this position
         var assignments = _internal().getAllAssignmentRecords();
         for (var j = 0; j < assignments.length; j++) {
             var a = assignments[j];
@@ -1403,14 +1246,6 @@
     // 14. BULK OPERATIONS
     // =========================================================================
 
-    /**
-     * Best-effort bulk assignment.
-     * 
-     * Does NOT abort on first failure. Returns:
-     *   { success: true, data: { succeeded: [...], failed: [...] } }
-     * 
-     * The caller decides whether to retry, display, or discard.
-     */
     function bulkAssign(assignments, options) {
         options = options || {};
         var succeeded = [];
@@ -1440,14 +1275,6 @@
     // 15. REPAIR (diagnostics)
     // =========================================================================
 
-    /**
-     * Repairs membership inconsistencies:
-     *   - Members that reference nonexistent characters are removed
-     *   - Characters with householdId pointing at this household but not in
-     *     members are removed from characters (reverse cleanup)
-     *   - Multiple heads per household are demoted to a single head
-     *   - Households with no head and living family members get a head
-     */
     function repairMemberships(options) {
         options = options || {};
         var all = _internal().getAllHouseholdRecords({ includeDeprecated: true });
@@ -1464,7 +1291,6 @@
             var household = all[i];
             if (!Array.isArray(household.members)) continue;
 
-            // Remove members whose characters do not exist
             var kept = [];
             for (var j = 0; j < household.members.length; j++) {
                 var m = household.members[j];
@@ -1474,15 +1300,11 @@
                 } catch (e) {
                     character = null;
                 }
-                if (character) {
-                    kept.push(m);
-                } else {
-                    result.membersRemoved++;
-                }
+                if (character) kept.push(m);
+                else result.membersRemoved++;
             }
             household.members = kept;
 
-            // Resolve duplicate heads
             var heads = [];
             for (var k = 0; k < household.members.length; k++) {
                 if (household.members[k].isHead) heads.push(household.members[k]);
@@ -1499,7 +1321,6 @@
                 }
             }
 
-            // Assign successor if no head and family members alive
             var hasHead = false;
             for (var p = 0; p < household.members.length; p++) {
                 if (household.members[p].isHead) { hasHead = true; break; }
@@ -1507,7 +1328,8 @@
             if (!hasHead) {
                 var successorId = _pickSuccessor(household);
                 if (successorId) {
-                    _setHeadInternal(household, successorId, year, 'Repair: auto-succession');
+                    _setHeadInternal(household, successorId, year,
+                        'Repair: auto-succession');
                     result.successorsAssigned++;
                 }
             }
