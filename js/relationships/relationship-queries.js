@@ -12,16 +12,13 @@
  *   - active-record filters (status === 'ongoing')
  *   - existence checks
  *   - counts
+ *   - most-recent lookup
  *
  * It does NOT contain:
  *   - any archetype-specific interpretation
  *   - any attribute interpretation (that lives in the owning domain)
  *   - any graph traversal (that lives in relationship-finder-queries.js)
  *   - any cultural logic
- *
- * Callers that need domain semantics (is this a marriage? is this an
- * affair? are these two friends?) call the owning domain's -queries.js.
- * This file only knows the raw schema.
  *
  * Load order: after relationship-state.js and relationship-types.js,
  * before relationship-commands.js.
@@ -40,19 +37,6 @@
 
     // -------------------------------------------------------------------------
     // FILTER
-    //
-    // Applies the standard options object to an array of projections.
-    // Recognised options:
-    //   type        string   archetype id
-    //   status      string   status id
-    //   activeOnly  boolean  status === 'ongoing'
-    //   startYearMin number  inclusive
-    //   startYearMax number  inclusive
-    //   endYearMin   number  inclusive
-    //   endYearMax   number  inclusive
-    //   hasAttribute string  attribute id
-    //
-    // Unknown options are ignored. No coercion. `0` is preserved.
     // -------------------------------------------------------------------------
 
     function _applyFilters(records, options) {
@@ -180,6 +164,52 @@
     }
 
     // -------------------------------------------------------------------------
+    // MOST RECENT
+    //
+    // Sorts by startYear descending. Ties broken by createdAt descending.
+    // Null startYear is treated as older than any number.
+    // -------------------------------------------------------------------------
+
+    function _mostRecent(records) {
+        if (!records || records.length === 0) return null;
+
+        var best = records[0];
+        for (var i = 1; i < records.length; i++) {
+            var r = records[i];
+            var bStart = best.startYear;
+            var rStart = r.startYear;
+
+            var bHasStart = typeof bStart === 'number';
+            var rHasStart = typeof rStart === 'number';
+
+            if (rHasStart && !bHasStart) { best = r; continue; }
+            if (!rHasStart && bHasStart) continue;
+            if (rHasStart && bHasStart) {
+                if (rStart > bStart) { best = r; continue; }
+                if (rStart < bStart) continue;
+            }
+
+            var bCreated = (typeof best.createdAt === 'number') ? best.createdAt : 0;
+            var rCreated = (typeof r.createdAt === 'number') ? r.createdAt : 0;
+            if (rCreated > bCreated) best = r;
+        }
+        return best;
+    }
+
+    function getMostRecentRelationship(a, b) {
+        if (typeof a !== 'string' || typeof b !== 'string') return null;
+        if (a === b) return null;
+        return _mostRecent(getBetween(a, b));
+    }
+
+    function getMostRecentRelationshipOfType(a, b, type) {
+        if (typeof a !== 'string' || typeof b !== 'string') return null;
+        if (typeof type !== 'string') return null;
+        if (a === b) return null;
+        return _mostRecent(getBetweenOfType(a, b, type));
+    }
+
+    // -------------------------------------------------------------------------
     // BY CHARACTER
     // -------------------------------------------------------------------------
 
@@ -243,10 +273,6 @@
 
     // -------------------------------------------------------------------------
     // INDEX READ ACCESS
-    //
-    // Raw index reads without projection. Used by the finder and by
-    // domain queries that need to iterate efficiently. Returned ids are
-    // safe to hold; the projections are fetched per id.
     // -------------------------------------------------------------------------
 
     function idsForCharacter(characterId) {
@@ -270,12 +296,7 @@
     }
 
     // -------------------------------------------------------------------------
-    // CONVENIENCE: NEIGHBOR IDS
-    //
-    // Returns the distinct set of character ids directly connected to
-    // characterId through any active or historical relationship record.
-    // Used by the finder's BFS. No filtering by type or status here; the
-    // caller applies options.
+    // NEIGHBOR IDS
     // -------------------------------------------------------------------------
 
     function getNeighborIds(characterId, options) {
@@ -298,11 +319,9 @@
     // -------------------------------------------------------------------------
 
     window.RelationshipQueries = {
-        // Direct
         getById: getById,
         exists: exists,
 
-        // Between
         getBetween: getBetween,
         getBetweenOfType: getBetweenOfType,
         getActiveBetween: getActiveBetween,
@@ -312,30 +331,28 @@
         hasActiveBetweenOfType: hasActiveBetweenOfType,
         countBetween: countBetween,
 
-        // By character
+        getMostRecentRelationship: getMostRecentRelationship,
+        getMostRecentRelationshipOfType: getMostRecentRelationshipOfType,
+
         getForCharacter: getForCharacter,
         getActiveForCharacter: getActiveForCharacter,
         countForCharacter: countForCharacter,
         countActiveForCharacter: countActiveForCharacter,
         countByTypeForCharacter: countByTypeForCharacter,
 
-        // By type
         getByType: getByType,
         getActiveByType: getActiveByType,
         countByType: countByType,
 
-        // All
         getAll: getAll,
         getActive: getActive,
         count: count,
 
-        // Raw index reads
         idsForCharacter: idsForCharacter,
         idsForType: idsForType,
         idsForPair: idsForPair,
         allIds: allIds,
 
-        // Graph helper
         getNeighborIds: getNeighborIds
     };
 
