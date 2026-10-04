@@ -2,218 +2,55 @@
  * romance-queries.js
  *
  * Semantic reads for romantic relationships.
- * Returns defensive projections. Never live entities.
- * No policy, no mutation, no persistence.
+ *
+ * Owns:
+ *   - romantic relationship projections for a character
+ *   - committed-relationship and marriage projections
+ *   - affair projections (committed + secret attribute)
+ *   - attribute interpretation (the only place in the codebase
+ *     permitted to read romance attributes by name)
+ *   - marriage status projections (attribute-based, not legal-status-
+ *     based; legal consequences read a separate semantic layer)
+ *   - multi-partner facts feeding RomanceRules
+ *
+ * Depends on RelationshipQueries for raw edge reads and on RomanceRules
+ * for the affair predicate and multi-partner policy.
+ *
+ * Does NOT own:
+ *   - state access (goes through RelationshipQueries)
+ *   - mutation
+ *   - persistence
+ *   - randomness
+ *   - cultural gating (callers consult CultureRules; this module
+ *     never asserts that a marriage is culturally valid)
+ *
+ * Every returned value is a defensive projection. Never a live record.
+ * Unknown inputs return null or []. No fabrication.
+ *
+ * Load order: after relationship-queries.js and romance-rules.js.
  */
 
 (function() {
     'use strict';
 
     var RQ = window.RelationshipQueries;
-    var A  = window.RELATIONSHIP_ARCHETYPES;
+    var RR = window.RomanceRules;
     var ATTR = window.RELATIONSHIP_ATTRIBUTES;
+    var A = window.RELATIONSHIP_ARCHETYPES;
     var STATUS = window.RELATIONSHIP_STATUS;
 
-    if (!RQ || !A || !ATTR || !STATUS) {
-        throw new Error('romance-queries.js: relationship-queries.js and relationship-types.js must load first');
+    if (!RQ || !RR || !ATTR || !A || !STATUS) {
+        throw new Error('romance-queries.js: relationship-queries.js and romance-rules.js must load first');
     }
 
-    var ROMANTIC_TYPES = {};
-    ROMANTIC_TYPES[A.CASUAL_DATING] = true;
-    ROMANTIC_TYPES[A.ONE_NIGHT_STAND] = true;
-    ROMANTIC_TYPES[A.COMMITTED] = true;
+    var CASUAL       = A.CASUAL_DATING;
+    var ONE_NIGHT    = A.ONE_NIGHT_STAND;
+    var COMMITTED    = A.COMMITTED;
 
-    // -------------------------------------------------------------------------
-    // INTERNAL HELPERS
-    // -------------------------------------------------------------------------
-
-    function _isRomantic(rel) {
-        return rel && !!ROMANTIC_TYPES[rel.type];
-    }
-
-    function _isActive(rel) {
-        return rel && rel.status === STATUS.ONGOING;
-    }
-
-    function _hasAttr(rel, attr) {
-        return !!(rel && rel.attributes && rel.attributes.indexOf(attr) !== -1);
-    }
-
-    function _projectPartnerId(rel, characterId) {
-        if (rel.participantA === characterId) return rel.participantB;
-        if (rel.participantB === characterId) return rel.participantA;
-        return null;
-    }
-
-    // -------------------------------------------------------------------------
-    // ROMANTIC RELATIONSHIPS FOR A CHARACTER
-    // -------------------------------------------------------------------------
-
-    function getRomanticRelationships(characterId, options) {
-        var all = RQ.getForCharacter(characterId, options);
-        return all.filter(_isRomantic);
-    }
-
-    function getActiveRomanticRelationships(characterId) {
-        var all = RQ.getActiveForCharacter(characterId);
-        return all.filter(_isRomantic);
-    }
-
-    function hasActiveRomanticRelationship(characterId) {
-        return getActiveRomanticRelationships(characterId).length > 0;
-    }
-
-    function hasActiveCommittedRelationship(characterId) {
-        return getActiveRomanticRelationships(characterId).some(function(r) {
-            return r.type === A.COMMITTED;
-        });
-    }
-
-    // -------------------------------------------------------------------------
-    // BETWEEN TWO CHARACTERS
-    // -------------------------------------------------------------------------
-
-    function getRomanticRelationshipsBetween(a, b, options) {
-        var all = RQ.getBetween(a, b, options);
-        return all.filter(_isRomantic);
-    }
-
-    function getActiveRomanticRelationshipsBetween(a, b) {
-        var all = RQ.getBetween(a, b, { status: STATUS.ONGOING });
-        return all.filter(_isRomantic);
-    }
-
-    function getCommittedRelationshipsBetween(a, b) {
-        return RQ.getBetweenOfType(a, b, A.COMMITTED);
-    }
-
-    function getActiveCommittedBetween(a, b) {
-        return RQ.getActiveBetweenOfType(a, b, A.COMMITTED);
-    }
-
-    function hasActiveRomanticBetween(a, b) {
-        return getActiveRomanticRelationshipsBetween(a, b).length > 0;
-    }
-
-    function hasActiveCommittedBetween(a, b) {
-        return getActiveCommittedBetween(a, b).length > 0;
-    }
-
-    // -------------------------------------------------------------------------
-    // PARTNERS
-    // -------------------------------------------------------------------------
-
-    /**
-     * Returns active committed relationships' projections, each annotated
-     * with the partner character id.
-     */
-    function getActiveCommittedPartners(characterId) {
-        var rels = getActiveRomanticRelationships(characterId).filter(function(r) {
-            return r.type === A.COMMITTED;
-        });
-        return rels.map(function(r) {
-            return {
-                relationship: r,
-                partnerId: _projectPartnerId(r, characterId)
-            };
-        });
-    }
-
-    /**
-     * Returns all active romantic partners (any romantic archetype),
-     * each annotated with the partner character id.
-     */
-    function getActiveRomanticPartners(characterId) {
-        var rels = getActiveRomanticRelationships(characterId);
-        return rels.map(function(r) {
-            return {
-                relationship: r,
-                partnerId: _projectPartnerId(r, characterId)
-            };
-        });
-    }
-
-    /**
-     * Counts active committed relationships.
-     */
-    function countActiveCommittedPartners(characterId) {
-        return getActiveCommittedPartners(characterId).length;
-    }
-
-    // -------------------------------------------------------------------------
-    // AFFAIRS
-    //
-    // An affair is a committed relationship with the SECRET attribute.
-    // Nothing more. Classification is not stored.
-    // -------------------------------------------------------------------------
-
-    function getAffairsForCharacter(characterId, options) {
-        options = options || {};
-        var rels = options.activeOnly
-            ? getActiveRomanticRelationships(characterId)
-            : getRomanticRelationships(characterId);
-        return rels.filter(function(r) {
-            return r.type === A.COMMITTED && _hasAttr(r, ATTR.SECRET);
-        });
-    }
-
-    function getActiveAffairsForCharacter(characterId) {
-        return getAffairsForCharacter(characterId, { activeOnly: true });
-    }
-
-    function getAffairBetween(a, b) {
-        var rels = getCommittedRelationshipsBetween(a, b);
-        for (var i = 0; i < rels.length; i++) {
-            if (_hasAttr(rels[i], ATTR.SECRET) && _isActive(rels[i])) {
-                return rels[i];
-            }
-        }
-        return null;
-    }
-
-    function isAffair(relationshipId) {
-        var rel = RQ.getById(relationshipId);
-        if (!rel) return false;
-        if (rel.type !== A.COMMITTED) return false;
-        return _hasAttr(rel, ATTR.SECRET);
-    }
-
-    function isSecretRelationship(a, b) {
-        var rels = getCommittedRelationshipsBetween(a, b);
-        for (var i = 0; i < rels.length; i++) {
-            if (_hasAttr(rels[i], ATTR.SECRET) && _isActive(rels[i])) return true;
-        }
-        return false;
-    }
-
-    // -------------------------------------------------------------------------
-    // ATTRIBUTE LOOKUPS
-    // -------------------------------------------------------------------------
-
-    function hasRelationshipAttribute(a, b, attribute) {
-        var rels = RQ.getBetween(a, b, { status: STATUS.ONGOING });
-        for (var i = 0; i < rels.length; i++) {
-            if (rels[i].type !== A.COMMITTED) continue;
-            if (_hasAttr(rels[i], attribute)) return true;
-        }
-        return false;
-    }
-
-    /**
-     * Returns the attribute list of the first active committed
-     * relationship between a and b, or an empty array.
-     */
-    function getCommittedAttributesBetween(a, b) {
-        var rels = getActiveCommittedBetween(a, b);
-        if (rels.length === 0) return [];
-        return rels[0].attributes.slice();
-    }
-
-    // -------------------------------------------------------------------------
-    // MARRIAGE STATUS (derived, not stored)
-    // -------------------------------------------------------------------------
-
-    var LEGAL_ATTRS_ORDER = [
+    // Order of precedence for legal-institution projections. The first
+    // attribute present in this list is the relationship's "institution"
+    // for display purposes. This is presentation only, not legal policy.
+    var INSTITUTION_PRECEDENCE = [
         ATTR.MARRIED,
         ATTR.HANDFASTED,
         ATTR.CIVIL_UNION,
@@ -221,39 +58,356 @@
         ATTR.COHABITING
     ];
 
-    function getMarriageStatus(relationshipId) {
-        var rel = RQ.getById(relationshipId);
-        if (!rel || rel.type !== A.COMMITTED) return null;
-        for (var i = 0; i < LEGAL_ATTRS_ORDER.length; i++) {
-            if (_hasAttr(rel, LEGAL_ATTRS_ORDER[i])) return LEGAL_ATTRS_ORDER[i];
+    // -------------------------------------------------------------------------
+    // INTERNAL HELPERS
+    // -------------------------------------------------------------------------
+
+    function _partnerId(record, characterId) {
+        if (record.participantA === characterId) return record.participantB;
+        if (record.participantB === characterId) return record.participantA;
+        return null;
+    }
+
+    function _hasAttr(record, attr) {
+        return !!(record && Array.isArray(record.attributes) &&
+                  record.attributes.indexOf(attr) !== -1);
+    }
+
+    function _isRomantic(record) {
+        return record &&
+               (record.type === CASUAL ||
+                record.type === ONE_NIGHT ||
+                record.type === COMMITTED);
+    }
+
+    /**
+     * Projects a romantic relationship record. The projection carries
+     * interpreted semantic fields (institution, isAffair, isCommitted)
+     * alongside the raw attributes array. Callers outside the romance
+     * domain must not interpret `attributes` by name; they should read
+     * `institution` or `isAffair` from this projection.
+     */
+    function _project(record, perspectiveId) {
+        if (!record) return null;
+
+        var institution = null;
+        for (var i = 0; i < INSTITUTION_PRECEDENCE.length; i++) {
+            if (_hasAttr(record, INSTITUTION_PRECEDENCE[i])) {
+                institution = INSTITUTION_PRECEDENCE[i];
+                break;
+            }
+        }
+
+        var isCommitted = record.type === COMMITTED;
+        var isAffair = isCommitted && _hasAttr(record, ATTR.SECRET);
+        var isPolyamorous = _hasAttr(record, ATTR.POLYAMOROUS);
+        var isSecret = _hasAttr(record, ATTR.SECRET);
+        var isScandalous = _hasAttr(record, ATTR.SCANDALOUS);
+
+        return {
+            relationshipId: record.id,
+            type: record.type,
+            status: record.status,
+            participantA: record.participantA,
+            participantB: record.participantB,
+            partnerId: perspectiveId ? _partnerId(record, perspectiveId) : null,
+            startYear: record.startYear,
+            endYear: record.endYear,
+            attributes: record.attributes.slice(),
+            institution: institution,
+            isCommitted: isCommitted,
+            isAffair: isAffair,
+            isPolyamorous: isPolyamorous,
+            isSecret: isSecret,
+            isScandalous: isScandalous,
+            notes: (record.metadata && typeof record.metadata.notes === 'string')
+                ? record.metadata.notes
+                : ''
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // ROMANTIC RELATIONSHIPS FOR A CHARACTER
+    // -------------------------------------------------------------------------
+
+    /**
+     * Returns all romantic relationship projections for a character,
+     * active and historical, unless options.activeOnly is set.
+     *
+     * options: { activeOnly?: boolean }
+     */
+    function getRomanticRelationships(characterId, options) {
+        options = options || {};
+        var records = options.activeOnly
+            ? RQ.getActiveForCharacter(characterId)
+            : RQ.getForCharacter(characterId);
+
+        var out = [];
+        for (var i = 0; i < records.length; i++) {
+            if (!_isRomantic(records[i])) continue;
+            out.push(_project(records[i], characterId));
+        }
+        return out;
+    }
+
+    function getActiveRomanticRelationships(characterId) {
+        return getRomanticRelationships(characterId, { activeOnly: true });
+    }
+
+    function hasActiveRomanticRelationship(characterId) {
+        return getActiveRomanticRelationships(characterId).length > 0;
+    }
+
+    function hasActiveCommittedRelationship(characterId) {
+        var list = getActiveRomanticRelationships(characterId);
+        for (var i = 0; i < list.length; i++) {
+            if (list[i].isCommitted) return true;
+        }
+        return false;
+    }
+
+    function countActiveRomanticPartners(characterId) {
+        return getActiveRomanticRelationships(characterId).length;
+    }
+
+    // -------------------------------------------------------------------------
+    // BETWEEN TWO CHARACTERS
+    // -------------------------------------------------------------------------
+
+    function getRomanticRelationshipsBetween(aId, bId, options) {
+        if (typeof aId !== 'string' || typeof bId !== 'string') return [];
+        if (aId === bId) return [];
+        var records = RQ.getBetween(aId, bId, options);
+        var out = [];
+        for (var i = 0; i < records.length; i++) {
+            if (!_isRomantic(records[i])) continue;
+            out.push(_project(records[i], aId));
+        }
+        return out;
+    }
+
+    function getActiveRomanticRelationshipsBetween(aId, bId) {
+        return getRomanticRelationshipsBetween(aId, bId, { activeOnly: true });
+    }
+
+    function getActiveCommittedBetween(aId, bId) {
+        if (typeof aId !== 'string' || typeof bId !== 'string') return [];
+        if (aId === bId) return [];
+        var records = RQ.getActiveBetweenOfType(aId, bId, COMMITTED);
+        var out = [];
+        for (var i = 0; i < records.length; i++) {
+            out.push(_project(records[i], aId));
+        }
+        return out;
+    }
+
+    function getAllCommittedBetween(aId, bId) {
+        if (typeof aId !== 'string' || typeof bId !== 'string') return [];
+        if (aId === bId) return [];
+        var records = RQ.getBetweenOfType(aId, bId, COMMITTED);
+        var out = [];
+        for (var i = 0; i < records.length; i++) {
+            out.push(_project(records[i], aId));
+        }
+        return out;
+    }
+
+    function hasActiveRomanticBetween(aId, bId) {
+        return getActiveRomanticRelationshipsBetween(aId, bId).length > 0;
+    }
+
+    function hasActiveCommittedBetween(aId, bId) {
+        return getActiveCommittedBetween(aId, bId).length > 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // PARTNERS
+    // -------------------------------------------------------------------------
+
+    /**
+     * Active committed partners for a character. Returns an array of
+     * projections, each with `partnerId` populated.
+     */
+    function getActiveCommittedPartners(characterId) {
+        var list = getActiveRomanticRelationships(characterId);
+        var out = [];
+        for (var i = 0; i < list.length; i++) {
+            if (list[i].isCommitted) out.push(list[i]);
+        }
+        return out;
+    }
+
+    /**
+     * All active romantic partners regardless of archetype.
+     */
+    function getActiveRomanticPartners(characterId) {
+        return getActiveRomanticRelationships(characterId);
+    }
+
+    function countActiveCommittedPartners(characterId) {
+        return getActiveCommittedPartners(characterId).length;
+    }
+
+    function getCommittedPartnerIds(characterId) {
+        var list = getActiveCommittedPartners(characterId);
+        var out = [];
+        for (var i = 0; i < list.length; i++) {
+            if (list[i].partnerId) out.push(list[i].partnerId);
+        }
+        return out;
+    }
+
+    // -------------------------------------------------------------------------
+    // AFFAIRS
+    //
+    // An affair is a committed relationship carrying the SECRET
+    // attribute. Nothing else defines an affair. Classification is
+    // never stored; it is derived here.
+    // -------------------------------------------------------------------------
+
+    function getAffairs(characterId, options) {
+        options = options || {};
+        var committed = getRomanticRelationships(characterId, {
+            activeOnly: !!options.activeOnly
+        });
+        var out = [];
+        for (var i = 0; i < committed.length; i++) {
+            if (!committed[i].isCommitted) continue;
+            if (!committed[i].isAffair) continue;
+            out.push(committed[i]);
+        }
+        return out;
+    }
+
+    function getActiveAffairs(characterId) {
+        return getAffairs(characterId, { activeOnly: true });
+    }
+
+    function getAffairBetween(aId, bId) {
+        var list = getActiveCommittedBetween(aId, bId);
+        for (var i = 0; i < list.length; i++) {
+            if (list[i].isAffair) return list[i];
         }
         return null;
     }
 
-    function getMarriageStatusBetween(a, b) {
-        var rels = getActiveCommittedBetween(a, b);
-        for (var i = 0; i < rels.length; i++) {
-            for (var j = 0; j < LEGAL_ATTRS_ORDER.length; j++) {
-                if (_hasAttr(rels[i], LEGAL_ATTRS_ORDER[j])) {
-                    return LEGAL_ATTRS_ORDER[j];
-                }
+    function isAffair(relationshipId) {
+        var record = RQ.getById(relationshipId);
+        if (!record) return false;
+        if (record.type !== COMMITTED) return false;
+        return RR.isAffair(record.attributes);
+    }
+
+    function isSecretRelationship(aId, bId) {
+        var list = getActiveCommittedBetween(aId, bId);
+        for (var i = 0; i < list.length; i++) {
+            if (list[i].isSecret) return true;
+        }
+        return false;
+    }
+
+    // -------------------------------------------------------------------------
+    // ATTRIBUTE INTERPRETATION
+    //
+    // The only functions in the codebase that read romance attributes by
+    // name. External domains must call these rather than inspecting
+    // `attributes` directly.
+    // -------------------------------------------------------------------------
+
+    function hasCommittedAttribute(relationshipId, attribute) {
+        var record = RQ.getById(relationshipId);
+        if (!record || record.type !== COMMITTED) return false;
+        return _hasAttr(record, attribute);
+    }
+
+    function hasActiveCommittedAttributeBetween(aId, bId, attribute) {
+        var list = getActiveCommittedBetween(aId, bId);
+        for (var i = 0; i < list.length; i++) {
+            if (list[i].attributes.indexOf(attribute) !== -1) return true;
+        }
+        return false;
+    }
+
+    function getCommittedAttributesBetween(aId, bId) {
+        var list = getActiveCommittedBetween(aId, bId);
+        if (list.length === 0) return [];
+        return list[0].attributes.slice();
+    }
+
+    // -------------------------------------------------------------------------
+    // MARRIAGE / INSTITUTION PROJECTIONS
+    //
+    // These are attribute-based projections for display and for callers
+    // that need a semantic answer. Legal consequences (succession,
+    // inheritance, custody) MUST NOT consult these directly; they
+    // consult CultureRules.getPartnershipLegalEffects. This module
+    // answers "what institutional marker does this relationship carry",
+    // not "what legal rights does it grant."
+    // -------------------------------------------------------------------------
+
+    /**
+     * The institutional marker on a single committed relationship, or
+     * null if none. Precedence: married > handfasted > civil_union >
+     * engaged > cohabiting.
+     */
+    function getInstitution(relationshipId) {
+        var record = RQ.getById(relationshipId);
+        if (!record || record.type !== COMMITTED) return null;
+        for (var i = 0; i < INSTITUTION_PRECEDENCE.length; i++) {
+            if (_hasAttr(record, INSTITUTION_PRECEDENCE[i])) {
+                return INSTITUTION_PRECEDENCE[i];
             }
         }
         return null;
     }
 
+    function getInstitutionBetween(aId, bId) {
+        var list = getActiveCommittedBetween(aId, bId);
+        for (var i = 0; i < list.length; i++) {
+            if (list[i].institution !== null) return list[i].institution;
+        }
+        return null;
+    }
+
+    /**
+     * Whether a character has any active committed relationship whose
+     * institution is the given attribute. This is a *semantic*
+     * projection, not a legal-status assertion. A culture without
+     * marriage can still have characters whose attributes contain
+     * `married`, but such a state is only reachable if
+     * RomanceRules.validateAttributesForCulture permitted it.
+     */
+    function hasActiveInstitution(characterId, institution) {
+        var list = getActiveCommittedPartners(characterId);
+        for (var i = 0; i < list.length; i++) {
+            if (list[i].institution === institution) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Returns the primary institution for a character, or null.
+     */
+    function getPrimaryInstitution(characterId) {
+        var list = getActiveCommittedPartners(characterId);
+        for (var i = 0; i < list.length; i++) {
+            if (list[i].institution !== null) return list[i].institution;
+        }
+        return null;
+    }
+
     // -------------------------------------------------------------------------
-    // METRICS FOR RULES
+    // MULTI-PARTNER FACTS
     //
-    // These helpers package facts consumed by RomanceRules. They perform
-    // only reads and projections; they do not decide anything.
+    // Feeds RomanceRules.canHaveMultiplePartners. The rank and trait
+    // facts come from outside romance; callers supply them.
     // -------------------------------------------------------------------------
 
     /**
-     * Returns the set of facts RomanceRules.canHaveMultiplePartners()
-     * needs for a character.
-     *
-     * The caller supplies rank/trait facts (which live outside Romance).
+     * externalFacts: {
+     *   allowsMultipleByRank?: boolean,
+     *   allowsMultipleByTrait?: boolean
+     * }
      */
     function getMultiPartnerFacts(characterId, externalFacts) {
         externalFacts = externalFacts || {};
@@ -261,7 +415,7 @@
 
         var anyPolyamorous = false;
         for (var i = 0; i < committed.length; i++) {
-            if (_hasAttr(committed[i].relationship, ATTR.POLYAMOROUS)) {
+            if (committed[i].isPolyamorous) {
                 anyPolyamorous = true;
                 break;
             }
@@ -276,39 +430,95 @@
     }
 
     // -------------------------------------------------------------------------
+    // STATISTICS
+    // -------------------------------------------------------------------------
+
+    function getRomanceStats(characterId) {
+        var all = getRomanticRelationships(characterId);
+        var active = getActiveRomanticRelationships(characterId);
+
+        var activeCommitted = 0;
+        var activeCasual = 0;
+        var activeOneNight = 0;
+        var activeAffairs = 0;
+        var earliestStartYear = null;
+
+        for (var i = 0; i < active.length; i++) {
+            var r = active[i];
+            if (r.type === COMMITTED) activeCommitted++;
+            else if (r.type === CASUAL) activeCasual++;
+            else if (r.type === ONE_NIGHT) activeOneNight++;
+            if (r.isAffair) activeAffairs++;
+        }
+
+        for (var j = 0; j < all.length; j++) {
+            var y = all[j].startYear;
+            if (typeof y !== 'number') continue;
+            if (earliestStartYear === null || y < earliestStartYear) {
+                earliestStartYear = y;
+            }
+        }
+
+        return {
+            totalRelationships: all.length,
+            activeRelationships: active.length,
+            activeCommitted: activeCommitted,
+            activeCasual: activeCasual,
+            activeOneNight: activeOneNight,
+            activeAffairs: activeAffairs,
+            earliestStartYear: earliestStartYear
+        };
+    }
+
+    // -------------------------------------------------------------------------
     // EXPORTS
     // -------------------------------------------------------------------------
 
     window.RomanceQueries = {
+        // For a character
         getRomanticRelationships: getRomanticRelationships,
         getActiveRomanticRelationships: getActiveRomanticRelationships,
         hasActiveRomanticRelationship: hasActiveRomanticRelationship,
         hasActiveCommittedRelationship: hasActiveCommittedRelationship,
+        countActiveRomanticPartners: countActiveRomanticPartners,
 
+        // Between
         getRomanticRelationshipsBetween: getRomanticRelationshipsBetween,
         getActiveRomanticRelationshipsBetween: getActiveRomanticRelationshipsBetween,
-        getCommittedRelationshipsBetween: getCommittedRelationshipsBetween,
         getActiveCommittedBetween: getActiveCommittedBetween,
+        getAllCommittedBetween: getAllCommittedBetween,
         hasActiveRomanticBetween: hasActiveRomanticBetween,
         hasActiveCommittedBetween: hasActiveCommittedBetween,
 
+        // Partners
         getActiveCommittedPartners: getActiveCommittedPartners,
         getActiveRomanticPartners: getActiveRomanticPartners,
         countActiveCommittedPartners: countActiveCommittedPartners,
+        getCommittedPartnerIds: getCommittedPartnerIds,
 
-        getAffairsForCharacter: getAffairsForCharacter,
-        getActiveAffairsForCharacter: getActiveAffairsForCharacter,
+        // Affairs
+        getAffairs: getAffairs,
+        getActiveAffairs: getActiveAffairs,
         getAffairBetween: getAffairBetween,
         isAffair: isAffair,
         isSecretRelationship: isSecretRelationship,
 
-        hasRelationshipAttribute: hasRelationshipAttribute,
+        // Attribute interpretation
+        hasCommittedAttribute: hasCommittedAttribute,
+        hasActiveCommittedAttributeBetween: hasActiveCommittedAttributeBetween,
         getCommittedAttributesBetween: getCommittedAttributesBetween,
 
-        getMarriageStatus: getMarriageStatus,
-        getMarriageStatusBetween: getMarriageStatusBetween,
+        // Institution projections
+        getInstitution: getInstitution,
+        getInstitutionBetween: getInstitutionBetween,
+        hasActiveInstitution: hasActiveInstitution,
+        getPrimaryInstitution: getPrimaryInstitution,
 
-        getMultiPartnerFacts: getMultiPartnerFacts
+        // Multi-partner facts
+        getMultiPartnerFacts: getMultiPartnerFacts,
+
+        // Statistics
+        getRomanceStats: getRomanceStats
     };
 
 })();
