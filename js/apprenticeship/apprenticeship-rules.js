@@ -4,45 +4,134 @@
  * js/apprenticeship/apprenticeship-rules.js
  * =============================================================================
  *
- * Pure policy. No mutation. No persistence. No window.* side effects.
- * Every function receives facts and returns a decision.
+ * Pure policy for the apprenticeship lifecycle. No mutation. No persistence.
+ * No window.* side effects. No state reads. No randomness.
  *
- * The caller (ApprenticeshipCommands) applies mutations.
+ * Every function receives facts and returns a decision. The caller
+ * (ApprenticeshipCommands) applies the decision.
+ *
+ * OWNERSHIP
+ *
+ *   ApprenticeshipRules owns:
+ *       - stage derivation from skill level
+ *       - skill clamping and range validation
+ *       - creation validation for an apprenticeship
+ *       - status-transition validation
+ *       - teaching outcome calculation (roll is supplied by the caller)
+ *       - annual progress calculation
+ *       - completion eligibility
+ *       - teaching eligibility
+ *       - required-years lookup per stage
+ *
+ *   ApprenticeshipRules does NOT own:
+ *       - specialization membership      → RoleRules.validateSpecialization
+ *       - skill taxonomy / thresholds    → SkillUtils
+ *       - the profession record          → CharacterCommands
+ *       - the relationship edge          → ProfessionalCommands
+ *       - the apprenticeship lifecycle   → ApprenticeshipCommands
+ *
+ * REMOVED IN THIS VERSION
+ *
+ *   validateSpecialization() has moved to RoleRules. The role catalogue
+ *   (role.specializations) is the authority on which specializations
+ *   exist for a role; that is a role-domain question, not an
+ *   apprenticeship question. ApprenticeshipCommands now calls
+ *   RoleRules.validateSpecialization().
+ *
+ * STAGE DERIVATION
+ *
+ *   APPRENTICESHIP_STAGES is derived from SkillUtils.TIERS in
+ *   apprenticeship-constants.js. This module's getStageForSkill() reads
+ *   from that derived table. It does not restate boundaries. If a tier
+ *   boundary moves in SkillUtils, both files move together.
+ *
+ * DEPENDENCIES (must be loaded first):
+ *   - apprenticeship-constants.js (APPRENTICESHIP_STAGES, APPRENTICESHIP_STATUS, TEACHING_CONSTANTS)
+ *   - skill-utils.js              (SkillUtils)
+ *
  * =============================================================================
  */
 
 (function () {
     'use strict';
 
-    var STAGES = window.APPRENTICESHIP_STAGES || {};
-    var STATUS = window.APPRENTICESHIP_STATUS || {};
-    var TEACH  = window.TEACHING_CONSTANTS || {};
-
     // =========================================================================
-    // 1. STAGE / LEVEL
+    // 1. HARD DEPENDENCY CHECK
     // =========================================================================
 
+    if (!window.APPRENTICESHIP_STAGES) {
+        throw new Error(
+            'apprenticeship-rules.js requires apprenticeship-constants.js ' +
+            '(APPRENTICESHIP_STAGES) first.'
+        );
+    }
+    if (!window.APPRENTICESHIP_STATUS) {
+        throw new Error(
+            'apprenticeship-rules.js requires apprenticeship-constants.js ' +
+            '(APPRENTICESHIP_STATUS) first.'
+        );
+    }
+    if (!window.TEACHING_CONSTANTS) {
+        throw new Error(
+            'apprenticeship-rules.js requires apprenticeship-constants.js ' +
+            '(TEACHING_CONSTANTS) first.'
+        );
+    }
+    if (!window.SkillUtils || typeof window.SkillUtils.getThresholds !== 'function') {
+        throw new Error(
+            'apprenticeship-rules.js requires skill-utils.js (SkillUtils) first.'
+        );
+    }
+
+    var STAGES = window.APPRENTICESHIP_STAGES;
+    var STATUS = window.APPRENTICESHIP_STATUS;
+    var TEACH  = window.TEACHING_CONSTANTS;
+    var SU     = window.SkillUtils;
+
+    var THRESHOLDS = SU.getThresholds();
+
+    // =========================================================================
+    // 2. STAGE / LEVEL
+    // =========================================================================
+    //
+    // Stage derivation delegates to SkillUtils for the tier boundary,
+    // then maps the tier id onto the apprenticeship stage table
+    // (which augments the tier with requiredYears).
+
+    /**
+     * Returns the apprenticeship stage object whose boundaries contain
+     * skillLevel. SkillUtils.getTierId is the sole authority on the
+     * boundary; STAGES is the apprenticeship-local view that adds
+     * requiredYears.
+     *
+     * @param {number} skillLevel
+     * @returns {Object}  A frozen stage record from APPRENTICESHIP_STAGES.
+     */
     function getStageForSkill(skillLevel) {
-        var level = clampSkill(skillLevel);
-        if (level >= STAGES.MASTER.minLevel)     return STAGES.MASTER;
-        if (level >= STAGES.JOURNEYMAN.minLevel) return STAGES.JOURNEYMAN;
-        if (level >= STAGES.APPRENTICE.minLevel) return STAGES.APPRENTICE;
-        return STAGES.NOVICE;
+        var tierId = SU.getTierId(skillLevel);
+        var stage = STAGES[tierId.toUpperCase()];
+        if (!stage) {
+            // Defensive: APPRENTICESHIP_STAGES is validated against
+            // SkillUtils.TIERS at apprenticeship-constants.js load time,
+            // so this should be unreachable. Fail loudly anyway.
+            throw new Error(
+                'ApprenticeshipRules.getStageForSkill: no stage for tier "' +
+                tierId + '".'
+            );
+        }
+        return stage;
     }
 
     function clampSkill(skillLevel) {
-        var n = Number(skillLevel);
-        if (!isFinite(n)) return 0;
-        return Math.max(TEACH.MIN_SKILL, Math.min(TEACH.MAX_SKILL, n));
+        return SU.clampLevel(skillLevel);
     }
 
     function isSkillInRange(skillLevel) {
-        var n = Number(skillLevel);
-        return isFinite(n) && n >= TEACH.MIN_SKILL && n <= TEACH.MAX_SKILL;
+        return SU.isValidLevel(skillLevel);
     }
 
     // =========================================================================
-    // 2. VALIDATION
+    // 3. VALIDATION
     // =========================================================================
 
     /**
@@ -58,29 +147,54 @@
      */
     function validateCreation(facts) {
         if (!facts.master || !facts.apprentice) {
-            return { valid: false, code: 'MISSING_PARTY', reason: 'Master and apprentice are required' };
+            return {
+                valid: false,
+                code: 'MISSING_PARTY',
+                reason: 'Master and apprentice are required'
+            };
         }
         if (!facts.role) {
-            return { valid: false, code: 'MISSING_ROLE', reason: 'Role is required' };
+            return {
+                valid: false,
+                code: 'MISSING_ROLE',
+                reason: 'Role is required'
+            };
         }
         if (facts.master.id === facts.apprentice.id) {
-            return { valid: false, code: 'SAME_PARTY', reason: 'Master and apprentice cannot be the same person' };
+            return {
+                valid: false,
+                code: 'SAME_PARTY',
+                reason: 'Master and apprentice cannot be the same person'
+            };
         }
         if (facts.master.isDeceased) {
-            return { valid: false, code: 'MASTER_DECEASED', reason: 'Master is deceased' };
+            return {
+                valid: false,
+                code: 'MASTER_DECEASED',
+                reason: 'Master is deceased'
+            };
         }
         if (facts.apprentice.isDeceased) {
-            return { valid: false, code: 'APPRENTICE_DECEASED', reason: 'Apprentice is deceased' };
+            return {
+                valid: false,
+                code: 'APPRENTICE_DECEASED',
+                reason: 'Apprentice is deceased'
+            };
         }
         if (facts.master.skillLevel < TEACH.MIN_MASTER_SKILL) {
             return {
                 valid: false,
                 code: 'MASTER_SKILL_TOO_LOW',
-                reason: 'Master requires skill ' + TEACH.MIN_MASTER_SKILL + '+ (Journeyman) to teach'
+                reason: 'Master requires skill ' + TEACH.MIN_MASTER_SKILL +
+                        '+ (Journeyman) to teach'
             };
         }
         if (!isSkillInRange(facts.initialSkill)) {
-            return { valid: false, code: 'INVALID_SKILL', reason: 'Initial skill must be 0-100' };
+            return {
+                valid: false,
+                code: 'INVALID_SKILL',
+                reason: 'Initial skill must be 0-100'
+            };
         }
         if (facts.existsActiveForRole) {
             return {
@@ -110,7 +224,11 @@
             cancelled: []
         };
         if (!allowed[fromStatus]) {
-            return { valid: false, code: 'UNKNOWN_STATUS', reason: 'Unknown source status: ' + fromStatus };
+            return {
+                valid: false,
+                code: 'UNKNOWN_STATUS',
+                reason: 'Unknown source status: ' + fromStatus
+            };
         }
         if (allowed[fromStatus].indexOf(toStatus) === -1) {
             return {
@@ -123,7 +241,7 @@
     }
 
     // =========================================================================
-    // 3. TEACHING OUTCOME (deterministic — caller supplies roll)
+    // 4. TEACHING OUTCOME (deterministic — caller supplies roll)
     // =========================================================================
 
     /**
@@ -161,23 +279,33 @@
     function calculateAnnualProgress(facts) {
         var masterSkill = facts.masterSkill || 0;
         var gain = 2;
-        if (masterSkill >= 91)      gain = 8;
-        else if (masterSkill >= 76) gain = 6;
-        else if (masterSkill >= 51) gain = 4;
-        else                        gain = 2;
+        if (masterSkill >= THRESHOLDS.MASTER)     gain = 8;
+        else if (masterSkill >= THRESHOLDS.EXPERT) gain = 6;
+        else if (masterSkill >= THRESHOLDS.JOURNEYMAN) gain = 4;
+        else                                       gain = 2;
 
         var newSkill = clampSkill(facts.currentSkill + gain);
         return { gain: newSkill - facts.currentSkill, newSkill: newSkill };
     }
 
     // =========================================================================
-    // 4. COMPLETION
+    // 5. COMPLETION
     // =========================================================================
 
     function canComplete(facts) {
-        if (!facts) return { valid: false, code: 'MISSING_FACTS', reason: 'No facts supplied' };
+        if (!facts) {
+            return {
+                valid: false,
+                code: 'MISSING_FACTS',
+                reason: 'No facts supplied'
+            };
+        }
         if (facts.status !== STATUS.ONGOING) {
-            return { valid: false, code: 'NOT_ONGOING', reason: 'Apprenticeship is not ongoing' };
+            return {
+                valid: false,
+                code: 'NOT_ONGOING',
+                reason: 'Apprenticeship is not ongoing'
+            };
         }
         if (facts.skillLevel < TEACH.COMPLETION_SKILL) {
             return {
@@ -190,41 +318,22 @@
     }
 
     function canTeach(masterSkillLevel) {
-        return Number(masterSkillLevel) >= TEACH.MIN_MASTER_SKILL;
+        return SU.clampLevel(masterSkillLevel) >= TEACH.MIN_MASTER_SKILL;
     }
 
     function getRequiredYearsForStage(stageId) {
         for (var key in STAGES) {
+            if (!Object.prototype.hasOwnProperty.call(STAGES, key)) continue;
             if (STAGES[key].id === stageId) return STAGES[key].requiredYears;
         }
         return null;
     }
 
     // =========================================================================
-    // 5. SPECIALIZATION
-    // =========================================================================
-
-    /**
-     * A specialization may only be added if it appears on the role's
-     * catalogue of specializations. The catalogue is the authority.
-     */
-    function validateSpecialization(role, specialization) {
-        if (!role) return { valid: false, code: 'NO_ROLE', reason: 'Role not found' };
-        if (!specialization) return { valid: false, code: 'NO_SPEC', reason: 'Specialization is required' };
-        var catalogue = Array.isArray(role.specializations) ? role.specializations : [];
-        if (catalogue.indexOf(specialization) === -1) {
-            return {
-                valid: false,
-                code: 'UNKNOWN_SPECIALIZATION',
-                reason: 'Specialization "' + specialization + '" is not part of this role'
-            };
-        }
-        return { valid: true };
-    }
-
-    // =========================================================================
     // 6. EXPORTS
     // =========================================================================
+    //
+    // validateSpecialization is NOT exported. It lives in RoleRules.
 
     window.ApprenticeshipRules = {
         getStageForSkill: getStageForSkill,
@@ -232,7 +341,6 @@
         isSkillInRange: isSkillInRange,
         validateCreation: validateCreation,
         validateStatusTransition: validateStatusTransition,
-        validateSpecialization: validateSpecialization,
         calculateTeachingOutcome: calculateTeachingOutcome,
         calculateAnnualProgress: calculateAnnualProgress,
         canComplete: canComplete,
