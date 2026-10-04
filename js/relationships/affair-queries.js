@@ -2,11 +2,36 @@
  * affair-queries.js
  *
  * Semantic reads for affairs.
- * Affair classification lives in RomanceQueries (SECRET attribute on
- * a committed relationship). This module adds discovery-risk and
- * consequence projections for a given affair.
  *
- * No policy, no mutation, no persistence.
+ * An affair is a committed relationship with the SECRET attribute.
+ * Classification is derived, never stored. The authoritative predicate
+ * is RomanceRules.isAffair.
+ *
+ * Owns:
+ *   - affair projections for a character
+ *   - affair projections between two characters
+ *   - discovery-risk projections for a given affair record
+ *   - affair statistics
+ *
+ * Depends on:
+ *   - RelationshipQueries for raw edge reads
+ *   - RomanceQueries for committed/affair projections
+ *   - RomanceRules for the affair predicate
+ *   - AffairRules for discovery-risk computation
+ *
+ * Does NOT own:
+ *   - state access (goes through RelationshipQueries)
+ *   - mutation
+ *   - persistence
+ *   - randomness
+ *   - cultural gating
+ *   - consequence execution
+ *
+ * Every returned value is a defensive projection. Never a live record.
+ * Unknown inputs return null or []. No fabrication.
+ *
+ * Load order: after relationship-queries.js, romance-queries.js,
+ * romance-rules.js, affair-rules.js.
  */
 
 (function() {
@@ -14,17 +39,21 @@
 
     var RQ = window.RelationshipQueries;
     var RoQ = window.RomanceQueries;
+    var RR = window.RomanceRules;
     var AR = window.AffairRules;
-    var A  = window.RELATIONSHIP_ARCHETYPES;
+
+    var A = window.RELATIONSHIP_ARCHETYPES;
     var ATTR = window.RELATIONSHIP_ATTRIBUTES;
     var STATUS = window.RELATIONSHIP_STATUS;
 
-    if (!RQ || !RoQ || !AR || !A || !ATTR || !STATUS) {
-        throw new Error('affair-queries.js: relationship-queries.js, romance-queries.js, affair-rules.js must load first');
+    if (!RQ || !RoQ || !RR || !AR || !A || !ATTR || !STATUS) {
+        throw new Error('affair-queries.js: relationship-queries.js, romance-queries.js, romance-rules.js, affair-rules.js must load first');
     }
 
+    var COMMITTED = A.COMMITTED;
+
     // -------------------------------------------------------------------------
-    // DEPENDENCIES (fail loud)
+    // DEPENDENCIES
     // -------------------------------------------------------------------------
 
     function _getCharacter(id) {
@@ -49,25 +78,82 @@
     }
 
     function _isSecretive(character) {
-        return !!(character && character.traits &&
+        return !!(character && Array.isArray(character.traits) &&
                   character.traits.indexOf('secretive') !== -1);
     }
 
+    function _durationYears(record, referenceYear) {
+        if (!record || typeof record.startYear !== 'number') return 0;
+        var end = (record.endYear !== null && record.endYear !== undefined)
+            ? record.endYear
+            : referenceYear;
+        return Math.max(0, end - record.startYear);
+    }
+
+    function _sameLocation(charA, charB) {
+        if (typeof window.getCurrentLocation !== 'function') return false;
+        var a = window.getCurrentLocation(charA);
+        var b = window.getCurrentLocation(charB);
+        if (a === null || b === null || a === undefined || b === undefined) return false;
+        return a === b;
+    }
+
     function _otherActiveAffairsCount(characterId, excludeRelId) {
-        var affairs = RoQ.getActiveAffairsForCharacter(characterId);
+        var list = RoQ.getActiveAffairs(characterId);
         var count = 0;
-        for (var i = 0; i < affairs.length; i++) {
-            if (affairs[i].id !== excludeRelId) count++;
+        for (var i = 0; i < list.length; i++) {
+            if (list[i].relationshipId !== excludeRelId) count++;
         }
         return count;
     }
 
-    function _durationYears(rel, referenceYear) {
-        if (!rel || typeof rel.startYear !== 'number') return 0;
-        var end = rel.endYear !== null && rel.endYear !== undefined
-            ? rel.endYear
-            : referenceYear;
-        return Math.max(0, end - rel.startYear);
+    // -------------------------------------------------------------------------
+    // PROJECTION
+    //
+    // Affair projection extends the romance projection with affair-specific
+    // metadata. The `isAffair` field is derived (RomanceRules.isAffair
+    // over the attributes), never read from storage.
+    // -------------------------------------------------------------------------
+
+    function _projectAffair(romanceProjection) {
+        if (!romanceProjection) return null;
+        if (!romanceProjection.isAffair) return null;
+
+        var record = RQ.getById(romanceProjection.relationshipId);
+        if (!record) return null;
+
+        var meta = record.metadata || {};
+        return {
+            relationshipId: record.id,
+            participantA: record.participantA,
+            participantB: record.participantB,
+            startYear: record.startYear,
+            endYear: record.endYear,
+            status: record.status,
+            attributes: record.attributes.slice(),
+            affairType: typeof meta.affairType === 'string'
+                ? meta.affairType
+                : AR.AFFAIR_TYPE.SECRET,
+            discovered: !!meta.discovered,
+            discoveryYear: typeof meta.discoveryYear === 'number'
+                ? meta.discoveryYear
+                : null,
+            discoveryCircumstances: typeof meta.discoveryCircumstances === 'string'
+                ? meta.discoveryCircumstances
+                : null,
+            discovererId: typeof meta.discovererId === 'string'
+                ? meta.discovererId
+                : null,
+            consequencesTriggered: !!meta.consequencesTriggered,
+            consequences: Array.isArray(meta.consequences)
+                ? meta.consequences.slice()
+                : [],
+            legitimizedFromAffair: !!meta.legitimizedFromAffair,
+            legitimizationYear: typeof meta.legitimizationYear === 'number'
+                ? meta.legitimizationYear
+                : null,
+            notes: typeof meta.notes === 'string' ? meta.notes : ''
+        };
     }
 
     // -------------------------------------------------------------------------
@@ -75,35 +161,21 @@
     // -------------------------------------------------------------------------
 
     /**
-     * Returns projections of a character's affairs (active + ended).
-     * Affair = committed + SECRET attribute.
+     * All affairs for a character. options: { activeOnly?: boolean }
      */
     function getAffairs(characterId, options) {
         options = options || {};
-        var rels = options.activeOnly
-            ? RoQ.getActiveAffairsForCharacter(characterId)
-            : RoQ.getAffairsForCharacter(characterId);
-
-        return rels.map(function(rel) {
-            var partnerId = rel.participantA === characterId
-                ? rel.participantB
-                : rel.participantA;
-            return {
-                relationshipId: rel.id,
-                participantA: rel.participantA,
-                participantB: rel.participantB,
-                partnerId: partnerId,
-                startYear: rel.startYear,
-                endYear: rel.endYear,
-                status: rel.status,
-                attributes: rel.attributes.slice(),
-                affairType: (rel.metadata && rel.metadata.affairType) || AR.AFFAIR_TYPE.SECRET,
-                discovered: !!(rel.metadata && rel.metadata.discovered),
-                discoveryYear: (rel.metadata && rel.metadata.discoveryYear) || null,
-                discoveryCircumstances: (rel.metadata && rel.metadata.discoveryCircumstances) || null,
-                notes: (rel.metadata && rel.metadata.notes) || null
-            };
+        var active = RoQ.getRomanticRelationships(characterId, {
+            activeOnly: !!options.activeOnly
         });
+        var out = [];
+        for (var i = 0; i < active.length; i++) {
+            if (!active[i].isCommitted) continue;
+            if (!active[i].isAffair) continue;
+            var projection = _projectAffair(active[i]);
+            if (projection) out.push(projection);
+        }
+        return out;
     }
 
     function getActiveAffairs(characterId) {
@@ -112,71 +184,86 @@
 
     function getDiscoveredAffairs(characterId) {
         var all = getAffairs(characterId);
-        return all.filter(function(a) { return a.discovered; });
+        var out = [];
+        for (var i = 0; i < all.length; i++) {
+            if (all[i].discovered) out.push(all[i]);
+        }
+        return out;
     }
 
     function isHavingAffair(characterId) {
         return getActiveAffairs(characterId).length > 0;
     }
 
-    function getAffairBetween(a, b) {
-        var rel = RoQ.getAffairBetween(a, b);
-        if (!rel) return null;
-        return {
-            relationshipId: rel.id,
-            participantA: rel.participantA,
-            participantB: rel.participantB,
-            startYear: rel.startYear,
-            endYear: rel.endYear,
-            status: rel.status,
-            attributes: rel.attributes.slice(),
-            affairType: (rel.metadata && rel.metadata.affairType) || AR.AFFAIR_TYPE.SECRET,
-            discovered: !!(rel.metadata && rel.metadata.discovered),
-            discoveryYear: (rel.metadata && rel.metadata.discoveryYear) || null
+    function getAffairBetween(aId, bId) {
+        var list = RoQ.getActiveCommittedBetween(aId, bId);
+        for (var i = 0; i < list.length; i++) {
+            if (list[i].isAffair) return _projectAffair(list[i]);
+        }
+        return null;
+    }
+
+    function getAffairById(relationshipId) {
+        var rec = RQ.getById(relationshipId);
+        if (!rec) return null;
+        if (rec.type !== COMMITTED) return null;
+        if (!RR.isAffair(rec.attributes)) return null;
+        var romanceProjection = {
+            relationshipId: rec.id,
+            type: rec.type,
+            status: rec.status,
+            participantA: rec.participantA,
+            participantB: rec.participantB,
+            startYear: rec.startYear,
+            endYear: rec.endYear,
+            attributes: rec.attributes.slice(),
+            isCommitted: true,
+            isAffair: true
         };
+        return _projectAffair(romanceProjection);
     }
 
     // -------------------------------------------------------------------------
     // DISCOVERY RISK PROJECTION
+    //
+    // Gathers facts from the graph and delegates to
+    // AffairRules.calculateDiscoveryRisk.
+    //
+    // Returns { risk, annualChance, facts } or null.
     // -------------------------------------------------------------------------
 
-    /**
-     * Gathers the facts AffairRules.calculateDiscoveryRisk needs for a
-     * relationship id, then delegates.
-     */
     function getDiscoveryRisk(relationshipId, options) {
         options = options || {};
-        var rel = RQ.getById(relationshipId);
-        if (!rel) return null;
-        if (rel.type !== A.COMMITTED) return null;
-        if (!rel.attributes || rel.attributes.indexOf(ATTR.SECRET) === -1) return null;
 
-        var charA = _getCharacter(rel.participantA);
-        var charB = _getCharacter(rel.participantB);
+        var rec = RQ.getById(relationshipId);
+        if (!rec) return null;
+        if (rec.type !== COMMITTED) return null;
+        if (!RR.isAffair(rec.attributes)) return null;
+
+        var charA = _getCharacter(rec.participantA);
+        var charB = _getCharacter(rec.participantB);
         if (!charA || !charB) return null;
 
         var referenceYear = options.referenceYear !== undefined
             ? options.referenceYear
             : _getCurrentYear();
 
-        var sameLocation = false;
-        if (typeof window.getCurrentLocation === 'function') {
-            sameLocation = window.getCurrentLocation(charA) ===
-                           window.getCurrentLocation(charB);
-        }
+        var meta = rec.metadata || {};
 
         var facts = {
-            affairType: (rel.metadata && rel.metadata.affairType) || AR.AFFAIR_TYPE.SECRET,
+            affairType: typeof meta.affairType === 'string'
+                ? meta.affairType
+                : AR.AFFAIR_TYPE.SECRET,
             participantARankPriority: _rankPriority(charA),
             participantBRankPriority: _rankPriority(charB),
             participantASecretive: _isSecretive(charA),
             participantBSecretive: _isSecretive(charB),
-            participantAOtherActiveAffairs: _otherActiveAffairsCount(rel.participantA, rel.id),
-            participantBOtherActiveAffairs: _otherActiveAffairsCount(rel.participantB, rel.id),
-            durationYears: _durationYears(rel, referenceYear),
-            sameLocation: sameLocation,
-            publicBehavior: !!(rel.metadata && rel.metadata.publicBehavior),
-            previousDiscovery: !!(rel.metadata && rel.metadata.discovered)
+            participantAOtherActiveAffairs: _otherActiveAffairsCount(rec.participantA, rec.id),
+            participantBOtherActiveAffairs: _otherActiveAffairsCount(rec.participantB, rec.id),
+            durationYears: _durationYears(rec, referenceYear),
+            sameLocation: _sameLocation(charA, charB),
+            publicBehavior: !!meta.publicBehavior,
+            previousDiscovery: !!meta.discovered
         };
 
         var risk = AR.calculateDiscoveryRisk(facts);
@@ -198,43 +285,95 @@
             : _getCurrentYear();
 
         var all = getAffairs(characterId);
-        var active = all.filter(function(a) { return a.status === STATUS.ONGOING; });
-        var discovered = all.filter(function(a) { return a.discovered; });
-        var ended = all.filter(function(a) { return a.status === STATUS.ENDED; });
-
+        var active = 0;
+        var discovered = 0;
+        var ended = 0;
         var totalDuration = 0;
-        for (var i = 0; i < all.length; i++) {
-            var rel = RQ.getById(all[i].relationshipId);
-            totalDuration += _durationYears(rel, referenceYear);
-        }
-
         var typeBreakdown = {};
-        for (var j = 0; j < all.length; j++) {
-            var t = all[j].affairType;
-            typeBreakdown[t] = (typeBreakdown[t] || 0) + 1;
+        var earliestStartYear = null;
+
+        for (var i = 0; i < all.length; i++) {
+            var a = all[i];
+            if (a.status === STATUS.ONGOING) active++;
+            if (a.status === STATUS.ENDED) ended++;
+            if (a.discovered) discovered++;
+
+            var type = a.affairType;
+            typeBreakdown[type] = (typeBreakdown[type] || 0) + 1;
+
+            var rec = RQ.getById(a.relationshipId);
+            totalDuration += _durationYears(rec, referenceYear);
+
+            if (typeof a.startYear === 'number') {
+                if (earliestStartYear === null || a.startYear < earliestStartYear) {
+                    earliestStartYear = a.startYear;
+                }
+            }
         }
 
         return {
             totalAffairs: all.length,
-            activeAffairs: active.length,
-            discoveredAffairs: discovered.length,
-            endedAffairs: ended.length,
+            activeAffairs: active,
+            discoveredAffairs: discovered,
+            endedAffairs: ended,
             averageDuration: all.length > 0 ? totalDuration / all.length : 0,
             typeBreakdown: typeBreakdown,
-            hasActiveAffair: active.length > 0
+            earliestStartYear: earliestStartYear,
+            hasActiveAffair: active > 0
         };
     }
 
     // -------------------------------------------------------------------------
+    // AGGREGATE DISCOVERY RISK
+    //
+    // For a character, the highest-risk active affair. Useful for annual
+    // processing that only needs to know which affair is most likely to
+    // be discovered.
+    // -------------------------------------------------------------------------
+
+    function getHighestRiskAffair(characterId, options) {
+        options = options || {};
+        var active = getActiveAffairs(characterId);
+        if (active.length === 0) return null;
+
+        var best = null;
+        var bestRisk = -1;
+
+        for (var i = 0; i < active.length; i++) {
+            var projection = getDiscoveryRisk(active[i].relationshipId, options);
+            if (!projection) continue;
+            if (projection.risk > bestRisk) {
+                bestRisk = projection.risk;
+                best = {
+                    affair: active[i],
+                    risk: projection.risk,
+                    annualChance: projection.annualChance,
+                    facts: projection.facts
+                };
+            }
+        }
+
+        return best;
+    }
+
+    // -------------------------------------------------------------------------
+    // EXPORTS
+    // -------------------------------------------------------------------------
 
     window.AffairQueries = {
+        // Lookups
         getAffairs: getAffairs,
         getActiveAffairs: getActiveAffairs,
         getDiscoveredAffairs: getDiscoveredAffairs,
         isHavingAffair: isHavingAffair,
         getAffairBetween: getAffairBetween,
+        getAffairById: getAffairById,
 
+        // Discovery risk
         getDiscoveryRisk: getDiscoveryRisk,
+        getHighestRiskAffair: getHighestRiskAffair,
+
+        // Statistics
         getAffairStatistics: getAffairStatistics
     };
 
