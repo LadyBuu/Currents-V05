@@ -1,22 +1,42 @@
 /**
  * romance-commands.js
  *
- * Mutation and transaction boundary for romantic relationships.
- * Orchestrates queries, rules, and RelationshipCommands.
- * Owns event logging and (optionally) persistence via commit callback.
+ * Mutation boundary for romantic relationships.
  *
- * CONTRACT:
- *   - Every public command returns { success, ... }
- *   - Never throws for domain errors
- *   - Orchestration only: no direct state mutation
- *   - One logical operation = one commit boundary (caller-provided)
+ * Owns:
+ *   - starting casual dating, one-night stands, and committed
+ *     relationships
+ *   - affair classification at creation time (via RomanceRules and
+ *     CultureRules)
+ *   - adding and removing committed attributes (with cultural gating)
+ *   - breaking up and widowing
+ *   - one commit per logical operation
+ *
+ * Depends on:
+ *   - RomanceRules for policy
+ *   - RomanceQueries for existence and facts
+ *   - CultureRules for cultural attribute gating (required when any
+ *     cultural attribute is present in the request)
+ *   - RelationshipCommands for the state write
+ *   - Character accessors for ages, names, traits, rank
+ *
+ * Does NOT own:
+ *   - direct state access (goes through RelationshipCommands)
+ *   - persistence (markDataDirty happens in RelationshipState)
+ *   - randomness (no rolls here; discovery/consequence rolls live in
+ *     affair-commands.js)
+ *
+ * Every command returns { success: true, ... } or
+ * { success: false, code, message }. Never throws for domain errors.
+ *
+ * Load order: after relationship-commands.js, romance-rules.js,
+ * romance-queries.js.
  */
 
 (function() {
     'use strict';
 
     var RC = window.RelationshipCommands;
-    var RQ = window.RelationshipQueries;
     var RR = window.RomanceRules;
     var RoQ = window.RomanceQueries;
 
@@ -24,19 +44,32 @@
     var ATTR = window.RELATIONSHIP_ATTRIBUTES;
     var STATUS = window.RELATIONSHIP_STATUS;
 
-    if (!RC || !RQ || !RR || !RoQ || !A || !ATTR || !STATUS) {
-        throw new Error('romance-commands.js: relationship-* and romance-* must load first');
+    if (!RC || !RR || !RoQ || !A || !ATTR || !STATUS) {
+        throw new Error('romance-commands.js: relationship-commands.js, romance-rules.js, romance-queries.js must load first');
     }
+
+    var CASUAL    = A.CASUAL_DATING;
+    var ONE_NIGHT = A.ONE_NIGHT_STAND;
+    var COMMITTED = A.COMMITTED;
 
     // -------------------------------------------------------------------------
     // DEPENDENCY WRAPPERS (fail loud, no fallbacks)
     // -------------------------------------------------------------------------
 
-    function _characterExists(id) {
+    function _getCharacter(id) {
         if (typeof window.getCharacterById !== 'function') {
             throw new Error('romance-commands.js: getCharacterById required');
         }
-        return !!window.getCharacterById(id);
+        return window.getCharacterById(id);
+    }
+
+    function _characterExists(id) {
+        return !!_getCharacter(id);
+    }
+
+    function _getCharacterName(id) {
+        var c = _getCharacter(id);
+        return c && typeof c.name === 'string' ? c.name : id;
     }
 
     function _getCurrentYear() {
@@ -54,29 +87,12 @@
     }
 
     function _ageAtYear(character, year) {
-        if (!character || !character.birthYear) return 0;
-        if (character.isDeceased && character.deathYear && character.deathYear <= year) {
+        if (!character || typeof character.birthYear !== 'number') return null;
+        if (character.isDeceased && typeof character.deathYear === 'number' &&
+            character.deathYear <= year) {
             return Math.max(0, character.deathYear - character.birthYear);
         }
         return Math.max(0, year - character.birthYear);
-    }
-
-    function _getExternalMultiPartnerFacts(character) {
-        if (!character) return {};
-        var facts = {};
-
-        if (character.activeRankId && typeof window.getRankById === 'function') {
-            var rank = window.getRankById(character.activeRankId);
-            if (rank && rank.allowsMultipleSpouses) {
-                facts.allowsMultipleByRank = true;
-            }
-        }
-
-        if (character.traits && character.traits.indexOf('polygamous') !== -1) {
-            facts.allowsMultipleByTrait = true;
-        }
-
-        return facts;
     }
 
     function _logEvent(category, type, message, subjects) {
@@ -85,11 +101,59 @@
         }
     }
 
-    function _commit() {
-        if (typeof window.saveMasterData === 'function') {
-            window.saveMasterData();
+    function _requireCultureRules() {
+        if (typeof window.CultureRules !== 'object' || window.CultureRules === null ||
+            typeof window.CultureRules.supportsRelationshipAttribute !== 'function') {
+            throw new Error('romance-commands.js: CultureRules.supportsRelationshipAttribute required');
         }
+        return window.CultureRules;
     }
+
+    // -------------------------------------------------------------------------
+    // EXTERNAL MULTI-PARTNER FACTS
+    //
+    // Rank and trait facts live outside romance. We read them from the
+    // character record and rank domain here, at the boundary.
+    // -------------------------------------------------------------------------
+
+    function _getExternalMultiPartnerFacts(character) {
+        var facts = {};
+        if (!character) return facts;
+
+        if (character.activeRankId && typeof window.getRankById === 'function') {
+            var rank = window.getRankById(character.activeRankId);
+            if (rank && rank.allowsMultipleSpouses) {
+                facts.allowsMultipleByRank = true;
+            }
+        }
+
+        if (Array.isArray(character.traits) &&
+            character.traits.indexOf('polygamous') !== -1) {
+            facts.allowsMultipleByTrait = true;
+        }
+
+        return facts;
+    }
+
+    // -------------------------------------------------------------------------
+    // CULTURE RESOLUTION
+    //
+    // Participants' culture ids come from the character record. If a
+    // cultural attribute is requested, both must be present. This is
+    // where a missing culture becomes a hard rejection, not a default.
+    // -------------------------------------------------------------------------
+
+    function _resolveCultureId(character) {
+        if (!character) return null;
+        if (typeof character.cultureId === 'string' && character.cultureId.length > 0) {
+            return character.cultureId;
+        }
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
+    // RESULT HELPERS
+    // -------------------------------------------------------------------------
 
     function _fail(code, message) {
         return { success: false, code: code, message: message };
@@ -100,144 +164,199 @@
     }
 
     // -------------------------------------------------------------------------
-    // FACT GATHERING (queries only, no mutation)
-    // -------------------------------------------------------------------------
-
-    function _gatherFacts(characterAId, characterBId, startYear) {
-        var charA = window.getCharacterById(characterAId);
-        var charB = window.getCharacterById(characterBId);
-        if (!charA || !charB) return null;
-
-        var aFacts = RoQ.getMultiPartnerFacts(
-            characterAId, _getExternalMultiPartnerFacts(charA)
-        );
-        aFacts.ageAtStart = _ageAtYear(charA, startYear);
-
-        var bFacts = RoQ.getMultiPartnerFacts(
-            characterBId, _getExternalMultiPartnerFacts(charB)
-        );
-        bFacts.ageAtStart = _ageAtYear(charB, startYear);
-
-        return { charA: charA, charB: charB, aFacts: aFacts, bFacts: bFacts };
-    }
-
-    // -------------------------------------------------------------------------
-    // CREATE HELPERS
+    // INTERNAL: BASIC ROMANTIC CREATE
+    //
+    // Used by casual and one-night creation. Does not run affair
+    // classification (not applicable to those archetypes).
     // -------------------------------------------------------------------------
 
     function _createSimpleRomantic(archetype, idA, idB, startYear, notes) {
-        var result = RC.create({
+        var createResult = RC.create({
             participantA: idA,
             participantB: idB,
             type: archetype,
             status: STATUS.ONGOING,
             startYear: startYear,
-            metadata: { notes: notes || '' }
-        });
-        if (!result.success) return result;
-
-        var charA = window.getCharacterById(idA);
-        var charB = window.getCharacterById(idB);
-        _logEvent('romance', 'Relationship Formed',
-            (charA && charA.name) + ' and ' + (charB && charB.name) +
-            ' began a ' + archetype + ' relationship in ' + startYear,
-            [charA, charB]);
-
-        return _ok({ relationship: result.relationship });
-    }
-
-    // -------------------------------------------------------------------------
-    // PUBLIC COMMANDS
-    // -------------------------------------------------------------------------
-
-    function startCasualDating(characterAId, characterBId, options) {
-        options = options || {};
-        if (!_characterExists(characterAId) || !_characterExists(characterBId)) {
-            return _fail('MISSING_CHARACTER', 'Character not found');
-        }
-        if (characterAId === characterBId) {
-            return _fail('SAME_CHARACTER', 'Cannot date oneself');
-        }
-
-        var startYear = options.startYear !== undefined
-            ? options.startYear : _getCurrentYear();
-
-        var result = _createSimpleRomantic(
-            A.CASUAL_DATING, characterAId, characterBId, startYear, options.notes
-        );
-        if (result.success) _commit();
-        return result;
-    }
-
-    function startOneNightStand(characterAId, characterBId, options) {
-        options = options || {};
-        if (!_characterExists(characterAId) || !_characterExists(characterBId)) {
-            return _fail('MISSING_CHARACTER', 'Character not found');
-        }
-        if (characterAId === characterBId) {
-            return _fail('SAME_CHARACTER', 'Cannot have a one night stand with oneself');
-        }
-
-        var startYear = options.startYear !== undefined
-            ? options.startYear : _getCurrentYear();
-
-        var createResult = RC.create({
-            participantA: characterAId,
-            participantB: characterBId,
-            type: A.ONE_NIGHT_STAND,
-            status: STATUS.ONGOING,
-            startYear: startYear,
-            metadata: { notes: options.notes || '' }
+            attributes: [],
+            metadata: { notes: typeof notes === 'string' ? notes : '' }
         });
         if (!createResult.success) return createResult;
 
-        // End immediately in same transaction
-        var endResult = RC.end(
-            createResult.relationship.id,
-            startYear,
-            'One night stand'
-        );
-        if (!endResult.success) return endResult;
+        var projection = RoQ.getRomanticRelationshipsBetween(idA, idB, { activeOnly: true });
+        var rel = projection.length > 0 ? projection[0] : createResult.relationship;
 
-        var charA = window.getCharacterById(characterAId);
-        var charB = window.getCharacterById(characterBId);
-        _logEvent('romance', 'One Night Stand',
-            (charA && charA.name) + ' and ' + (charB && charB.name) +
-            ' had a one night stand in ' + startYear,
-            [charA, charB]);
-
-        _commit();
-        return _ok({ relationship: endResult.relationship });
+        return _ok({ relationship: rel });
     }
 
-    /**
-     * Starts a committed relationship. Applies automatic affair
-     * classification when one party is monogamous with an existing partner.
-     */
-    function startCommittedRelationship(characterAId, characterBId, options) {
+    // -------------------------------------------------------------------------
+    // CASUAL DATING
+    // -------------------------------------------------------------------------
+
+    function startCasualDating(idA, idB, options) {
         options = options || {};
-        if (!_characterExists(characterAId) || !_characterExists(characterBId)) {
-            return _fail('MISSING_CHARACTER', 'Character not found');
+
+        if (typeof idA !== 'string' || typeof idB !== 'string') {
+            return _fail('MISSING_ID', 'both character ids required');
         }
-        if (characterAId === characterBId) {
-            return _fail('SAME_CHARACTER', 'Cannot commit to oneself');
+        if (idA === idB) {
+            return _fail('SAME_CHARACTER', 'cannot date oneself');
+        }
+        if (!_characterExists(idA) || !_characterExists(idB)) {
+            return _fail('MISSING_CHARACTER', 'character not found');
         }
 
         var startYear = options.startYear !== undefined
-            ? options.startYear : _getCurrentYear();
+            ? options.startYear
+            : _getCurrentYear();
 
-        // Already in a committed relationship with each other?
-        if (RoQ.hasActiveCommittedBetween(characterAId, characterBId)) {
-            return _fail('ALREADY_COMMITTED', 'These characters are already committed');
+        var charA = _getCharacter(idA);
+        var charB = _getCharacter(idB);
+
+        if (!RR.isAgeValid(CASUAL, _ageAtYear(charA, startYear))) {
+            return _fail('UNDERAGE', 'participant A below minimum age');
+        }
+        if (!RR.isAgeValid(CASUAL, _ageAtYear(charB, startYear))) {
+            return _fail('UNDERAGE', 'participant B below minimum age');
         }
 
-        var facts = _gatherFacts(characterAId, characterBId, startYear);
-        if (!facts) return _fail('MISSING_CHARACTER', 'Character not found');
+        if (RoQ.hasActiveRomanticBetween(idA, idB)) {
+            return _fail('ALREADY_ROMANTIC', 'active romantic relationship already exists');
+        }
+
+        var result = _createSimpleRomantic(CASUAL, idA, idB, startYear, options.notes);
+        if (!result.success) return result;
+
+        _logEvent('romance', 'Casual Dating',
+            _getCharacterName(idA) + ' and ' + _getCharacterName(idB) +
+            ' began casual dating in ' + startYear,
+            [charA, charB]);
+
+        return result;
+    }
+
+    // -------------------------------------------------------------------------
+    // ONE NIGHT STAND
+    // -------------------------------------------------------------------------
+
+    function startOneNightStand(idA, idB, options) {
+        options = options || {};
+
+        if (typeof idA !== 'string' || typeof idB !== 'string') {
+            return _fail('MISSING_ID', 'both character ids required');
+        }
+        if (idA === idB) {
+            return _fail('SAME_CHARACTER', 'cannot have a one night stand with oneself');
+        }
+        if (!_characterExists(idA) || !_characterExists(idB)) {
+            return _fail('MISSING_CHARACTER', 'character not found');
+        }
+
+        var startYear = options.startYear !== undefined
+            ? options.startYear
+            : _getCurrentYear();
+
+        var charA = _getCharacter(idA);
+        var charB = _getCharacter(idB);
+
+        if (!RR.isAgeValid(ONE_NIGHT, _ageAtYear(charA, startYear))) {
+            return _fail('UNDERAGE', 'participant A below minimum age');
+        }
+        if (!RR.isAgeValid(ONE_NIGHT, _ageAtYear(charB, startYear))) {
+            return _fail('UNDERAGE', 'participant B below minimum age');
+        }
+
+        var createResult = RC.create({
+            participantA: idA,
+            participantB: idB,
+            type: ONE_NIGHT,
+            status: STATUS.ONGOING,
+            startYear: startYear,
+            attributes: [],
+            metadata: { notes: typeof options.notes === 'string' ? options.notes : '' }
+        });
+        if (!createResult.success) return createResult;
+
+        // One-night stands end immediately; the record is historical from
+        // the start. This is a single logical operation.
+        var endResult = RC.end(
+            createResult.relationship.relationshipId || createResult.relationship.id,
+            startYear,
+            'one_night_stand'
+        );
+        if (!endResult.success) return endResult;
+
+        _logEvent('romance', 'One Night Stand',
+            _getCharacterName(idA) + ' and ' + _getCharacterName(idB) +
+            ' had a one night stand in ' + startYear,
+            [charA, charB]);
+
+        var projection = RoQ.getAllCommittedBetween(idA, idB); // empty; here for symmetry
+        var all = RoQ.getRomanticRelationshipsBetween(idA, idB);
+        var oneNightProjection = null;
+        for (var i = 0; i < all.length; i++) {
+            if (all[i].type === ONE_NIGHT && all[i].startYear === startYear) {
+                oneNightProjection = all[i];
+                break;
+            }
+        }
+
+        return _ok({ relationship: oneNightProjection || endResult.relationship });
+    }
+
+    // -------------------------------------------------------------------------
+    // COMMITTED RELATIONSHIP
+    //
+    // Full pipeline: gather facts, classify, resolve attributes, validate
+    // structurally and culturally, then write.
+    // -------------------------------------------------------------------------
+
+    /**
+     * options: {
+     *   startYear?,
+     *   attributes?: string[],
+     *   forceAffair?: boolean,
+     *   isSecret?: boolean,
+     *   isScandalous?: boolean,
+     *   notes?: string
+     * }
+     */
+    function startCommittedRelationship(idA, idB, options) {
+        options = options || {};
+
+        if (typeof idA !== 'string' || typeof idB !== 'string') {
+            return _fail('MISSING_ID', 'both character ids required');
+        }
+        if (idA === idB) {
+            return _fail('SAME_CHARACTER', 'cannot commit to oneself');
+        }
+        if (!_characterExists(idA) || !_characterExists(idB)) {
+            return _fail('MISSING_CHARACTER', 'character not found');
+        }
+
+        var startYear = options.startYear !== undefined
+            ? options.startYear
+            : _getCurrentYear();
+
+        var charA = _getCharacter(idA);
+        var charB = _getCharacter(idB);
+
+        if (RoQ.hasActiveCommittedBetween(idA, idB)) {
+            return _fail('ALREADY_COMMITTED', 'these characters are already committed');
+        }
+
+        var aAge = _ageAtYear(charA, startYear);
+        var bAge = _ageAtYear(charB, startYear);
+
+        var aFacts = RoQ.getMultiPartnerFacts(idA, _getExternalMultiPartnerFacts(charA));
+        aFacts.ageAtStart = aAge;
+
+        var bFacts = RoQ.getMultiPartnerFacts(idB, _getExternalMultiPartnerFacts(charB));
+        bFacts.ageAtStart = bAge;
 
         var classification = RR.classifyNewRelationship({
-            archetype: A.COMMITTED,
-            participantAFacts: facts.aFacts,
-            participantBFacts: facts.bFacts,
+            archetype: COMMITTED,
+            participantAFacts: aFacts,
+            participantBFacts: bFacts,
             startYear: startYear,
             forceAffair: !!options.forceAffair,
             explicitSecret: !!options.isSecret
@@ -247,40 +366,67 @@
             return _fail('BLOCKED', classification.reason);
         }
 
-        var resolvedAttrs = RR.resolveAttributes({
+        var resolved = RR.resolveAttributes({
             classification: classification.classification,
             userAttributes: options.attributes || [],
             isScandalous: !!options.isScandalous
         });
 
-        var attrCheck = RR.validateAttributes(A.COMMITTED, resolvedAttrs);
+        var attrCheck = RR.validateAttributes(COMMITTED, resolved);
         if (!attrCheck.valid) {
-            return _fail('INVALID_ATTRIBUTES', attrCheck.conflicts.join('; '));
+            return _fail('INVALID_ATTRIBUTES', attrCheck.errors.join('; '));
+        }
+
+        // Cultural gating: only consulted if any cultural attribute is
+        // present. Universal-only requests skip CultureRules entirely.
+        var hasCultural = false;
+        for (var i = 0; i < resolved.length; i++) {
+            if (window.RELATIONSHIP_TYPES.isCulturalAttribute(resolved[i])) {
+                hasCultural = true;
+                break;
+            }
+        }
+        if (hasCultural) {
+            var cultureA = _resolveCultureId(charA);
+            var cultureB = _resolveCultureId(charB);
+            var cultureCheck = RR.validateAttributesForCulture({
+                attributes: resolved,
+                cultureA: cultureA,
+                cultureB: cultureB
+            });
+            if (!cultureCheck.valid) {
+                return _fail('CULTURAL_ATTRIBUTE_REJECTED', cultureCheck.errors.join('; '));
+            }
         }
 
         var createResult = RC.create({
-            participantA: characterAId,
-            participantB: characterBId,
-            type: A.COMMITTED,
+            participantA: idA,
+            participantB: idB,
+            type: COMMITTED,
             status: STATUS.ONGOING,
             startYear: startYear,
-            attributes: resolvedAttrs,
-            metadata: { notes: options.notes || '' }
+            attributes: resolved,
+            metadata: {
+                notes: typeof options.notes === 'string' ? options.notes : '',
+                classification: classification.classification,
+                classificationReason: classification.reason
+            }
         });
         if (!createResult.success) return createResult;
+
+        var projection = RoQ.getActiveCommittedBetween(idA, idB);
+        var rel = projection.length > 0 ? projection[0] : createResult.relationship;
 
         _logEvent('romance',
             classification.classification === 'affair'
                 ? 'Affair Formed'
                 : 'Committed Relationship Formed',
-            facts.charA.name + ' and ' + facts.charB.name +
+            _getCharacterName(idA) + ' and ' + _getCharacterName(idB) +
             ' began a committed relationship in ' + startYear,
-            [facts.charA, facts.charB]);
-
-        _commit();
+            [charA, charB]);
 
         return _ok({
-            relationship: createResult.relationship,
+            relationship: rel,
             classification: classification.classification,
             reason: classification.reason
         });
@@ -288,107 +434,255 @@
 
     // -------------------------------------------------------------------------
     // ATTRIBUTE MANAGEMENT
+    //
+    // Adding or removing an attribute on a committed relationship.
+    // Structural validation via RomanceRules; cultural gating via
+    // CultureRules when the attribute is cultural.
     // -------------------------------------------------------------------------
 
-    function addRelationshipAttribute(relationshipId, attribute) {
-        var rel = RQ.getById(relationshipId);
-        if (!rel) return _fail('NOT_FOUND', 'Relationship not found');
+    function addCommittedAttribute(relationshipId, attribute, options) {
+        options = options || {};
+
+        if (typeof relationshipId !== 'string' || relationshipId.length === 0) {
+            return _fail('MISSING_ID', 'relationshipId required');
+        }
+
+        var record = RC._getLiveRecord ? null : null; // not used; go via queries
+        var projection = RoQ.getRomanticRelationshipsBetween.__proto__ ? null : null;
+
+        // Fetch via RelationshipQueries through RomanceQueries
+        var current = RC._getLiveRecord ? null : null;
+        // Use the public path: inspect via queries
+        var rec = window.RelationshipQueries.getById(relationshipId);
+        if (!rec) return _fail('NOT_FOUND', 'relationship not found');
+        if (rec.type !== COMMITTED) {
+            return _fail('NOT_COMMITTED', 'relationship is not committed');
+        }
+        if (rec.status !== STATUS.ONGOING) {
+            return _fail('NOT_ACTIVE', 'relationship is not ongoing');
+        }
 
         var check = RR.canAddAttribute({
-            archetype: rel.type,
-            currentAttributes: rel.attributes,
+            archetype: COMMITTED,
+            currentAttributes: rec.attributes,
             attribute: attribute
         });
-        if (!check.valid) return _fail('INVALID_ATTRIBUTE', check.reason);
+        if (!check.valid) {
+            return _fail('INVALID_ATTRIBUTE', check.reason);
+        }
+
+        // Cultural gating if applicable.
+        if (window.RELATIONSHIP_TYPES.isCulturalAttribute(attribute)) {
+            var charA = _getCharacter(rec.participantA);
+            var charB = _getCharacter(rec.participantB);
+            var cultureA = _resolveCultureId(charA);
+            var cultureB = _resolveCultureId(charB);
+            var cultureCheck = RR.validateAttributesForCulture({
+                attributes: [attribute],
+                cultureA: cultureA,
+                cultureB: cultureB
+            });
+            if (!cultureCheck.valid) {
+                return _fail('CULTURAL_ATTRIBUTE_REJECTED', cultureCheck.errors.join('; '));
+            }
+        }
 
         var result = RC.addAttribute(relationshipId, attribute);
-        if (result.success) _commit();
-        return result;
+        if (!result.success) return result;
+
+        var refreshed = window.RelationshipQueries.getById(relationshipId);
+        return _ok({ relationship: refreshed });
     }
 
-    function removeRelationshipAttribute(relationshipId, attribute) {
-        var rel = RQ.getById(relationshipId);
-        if (!rel) return _fail('NOT_FOUND', 'Relationship not found');
+    function removeCommittedAttribute(relationshipId, attribute) {
+        if (typeof relationshipId !== 'string' || relationshipId.length === 0) {
+            return _fail('MISSING_ID', 'relationshipId required');
+        }
+
+        var rec = window.RelationshipQueries.getById(relationshipId);
+        if (!rec) return _fail('NOT_FOUND', 'relationship not found');
+        if (rec.type !== COMMITTED) {
+            return _fail('NOT_COMMITTED', 'relationship is not committed');
+        }
+        if (rec.status !== STATUS.ONGOING) {
+            return _fail('NOT_ACTIVE', 'relationship is not ongoing');
+        }
 
         var check = RR.canRemoveAttribute({
-            archetype: rel.type,
-            currentAttributes: rel.attributes,
+            archetype: COMMITTED,
+            currentAttributes: rec.attributes,
             attribute: attribute
         });
-        if (!check.valid) return _fail('INVALID_ATTRIBUTE', check.reason);
+        if (!check.valid) {
+            return _fail('INVALID_ATTRIBUTE', check.reason);
+        }
 
         var result = RC.removeAttribute(relationshipId, attribute);
-        if (result.success) _commit();
-        return result;
+        if (!result.success) return result;
+
+        var refreshed = window.RelationshipQueries.getById(relationshipId);
+        return _ok({ relationship: refreshed });
     }
 
     // -------------------------------------------------------------------------
     // BREAKUP
     // -------------------------------------------------------------------------
 
+    /**
+     * options: { endYear?, reason? }
+     */
     function breakUp(relationshipId, options) {
         options = options || {};
-        var rel = RQ.getById(relationshipId);
-        if (!rel) return _fail('NOT_FOUND', 'Relationship not found');
 
-        var check = RR.canBreakUp({ status: rel.status });
-        if (!check.valid) return _fail('NOT_ACTIVE', check.reason);
+        if (typeof relationshipId !== 'string' || relationshipId.length === 0) {
+            return _fail('MISSING_ID', 'relationshipId required');
+        }
+
+        var rec = window.RelationshipQueries.getById(relationshipId);
+        if (!rec) return _fail('NOT_FOUND', 'relationship not found');
+        if (!RR.isRomanticArchetype(rec.type)) {
+            return _fail('NOT_ROMANTIC', 'relationship is not romantic');
+        }
+
+        var check = RR.canBreakUp({ status: rec.status });
+        if (!check.valid) {
+            return _fail('NOT_ACTIVE', check.reason);
+        }
 
         var endYear = options.endYear !== undefined
-            ? options.endYear : _getCurrentYear();
-        var reason = options.reason || 'Breakup';
+            ? options.endYear
+            : _getCurrentYear();
+        var reason = options.reason !== undefined && options.reason !== null
+            ? options.reason
+            : 'breakup';
 
         var result = RC.end(relationshipId, endYear, reason);
         if (!result.success) return result;
 
-        var charA = window.getCharacterById(rel.participantA);
-        var charB = window.getCharacterById(rel.participantB);
         _logEvent('romance', 'Breakup',
-            (charA && charA.name) + ' and ' + (charB && charB.name) +
+            _getCharacterName(rec.participantA) + ' and ' +
+            _getCharacterName(rec.participantB) +
             ' ended their relationship in ' + endYear + ' (' + reason + ')',
-            [charA, charB]);
+            [_getCharacter(rec.participantA), _getCharacter(rec.participantB)]);
 
-        _commit();
-        return _ok({ relationship: result.relationship });
+        return _ok({ relationship: window.RelationshipQueries.getById(relationshipId) });
     }
 
     // -------------------------------------------------------------------------
-    // DEATH OF PARTNER
+    // WIDOWING
     // -------------------------------------------------------------------------
 
+    /**
+     * options: { deathYear? }
+     */
     function deathEndsRelationship(relationshipId, options) {
         options = options || {};
-        var rel = RQ.getById(relationshipId);
-        if (!rel) return _fail('NOT_FOUND', 'Relationship not found');
 
-        var check = RR.canBeWidowed({ status: rel.status });
-        if (!check.valid) return _fail('NOT_ACTIVE', check.reason);
+        if (typeof relationshipId !== 'string' || relationshipId.length === 0) {
+            return _fail('MISSING_ID', 'relationshipId required');
+        }
+
+        var rec = window.RelationshipQueries.getById(relationshipId);
+        if (!rec) return _fail('NOT_FOUND', 'relationship not found');
+        if (!RR.isRomanticArchetype(rec.type)) {
+            return _fail('NOT_ROMANTIC', 'relationship is not romantic');
+        }
+
+        var check = RR.canBeWidowed({ status: rec.status });
+        if (!check.valid) {
+            return _fail('NOT_ACTIVE', check.reason);
+        }
 
         var deathYear = options.deathYear !== undefined
-            ? options.deathYear : _getCurrentYear();
+            ? options.deathYear
+            : _getCurrentYear();
 
         var result = RC.setWidowed(relationshipId, deathYear);
         if (!result.success) return result;
 
         _logEvent('romance', 'Partner Died',
-            'Relationship between ' + rel.participantA + ' and ' + rel.participantB +
+            _getCharacterName(rec.participantA) + ' and ' +
+            _getCharacterName(rec.participantB) +
             ' ended by death in ' + deathYear,
-            []);
+            [_getCharacter(rec.participantA), _getCharacter(rec.participantB)]);
 
-        _commit();
-        return _ok({ relationship: result.relationship });
+        return _ok({ relationship: window.RelationshipQueries.getById(relationshipId) });
     }
 
+    // -------------------------------------------------------------------------
+    // BULK: END ALL ROMANTIC RELATIONSHIPS FOR A CHARACTER
+    //
+    // Used by life-death integration when the relationship command
+    // surface is being invoked from outside romance. One commit.
+    // -------------------------------------------------------------------------
+
+    /**
+     * options: {
+     *   endYear,
+     *   reason?,
+     *   widowedInstead?: boolean
+     * }
+     */
+    function endAllRomanticForCharacter(characterId, options) {
+        options = options || {};
+
+        if (typeof characterId !== 'string' || characterId.length === 0) {
+            return _fail('MISSING_ID', 'characterId required');
+        }
+        if (typeof options.endYear !== 'number') {
+            return _fail('MISSING_END_YEAR', 'endYear required');
+        }
+
+        var active = RoQ.getActiveRomanticRelationships(characterId);
+        if (active.length === 0) {
+            return _ok({ ended: [], count: 0, mode: 'none' });
+        }
+
+        var ended = [];
+        var failed = [];
+        var mode = options.widowedInstead === true ? 'widowed' : 'ended';
+
+        for (var i = 0; i < active.length; i++) {
+            var r = active[i];
+            var res = mode === 'widowed'
+                ? RC.setWidowed(r.relationshipId, options.endYear)
+                : RC.end(r.relationshipId, options.endYear, options.reason || 'ended_by_character_event');
+            if (res.success) ended.push(r.relationshipId);
+            else failed.push({ id: r.relationshipId, code: res.code, message: res.message });
+        }
+
+        if (ended.length > 0) {
+            _logEvent('romance', 'Romantic Relationships Ended',
+                ended.length + ' romantic relationship(s) ended for ' +
+                _getCharacterName(characterId) + ' (' + mode + ')',
+                [_getCharacter(characterId)]);
+        }
+
+        return _ok({
+            ended: ended,
+            failed: failed,
+            count: ended.length,
+            failedCount: failed.length,
+            mode: mode
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // EXPORTS
     // -------------------------------------------------------------------------
 
     window.RomanceCommands = {
         startCasualDating: startCasualDating,
         startOneNightStand: startOneNightStand,
         startCommittedRelationship: startCommittedRelationship,
-        addRelationshipAttribute: addRelationshipAttribute,
-        removeRelationshipAttribute: removeRelationshipAttribute,
+
+        addCommittedAttribute: addCommittedAttribute,
+        removeCommittedAttribute: removeCommittedAttribute,
+
         breakUp: breakUp,
-        deathEndsRelationship: deathEndsRelationship
+        deathEndsRelationship: deathEndsRelationship,
+
+        endAllRomanticForCharacter: endAllRomanticForCharacter
     };
 
 })();
