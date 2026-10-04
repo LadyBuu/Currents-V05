@@ -690,16 +690,35 @@
         if (!curriculumItem) return _fail('Subject not found in curriculum: ' + subjectId);
 
         // Role-type subject requires the teacher to hold the role.
+        //
+        // RoleQueries is a required dependency for role-type curricula.
+        // If it is not loaded, this is a load-order failure, not a
+        // "silently skip the check" case. (Previous versions of this file
+        // fell through when getCharactersWithRoleDetails returned null;
+        // that let teachers be hired without the role they were teaching.)
         if (curriculumItem.type === 'role') {
-            var roleDetails = _getCharactersWithRoleDetails(subjectId);
-            if (roleDetails) {
-                var hasRole = roleDetails.some(function(d) {
-                    return d.character && d.character.id === teacherId;
-                });
-                if (!hasRole) {
-                    var role = _getRoleById(subjectId);
-                    return _fail('Teacher does not have required role: ' + (role ? role.name : subjectId));
+            if (typeof window.RoleQueries === 'undefined' ||
+                typeof window.RoleQueries.getCharactersWithRoleDetails !== 'function') {
+                return _fail(
+                    'RoleQueries.getCharactersWithRoleDetails is required to ' +
+                    'hire a teacher for a role-type subject (' + subjectId + ').'
+                );
+            }
+            var roleDetails = window.RoleQueries.getCharactersWithRoleDetails(subjectId);
+            var hasRole = false;
+            if (Array.isArray(roleDetails)) {
+                for (var j = 0; j < roleDetails.length; j++) {
+                    var d = roleDetails[j];
+                    if (d && d.character && d.character.id === teacherId) {
+                        hasRole = true;
+                        break;
+                    }
                 }
+            }
+            if (!hasRole) {
+                var role = _getRoleById(subjectId);
+                return _fail('Teacher does not have required role: ' +
+                    (role ? role.name : subjectId));
             }
         }
 
@@ -857,8 +876,20 @@
         }
 
         // Grant role if any.
+        //
+        // Role-grant failure does not abort the graduation. The institution
+        // records the student as graduated, the character's education history
+        // is written, and the failure is reported back to the caller via
+        // roleGrantError. Callers that want to enforce the grant can check
+        // result.roleGrantError after the call.
+        //
+        // The alternative (hard-fail) was considered and rejected: a partial
+        // graduation — institution says graduated, character does not hold
+        // the role — is worse than a visible warning, because it silently
+        // diverges the institution's graduate list from the character's
+        // profession list.
+        var roleGrantError = null;
         if (roleToGrant) {
-            var role = _getRoleById(roleToGrant);
             var roleResult = _assignRoleToCharacter(studentId, roleToGrant, {
                 skillLevel: 100,
                 primary: false,
@@ -867,11 +898,17 @@
                 learnedVia: 'institution',
                 institutionId: institutionId
             });
-            if (roleResult && roleResult.success === false) {
-                // Role grant failed but graduation proceeds; caller sees the reason.
-                // (Alternative: hard-fail. Left as warn for now.)
-                if (typeof console !== 'undefined' && console.warn) {
-                    console.warn('Role grant failed during graduation:', roleResult.reason);
+            if (!roleResult || roleResult.success === false) {
+                roleGrantError = (roleResult && roleResult.reason)
+                    ? roleResult.reason
+                    : 'Role grant failed for unknown reason';
+                if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+                    var roleName = (_getRoleById(roleToGrant) || {}).name || roleToGrant;
+                    console.warn(
+                        'Role grant failed during graduation: student=' + studentId +
+                        ' role=' + roleName +
+                        ' reason=' + roleGrantError
+                    );
                 }
             }
         }
@@ -937,7 +974,8 @@
             institutionId: institutionId,
             studentId: studentId,
             grantedRole: roleToGrant,
-            graduationYear: year
+            graduationYear: year,
+            roleGrantError: roleGrantError    // null on success, string on failure
         });
     }
 
