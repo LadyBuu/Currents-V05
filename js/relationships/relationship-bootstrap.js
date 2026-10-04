@@ -1,76 +1,91 @@
 /**
  * relationships-bootstrap.js
  *
- * Load-order manifest and integrity check for the relationship system.
- *
- * LOAD THIS FILE LAST, after every other relationships/*.js file.
+ * Load-order manifest and integrity check for the relationship domain.
  *
  * Responsibilities:
- *   1. Verify every required module loaded.
- *   2. Verify every external dependency the system needs is present.
- *   3. Expose window.Relationships as the single entry point.
+ *   1. Verify every required module loaded and exposes its namespace.
+ *   2. Verify every external dependency the relationship domain needs
+ *      is present.
+ *   3. Verify cross-domain prerequisites: CultureRules exposes
+ *      supportsRelationshipAttribute, SkillQueries exposes
+ *      getSkillLevel, SkillCommands exposes updateSkillLevel (required
+ *      only when professional apprenticeship progression runs).
+ *   4. Expose window.Relationships as the single entry point.
+ *   5. Verify internal consistency of the domain's key tables so that a
+ *      typo cannot silently produce a domain with holes.
  *
  * No logic beyond verification. Fail loud. No fallbacks.
+ *
+ * LOAD THIS FILE LAST, after every other relationships/*.js file, and
+ * after family-queries.js, family-rules.js, character-queries.js, and
+ * any other external dependency. See section 13 of the domain docs for
+ * the full HTML load order.
  */
 
 (function() {
     'use strict';
 
     // -------------------------------------------------------------------------
-    // REQUIRED MODULES (load order enforced by script tag order)
+    // REQUIRED MODULES (relationship domain)
     // -------------------------------------------------------------------------
 
     var REQUIRED_MODULES = [
-        // Core vocabulary
+        // Vocabulary + utilities
         'RELATIONSHIP_ARCHETYPES',
         'RELATIONSHIP_ATTRIBUTES',
         'RELATIONSHIP_STATUS',
+        'RELATIONSHIP_TYPES',
+        'RelationshipUtils',
 
-        // State / rules / queries / commands
+        // Core storage and pipeline
         'RelationshipState',
-        'RelationshipRules',
         'RelationshipQueries',
         'RelationshipCommands',
 
-        // Presentation metadata
-        'RelationshipUI',
-
-        // Romance
+        // Domain rules / queries / commands
         'RomanceRules',
         'RomanceQueries',
         'RomanceCommands',
 
-        // Friendship
         'FriendshipRules',
         'FriendshipQueries',
         'FriendshipCommands',
 
-        // Family
-        'FamilyRules',
-        'FamilyQueries',
-        'FamilyCommands',
+        'RivalryRules',
+        'RivalryQueries',
+        'RivalryCommands',
 
-        // Professional
-        'ProfessionalRules',
-        'ProfessionalQueries',
-        'ProfessionalCommands',
-
-        // Jealousy
         'JealousyRules',
         'JealousyQueries',
         'JealousyCommands',
 
-        // Affair
         'AffairRules',
         'AffairQueries',
         'AffairCommands',
 
+        'MatchmakingRules',
+        'MatchmakingQueries',
+
+        'ProfessionalRules',
+        'ProfessionalQueries',
+        'ProfessionalCommands',
+
         // Finder
-        'RelationshipFinderQueries'
+        'RelationshipFinderQueries',
+
+        // Presentation metadata
+        'RelationshipUI',
+
+        // Cross-domain integrations owned by this domain
+        'RelationshipIntegrations'
     ];
 
     // -------------------------------------------------------------------------
-    // REQUIRED EXTERNAL DEPENDENCIES (from other subsystems)
+    // REQUIRED EXTERNAL GLOBALS (relationship domain)
+    //
+    // These are hard requirements. A relationship domain without
+    // character accessors, ids, or current year cannot operate.
     // -------------------------------------------------------------------------
 
     var REQUIRED_GLOBALS = [
@@ -79,58 +94,188 @@
         'getCurrentYearSafe',
         'calculateAge',
         'generateId',
-        'saveMasterData',
-        'openModal',
-        'closeTopModal'
+        'markDataDirty',
+        'logEvent',
+        'Random',
+        'CultureRules'
     ];
 
-    // Optional but recommended (system degrades gracefully if missing)
+    // CultureRules sub-requirements
+    var REQUIRED_CULTURE_RULES_METHODS = [
+        'supportsRelationshipAttribute'
+    ];
+
+    // -------------------------------------------------------------------------
+    // CONDITIONALLY REQUIRED GLOBALS
+    //
+    // Skills are only required if professional commands are invoked.
+    // We do not fail the bootstrap if they are missing; we warn, and
+    // professional commands will throw if called without them. This
+    // matches the project's "fail loud at point of use" convention for
+    // optional subsystems.
+    // -------------------------------------------------------------------------
+
+    var CONDITIONAL_GLOBALS = [
+        'SkillQueries',
+        'SkillCommands',
+        'MurderCommands',
+        'ExecutionCommands'
+    ];
+
+    // -------------------------------------------------------------------------
+    // OPTIONAL GLOBALS
+    //
+    // Used by UI and by cross-domain logging. Absence is not fatal.
+    // -------------------------------------------------------------------------
+
     var OPTIONAL_GLOBALS = [
+        'getCurrentLocation',
+        'getActiveRankDisplay',
+        'getRankById',
+        'registerLifecycleHook',
         'Icons',
         'escapeHtml',
         'showToast',
-        'logEvent',
-        'Random',
-        'SkillQueries',
-        'getCurrentLocation',
-        'getActiveRankDisplay',
-        'getRankById'
+        'openModal',
+        'closeTopModal'
     ];
 
     // -------------------------------------------------------------------------
     // VERIFICATION
     // -------------------------------------------------------------------------
 
-    function _verify() {
-        var missingModules = [];
-        var missingGlobals = [];
-        var missingOptional = [];
-
+    function _verifyModules() {
+        var missing = [];
         for (var i = 0; i < REQUIRED_MODULES.length; i++) {
-            if (typeof window[REQUIRED_MODULES[i]] === 'undefined') {
-                missingModules.push(REQUIRED_MODULES[i]);
+            var name = REQUIRED_MODULES[i];
+            if (typeof window[name] === 'undefined' || window[name] === null) {
+                missing.push(name);
             }
         }
-
-        for (var j = 0; j < REQUIRED_GLOBALS.length; j++) {
-            if (typeof window[REQUIRED_GLOBALS[j]] === 'undefined') {
-                missingGlobals.push(REQUIRED_GLOBALS[j]);
-            }
-        }
-
-        for (var k = 0; k < OPTIONAL_GLOBALS.length; k++) {
-            if (typeof window[OPTIONAL_GLOBALS[k]] === 'undefined') {
-                missingOptional.push(OPTIONAL_GLOBALS[k]);
-            }
-        }
-
-        return {
-            ok: missingModules.length === 0 && missingGlobals.length === 0,
-            missingModules: missingModules,
-            missingGlobals: missingGlobals,
-            missingOptional: missingOptional
-        };
+        return missing;
     }
+
+    function _verifyGlobals() {
+        var missing = [];
+        for (var i = 0; i < REQUIRED_GLOBALS.length; i++) {
+            var name = REQUIRED_GLOBALS[i];
+            if (typeof window[name] === 'undefined' || window[name] === null) {
+                missing.push(name);
+            }
+        }
+        return missing;
+    }
+
+    function _verifyCultureRules() {
+        var missing = [];
+        if (typeof window.CultureRules !== 'object' || window.CultureRules === null) {
+            return ['CultureRules'];
+        }
+        for (var i = 0; i < REQUIRED_CULTURE_RULES_METHODS.length; i++) {
+            var m = REQUIRED_CULTURE_RULES_METHODS[i];
+            if (typeof window.CultureRules[m] !== 'function') {
+                missing.push('CultureRules.' + m);
+            }
+        }
+        return missing;
+    }
+
+    function _verifyConditionals() {
+        var missing = [];
+        for (var i = 0; i < CONDITIONAL_GLOBALS.length; i++) {
+            var name = CONDITIONAL_GLOBALS[i];
+            if (typeof window[name] === 'undefined' || window[name] === null) {
+                missing.push(name);
+            }
+        }
+        return missing;
+    }
+
+    function _verifyOptional() {
+        var missing = [];
+        for (var i = 0; i < OPTIONAL_GLOBALS.length; i++) {
+            var name = OPTIONAL_GLOBALS[i];
+            if (typeof window[name] === 'undefined' || window[name] === null) {
+                missing.push(name);
+            }
+        }
+        return missing;
+    }
+
+    // -------------------------------------------------------------------------
+    // INTERNAL CONSISTENCY
+    //
+    // Checks that the vocabulary tables line up and that the domain's
+    // rules modules expose the transition tables and attribute sets
+    // they are expected to. A missing table is a load-order bug, not a
+    // runtime condition; failing loud here prevents silent divergence.
+    // -------------------------------------------------------------------------
+
+    function _verifyVocabulary() {
+        var errors = [];
+        var TYPES = window.RELATIONSHIP_TYPES;
+
+        if (typeof TYPES.getAllArchetypes !== 'function') {
+            errors.push('RELATIONSHIP_TYPES.getAllArchetypes missing');
+            return errors;
+        }
+
+        var archetypes = TYPES.getAllArchetypes();
+        for (var i = 0; i < archetypes.length; i++) {
+            var a = archetypes[i];
+            if (TYPES.getArchetypeCategory(a) === null) {
+                errors.push('archetype missing category: ' + a);
+            }
+            if (TYPES.getArchetypeDirection(a) === null) {
+                errors.push('archetype missing direction: ' + a);
+            }
+            if (TYPES.isDirectional(a) && TYPES.getArchetypeRoles(a) === null) {
+                errors.push('directional archetype missing roles: ' + a);
+            }
+        }
+
+        var attrs = TYPES.getAllAttributes();
+        for (var j = 0; j < attrs.length; j++) {
+            var at = attrs[j];
+            if (TYPES.getAttributeScope(at) === null) {
+                errors.push('attribute missing scope: ' + at);
+            }
+            if (TYPES.getAttributeOwner(at) === null) {
+                errors.push('attribute missing owner: ' + at);
+            }
+        }
+
+        return errors;
+    }
+
+    function _verifyDomainTables() {
+        var errors = [];
+
+        if (!window.RomanceRules || !window.RomanceRules.ROMANCE_TRANSITIONS) {
+            errors.push('RomanceRules.ROMANCE_TRANSITIONS missing');
+        }
+        if (!window.RomanceRules || !window.RomanceRules.ROMANCE_ALLOWED_ATTRIBUTES) {
+            errors.push('RomanceRules.ROMANCE_ALLOWED_ATTRIBUTES missing');
+        }
+        if (!window.FriendshipRules || !window.FriendshipRules.FRIENDSHIP_TRANSITIONS) {
+            errors.push('FriendshipRules.FRIENDSHIP_TRANSITIONS missing');
+        }
+        if (!window.RivalryRules || !window.RivalryRules.RIVALRY_TRANSITIONS) {
+            errors.push('RivalryRules.RIVALRY_TRANSITIONS missing');
+        }
+        if (!window.RivalryRules || !window.RivalryRules.ENMITY_TRANSITIONS) {
+            errors.push('RivalryRules.ENMITY_TRANSITIONS missing');
+        }
+        if (!window.ProfessionalRules || !window.ProfessionalRules.APPRENTICESHIP_TRANSITIONS) {
+            errors.push('ProfessionalRules.APPRENTICESHIP_TRANSITIONS missing');
+        }
+
+        return errors;
+    }
+
+    // -------------------------------------------------------------------------
+    // REPORTING
+    // -------------------------------------------------------------------------
 
     function _formatList(list) {
         if (!list || list.length === 0) return '(none)';
@@ -138,13 +283,32 @@
     }
 
     function _report(status) {
-        if (!status.ok) {
-            var msg = 'relationships-bootstrap.js: missing dependencies\n' +
+        if (status.missingModules.length > 0 ||
+            status.missingGlobals.length > 0 ||
+            status.missingCultureRules.length > 0 ||
+            status.vocabularyErrors.length > 0 ||
+            status.domainTableErrors.length > 0) {
+
+            var msg = 'relationships-bootstrap.js: dependency verification failed\n' +
                 '\nMissing modules:\n' + _formatList(status.missingModules) +
-                '\nMissing globals:\n' + _formatList(status.missingGlobals);
+                '\nMissing required globals:\n' + _formatList(status.missingGlobals) +
+                '\nMissing CultureRules members:\n' + _formatList(status.missingCultureRules) +
+                '\nVocabulary errors:\n' + _formatList(status.vocabularyErrors) +
+                '\nDomain table errors:\n' + _formatList(status.domainTableErrors);
+
             console.error(msg);
             throw new Error(msg);
         }
+
+        if (status.missingConditionals.length > 0) {
+            console.warn(
+                'relationships-bootstrap.js: conditional dependencies missing\n' +
+                _formatList(status.missingConditionals) +
+                '\nThe relationship domain will load, but commands that depend on\n' +
+                'these modules will throw when invoked.'
+            );
+        }
+
         if (status.missingOptional.length > 0) {
             console.warn(
                 'relationships-bootstrap.js: optional dependencies missing\n' +
@@ -157,29 +321,63 @@
     // PUBLIC ENTRY POINT
     // -------------------------------------------------------------------------
 
+    function verify() {
+        var status = {
+            missingModules: _verifyModules(),
+            missingGlobals: _verifyGlobals(),
+            missingCultureRules: _verifyCultureRules(),
+            missingConditionals: _verifyConditionals(),
+            missingOptional: _verifyOptional(),
+            vocabularyErrors: _verifyVocabulary(),
+            domainTableErrors: _verifyDomainTables()
+        };
+
+        var ok = status.missingModules.length === 0 &&
+                 status.missingGlobals.length === 0 &&
+                 status.missingCultureRules.length === 0 &&
+                 status.vocabularyErrors.length === 0 &&
+                 status.domainTableErrors.length === 0;
+
+        return {
+            ok: ok,
+            status: status
+        };
+    }
+
     function init() {
-        var status = _verify();
-        _report(status);
+        var verified = verify();
+        _report(verified.status);
         return {
             success: true,
+            ok: verified.ok,
             modules: REQUIRED_MODULES.slice(),
-            missingOptional: status.missingOptional.slice()
+            missingOptional: verified.status.missingOptional.slice(),
+            missingConditionals: verified.status.missingConditionals.slice()
         };
     }
 
     // -------------------------------------------------------------------------
     // NAMESPACE
+    //
+    // window.Relationships is the recommended entry point. Individual
+    // globals remain on window for backward compatibility with
+    // external subsystems, but new code should use the namespace.
+    //
+    // The namespace re-exports live references. If a module is loaded
+    // after bootstrap (which violates the load contract), the namespace
+    // will not see it. Load this file last.
     // -------------------------------------------------------------------------
 
     window.Relationships = {
         init: init,
+        verify: verify,
 
-        // Convenience re-exports (all references, no wrapping)
-        State:      window.RelationshipState,
-        Rules:      window.RelationshipRules,
-        Queries:    window.RelationshipQueries,
-        Commands:   window.RelationshipCommands,
-        UI:         window.RelationshipUI,
+        Types: window.RELATIONSHIP_TYPES,
+        Utils: window.RelationshipUtils,
+
+        State:    window.RelationshipState,
+        Queries:  window.RelationshipQueries,
+        Commands: window.RelationshipCommands,
 
         Romance: {
             Rules:    window.RomanceRules,
@@ -191,15 +389,10 @@
             Queries:  window.FriendshipQueries,
             Commands: window.FriendshipCommands
         },
-        Family: {
-            Rules:    window.FamilyRules,
-            Queries:  window.FamilyQueries,
-            Commands: window.FamilyCommands
-        },
-        Professional: {
-            Rules:    window.ProfessionalRules,
-            Queries:  window.ProfessionalQueries,
-            Commands: window.ProfessionalCommands
+        Rivalry: {
+            Rules:    window.RivalryRules,
+            Queries:  window.RivalryQueries,
+            Commands: window.RivalryCommands
         },
         Jealousy: {
             Rules:    window.JealousyRules,
@@ -211,14 +404,29 @@
             Queries:  window.AffairQueries,
             Commands: window.AffairCommands
         },
+        Matchmaking: {
+            Rules:   window.MatchmakingRules,
+            Queries: window.MatchmakingQueries
+        },
+        Professional: {
+            Rules:    window.ProfessionalRules,
+            Queries:  window.ProfessionalQueries,
+            Commands: window.ProfessionalCommands
+        },
 
         Finder: {
-            Queries:  window.RelationshipFinderQueries,
-            render:   window.renderRelationshipFinder
-        }
+            Queries: window.RelationshipFinderQueries
+        },
+
+        UI: window.RelationshipUI,
+
+        Integrations: window.RelationshipIntegrations
     };
 
-    // Run verification at load time; caller can still call init() if desired.
+    // Run verification at load time. A failure throws and halts
+    // bootstrap, which is the intended behaviour: a relationship
+    // domain without its dependencies is a broken application, not a
+    // degraded one.
     init();
 
 })();
