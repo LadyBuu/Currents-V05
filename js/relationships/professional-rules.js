@@ -1,58 +1,98 @@
 /**
- * professional-rules.js
+ * =============================================================================
+ * STILL WATERS - PROFESSIONAL RULES (professional-rules.js)
+ * =============================================================================
  *
- * Pure policy for professional relationships.
+ * LOCATION: js/social/professional-rules.js
  *
- * Professional relationships are:
- *   apprenticeship    A = master,    B = apprentice
- *   mastership        A = master,    B = expert
- *   employment        A = employer,  B = employee
- *   guild_membership  A = guild,     B = member
+ * Pure policy for professional relationship edges. No state access. No
+ * mutation. No persistence. No randomness. No window.* side effects.
  *
- * Owns:
- *   - transition tables for each professional archetype
- *   - skill scale (bounds, clamping, tiers)
- *   - teaching eligibility (skill floor)
- *   - apprenticeship validation
- *   - employment validation
- *   - guild membership validation
- *   - the professional archetype predicate
+ * PROFESSIONAL ARCHETYPES
  *
- * Does NOT own:
- *   - state access
- *   - mutation
- *   - persistence
- *   - randomness
- *   - skill reads (those come from SkillQueries at call time)
- *   - queries (see professional-queries.js)
+ *   apprenticeship    A = master,     B = apprentice
+ *   mastership        A = master,     B = expert
+ *   employment        A = employer,   B = employee
+ *   guild_membership  A = guild,      B = member
  *
- * Skill levels live on the character record. This module never reads
- * them; callers supply explicit values.
+ * OWNERSHIP
  *
- * Every function is deterministic and takes explicit facts.
+ *   ProfessionalRules owns:
+ *       - the professional-archetype predicate
+ *       - transition tables for the four professional archetypes
+ *       - attribute-set validation for professional edges (empty in v1)
+ *       - creation validators for apprenticeship, employment, guild
+ *       - apprenticeship progression / completion validators
  *
- * Load order: after relationship-types.js, relationship-utils.js.
+ *   ProfessionalRules does NOT own:
+ *       - the skill taxonomy or thresholds    → SkillUtils
+ *       - the apprenticeship lifecycle policy → ApprenticeshipRules
+ *       - the role catalogue or specialization membership → RoleRules
+ *       - state reads                          → ProfessionalQueries
+ *       - state writes                         → ProfessionalCommands
+ *
+ * SKILL THRESHOLDS
+ *
+ *   Every skill number is read from SkillUtils at load time. This file
+ *   does not restate 0, 1, 26, 51, 76, or 91. If SkillUtils moves a
+ *   threshold, this file moves with it. The exports below mirror the
+ *   canonical values for convenience; they are not a second source of
+ *   truth.
+ *
+ * DEPENDENCIES (must be loaded first):
+ *   - relationship-types.js (RELATIONSHIP_ARCHETYPES, RELATIONSHIP_STATUS)
+ *   - relationship-utils.js (RelationshipUtils)
+ *   - skill-utils.js        (SkillUtils)
+ *
+ * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
+
+    // =========================================================================
+    // 1. HARD DEPENDENCY CHECK
+    // =========================================================================
+
+    if (!window.RELATIONSHIP_ARCHETYPES) {
+        throw new Error(
+            'professional-rules.js requires relationship-types.js ' +
+            '(RELATIONSHIP_ARCHETYPES) first.'
+        );
+    }
+    if (!window.RELATIONSHIP_STATUS) {
+        throw new Error(
+            'professional-rules.js requires relationship-types.js ' +
+            '(RELATIONSHIP_STATUS) first.'
+        );
+    }
+    if (!window.RelationshipUtils) {
+        throw new Error(
+            'professional-rules.js requires relationship-utils.js ' +
+            '(RelationshipUtils) first.'
+        );
+    }
+    if (!window.SkillUtils || typeof window.SkillUtils.getThresholds !== 'function') {
+        throw new Error(
+            'professional-rules.js requires skill-utils.js (SkillUtils) first.'
+        );
+    }
 
     var A = window.RELATIONSHIP_ARCHETYPES;
     var STATUS = window.RELATIONSHIP_STATUS;
     var Utils = window.RelationshipUtils;
-
-    if (!A || !STATUS || !Utils) {
-        throw new Error('professional-rules.js: relationship-types.js and relationship-utils.js must load first');
-    }
+    var SU = window.SkillUtils;
 
     var APPRENTICESHIP   = A.APPRENTICESHIP;
     var MASTERSHIP       = A.MASTERSHIP;
     var EMPLOYMENT       = A.EMPLOYMENT;
     var GUILD_MEMBERSHIP = A.GUILD_MEMBERSHIP;
 
-    // -------------------------------------------------------------------------
-    // PROFESSIONAL ARCHETYPE PREDICATE
-    // -------------------------------------------------------------------------
+    var THRESHOLDS = SU.getThresholds();
+
+    // =========================================================================
+    // 2. PROFESSIONAL ARCHETYPE PREDICATE
+    // =========================================================================
 
     var PROFESSIONAL_TYPES = {};
     PROFESSIONAL_TYPES[APPRENTICESHIP]   = true;
@@ -64,13 +104,16 @@
         return !!PROFESSIONAL_TYPES[type];
     }
 
-    // -------------------------------------------------------------------------
-    // TRANSITION TABLES
+    // =========================================================================
+    // 3. TRANSITION TABLES
+    // =========================================================================
     //
-    // All four archetypes share the same simple lifecycle:
-    // ongoing -> ended, and ended -> {} (terminal).
-    // A new relationship is a new record.
-    // -------------------------------------------------------------------------
+    // All four professional archetypes share the same simple lifecycle:
+    //
+    //     ongoing → ended
+    //     ended   → (terminal)
+    //
+    // A new relationship is a new record. Status is opaque to State.
 
     var APPRENTICESHIP_TRANSITIONS = Utils.freezeTable({
         'ongoing': { 'ended': true },
@@ -101,7 +144,8 @@
     }
 
     /**
-     * facts: { archetype, from, to }
+     * @param {Object} facts  { archetype, from, to }
+     * @returns {{ valid: boolean, errors?: string[] }}
      */
     function canTransition(facts) {
         if (!facts || typeof facts !== 'object') {
@@ -114,12 +158,12 @@
         return Utils.validateStatusTransition(facts.from, facts.to, table);
     }
 
-    // -------------------------------------------------------------------------
-    // ATTRIBUTE SETS
+    // =========================================================================
+    // 4. ATTRIBUTE SET
+    // =========================================================================
     //
     // Professional relationships have no attributes in v1. Structural
-    // validation still runs (empty array permitted).
-    // -------------------------------------------------------------------------
+    // validation still runs (empty array permitted, non-empty rejected).
 
     var PROFESSIONAL_ALLOWED_ATTRIBUTES = Object.freeze({});
 
@@ -140,59 +184,55 @@
         };
     }
 
-    // -------------------------------------------------------------------------
-    // SKILL SCALE
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 5. SKILL — DELEGATED TO SkillUtils
+    // =========================================================================
+    //
+    // Every skill number and every tier classification is read from
+    // SkillUtils. The exports below mirror the canonical values for
+    // convenience; they are not a second source of truth.
 
-    var SKILL_MIN = 0;
-    var SKILL_MAX = 100;
+    var SKILL_MIN     = SU.clampLevel(0);        // 0
+    var SKILL_MAX     = SU.clampLevel(100);      // 100
     var SKILL_DEFAULT = 0;
 
-    var TEACHING_MIN_SKILL = 51;
-    var MASTER_MIN_SKILL   = 76;
-
-    var SKILL_TIER = {
-        UNTRAINED:  'untrained',
-        NOVICE:     'novice',
-        APPRENTICE: 'apprentice',
-        JOURNEYMAN: 'journeyman',
-        EXPERT:     'expert',
-        MASTER:     'master'
-    };
+    var TEACHING_MIN_SKILL = THRESHOLDS.JOURNEYMAN;   // 51
+    var MASTER_MIN_SKILL   = THRESHOLDS.EXPERT;       // 76
 
     function clampSkill(value) {
-        if (typeof value !== 'number' || isNaN(value)) return SKILL_DEFAULT;
-        if (value < SKILL_MIN) return SKILL_MIN;
-        if (value > SKILL_MAX) return SKILL_MAX;
-        return value;
+        return SU.clampLevel(value);
     }
 
     function skillTier(skill) {
-        var s = clampSkill(skill);
-        if (s >= 91) return SKILL_TIER.MASTER;
-        if (s >= 76) return SKILL_TIER.EXPERT;
-        if (s >= 51) return SKILL_TIER.JOURNEYMAN;
-        if (s >= 26) return SKILL_TIER.APPRENTICE;
-        if (s >= 1)  return SKILL_TIER.NOVICE;
-        return SKILL_TIER.UNTRAINED;
+        return SU.getTierId(skill);
     }
 
     function canTeach(skillLevel, minSkill) {
-        var threshold = (typeof minSkill === 'number') ? minSkill : TEACHING_MIN_SKILL;
-        return clampSkill(skillLevel) >= threshold;
+        var threshold = (typeof minSkill === 'number')
+            ? minSkill
+            : TEACHING_MIN_SKILL;
+        return SU.clampLevel(skillLevel) >= threshold;
     }
 
-    // -------------------------------------------------------------------------
-    // APPRENTICESHIP
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 6. APPRENTICESHIP VALIDATORS
+    // =========================================================================
+    //
+    // Apprenticeship lifecycle policy — teaching outcomes, progression
+    // curves, completion thresholds — lives in ApprenticeshipRules.
+    // These validators cover only what the professional-edge layer needs
+    // to know at creation and transition time.
 
     /**
-     * facts: {
-     *   masterId, apprenticeId,
-     *   masterSkillLevel, apprenticeSkillLevel,
-     *   masterAge, apprenticeAge,
-     *   roleId
-     * }
+     * @param {Object} facts
+     * @param {string} facts.masterId
+     * @param {string} facts.apprenticeId
+     * @param {number} [facts.masterSkillLevel]
+     * @param {number} [facts.apprenticeSkillLevel]
+     * @param {number} [facts.masterAge]
+     * @param {number} [facts.apprenticeAge]
+     * @param {string} facts.roleId
+     * @returns {{ valid: boolean, errors: string[] }}
      */
     function canCreateApprenticeship(facts) {
         var errors = [];
@@ -236,7 +276,8 @@
     }
 
     /**
-     * facts: { status }
+     * @param {Object} facts  { status }
+     * @returns {{ valid: boolean, errors: string[] }}
      */
     function canProgressApprenticeship(facts) {
         if (!facts || typeof facts !== 'object') {
@@ -250,7 +291,8 @@
     }
 
     /**
-     * facts: { status, skillLevel }
+     * @param {Object} facts  { status, skillLevel? }
+     * @returns {{ valid: boolean, errors: string[] }}
      */
     function canCompleteApprenticeship(facts) {
         if (!facts || typeof facts !== 'object') {
@@ -268,12 +310,17 @@
         return { valid: errors.length === 0, errors: errors };
     }
 
-    // -------------------------------------------------------------------------
-    // EMPLOYMENT
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 7. EMPLOYMENT VALIDATORS
+    // =========================================================================
 
     /**
-     * facts: { employerId, employeeId, employerAge, employeeAge }
+     * @param {Object} facts
+     * @param {string} facts.employerId
+     * @param {string} facts.employeeId
+     * @param {number} [facts.employerAge]
+     * @param {number} [facts.employeeAge]
+     * @returns {{ valid: boolean, errors: string[] }}
      */
     function canCreateEmployment(facts) {
         var errors = [];
@@ -298,12 +345,17 @@
         return { valid: errors.length === 0, errors: errors };
     }
 
-    // -------------------------------------------------------------------------
-    // GUILD MEMBERSHIP
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 8. GUILD MEMBERSHIP VALIDATORS
+    // =========================================================================
 
     /**
-     * facts: { guildId, memberId, memberAge, rank }
+     * @param {Object} facts
+     * @param {string} facts.guildId
+     * @param {string} facts.memberId
+     * @param {number} [facts.memberAge]
+     * @param {string} [facts.rank]
+     * @returns {{ valid: boolean, errors: string[] }}
      */
     function canCreateGuildMembership(facts) {
         var errors = [];
@@ -328,9 +380,9 @@
         return { valid: errors.length === 0, errors: errors };
     }
 
-    // -------------------------------------------------------------------------
-    // EXPORTS
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 9. EXPORTS
+    // =========================================================================
 
     window.ProfessionalRules = {
         // Predicate
@@ -348,13 +400,12 @@
         PROFESSIONAL_ALLOWED_ATTRIBUTES: PROFESSIONAL_ALLOWED_ATTRIBUTES,
         validateAttributes: validateAttributes,
 
-        // Skill
+        // Skill — mirrors SkillUtils, provided here for role-domain convenience
         SKILL_MIN: SKILL_MIN,
         SKILL_MAX: SKILL_MAX,
         SKILL_DEFAULT: SKILL_DEFAULT,
         TEACHING_MIN_SKILL: TEACHING_MIN_SKILL,
         MASTER_MIN_SKILL: MASTER_MIN_SKILL,
-        SKILL_TIER: SKILL_TIER,
         clampSkill: clampSkill,
         skillTier: skillTier,
         canTeach: canTeach,
@@ -367,4 +418,7 @@
         canCreateGuildMembership: canCreateGuildMembership
     };
 
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.ProfessionalRules;
+    }
 })();
