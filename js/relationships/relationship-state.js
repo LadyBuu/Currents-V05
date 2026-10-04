@@ -13,6 +13,7 @@
  *   - defensive snapshot read
  *   - internal mutation primitives reserved for RelationshipCommands
  *   - reload from masterData.data.relationships on masterDataUpdated
+ *   - validateIntegrity() — diagnostic consistency check
  *
  * It does NOT contain:
  *   - validation beyond structural integrity
@@ -37,9 +38,7 @@
  *   }
  *
  * byPair is a Map<pairKey, Set<relationshipId>>. A pair may have any
- * number of historical records. "Alice and Bob are married" is not a
- * fact that State stores; State stores a record whose current status
- * and attributes happen to describe that state. History is preserved.
+ * number of historical records.
  *
  * Load order: after relationship-types.js and relationship-utils.js,
  * before relationship-queries.js and relationship-commands.js.
@@ -59,10 +58,10 @@
     // STORAGE
     // -------------------------------------------------------------------------
 
-    var _byId       = new Map();   // id -> record
-    var _byChar     = new Map();   // characterId -> Set<id>
-    var _byType     = new Map();   // archetype -> Set<id>
-    var _byPair     = new Map();   // pairKey -> Set<id>
+    var _byId       = new Map();
+    var _byChar     = new Map();
+    var _byType     = new Map();
+    var _byPair     = new Map();
 
     var _subscribers = [];
     var _initialized = false;
@@ -103,13 +102,6 @@
 
     // -------------------------------------------------------------------------
     // STRUCTURAL VALIDATION
-    //
-    // State's only job here is to refuse to hold a record that cannot be
-    // indexed. It does not check status values, attribute names, archetype
-    // existence, or participant validity — those belong to the caller.
-    //
-    // The exceptions are: participantA !== participantB (a pair index
-    // requires two distinct keys), and both participants present.
     // -------------------------------------------------------------------------
 
     function _isStructurallyValid(record) {
@@ -129,9 +121,6 @@
 
     // -------------------------------------------------------------------------
     // SUBSCRIBE
-    //
-    // Subscribers receive { action, relationshipIds } on every committed
-    // batch mutation. Used by UI panels and query caches.
     // -------------------------------------------------------------------------
 
     function subscribe(callback) {
@@ -154,8 +143,6 @@
 
     // -------------------------------------------------------------------------
     // PUBLIC READS
-    //
-    // These return defensive copies. No live record leaves this module.
     // -------------------------------------------------------------------------
 
     function isInitialized() {
@@ -220,10 +207,6 @@
 
     // -------------------------------------------------------------------------
     // INTERNAL MUTATION PRIMITIVES
-    //
-    // Reserved for RelationshipCommands. Not part of the public API.
-    // Each returns the affected record or a boolean. None of them notify
-    // subscribers individually; batch mutation is responsible for that.
     // -------------------------------------------------------------------------
 
     function _getLiveRecord(id) {
@@ -257,7 +240,6 @@
         var rec = _byId.get(id);
         if (!rec) return null;
 
-        // status is opaque; caller validated it
         if (patch.status !== undefined) rec.status = patch.status;
         if (patch.startYear !== undefined) rec.startYear = patch.startYear;
         if (patch.endYear !== undefined) rec.endYear = patch.endYear;
@@ -280,9 +262,6 @@
 
     // -------------------------------------------------------------------------
     // BATCH MUTATION
-    //
-    // Every public write path in RelationshipCommands funnels through
-    // one of these three. Subscribers are notified once per batch.
     // -------------------------------------------------------------------------
 
     function applyInserts(records) {
@@ -290,7 +269,6 @@
             return { success: true, inserted: [] };
         }
 
-        // Pre-validate all before mutating
         for (var v = 0; v < records.length; v++) {
             if (!_isStructurallyValid(records[v])) {
                 return { success: false, reason: 'structurally_invalid_record_at_index:' + v };
@@ -304,7 +282,6 @@
         for (var i = 0; i < records.length; i++) {
             var stored = _insert(records[i]);
             if (!stored) {
-                // Unreachable after pre-validation, but defensive
                 return { success: false, reason: 'insert_failed_at_index:' + i };
             }
             inserted.push(stored.id);
@@ -371,9 +348,6 @@
 
     // -------------------------------------------------------------------------
     // SNAPSHOT / REPLACE / CLEAR
-    //
-    // replaceAll is used on load and on masterDataUpdated. clear is used
-    // when the world is reset.
     // -------------------------------------------------------------------------
 
     function snapshot() {
@@ -413,8 +387,6 @@
 
     // -------------------------------------------------------------------------
     // PERSISTENCE NOTIFICATION
-    //
-    // State never saves. It marks dirty and lets storage decide.
     // -------------------------------------------------------------------------
 
     function _markDirty() {
@@ -425,8 +397,6 @@
 
     // -------------------------------------------------------------------------
     // RELOAD
-    //
-    // Listens for masterDataUpdated and rebuilds from the canonical store.
     // -------------------------------------------------------------------------
 
     function _reloadFromMasterData() {
@@ -453,14 +423,99 @@
     }
 
     // -------------------------------------------------------------------------
+    // INTEGRITY VALIDATION (diagnostic)
+    //
+    // Verifies that the record set and every index agree. Intended for
+    // tests, migrations, and diagnostic dumps. Not called at runtime.
+    //
+    // Returns { valid, errors } where errors is an array of strings.
+    // -------------------------------------------------------------------------
+
+    function validateIntegrity() {
+        var errors = [];
+
+        // Every indexed id must exist, and every record must appear in
+        // every index its fields imply.
+        var seenInById = {};
+
+        _byId.forEach(function(rec, id) {
+            seenInById[id] = true;
+
+            if (!_isStructurallyValid(rec)) {
+                errors.push('record_not_structurally_valid:' + id);
+            }
+
+            var charIds = [rec.participantA, rec.participantB];
+            for (var c = 0; c < charIds.length; c++) {
+                var charSet = _byChar.get(charIds[c]);
+                if (!charSet || !charSet.has(id)) {
+                    errors.push('record_missing_from_byChar:' + id + ':' + charIds[c]);
+                }
+            }
+
+            var typeSet = _byType.get(rec.type);
+            if (!typeSet || !typeSet.has(id)) {
+                errors.push('record_missing_from_byType:' + id + ':' + rec.type);
+            }
+
+            var pk = UTILS.pairKey(rec.participantA, rec.participantB);
+            var pairSet = _byPair.get(pk);
+            if (!pairSet || !pairSet.has(id)) {
+                errors.push('record_missing_from_byPair:' + id + ':' + pk);
+            }
+        });
+
+        // Every index entry must point to a live record.
+        _byChar.forEach(function(set, charId) {
+            set.forEach(function(id) {
+                if (!_byId.has(id)) {
+                    errors.push('byChar_stale_id:' + charId + ':' + id);
+                    return;
+                }
+                var rec = _byId.get(id);
+                if (rec.participantA !== charId && rec.participantB !== charId) {
+                    errors.push('byChar_wrong_participant:' + charId + ':' + id);
+                }
+            });
+        });
+
+        _byType.forEach(function(set, type) {
+            set.forEach(function(id) {
+                if (!_byId.has(id)) {
+                    errors.push('byType_stale_id:' + type + ':' + id);
+                    return;
+                }
+                var rec = _byId.get(id);
+                if (rec.type !== type) {
+                    errors.push('byType_wrong_type:' + type + ':' + id);
+                }
+            });
+        });
+
+        _byPair.forEach(function(set, pk) {
+            set.forEach(function(id) {
+                if (!_byId.has(id)) {
+                    errors.push('byPair_stale_id:' + pk + ':' + id);
+                    return;
+                }
+                var rec = _byId.get(id);
+                var expected = UTILS.pairKey(rec.participantA, rec.participantB);
+                if (expected !== pk) {
+                    errors.push('byPair_wrong_pair:' + pk + ':' + id);
+                }
+            });
+        });
+
+        return { valid: errors.length === 0, errors: errors };
+    }
+
+    // -------------------------------------------------------------------------
     // EXPORTS
     // -------------------------------------------------------------------------
 
     window.RelationshipState = {
-        // Initialization
         isInitialized: isInitialized,
 
-        // Reads
         size: size,
         allIds: allIds,
         all: all,
@@ -470,28 +525,22 @@
         idsForPair: idsForPair,
         hasId: hasId,
 
-        // Snapshot / replace / clear
         snapshot: snapshot,
         replaceAll: replaceAll,
         clear: clear,
 
-        // Subscription
         subscribe: subscribe,
 
-        // Batch mutation (reserved for RelationshipCommands)
         applyInserts: applyInserts,
         applyUpdates: applyUpdates,
         applyRemovals: applyRemovals,
 
-        // Internal live access (reserved for RelationshipCommands)
         _getLiveRecord: _getLiveRecord,
 
-        // Explicit reload hook (used by tests and storage)
-        reload: _reloadFromMasterData
+        reload: _reloadFromMasterData,
+        validateIntegrity: validateIntegrity
     };
 
-    // Attempt initial load. If masterData is not yet available, the
-    // first masterDataUpdated event will initialise.
     _ensureInitializedFromMasterData();
 
 })();
