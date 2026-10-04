@@ -1,49 +1,42 @@
 /**
  * =============================================================================
- * STILL WATERS - CHILDREN BIRTH MODALS (js/character/modals-children-birth.js)
+ * STILL WATERS - CHILDREN BIRTH MODALS
+ * (js/character/modals-children-birth.js)
  * =============================================================================
  *
  * Birth-related modals.
  *
  * SCOPE:
  *   - openBirthModal(motherId, fatherId, onSuccess)
- *       Record a single live birth or stillbirth.
  *   - openSurpriseBirthModal(motherId, fatherId, onSuccess)
- *       Roll a random birth event (1–4 children) and commit it.
  *   - openBatchBirthModal(motherId, fatherId, onSuccess)
- *       Add several children within the mother's fertile window.
+ *   - openPregnancyAttemptModal(motherId, fatherId, options, onSuccess)
+ *       Full pregnancy attempt with random mode and specify-outcome
+ *       mode. Handles maternal death through the command layer.
  *
  * OUT OF SCOPE:
- *   - Childbirth death                -> CharacterLifecycle
- *   - Pregnancy attempt simulation    -> ChildrenCommands.recordPregnancyAttempt
- *                                        (this module uses recordBirth directly;
- *                                         pregnancy simulation is not exposed
- *                                         through a modal at this stage)
  *   - Mortality policy                -> MortalityRules
  *   - Persistence                     -> CharacterState / ChildrenState
  *   - Presentation CSS                -> stylesheet
  *   - Modal stack                     -> modals-core.js
  *
  * CONTRACT:
- *   - UI only. Reads via CharacterQueries and ChildrenQueries. Mutates
- *     only via ChildrenCommands (recordBirth).
+ *   - UI only. Reads via CharacterQueries and ChildrenQueries.
+ *     Mutates only via ChildrenCommands.
  *   - Does not read character.relationships. Does not compute fertility
- *     policy. Does not save. Does not invalidate caches.
- *   - No fallback for missing dependencies. Missing openModal,
- *     CharacterQueries, ChildrenCommands, ChildrenGenerator, or
- *     ChildrenRules throws at load.
- *   - Character ids, not character objects, are the modal arguments.
+ *     policy. Does not save.
+ *   - No fallback for missing dependencies.
  *
  * DEPENDENCIES (REQUIRED):
- *   - formatting.js:             escapeHtml
- *   - icons.js:                  Icons
- *   - modals-core.js:            openModal, closeTopModal
- *   - time.js:                   getCurrentYear, isValidYear, calculateAge
- *   - CharacterQueries:          getCharacterSummary
- *   - ChildrenCommands:          recordBirth
- *   - ChildrenQueries:           getPregnanciesForMother
- *   - ChildrenGenerator:         generateBatchBirthData
- *   - ChildrenRules:             FERTILITY_CONSTANTS
+ *   - formatting.js:        escapeHtml
+ *   - icons.js:             Icons
+ *   - modals-core.js:       openModal, closeTopModal
+ *   - time.js:              getCurrentYear, isValidYear, calculateAge
+ *   - CharacterQueries:     getCharacterSummary
+ *   - ChildrenCommands:     recordBirth, recordPregnancyAttempt
+ *   - ChildrenQueries:      getPregnanciesForMother
+ *   - ChildrenGenerator:    generateBatchBirthData
+ *   - ChildrenRules:        FERTILITY_CONSTANTS, PREGNANCY_OUTCOME
  *
  * ICON POLICY: SVG from icons.js. No emojis.
  *
@@ -52,10 +45,6 @@
 
 (function () {
     'use strict';
-
-    // =========================================================================
-    // 0. DEPENDENCY GUARDS
-    // =========================================================================
 
     function _requireDependencies() {
         var required = [
@@ -189,11 +178,6 @@
     // 2. BIRTH MODAL
     // =========================================================================
 
-    /**
-     * @param {string} motherId
-     * @param {string|null} fatherId
-     * @param {Function} [onSuccess]
-     */
     function openBirthModal(motherId, fatherId, onSuccess) {
         var mother = _readMother(motherId);
         if (!mother) {
@@ -326,14 +310,6 @@
     // 3. SURPRISE BIRTH MODAL
     // =========================================================================
 
-    /**
-     * Rolls a random number of children (1–4) within the mother's
-     * fertile window and commits them all in one submission.
-     *
-     * @param {string} motherId
-     * @param {string|null} fatherId
-     * @param {Function} [onSuccess]
-     */
     function openSurpriseBirthModal(motherId, fatherId, onSuccess) {
         var mother = _readMother(motherId);
         if (!mother) {
@@ -349,7 +325,6 @@
             return { success: false, reason: 'Mother has no fertile window.' };
         }
 
-        // Roll the count now, so it can be displayed in the modal.
         var countRoll = Math.random();
         var childCount;
         if (countRoll < 0.05) childCount = 4;
@@ -456,13 +431,6 @@
     // 4. BATCH BIRTH MODAL
     // =========================================================================
 
-    /**
-     * Adds several children within a specified window.
-     *
-     * @param {string} motherId
-     * @param {string|null} fatherId
-     * @param {Function} [onSuccess]
-     */
     function openBatchBirthModal(motherId, fatherId, onSuccess) {
         var mother = _readMother(motherId);
         if (!mother) {
@@ -595,18 +563,230 @@
     }
 
     // =========================================================================
-    // 5. EXPORTS
+    // 5. PREGNANCY ATTEMPT MODAL
     // =========================================================================
 
-    window.openBirthModal = openBirthModal;
-    window.openSurpriseBirthModal = openSurpriseBirthModal;
-    window.openBatchBirthModal = openBatchBirthModal;
+    /**
+     * Full pregnancy attempt modal with random and specify-outcome modes.
+     *
+     * @param {string} motherId
+     * @param {string|null} fatherId
+     * @param {Object} [options]
+     * @param {number} [options.year]
+     * @param {boolean} [options.allowMaternalDeath]   default true
+     * @param {Function} [onSuccess]
+     */
+    function openPregnancyAttemptModal(motherId, fatherId, options, onSuccess) {
+        var mother = _readMother(motherId);
+        if (!mother) {
+            return { success: false, reason: 'Mother not found.' };
+        }
+        if (mother.isDeceased === true) {
+            return { success: false, reason: 'Mother is deceased.' };
+        }
 
-    if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            openBirthModal: openBirthModal,
-            openSurpriseBirthModal: openSurpriseBirthModal,
-            openBatchBirthModal: openBatchBirthModal
-        };
-    }
-})();
+        var father = _readFather(fatherId);
+        if (_hasId(fatherId) && !father) {
+            return { success: false, reason: 'Father not found.' };
+        }
+        if (father && father.isDeceased === true) {
+            return { success: false, reason: 'Father is deceased.' };
+        }
+
+        var window_ = _fertileWindow(mother);
+        if (!window_) {
+            return { success: false, reason: 'Mother has no fertile window.' };
+        }
+
+        if (_isMissing(options)) options = {};
+        var allowMaternalDeath = options.allowMaternalDeath !== false;
+        var defaultYear = typeof options.year === 'number'
+            ? options.year
+            : Math.min(window.getCurrentYear(), window_.maxYear);
+
+        // Mode: 'random' or 'specify'
+        var mode = 'random';
+
+        var content = '<div class="character-modal">';
+
+        content += '<div class="character-modal__section">'
+                 + '<strong>Mother: ' + _esc(_fullName(mother)) + '</strong>'
+                 + '<br>' + _esc(mother.age === null ? 'Unknown age' : mother.age + ' years')
+                 + (father ? '<br>Father: ' + _esc(_fullName(father)) : '')
+                 + '</div>';
+
+        content += '<div class="character-modal__form-field">'
+                 + '<label class="character-modal__form-label" for="preg-year">Year</label>'
+                 + '<input type="number" id="preg-year" class="character-modal__form-input" '
+                 + 'value="' + _esc(defaultYear) + '" '
+                 + 'min="' + window_.minYear + '" '
+                 + 'max="' + window_.maxYear + '">'
+                 + '</div>';
+
+        content += '<div class="character-modal__form-field">'
+                 + '<label class="character-modal__form-label">Mode</label>'
+                 + '<label style="display:flex; align-items:center; gap:8px;">'
+                 + '<input type="radio" name="preg-mode" value="random" checked>'
+                 + '<span>Simulate (roll the dice)</span>'
+                 + '</label>'
+                 + '<label style="display:flex; align-items:center; gap:8px;">'
+                 + '<input type="radio" name="preg-mode" value="specify">'
+                 + '<span>Specify outcome</span>'
+                 + '</label>'
+                 + '</div>';
+
+        content += '<div id="preg-random-section">';
+
+        content += '<div class="character-modal__form-field">'
+                 + '<label class="character-modal__form-label" for="preg-attempt">'
+                 + 'Attempt Number (for spacing context)</label>'
+                 + '<input type="number" id="preg-attempt" class="character-modal__form-input" '
+                 + 'value="0" min="0">'
+                 + '</div>';
+
+        content += '<div class="character-modal__form-field">'
+                 + '<label style="display:flex; align-items:center; gap:8px;">'
+                 + '<input type="checkbox" id="preg-force-conception">'
+                 + '<span>Force conception</span>'
+                 + '</label>'
+                 + '</div>';
+
+        content += '<div class="character-modal__form-field">'
+                 + '<label style="display:flex; align-items:center; gap:8px;">'
+                 + '<input type="checkbox" id="preg-force-single">'
+                 + '<span>Force single birth (no twins/triplets)</span>'
+                 + '</label>'
+                 + '</div>';
+
+        content += '</div>';
+
+        content += '<div id="preg-specify-section" style="display:none;">';
+
+        content += '<div class="character-modal__form-field">'
+                 + '<label class="character-modal__form-label" for="preg-outcome">Outcome</label>'
+                 + '<select id="preg-outcome" class="character-modal__form-input">'
+                 + '<option value="live_birth">Live Birth</option>'
+                 + '<option value="stillbirth">Stillbirth</option>'
+                 + '<option value="miscarriage">Miscarriage</option>'
+                 + '<option value="no_conception">No Conception</option>'
+                 + '</select>'
+                 + '</div>';
+
+        content += '<div class="character-modal__form-field">'
+                 + '<label class="character-modal__form-label" for="preg-fetus-count">'
+                 + 'Number of Children</label>'
+                 + '<input type="number" id="preg-fetus-count" class="character-modal__form-input" '
+                 + 'value="1" min="1" max="3">'
+                 + '</div>';
+
+        content += '<div class="character-modal__form-field">'
+                 + '<label style="display:flex; align-items:center; gap:8px;">'
+                 + '<input type="checkbox" id="preg-complications">'
+                 + '<span>Pregnancy had complications</span>'
+                 + '</label>'
+                 + '</div>';
+
+        if (allowMaternalDeath) {
+            content += '<div class="character-modal__form-field">'
+                     + '<label style="display:flex; align-items:center; gap:8px;">'
+                     + '<input type="checkbox" id="preg-maternal-death">'
+                     + '<span>Mother died in childbirth (childbed fever)</span>'
+                     + '</label>'
+                     + '</div>';
+        }
+
+        content += '</div>';
+
+        content += '<div class="character-modal__form-field">'
+                 + '<label class="character-modal__form-label" for="preg-notes">Notes</label>'
+                 + '<textarea id="preg-notes" class="character-modal__form-input" rows="2"></textarea>'
+                 + '</div>';
+
+        content += '</div>';
+
+        var modal = window.openModal({
+            titleHtml: 'Pregnancy Attempt: ' + _esc(mother.name || ''),
+            contentHtml: content,
+            confirmText: 'Attempt',
+            cancelText: 'Cancel',
+            onOpen: function (modalElement) {
+                var randomSection = modalElement.querySelector('#preg-random-section');
+                var specifySection = modalElement.querySelector('#preg-specify-section');
+                var radios = modalElement.querySelectorAll('input[name="preg-mode"]');
+
+                function applyMode() {
+                    if (mode === 'random') {
+                        randomSection.style.display = '';
+                        specifySection.style.display = 'none';
+                    } else {
+                        randomSection.style.display = 'none';
+                        specifySection.style.display = '';
+                    }
+                }
+
+                for (var i = 0; i < radios.length; i++) {
+                    (function (radio) {
+                        radio.addEventListener('change', function () {
+                            if (radio.checked) {
+                                mode = radio.value;
+                                applyMode();
+                            }
+                        });
+                    })(radios[i]);
+                }
+
+                applyMode();
+            },
+            onConfirm: function () {
+                var yearInput = modal.element.querySelector('#preg-year');
+                var notesInput = modal.element.querySelector('#preg-notes');
+                var year = parseInt(yearInput.value, 10);
+
+                if (!Number.isInteger(year) || !window.isValidYear(year)) {
+                    throw new Error('Please enter a valid year.');
+                }
+
+                var commandOptions = {
+                    year: year,
+                    notes: notesInput.value || ''
+                };
+
+                if (mode === 'random') {
+                    var attemptInput = modal.element.querySelector('#preg-attempt');
+                    var forceConception = modal.element.querySelector('#preg-force-conception');
+                    var forceSingle = modal.element.querySelector('#preg-force-single');
+
+                    commandOptions.attemptNumber = parseInt(attemptInput.value, 10) || 0;
+                    if (forceConception.checked) commandOptions.forceConception = true;
+                    if (forceSingle.checked) commandOptions.forceSingle = true;
+                } else {
+                    var outcomeSelect = modal.element.querySelector('#preg-outcome');
+                    var fetusInput = modal.element.querySelector('#preg-fetus-count');
+                    var complicationsInput = modal.element.querySelector('#preg-complications');
+                    var maternalDeathInput = modal.element.querySelector('#preg-maternal-death');
+
+                    commandOptions.outcome = outcomeSelect.value;
+                    commandOptions.fetusCount = parseInt(fetusInput.value, 10) || 1;
+                    commandOptions.isMultiple = commandOptions.fetusCount > 1;
+                    commandOptions.hasComplications = complicationsInput.checked === true;
+                    commandOptions.maternalDeath = maternalDeathInput
+                        && maternalDeathInput.checked === true;
+                }
+
+                var result = ChC.recordPregnancyAttempt(
+                    motherId,
+                    father ? father.id : null,
+                    commandOptions
+                );
+
+                if (!result || result.success !== true) {
+                    throw new Error(result && result.reason
+                        ? result.reason
+                        : 'Failed to record pregnancy attempt.');
+                }
+
+                if (typeof onSuccess === 'function') {
+                    onSuccess(result);
+                }
+            }
+        });
