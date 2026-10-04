@@ -1,34 +1,66 @@
 /**
  * affair-commands.js
  *
- * Mutation and transaction boundary for affairs.
+ * Mutation boundary for affairs.
  *
- * An affair is a committed relationship with SECRET attribute, created
- * via RomanceCommands.startCommittedRelationship with forceAffair.
- * This module owns affair-specific metadata, discovery, and consequences.
+ * An affair is a committed relationship with the SECRET attribute.
+ * Creation delegates to RomanceCommands.startCommittedRelationship with
+ * forceAffair: true. Discovery, consequence application, legitimization,
+ * and reconciliation are owned here.
  *
- * RANDOMNESS:
- *   Caller supplies roll values, or window.Random service is used.
+ * Owns:
+ *   - creating affairs (delegating to RomanceCommands)
+ *   - rolling discovery (caller may supply roll, else Random service)
+ *   - applying consequences (breakup, murder, execution)
+ *   - ending affairs
+ *   - legitimizing affairs
+ *   - reconciling after an affair
+ *   - bulk ending all affairs for a character
+ *
+ * Depends on:
+ *   - RomanceCommands for creation
+ *   - RomanceRules, RomanceQueries for existence and attribute lookup
+ *   - AffairRules for policy
+ *   - AffairQueries for projections and discovery risk
+ *   - RelationshipCommands for state writes
+ *   - MurderCommands and ExecutionCommands if present (optional
+ *     cross-domain; absence degrades consequence handling gracefully)
+ *
+ * Does NOT own:
+ *   - direct state access (goes through RelationshipCommands)
+ *   - persistence (markDataDirty happens in RelationshipState)
+ *   - the definition of "affair" (RomanceRules.isAffair is sole owner)
+ *
+ * Randomness:
+ *   Every roll is either caller-supplied or drawn from window.Random.
  *   Never uses Math.random() directly.
+ *
+ * Every command returns { success: true, ... } or
+ * { success: false, code, message }. Never throws for domain errors.
+ *
+ * Load order: after relationship-commands.js, romance-commands.js,
+ * romance-rules.js, romance-queries.js, affair-rules.js, affair-queries.js.
  */
 
 (function() {
     'use strict';
 
-    var RC = window.RelationshipCommands;
-    var RQ = window.RelationshipQueries;
-    var RoC = window.RomanceCommands;
-    var RoQ = window.RomanceQueries;
-    var AR = window.AffairRules;
-    var AQ = window.AffairQueries;
+    var RC   = window.RelationshipCommands;
+    var RoC  = window.RomanceCommands;
+    var RR   = window.RomanceRules;
+    var RoQ  = window.RomanceQueries;
+    var AR   = window.AffairRules;
+    var AQ   = window.AffairQueries;
 
     var A = window.RELATIONSHIP_ARCHETYPES;
     var ATTR = window.RELATIONSHIP_ATTRIBUTES;
     var STATUS = window.RELATIONSHIP_STATUS;
 
-    if (!RC || !RQ || !RoC || !RoQ || !AR || !AQ || !A || !ATTR || !STATUS) {
-        throw new Error('affair-commands.js: relationship-*, romance-*, affair-* must load first');
+    if (!RC || !RoC || !RR || !RoQ || !AR || !AQ || !A || !ATTR || !STATUS) {
+        throw new Error('affair-commands.js: relationship-commands.js, romance-commands.js, romance-rules.js, romance-queries.js, affair-rules.js, affair-queries.js must load first');
     }
+
+    var COMMITTED = A.COMMITTED;
 
     // -------------------------------------------------------------------------
     // DEPENDENCIES
@@ -39,13 +71,6 @@
             throw new Error('affair-commands.js: getCharacterById required');
         }
         return window.getCharacterById(id);
-    }
-
-    function _getCharacters() {
-        if (typeof window.getCharacters !== 'function') {
-            throw new Error('affair-commands.js: getCharacters required');
-        }
-        return window.getCharacters();
     }
 
     function _getCurrentYear() {
@@ -71,11 +96,29 @@
         }
     }
 
-    function _commit() {
-        if (typeof window.saveMasterData === 'function') {
-            window.saveMasterData();
+    function _requireMurderCommands() {
+        if (typeof window.MurderCommands !== 'object' || window.MurderCommands === null) {
+            return null;
         }
+        if (typeof window.MurderCommands.commitMurder !== 'function') {
+            return null;
+        }
+        return window.MurderCommands;
     }
+
+    function _requireExecutionCommands() {
+        if (typeof window.ExecutionCommands !== 'object' || window.ExecutionCommands === null) {
+            return null;
+        }
+        if (typeof window.ExecutionCommands.execute !== 'function') {
+            return null;
+        }
+        return window.ExecutionCommands;
+    }
+
+    // -------------------------------------------------------------------------
+    // RESULT HELPERS
+    // -------------------------------------------------------------------------
 
     function _fail(code, message) {
         return { success: false, code: code, message: message };
@@ -87,174 +130,255 @@
 
     // -------------------------------------------------------------------------
     // CREATE
+    //
+    // options: {
+    //   affairType?: 'secret' | 'open' | 'emotional' | 'one_night',
+    //   startYear?,
+    //   isScandalous?: boolean,
+    //   notes?: string
+    // }
+    //
+    // Delegates to RomanceCommands.startCommittedRelationship with
+    // forceAffair: true. The resulting relationship carries SECRET,
+    // which is what makes it an affair. Affair-specific metadata
+    // (affairType, discovery state, consequence state) is merged in a
+    // second update.
     // -------------------------------------------------------------------------
 
-    /**
-     * options: {
-     *   affairType: 'secret' | 'open' | 'emotional' | 'one_night'
-     *   startYear
-     *   isScandalous: boolean
-     *   notes
-     * }
-     */
-    function createAffair(characterAId, characterBId, options) {
+    function createAffair(idA, idB, options) {
         options = options || {};
-        if (!characterAId || !characterBId) return _fail('MISSING_ID', 'both characters required');
-        if (characterAId === characterBId) return _fail('SAME_PERSON', 'cannot have affair with self');
+
+        if (typeof idA !== 'string' || typeof idB !== 'string') {
+            return _fail('MISSING_ID', 'both character ids required');
+        }
+        if (idA === idB) {
+            return _fail('SAME_CHARACTER', 'cannot have an affair with oneself');
+        }
 
         var affairType = AR.normalizeAffairType(options.affairType || AR.AFFAIR_TYPE.SECRET);
-        var startYear = options.startYear !== undefined ? options.startYear : _getCurrentYear();
+        var startYear = options.startYear !== undefined
+            ? options.startYear
+            : _getCurrentYear();
 
-        // Delegate to RomanceCommands; forceAffair ensures SECRET is applied
-        var result = RoC.startCommittedRelationship(characterAId, characterBId, {
+        var romanceResult = RoC.startCommittedRelationship(idA, idB, {
             startYear: startYear,
             forceAffair: true,
             isScandalous: !!options.isScandalous,
-            notes: options.notes || ''
+            notes: typeof options.notes === 'string' ? options.notes : ''
         });
-        if (!result.success) return result;
+        if (!romanceResult.success) return romanceResult;
 
-        // Write affair-specific metadata
-        RC.update(result.relationship.id, {
+        var relId = romanceResult.relationship.relationshipId
+            || romanceResult.relationship.id;
+
+        var metaUpdate = RC.update(relId, {
             metadata: {
                 affairType: affairType,
-                isAffair: true,
                 discovered: false,
                 discoveryYear: null,
                 discoveryCircumstances: null,
-                consequences: []
+                discovererId: null,
+                consequencesTriggered: false,
+                consequences: [],
+                publicBehavior: !!options.publicBehavior
             }
         });
+        if (!metaUpdate.success) return metaUpdate;
 
-        var charA = _getCharacter(characterAId);
-        var charB = _getCharacter(characterBId);
+        var charA = _getCharacter(idA);
+        var charB = _getCharacter(idB);
+
         _logEvent('affair', 'Affair Formed',
-            (charA && charA.name) + ' and ' + (charB && charB.name) +
+            (charA && charA.name ? charA.name : idA) + ' and ' +
+            (charB && charB.name ? charB.name : idB) +
             ' began a ' + affairType + ' affair in ' + startYear,
             [charA, charB]);
 
-        _commit();
         return _ok({
-            relationship: RQ.getById(result.relationship.id),
+            relationship: AQ.getAffairById(relId),
             affairType: affairType
         });
     }
 
     // -------------------------------------------------------------------------
     // DISCOVERY
+    //
+    // options: {
+    //   roll?: number,             // if omitted, drawn from Random service
+    //   year?: number,
+    //   circumstances?: string,
+    //   discovererId?: string
+    // }
     // -------------------------------------------------------------------------
 
-    /**
-     * Rolls discovery for one affair.
-     * options: { roll (optional), circumstances, discovererId }
-     */
     function rollDiscovery(relationshipId, options) {
         options = options || {};
-        var rel = RQ.getById(relationshipId);
-        if (!rel) return _fail('NOT_FOUND', 'relationship not found');
-        if (rel.type !== A.COMMITTED) return _fail('NOT_AFFAIR', 'not a committed relationship');
-        if (!rel.attributes || rel.attributes.indexOf(ATTR.SECRET) === -1) {
+
+        if (typeof relationshipId !== 'string' || relationshipId.length === 0) {
+            return _fail('MISSING_ID', 'relationshipId required');
+        }
+
+        var rec = RC ? window.RelationshipQueries.getById(relationshipId) : null;
+        if (!rec) return _fail('NOT_FOUND', 'relationship not found');
+        if (rec.type !== COMMITTED) {
+            return _fail('NOT_AFFAIR', 'not a committed relationship');
+        }
+        if (!RR.isAffair(rec.attributes)) {
             return _fail('NOT_AFFAIR', 'not an affair');
         }
-        if (rel.metadata && rel.metadata.discovered) {
-            return _ok({ alreadyDiscovered: true });
+        if (rec.status !== STATUS.ONGOING) {
+            return _fail('NOT_ACTIVE', 'affair not ongoing');
+        }
+        if (rec.metadata && rec.metadata.discovered) {
+            return _ok({ alreadyDiscovered: true, discovered: true });
         }
 
-        var riskProjection = AQ.getDiscoveryRisk(relationshipId);
-        if (!riskProjection) return _fail('NO_RISK', 'could not compute discovery risk');
+        var riskProjection = AQ.getDiscoveryRisk(relationshipId, {
+            referenceYear: options.year
+        });
+        if (!riskProjection) {
+            return _fail('NO_RISK', 'could not compute discovery risk');
+        }
 
-        var roll = options.roll !== undefined ? options.roll : _roll();
-        var discovered = roll < riskProjection.annualChance;
-        if (!discovered) return _ok({ discovered: false, roll: roll });
+        var roll = (typeof options.roll === 'number') ? options.roll : _roll();
+        var evaluated = AR.evaluateDiscovery({
+            risk: riskProjection.risk,
+            roll: roll
+        });
+        if (!evaluated.valid) {
+            return _fail('INVALID_DISCOVERY', 'evaluation failed');
+        }
+
+        if (!evaluated.discovered) {
+            return _ok({
+                discovered: false,
+                roll: roll,
+                chance: evaluated.chance,
+                risk: riskProjection.risk
+            });
+        }
 
         var year = options.year !== undefined ? options.year : _getCurrentYear();
-        var circumstances = options.circumstances || 'Suspicious behavior was noticed';
+        var circumstances = (typeof options.circumstances === 'string' && options.circumstances.length > 0)
+            ? options.circumstances
+            : 'Suspicious behavior was noticed';
 
-        RC.update(relationshipId, {
+        var updateResult = RC.update(relationshipId, {
             metadata: {
                 discovered: true,
                 discoveryYear: year,
                 discoveryCircumstances: circumstances,
                 discoveryRisk: riskProjection.risk,
-                discovererId: options.discovererId || null
+                discovererId: typeof options.discovererId === 'string'
+                    ? options.discovererId
+                    : null
             }
         });
+        if (!updateResult.success) return updateResult;
 
         _logEvent('affair', 'Affair Discovered',
-            'An affair was discovered in ' + year,
-            [_getCharacter(rel.participantA), _getCharacter(rel.participantB)]);
+            'An affair between ' +
+            (function() {
+                var a = _getCharacter(rec.participantA);
+                var b = _getCharacter(rec.participantB);
+                return (a && a.name ? a.name : rec.participantA) + ' and ' +
+                       (b && b.name ? b.name : rec.participantB);
+            })() +
+            ' was discovered in ' + year,
+            [_getCharacter(rec.participantA), _getCharacter(rec.participantB)]);
 
-        _commit();
         return _ok({
             discovered: true,
             year: year,
             circumstances: circumstances,
-            risk: riskProjection.risk
+            risk: riskProjection.risk,
+            chance: evaluated.chance,
+            roll: roll
         });
     }
 
     // -------------------------------------------------------------------------
-    // CONSEQUENCES
+    // APPLY CONSEQUENCES
+    //
+    // options: {
+    //   discovererId?,
+    //   breakupRoll?, murderRoll?, executionRoll?,
+    //   breakupChance?, murderChance?, executionChance?,
+    //   victimId?, rulerId?,
+    //   breakUpExisting?: boolean (default true)
+    // }
     // -------------------------------------------------------------------------
 
-    /**
-     * Applies consequences to a discovered affair.
-     *
-     * options: {
-     *   discovererId,
-     *   breakupRoll, murderRoll, executionRoll,  // optional; else rolled
-     *   victimId,
-     *   rulerId,
-     *   breakUpExisting: boolean (default true)
-     * }
-     *
-     * Returns { consequences: [{ type, success, details }] }
-     */
     function applyConsequences(relationshipId, options) {
         options = options || {};
-        var rel = RQ.getById(relationshipId);
-        if (!rel) return _fail('NOT_FOUND', 'relationship not found');
-        if (rel.type !== A.COMMITTED) return _fail('NOT_AFFAIR', 'not a committed relationship');
-        if (!rel.attributes || rel.attributes.indexOf(ATTR.SECRET) === -1) {
+
+        if (typeof relationshipId !== 'string' || relationshipId.length === 0) {
+            return _fail('MISSING_ID', 'relationshipId required');
+        }
+
+        var rec = window.RelationshipQueries.getById(relationshipId);
+        if (!rec) return _fail('NOT_FOUND', 'relationship not found');
+        if (rec.type !== COMMITTED) {
+            return _fail('NOT_AFFAIR', 'not a committed relationship');
+        }
+        if (!RR.isAffair(rec.attributes)) {
             return _fail('NOT_AFFAIR', 'not an affair');
         }
-        if (!rel.metadata || !rel.metadata.discovered) {
+        if (!rec.metadata || !rec.metadata.discovered) {
             return _fail('NOT_DISCOVERED', 'affair not yet discovered');
+        }
+        if (rec.metadata.consequencesTriggered) {
+            return _ok({
+                alreadyApplied: true,
+                consequences: Array.isArray(rec.metadata.consequences)
+                    ? rec.metadata.consequences.slice()
+                    : []
+            });
         }
 
         var consequences = [];
 
-        // DISCOVERY marker (always)
+        // DISCOVERY marker
         consequences.push({
             type: AR.CONSEQUENCE.DISCOVERY,
             success: true,
-            details: { year: rel.metadata.discoveryYear }
+            details: { year: rec.metadata.discoveryYear }
         });
 
-        // SCANDAL marker (always)
+        // SCANDAL marker with impact computed from facts
+        var scandal = _computeScandal(rec);
         consequences.push({
             type: AR.CONSEQUENCE.SCANDAL,
             success: true,
-            details: {}
+            details: scandal
         });
 
-        // Get partners who would be affected
-        var charA = _getCharacter(rel.participantA);
-        var charB = _getCharacter(rel.participantB);
-        if (!charA || !charB) return _fail('MISSING_CHARACTER', 'participant missing');
-
-        var partnersA = RoQ.getActiveCommittedPartners(rel.participantA)
-            .filter(function(p) { return p.relationship.id !== rel.id; });
-        var partnersB = RoQ.getActiveCommittedPartners(rel.participantB)
-            .filter(function(p) { return p.relationship.id !== rel.id; });
-
+        // Partnered participants?
+        var partnersA = _otherCommittedPartners(rec.participantA, relationshipId);
+        var partnersB = _otherCommittedPartners(rec.participantB, relationshipId);
         var hasPartneredParticipant = partnersA.length > 0 || partnersB.length > 0;
-        var eligible = AR.eligibleConsequences({ hasPartneredParticipant: hasPartneredParticipant });
+
+        var eligible = AR.eligibleConsequences({
+            hasPartneredParticipant: hasPartneredParticipant
+        });
 
         // BREAKUP
-        if (eligible.indexOf(AR.CONSEQUENCE.BREAKUP) !== -1 && options.breakUpExisting !== false) {
-            var breakupRoll = options.breakupRoll !== undefined ? options.breakupRoll : _roll();
-            var breakupResult = _applyBreakups(rel, partnersA, partnersB, breakupRoll, options.breakupChance);
+        if (eligible.indexOf(AR.CONSEQUENCE.BREAKUP) !== -1 &&
+            options.breakUpExisting !== false) {
+            var breakupRoll = (typeof options.breakupRoll === 'number')
+                ? options.breakupRoll
+                : _roll();
+            var breakupChance = (typeof options.breakupChance === 'number')
+                ? options.breakupChance
+                : AR.DEFAULT_BREAKUP_CHANCE;
+
+            var breakupResult = _applyBreakups(
+                rec,
+                partnersA,
+                partnersB,
+                breakupRoll,
+                breakupChance
+            );
             consequences.push({
                 type: AR.CONSEQUENCE.BREAKUP,
                 success: breakupResult.count > 0,
@@ -262,54 +386,96 @@
             });
         }
 
-        // MURDER (delegates to external MurderCommands if present)
-        if (eligible.indexOf(AR.CONSEQUENCE.MURDER) !== -1 &&
-            typeof window.MurderCommands !== 'undefined' &&
-            typeof window.MurderCommands.commitMurder === 'function') {
-            var murderRoll = options.murderRoll !== undefined ? options.murderRoll : _roll();
-            var chance = options.murderChance !== undefined ? options.murderChance : AR.DEFAULT_MURDER_CHANCE;
-            if (murderRoll < chance) {
-                var victimId = options.victimId || rel.participantA;
-                var killerId = options.discovererId || rel.participantB;
-                var victim = _getCharacter(victimId);
-                var killer = _getCharacter(killerId);
-                if (victim && killer && victim.id !== killer.id) {
-                    var m = window.MurderCommands.commitMurder(victimId, killerId, {
-                        year: rel.metadata.discoveryYear,
-                        reason: 'affair discovery'
-                    });
+        // MURDER
+        if (eligible.indexOf(AR.CONSEQUENCE.MURDER) !== -1) {
+            var murderCmds = _requireMurderCommands();
+            if (murderCmds) {
+                var murderRoll = (typeof options.murderRoll === 'number')
+                    ? options.murderRoll
+                    : _roll();
+                var murderChance = (typeof options.murderChance === 'number')
+                    ? options.murderChance
+                    : AR.DEFAULT_MURDER_CHANCE;
+
+                if (murderRoll < murderChance) {
+                    var victimId = options.victimId || rec.participantA;
+                    var killerId = options.discovererId || rec.participantB;
+                    if (victimId !== killerId) {
+                        var murderResult = murderCmds.commitMurder(victimId, killerId, {
+                            year: rec.metadata.discoveryYear,
+                            reason: 'affair discovery'
+                        });
+                        consequences.push({
+                            type: AR.CONSEQUENCE.MURDER,
+                            success: !!(murderResult && murderResult.success),
+                            details: murderResult || { reason: 'no_result' }
+                        });
+                    } else {
+                        consequences.push({
+                            type: AR.CONSEQUENCE.MURDER,
+                            success: false,
+                            details: { reason: 'victim_equals_killer' }
+                        });
+                    }
+                } else {
                     consequences.push({
                         type: AR.CONSEQUENCE.MURDER,
-                        success: !!(m && m.success),
-                        details: m
+                        success: false,
+                        details: { roll: murderRoll, chance: murderChance, triggered: false }
                     });
                 }
+            } else {
+                consequences.push({
+                    type: AR.CONSEQUENCE.MURDER,
+                    success: false,
+                    details: { reason: 'MurderCommands_unavailable' }
+                });
             }
         }
 
-        // EXECUTION (delegates to external ExecutionCommands if present)
-        if (eligible.indexOf(AR.CONSEQUENCE.EXECUTION) !== -1 &&
-            typeof window.ExecutionCommands !== 'undefined' &&
-            typeof window.ExecutionCommands.execute === 'function') {
-            var execRoll = options.executionRoll !== undefined ? options.executionRoll : _roll();
-            var execChance = options.executionChance !== undefined ? options.executionChance : AR.DEFAULT_EXECUTION_CHANCE;
-            if (execRoll < execChance) {
-                var rulerId = options.rulerId || options.discovererId;
-                var e = window.ExecutionCommands.execute(rel.participantA, rel.participantB, {
-                    year: rel.metadata.discoveryYear,
-                    rulerId: rulerId,
-                    reason: 'adultery'
-                });
+        // EXECUTION
+        if (eligible.indexOf(AR.CONSEQUENCE.EXECUTION) !== -1) {
+            var execCmds = _requireExecutionCommands();
+            if (execCmds) {
+                var execRoll = (typeof options.executionRoll === 'number')
+                    ? options.executionRoll
+                    : _roll();
+                var execChance = (typeof options.executionChance === 'number')
+                    ? options.executionChance
+                    : AR.DEFAULT_EXECUTION_CHANCE;
+
+                if (execRoll < execChance) {
+                    var rulerId = options.rulerId || options.discovererId || null;
+                    var execResult = execCmds.execute(rec.participantA, rec.participantB, {
+                        year: rec.metadata.discoveryYear,
+                        rulerId: rulerId,
+                        reason: 'adultery'
+                    });
+                    consequences.push({
+                        type: AR.CONSEQUENCE.EXECUTION,
+                        success: !!(execResult && execResult.success),
+                        details: execResult || { reason: 'no_result' }
+                    });
+                } else {
+                    consequences.push({
+                        type: AR.CONSEQUENCE.EXECUTION,
+                        success: false,
+                        details: { roll: execRoll, chance: execChance, triggered: false }
+                    });
+                }
+            } else {
                 consequences.push({
                     type: AR.CONSEQUENCE.EXECUTION,
-                    success: !!(e && e.success),
-                    details: e
+                    success: false,
+                    details: { reason: 'ExecutionCommands_unavailable' }
                 });
             }
         }
 
-        // Record what was applied
-        var types = consequences.map(function(c) { return c.type; });
+        // Persist the consequence summary
+        var types = [];
+        for (var i = 0; i < consequences.length; i++) types.push(consequences[i].type);
+
         RC.update(relationshipId, {
             metadata: {
                 consequencesTriggered: true,
@@ -317,169 +483,312 @@
             }
         });
 
-        _commit();
         return _ok({ consequences: consequences });
     }
 
-    function _applyBreakups(rel, partnersA, partnersB, roll, overrideChance) {
-        var chance = overrideChance !== undefined ? overrideChance : AR.DEFAULT_BREAKUP_CHANCE;
-        var broke = [];
-        if (roll >= chance) return { count: 0, ended: broke };
+    // -------------------------------------------------------------------------
+    // SCANDAL / BREAKUP HELPERS
+    // -------------------------------------------------------------------------
 
-        var year = rel.metadata.discoveryYear || _getCurrentYear();
+    function _computeScandal(rec) {
+        var charA = _getCharacter(rec.participantA);
+        var charB = _getCharacter(rec.participantB);
+
+        function _rankPriority(c) {
+            if (!c || !c.activeRankId) return 5;
+            if (typeof window.getRankById !== 'function') return 5;
+            var r = window.getRankById(c.activeRankId);
+            return (r && typeof r.priority === 'number') ? r.priority : 5;
+        }
+
+        return AR.calculateScandalImpact({
+            affairType: (rec.metadata && rec.metadata.affairType) || AR.AFFAIR_TYPE.SECRET,
+            discovered: !!(rec.metadata && rec.metadata.discovered),
+            participants: [
+                {
+                    id: rec.participantA,
+                    rankPriority: _rankPriority(charA),
+                    hasActivePartners: _otherCommittedPartners(rec.participantA, rec.id).length > 0
+                },
+                {
+                    id: rec.participantB,
+                    rankPriority: _rankPriority(charB),
+                    hasActivePartners: _otherCommittedPartners(rec.participantB, rec.id).length > 0
+                }
+            ]
+        });
+    }
+
+    function _otherCommittedPartners(characterId, excludeRelId) {
+        var list = RoQ.getActiveCommittedPartners(characterId);
+        var out = [];
+        for (var i = 0; i < list.length; i++) {
+            if (list[i].relationshipId !== excludeRelId) {
+                out.push(list[i]);
+            }
+        }
+        return out;
+    }
+
+    function _applyBreakups(rec, partnersA, partnersB, roll, chance) {
+        var ended = [];
+        if (roll >= chance) {
+            return { count: 0, ended: ended, roll: roll, chance: chance };
+        }
+
+        var year = rec.metadata && typeof rec.metadata.discoveryYear === 'number'
+            ? rec.metadata.discoveryYear
+            : _getCurrentYear();
 
         var i;
         for (i = 0; i < partnersA.length; i++) {
-            var r = RoC.breakUp(partnersA[i].relationship.id, {
+            var r = RoC.breakUp(partnersA[i].relationshipId, {
                 endYear: year,
                 reason: 'affair discovered'
             });
-            if (r.success) broke.push(partnersA[i].relationship.id);
+            if (r.success) ended.push(partnersA[i].relationshipId);
         }
         for (i = 0; i < partnersB.length; i++) {
-            var r2 = RoC.breakUp(partnersB[i].relationship.id, {
+            var r2 = RoC.breakUp(partnersB[i].relationshipId, {
                 endYear: year,
                 reason: 'affair discovered'
             });
-            if (r2.success) broke.push(partnersB[i].relationship.id);
+            if (r2.success) ended.push(partnersB[i].relationshipId);
         }
 
-        return { count: broke.length, ended: broke };
+        return { count: ended.length, ended: ended, roll: roll, chance: chance };
     }
 
     // -------------------------------------------------------------------------
-    // END / LEGITIMIZE / RECONCILE
+    // END AFFAIR
+    //
+    // options: { endYear?, reason? }
     // -------------------------------------------------------------------------
 
     function endAffair(relationshipId, options) {
         options = options || {};
-        var rel = RQ.getById(relationshipId);
-        if (!rel) return _fail('NOT_FOUND', 'relationship not found');
-        if (rel.type !== A.COMMITTED) return _fail('NOT_AFFAIR', 'not committed');
-        if (!rel.attributes || rel.attributes.indexOf(ATTR.SECRET) === -1) {
-            return _fail('NOT_AFFAIR', 'not an affair');
+
+        if (typeof relationshipId !== 'string' || relationshipId.length === 0) {
+            return _fail('MISSING_ID', 'relationshipId required');
         }
-        if (rel.status !== STATUS.ONGOING) return _fail('NOT_ACTIVE', 'not ongoing');
+
+        var rec = window.RelationshipQueries.getById(relationshipId);
+        if (!rec) return _fail('NOT_FOUND', 'relationship not found');
+        if (rec.type !== COMMITTED) return _fail('NOT_AFFAIR', 'not committed');
+        if (!RR.isAffair(rec.attributes)) return _fail('NOT_AFFAIR', 'not an affair');
+        if (rec.status !== STATUS.ONGOING) return _fail('NOT_ACTIVE', 'not ongoing');
 
         var year = options.endYear !== undefined ? options.endYear : _getCurrentYear();
-        var reason = options.reason || 'affair ended';
+        var reason = (typeof options.reason === 'string' && options.reason.length > 0)
+            ? options.reason
+            : 'affair ended';
 
-        var result = RoC.breakUp(relationshipId, {
-            endYear: year,
-            reason: reason
-        });
-        if (result.success) _commit();
-        return result;
-    }
-
-    /**
-     * Legitimize = remove SECRET attribute, keep committed relationship.
-     * Single mutation. No end+create dance.
-     */
-    function legitimizeAffair(relationshipId, options) {
-        options = options || {};
-        var rel = RQ.getById(relationshipId);
-        if (!rel) return _fail('NOT_FOUND', 'relationship not found');
-        if (rel.type !== A.COMMITTED) return _fail('NOT_AFFAIR', 'not committed');
-        if (!rel.attributes || rel.attributes.indexOf(ATTR.SECRET) === -1) {
-            return _fail('NOT_AFFAIR', 'not an affair');
-        }
-
-        var year = options.legitimizationYear !== undefined ? options.legitimizationYear : _getCurrentYear();
-        var removeAttrs = [ATTR.SECRET];
-        var newAttrs = rel.attributes.filter(function(a) {
-            return removeAttrs.indexOf(a) === -1;
-        });
-
-        // Optionally add attributes supplied by caller
-        var extra = options.attributes || [];
-        for (var i = 0; i < extra.length; i++) {
-            if (newAttrs.indexOf(extra[i]) === -1) newAttrs.push(extra[i]);
-        }
-
-        var result = RC.update(relationshipId, {
-            attributes: newAttrs,
-            metadata: {
-                legitimizedFromAffair: true,
-                legitimizationYear: year,
-                discoveryCircumstances: rel.metadata ? rel.metadata.discoveryCircumstances : null
-            }
-        });
+        var result = RC.end(relationshipId, year, reason);
         if (!result.success) return result;
 
-        _logEvent('affair', 'Affair Legitimized',
-            'Affair legitimized in ' + year,
-            [_getCharacter(rel.participantA), _getCharacter(rel.participantB)]);
+        _logEvent('affair', 'Affair Ended',
+            'An affair ended in ' + year + ' (' + reason + ')',
+            [_getCharacter(rec.participantA), _getCharacter(rec.participantB)]);
 
-        _commit();
         return _ok({ relationship: result.relationship });
     }
 
-    /**
-     * Reconcile = wronged party accepts the adulterer back.
-     * In this model, reconciliation means: the affair ends, but the
-     * wronged party's prior committed relationship remains ongoing.
-     * Since breakups are separate, this command is a decision record.
-     */
+    // -------------------------------------------------------------------------
+    // LEGITIMIZE AFFAIR
+    //
+    // Removes SECRET, adds PUBLIC, optionally merges extra attributes.
+    // Cultural gating applies if extras include cultural attributes.
+    //
+    // options: {
+    //   legitimizationYear?,
+    //   extraAttributes?: string[]
+    // }
+    // -------------------------------------------------------------------------
+
+    function legitimizeAffair(relationshipId, options) {
+        options = options || {};
+
+        if (typeof relationshipId !== 'string' || relationshipId.length === 0) {
+            return _fail('MISSING_ID', 'relationshipId required');
+        }
+
+        var rec = window.RelationshipQueries.getById(relationshipId);
+        if (!rec) return _fail('NOT_FOUND', 'relationship not found');
+        if (rec.type !== COMMITTED) return _fail('NOT_AFFAIR', 'not committed');
+
+        var check = AR.canLegitimize({
+            status: rec.status,
+            attributes: rec.attributes
+        });
+        if (!check.valid) return _fail('CANNOT_LEGITIMIZE', check.reason);
+
+        var resolved = AR.resolveLegitimizedAttributes({
+            currentAttributes: rec.attributes,
+            extraAttributes: options.extraAttributes || []
+        });
+
+        // Structural validation
+        var structural = RR.validateAttributes(COMMITTED, resolved);
+        if (!structural.valid) {
+            return _fail('INVALID_ATTRIBUTES', structural.errors.join('; '));
+        }
+
+        // Cultural gating for any cultural attributes in the resolved set.
+        var hasCultural = false;
+        for (var i = 0; i < resolved.length; i++) {
+            if (window.RELATIONSHIP_TYPES.isCulturalAttribute(resolved[i])) {
+                hasCultural = true;
+                break;
+            }
+        }
+        if (hasCultural) {
+            var charA = _getCharacter(rec.participantA);
+            var charB = _getCharacter(rec.participantB);
+            var cultureA = (charA && typeof charA.cultureId === 'string') ? charA.cultureId : null;
+            var cultureB = (charB && typeof charB.cultureId === 'string') ? charB.cultureId : null;
+            var cultureCheck = RR.validateAttributesForCulture({
+                attributes: resolved,
+                cultureA: cultureA,
+                cultureB: cultureB
+            });
+            if (!cultureCheck.valid) {
+                return _fail('CULTURAL_ATTRIBUTE_REJECTED', cultureCheck.errors.join('; '));
+            }
+        }
+
+        var year = options.legitimizationYear !== undefined
+            ? options.legitimizationYear
+            : _getCurrentYear();
+
+        var updateResult = RC.update(relationshipId, {
+            attributes: resolved,
+            metadata: {
+                legitimizedFromAffair: true,
+                legitimizationYear: year
+            }
+        });
+        if (!updateResult.success) return updateResult;
+
+        _logEvent('affair', 'Affair Legitimized',
+            'An affair was legitimized in ' + year,
+            [_getCharacter(rec.participantA), _getCharacter(rec.participantB)]);
+
+        return _ok({ relationship: window.RelationshipQueries.getById(relationshipId) });
+    }
+
+    // -------------------------------------------------------------------------
+    // RECONCILE AFTER AFFAIR
+    //
+    // Records a decision by the wronged party to accept the adulterer
+    // back. This is a decision record; the actual ending of affairs and
+    // partnerships is the caller's responsibility (RomanceCommands.breakUp
+    // is the canonical path).
+    //
+    // options: { roll?, year?, hasChildren? }
+    // -------------------------------------------------------------------------
+
     function reconcileAfterAffair(relationshipId, wrongedPartyId, options) {
         options = options || {};
-        var rel = RQ.getById(relationshipId);
-        if (!rel) return _fail('NOT_FOUND', 'relationship not found');
+
+        if (typeof relationshipId !== 'string' || relationshipId.length === 0) {
+            return _fail('MISSING_ID', 'relationshipId required');
+        }
+        if (typeof wrongedPartyId !== 'string' || wrongedPartyId.length === 0) {
+            return _fail('MISSING_ID', 'wrongedPartyId required');
+        }
+
+        var rec = window.RelationshipQueries.getById(relationshipId);
+        if (!rec) return _fail('NOT_FOUND', 'relationship not found');
 
         var wronged = _getCharacter(wrongedPartyId);
         if (!wronged) return _fail('MISSING_CHARACTER', 'wronged party not found');
 
         var duration = 0;
-        if (typeof rel.startYear === 'number') {
-            var endY = rel.endYear || _getCurrentYear();
-            duration = Math.max(0, endY - rel.startYear);
+        if (typeof rec.startYear === 'number') {
+            var endY = typeof rec.endYear === 'number' ? rec.endYear : _getCurrentYear();
+            duration = Math.max(0, endY - rec.startYear);
         }
 
-        var chance = AR.calculateReconciliationChance({
-            durationYears: duration,
-            hasChildren: false,
-            wrongedPartyRankPriority: 5,
-            affairType: rel.metadata ? rel.metadata.affairType : AR.AFFAIR_TYPE.SECRET
-        });
+        var roll = (typeof options.roll === 'number') ? options.roll : _roll();
 
-        var roll = options.roll !== undefined ? options.roll : _roll();
-        var success = roll < chance;
+        var affairType = (rec.metadata && typeof rec.metadata.affairType === 'string')
+            ? rec.metadata.affairType
+            : AR.AFFAIR_TYPE.SECRET;
+
+        var evaluated = AR.evaluateReconciliation({
+            wrongedPartyId: wrongedPartyId,
+            affairType: affairType,
+            durationYears: duration,
+            hasChildren: !!options.hasChildren,
+            wrongedPartyRankPriority: _rankPriority(wronged),
+            roll: roll
+        });
+        if (!evaluated.valid) {
+            return _fail('INVALID_RECONCILIATION', 'evaluation failed');
+        }
 
         _logEvent('affair', 'Reconciliation',
-            (success ? 'Successful' : 'Failed') +
-            ' reconciliation attempt by ' + wronged.name,
+            (evaluated.reconciled ? 'Successful' : 'Failed') +
+            ' reconciliation attempt by ' +
+            (wronged.name ? wronged.name : wrongedPartyId),
             [wronged]);
 
-        _commit();
         return _ok({
-            success: success,
-            chance: chance,
+            reconciled: evaluated.reconciled,
+            chance: evaluated.chance,
             roll: roll,
             wrongedPartyId: wrongedPartyId
         });
     }
 
     // -------------------------------------------------------------------------
-    // BULK
+    // BULK END
+    //
+    // options: { endYear?, reason? }
     // -------------------------------------------------------------------------
 
     function endAllAffairsForCharacter(characterId, options) {
         options = options || {};
-        var affairs = RoQ.getActiveAffairsForCharacter(characterId);
+
+        if (typeof characterId !== 'string' || characterId.length === 0) {
+            return _fail('MISSING_ID', 'characterId required');
+        }
+
+        var affairs = RoQ.getActiveAffairs(characterId);
         var ended = 0;
+        var failed = [];
+        var year = options.endYear !== undefined ? options.endYear : _getCurrentYear();
+
         for (var i = 0; i < affairs.length; i++) {
-            var otherId = affairs[i].participantA === characterId
-                ? affairs[i].participantB
-                : affairs[i].participantA;
-            var r = endAffair(affairs[i].id, {
-                endYear: options.endYear,
+            var r = endAffair(affairs[i].relationshipId, {
+                endYear: year,
                 reason: options.reason
             });
             if (r.success) ended++;
+            else failed.push({ id: affairs[i].relationshipId, code: r.code, message: r.message });
         }
-        return _ok({ ended: ended });
+
+        return _ok({
+            ended: ended,
+            failed: failed,
+            count: ended,
+            failedCount: failed.length
+        });
     }
 
+    // -------------------------------------------------------------------------
+    // HELPERS
+    // -------------------------------------------------------------------------
+
+    function _rankPriority(character) {
+        if (!character || !character.activeRankId) return 5;
+        if (typeof window.getRankById !== 'function') return 5;
+        var r = window.getRankById(character.activeRankId);
+        return (r && typeof r.priority === 'number') ? r.priority : 5;
+    }
+
+    // -------------------------------------------------------------------------
+    // EXPORTS
     // -------------------------------------------------------------------------
 
     window.AffairCommands = {
