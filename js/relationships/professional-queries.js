@@ -1,94 +1,149 @@
 /**
- * professional-queries.js
+ * =============================================================================
+ * STILL WATERS - PROFESSIONAL QUERIES (professional-queries.js)
+ * =============================================================================
  *
- * Semantic reads for professional relationships.
+ * LOCATION: js/social/professional-queries.js
+ *
+ * Semantic reads for professional relationship edges.
  *
  * DIRECTION
- *   apprenticeship    participantA = master,   participantB = apprentice
- *   mastership        participantA = master,   participantB = expert
- *   employment        participantA = employer, participantB = employee
- *   guild_membership  participantA = guild,    participantB = member
  *
- * Owns:
- *   - projections of professional relationships from the perspective
- *     of either participant
- *   - lookups: masters of, apprentices of, employers of, employees of,
- *     guilds of, members of
- *   - existence checks
- *   - statistics
+ *   apprenticeship    A = master,     B = apprentice
+ *   mastership        A = master,     B = expert
+ *   employment        A = employer,   B = employee
+ *   guild_membership  A = guild,      B = member
  *
- * Depends on:
- *   - RelationshipQueries for raw edge reads
- *   - ProfessionalRules for tier classification
- *   - SkillQueries for skill level reads (professional is the domain
- *     allowed to interpret skill data on relationship projections)
+ * OWNERSHIP
  *
- * Does NOT own:
- *   - state access (goes through RelationshipQueries)
- *   - mutation
- *   - persistence
- *   - randomness
- *   - skill writes (SkillCommands / CharacterCommands own them)
+ *   ProfessionalQueries owns:
+ *       - defensive projections of professional edges, from either
+ *         participant's perspective
+ *       - existence checks
+ *       - counts and simple statistics
  *
- * Every returned value is a defensive projection. Never a live record.
- * Unknown inputs return null or []. No fabrication.
+ *   ProfessionalQueries does NOT own:
+ *       - state access (goes through RelationshipQueries)
+ *       - mutation (see ProfessionalCommands)
+ *       - apprenticeship lifecycle policy (see ApprenticeshipRules)
+ *       - skill storage  (see CharacterCommands.getProfession — the
+ *         character domain owns `character.professions`)
+ *       - role catalogue (see RoleState.getRole)
  *
- * Load order: after relationship-queries.js and professional-rules.js.
+ * SKILL READS
+ *
+ *   Skill is a field on the character's profession record:
+ *
+ *       character.professions[i].skillLevel
+ *
+ *   `CharacterCommands.getProfession(characterId, roleId)` is the
+ *   canonical accessor. This module reads through it. It does not
+ *   reach into `character.professions` directly, and it does not
+ *   depend on a `SkillQueries` module.
+ *
+ * RETURN CONTRACT
+ *
+ *   Singular lookup:  T | null
+ *   Collection:       T[]
+ *   Every returned object is a defensive projection. Live records never
+ *   leave RelationshipState.
+ *
+ * DEPENDENCIES (must be loaded first):
+ *   - relationship-queries.js (RelationshipQueries)
+ *   - professional-rules.js   (ProfessionalRules)
+ *   - character-commands.js   (CharacterCommands)
+ *   - role-state.js           (RoleState)
+ *
+ * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
+
+    // =========================================================================
+    // 1. HARD DEPENDENCY CHECK
+    // =========================================================================
+
+    if (!window.RelationshipQueries) {
+        throw new Error(
+            'professional-queries.js requires relationship-queries.js ' +
+            '(RelationshipQueries) first.'
+        );
+    }
+    if (!window.ProfessionalRules) {
+        throw new Error(
+            'professional-queries.js requires professional-rules.js ' +
+            '(ProfessionalRules) first.'
+        );
+    }
+    if (!window.RELATIONSHIP_ARCHETYPES) {
+        throw new Error(
+            'professional-queries.js requires relationship-types.js ' +
+            '(RELATIONSHIP_ARCHETYPES) first.'
+        );
+    }
+    if (!window.RELATIONSHIP_STATUS) {
+        throw new Error(
+            'professional-queries.js requires relationship-types.js ' +
+            '(RELATIONSHIP_STATUS) first.'
+        );
+    }
+    if (!window.CharacterCommands ||
+        typeof window.CharacterCommands.getProfession !== 'function') {
+        throw new Error(
+            'professional-queries.js requires character-commands.js ' +
+            '(CharacterCommands.getProfession) first.'
+        );
+    }
+    if (!window.RoleState || typeof window.RoleState.getRole !== 'function') {
+        throw new Error(
+            'professional-queries.js requires role-state.js ' +
+            '(RoleState.getRole) first.'
+        );
+    }
 
     var RQ = window.RelationshipQueries;
     var PR = window.ProfessionalRules;
+    var CC = window.CharacterCommands;
+    var RS = window.RoleState;
 
     var A = window.RELATIONSHIP_ARCHETYPES;
     var STATUS = window.RELATIONSHIP_STATUS;
-
-    if (!RQ || !PR || !A || !STATUS) {
-        throw new Error('professional-queries.js: relationship-queries.js and professional-rules.js must load first');
-    }
 
     var APPRENTICESHIP   = A.APPRENTICESHIP;
     var MASTERSHIP       = A.MASTERSHIP;
     var EMPLOYMENT       = A.EMPLOYMENT;
     var GUILD_MEMBERSHIP = A.GUILD_MEMBERSHIP;
 
-    // -------------------------------------------------------------------------
-    // SKILL PROVIDER (required for skill-aware projections)
+    // =========================================================================
+    // 2. SKILL / ROLE PROVIDERS
+    // =========================================================================
     //
-    // Skill data lives on the character record. This module never reads
-    // it directly; it goes through SkillQueries, which must exist.
-    // -------------------------------------------------------------------------
-
-    function _skillProvider() {
-        if (!window.SkillQueries) {
-            throw new Error('professional-queries.js: SkillQueries required');
-        }
-        return window.SkillQueries;
-    }
+    // CharacterCommands.getProfession returns the profession record
+    // (which carries skillLevel), or null if the character does not
+    // hold the role.
 
     function _skillLevel(characterId, roleId) {
         if (!roleId) return null;
-        var sp = _skillProvider();
-        if (typeof sp.getSkillLevel !== 'function') {
-            throw new Error('professional-queries.js: SkillQueries.getSkillLevel required');
-        }
-        var level = sp.getSkillLevel(characterId, roleId);
-        return (typeof level === 'number') ? level : null;
+        var profession = CC.getProfession(characterId, roleId);
+        if (!profession) return null;
+        return typeof profession.skillLevel === 'number'
+            ? profession.skillLevel
+            : 0;
     }
 
     function _roleName(roleId) {
         if (!roleId) return null;
-        var sp = _skillProvider();
-        if (typeof sp.getRoleName !== 'function') return roleId;
-        var name = sp.getRoleName(roleId);
-        return (typeof name === 'string' && name.length > 0) ? name : roleId;
+        var role = RS.getRole(roleId);
+        if (role && typeof role.name === 'string' && role.name.length > 0) {
+            return role.name;
+        }
+        return roleId;
     }
 
-    // -------------------------------------------------------------------------
-    // INTERNAL HELPERS
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 3. INTERNAL HELPERS
+    // =========================================================================
 
     function _otherId(record, characterId) {
         if (record.participantA === characterId) return record.participantB;
@@ -108,15 +163,21 @@
         return by - ay;
     }
 
-    // -------------------------------------------------------------------------
-    // APPRENTICESHIP PROJECTIONS
-    // -------------------------------------------------------------------------
+    function _isActive(record) {
+        return record.status === STATUS.ONGOING;
+    }
+
+    // =========================================================================
+    // 4. APPRENTICESHIP PROJECTIONS
+    // =========================================================================
 
     function _projectApprenticeshipForMaster(record) {
         var apprenticeId = record.participantB;
         var roleId = _meta(record, 'roleId', null);
         var skill = _skillLevel(apprenticeId, roleId);
         var tier = (skill !== null) ? PR.skillTier(skill) : null;
+        var specializationsTaught = _meta(record, 'specializationsTaught', []);
+        if (!Array.isArray(specializationsTaught)) specializationsTaught = [];
 
         return {
             relationshipId: record.id,
@@ -128,9 +189,7 @@
             roleName: _roleName(roleId),
             skillLevel: skill,
             tier: tier,
-            specializationsTaught: Array.isArray(_meta(record, 'specializationsTaught', []))
-                ? _meta(record, 'specializationsTaught', []).slice()
-                : [],
+            specializationsTaught: specializationsTaught.slice(),
             startYear: record.startYear,
             endYear: record.endYear,
             notes: _meta(record, 'notes', '')
@@ -160,8 +219,9 @@
     }
 
     /**
-     * Returns active apprenticeships where the character is master.
-     * options: { includeEnded?: boolean }
+     * Active apprenticeships where the character is master.
+     * @param {string} characterId
+     * @param {Object} [options]  { includeEnded?: boolean }
      */
     function getApprentices(characterId, options) {
         options = options || {};
@@ -194,8 +254,9 @@
     }
 
     /**
-     * Returns active apprenticeships where the character is apprentice.
-     * options: { includeEnded?: boolean }
+     * Active apprenticeships where the character is apprentice.
+     * @param {string} characterId
+     * @param {Object} [options]  { includeEnded?: boolean }
      */
     function getMasterRelationships(characterId, options) {
         options = options || {};
@@ -219,6 +280,11 @@
         return out;
     }
 
+    /**
+     * Convenience: the single active master if exactly one exists, else
+     * the most recent. Returns null if none. Callers that need all
+     * masters must use getMasterRelationships().
+     */
     function getMaster(characterId, options) {
         var ids = getMasterIds(characterId, options);
         return ids.length > 0 ? ids[0] : null;
@@ -229,8 +295,8 @@
     }
 
     /**
-     * Returns the active apprenticeship between master and apprentice
-     * if it exists, or null. Uses master's perspective.
+     * Active apprenticeship between master and apprentice, projected from
+     * the master's perspective, or null.
      */
     function getApprenticeshipBetween(masterId, apprenticeId) {
         if (typeof masterId !== 'string' || typeof apprenticeId !== 'string') return null;
@@ -247,8 +313,9 @@
     }
 
     /**
-     * Returns the active roleId of the character's apprenticeship, or
-     * null if not apprenticed.
+     * The active roleId of the character's apprenticeship, or null.
+     * If the character has multiple concurrent apprenticeships, returns
+     * the role of the most recent one.
      */
     function getApprenticeshipRoleId(characterId) {
         var rels = getMasterRelationships(characterId);
@@ -258,21 +325,44 @@
         return null;
     }
 
-    // -------------------------------------------------------------------------
-    // MASTERSHIP PROJECTIONS
-    //
-    // A mastership is a distinct archetype: A = master, B = expert.
-    // -------------------------------------------------------------------------
+    /**
+     * All active apprenticeships where the character is apprentice.
+     * Alias kept for callers that prefer the plural-by-default form.
+     */
+    function getApprenticeshipRelationships(characterId, options) {
+        return getMasterRelationships(characterId, options);
+    }
+
+    // =========================================================================
+    // 5. MASTERSHIP PROJECTIONS
+    // =========================================================================
 
     function _projectMastershipForMaster(record) {
+        var roleId = _meta(record, 'roleId', null);
         return {
             relationshipId: record.id,
             type: MASTERSHIP,
             status: record.status,
             masterId: record.participantA,
             expertId: record.participantB,
-            roleId: _meta(record, 'roleId', null),
-            roleName: _roleName(_meta(record, 'roleId', null)),
+            roleId: roleId,
+            roleName: _roleName(roleId),
+            startYear: record.startYear,
+            endYear: record.endYear,
+            notes: _meta(record, 'notes', '')
+        };
+    }
+
+    function _projectMastershipForExpert(record) {
+        var roleId = _meta(record, 'roleId', null);
+        return {
+            relationshipId: record.id,
+            type: MASTERSHIP,
+            status: record.status,
+            masterId: record.participantA,
+            expertId: record.participantB,
+            roleId: roleId,
+            roleName: _roleName(roleId),
             startYear: record.startYear,
             endYear: record.endYear,
             notes: _meta(record, 'notes', '')
@@ -303,43 +393,17 @@
         var out = [];
         for (var i = 0; i < records.length; i++) {
             if (records[i].participantB !== characterId) continue;
-            out.push({
-                relationshipId: records[i].id,
-                type: MASTERSHIP,
-                status: records[i].status,
-                masterId: records[i].participantA,
-                expertId: records[i].participantB,
-                roleId: _meta(records[i], 'roleId', null),
-                roleName: _roleName(_meta(records[i], 'roleId', null)),
-                startYear: records[i].startYear,
-                endYear: records[i].endYear
-            });
+            out.push(_projectMastershipForExpert(records[i]));
         }
         out.sort(_sortByStartDesc);
         return out;
     }
 
-    // -------------------------------------------------------------------------
-    // EMPLOYMENT PROJECTIONS
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 6. EMPLOYMENT PROJECTIONS
+    // =========================================================================
 
-    function _projectEmploymentForEmployer(record) {
-        var wages = _meta(record, 'wages', null);
-        return {
-            relationshipId: record.id,
-            type: EMPLOYMENT,
-            status: record.status,
-            employerId: record.participantA,
-            employeeId: record.participantB,
-            role: _meta(record, 'role', null),
-            wages: (typeof wages === 'number') ? wages : null,
-            startYear: record.startYear,
-            endYear: record.endYear,
-            notes: _meta(record, 'notes', '')
-        };
-    }
-
-    function _projectEmploymentForEmployee(record) {
+    function _projectEmployment(record) {
         var wages = _meta(record, 'wages', null);
         return {
             relationshipId: record.id,
@@ -364,7 +428,7 @@
         var out = [];
         for (var i = 0; i < records.length; i++) {
             if (records[i].participantA !== employerId) continue;
-            out.push(_projectEmploymentForEmployer(records[i]));
+            out.push(_projectEmployment(records[i]));
         }
         out.sort(_sortByStartDesc);
         return out;
@@ -390,7 +454,7 @@
         var out = [];
         for (var i = 0; i < records.length; i++) {
             if (records[i].participantB !== employeeId) continue;
-            out.push(_projectEmploymentForEmployee(records[i]));
+            out.push(_projectEmployment(records[i]));
         }
         out.sort(_sortByStartDesc);
         return out;
@@ -420,17 +484,17 @@
         for (var i = 0; i < records.length; i++) {
             if (records[i].participantA === employerId &&
                 records[i].participantB === employeeId) {
-                return _projectEmploymentForEmployer(records[i]);
+                return _projectEmployment(records[i]);
             }
         }
         return null;
     }
 
-    // -------------------------------------------------------------------------
-    // GUILD MEMBERSHIP PROJECTIONS
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 7. GUILD MEMBERSHIP PROJECTIONS
+    // =========================================================================
 
-    function _projectGuildForMember(record) {
+    function _projectGuildMembership(record) {
         return {
             relationshipId: record.id,
             type: GUILD_MEMBERSHIP,
@@ -453,7 +517,7 @@
         var out = [];
         for (var i = 0; i < records.length; i++) {
             if (records[i].participantA !== guildId) continue;
-            out.push(_projectGuildForMember(records[i]));
+            out.push(_projectGuildMembership(records[i]));
         }
         return out;
     }
@@ -474,7 +538,7 @@
         var out = [];
         for (var i = 0; i < records.length; i++) {
             if (records[i].participantB !== characterId) continue;
-            out.push(_projectGuildForMember(records[i]));
+            out.push(_projectGuildMembership(records[i]));
         }
         return out;
     }
@@ -512,9 +576,9 @@
         return m ? m.rank : null;
     }
 
-    // -------------------------------------------------------------------------
-    // GENERAL
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 8. GENERAL
+    // =========================================================================
 
     function getProfessionalRelationships(characterId, options) {
         options = options || {};
@@ -556,7 +620,7 @@
         for (var t = 0; t < types.length; t++) {
             var records = RQ.getBetweenOfType(aId, bId, types[t]);
             for (var i = 0; i < records.length; i++) {
-                if (!options.includeEnded && records[i].status !== STATUS.ONGOING) continue;
+                if (!options.includeEnded && !_isActive(records[i])) continue;
                 out.push({
                     relationshipId: records[i].id,
                     type: records[i].type,
@@ -589,9 +653,9 @@
         };
     }
 
-    // -------------------------------------------------------------------------
-    // EXPORTS
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 9. EXPORTS
+    // =========================================================================
 
     window.ProfessionalQueries = {
         // Apprenticeship
@@ -605,6 +669,7 @@
         isApprentice: isApprentice,
         getApprenticeshipBetween: getApprenticeshipBetween,
         getApprenticeshipRoleId: getApprenticeshipRoleId,
+        getApprenticeshipRelationships: getApprenticeshipRelationships,
 
         // Mastership
         getExperts: getExperts,
@@ -635,4 +700,7 @@
         getProfessionalStats: getProfessionalStats
     };
 
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.ProfessionalQueries;
+    }
 })();
