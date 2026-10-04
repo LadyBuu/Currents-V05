@@ -3,6 +3,8 @@
  * STILL WATERS - ROLE COMMANDS (role-commands.js)
  * =============================================================================
  *
+ * LOCATION: js/systems/roles/role-commands.js
+ *
  * All write operations for the role domain.
  *
  * Contract:
@@ -31,6 +33,8 @@
  *   - role-queries.js
  *   - character-commands.js  (CharacterCommands) — profession API only
  *   - accessors.js           (getCharacterById)
+ *   - ids.js                 (generateId)
+ *   - time.js                (getCurrentYearSafe, optional)
  *
  * =============================================================================
  */
@@ -59,6 +63,11 @@
     if (typeof window.getCharacterById !== 'function') {
         throw new Error(
             'role-commands.js requires accessors.js (getCharacterById).'
+        );
+    }
+    if (typeof window.generateId !== 'function') {
+        throw new Error(
+            'role-commands.js requires ids.js (generateId).'
         );
     }
 
@@ -120,7 +129,9 @@
             window.dispatchEvent(new CustomEvent(eventName, { detail: detail || {} }));
         } catch (err) {
             if (window.console && typeof window.console.error === 'function') {
-                window.console.error('role-commands: event "' + eventName + '" dispatch failed:', err);
+                window.console.error(
+                    'role-commands: event "' + eventName + '" dispatch failed:', err
+                );
             }
         }
     }
@@ -214,8 +225,7 @@
         var icon = _validString(data.icon) ? data.icon : 'CIRCLE';
 
         var role = RS.addRole({
-            id: window.generateId ? window.generateId('role')
-                : 'role_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+            id: window.generateId('role'),
             name: data.name.trim(),
             category: category,
             icon: icon,
