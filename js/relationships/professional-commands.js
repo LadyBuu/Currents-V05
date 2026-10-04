@@ -1,78 +1,159 @@
 /**
- * professional-commands.js
+ * =============================================================================
+ * STILL WATERS - PROFESSIONAL COMMANDS (professional-commands.js)
+ * =============================================================================
  *
- * Mutation boundary for professional relationships.
+ * LOCATION: js/social/professional-commands.js
+ *
+ * Mutation boundary for professional relationship edges.
  *
  * DIRECTION
- *   apprenticeship    participantA = master,   participantB = apprentice
- *   mastership        participantA = master,   participantB = expert
- *   employment        participantA = employer, participantB = employee
- *   guild_membership  participantA = guild,    participantB = member
  *
- * Owns:
- *   - creating apprenticeships, masterships, employment, and guild
- *     memberships
- *   - progressing and completing an apprenticeship
- *   - updating guild rank
- *   - ending any of the four archetypes
- *   - one commit per logical operation
+ *   apprenticeship    A = master,     B = apprentice
+ *   mastership        A = master,     B = expert
+ *   employment        A = employer,   B = employee
+ *   guild_membership  A = guild,      B = member
  *
- * Depends on:
- *   - ProfessionalRules for policy
- *   - ProfessionalQueries for existence checks
- *   - RelationshipCommands for state writes
- *   - RomanceQueries for the character name accessors (via
- *     getCharacterById)
- *   - SkillCommands for skill writes (required for apprenticeship
- *     progression; absence is a hard failure, not a silent skip)
- *   - CharacterCommands for character field updates (profession array
- *     updates, when applicable)
+ * OWNERSHIP
  *
- * SKILL WRITE PATH
- *   Apprentice skill progression modifies the character record.
- *   SkillCommands.updateSkillLevel is the canonical writer. This
- *   module never reaches into the character record directly.
+ *   ProfessionalCommands owns:
+ *       - the edge primitive: createEdge, updateEdgeMetadata, endEdge,
+ *         removeEdge — the only sanctioned entry points for writing a
+ *         professional edge into RelationshipState
+ *       - the mastership edge commands (createMastership, endMastership)
+ *       - the employment edge commands (createEmployment,
+ *         updateEmployment, endEmployment)
+ *       - the guild membership commands (createGuildMembership,
+ *         removeGuildMembership, setGuildRank)
  *
- * Does NOT own:
- *   - direct state access (goes through RelationshipCommands)
- *   - persistence (markDataDirty happens in RelationshipState)
- *   - randomness
- *   - queries
+ *   ProfessionalCommands does NOT own:
+ *       - apprenticeship lifecycle
+ *             → ApprenticeshipCommands
+ *       - apprenticeship progression and teaching policy
+ *             → ApprenticeshipRules
+ *       - skill writes
+ *             → CharacterCommands.updateProfession
+ *       - role catalogue or specialization membership
+ *             → RoleRules
+ *       - state
+ *             → RelationshipState (via RelationshipCommands)
  *
- * Every command returns { success: true, ... } or
- * { success: false, code, message }. Never throws for domain errors.
+ * THE APPRENTICESHIP EDGE
  *
- * Load order: after relationship-commands.js, professional-rules.js,
- * professional-queries.js.
+ *   ApprenticeshipCommands calls ProfessionalCommands.createEdge() with
+ *   archetype 'apprenticeship'. This module provides the write primitive;
+ *   ApprenticeshipCommands owns the lifecycle that drives it (create,
+ *   progress, teach, complete, terminate, annual advancement).
+ *
+ * EDGE PRIMITIVE SHAPE
+ *
+ *   createEdge({
+ *       archetype,          // 'apprenticeship' | 'mastership' |
+ *                           // 'employment' | 'guild_membership'
+ *       participantA,       // role depends on archetype
+ *       participantB,       // role depends on archetype
+ *       startYear,          // number | null
+ *       metadata,           // archetype-specific
+ *       status              // optional; defaults to 'ongoing'
+ *   })
+ *
+ *   Returns { success: true, relationshipId } on success, or
+ *   { success: false, code, message } on failure.
+ *
+ * SKILL WRITES
+ *
+ *   None in this file. Skill is character-owned. Any caller that needs
+ *   to write skill calls CharacterCommands.updateProfession directly.
+ *   The professional edge never carries a cached skillLevel in its
+ *   metadata — the canonical skill is on the character's profession
+ *   record, read via CharacterCommands.getProfession.
+ *
+ * DEPENDENCIES (must be loaded first):
+ *   - relationship-types.js    (RELATIONSHIP_ARCHETYPES, RELATIONSHIP_STATUS)
+ *   - relationship-commands.js (RelationshipCommands)
+ *   - relationship-queries.js  (RelationshipQueries — used by end/update)
+ *   - professional-rules.js    (ProfessionalRules)
+ *   - professional-queries.js  (ProfessionalQueries)
+ *   - character-queries.js     (getCharacterById, calculateAge)
+ *   - time.js                  (getCurrentYearSafe)
+ *
+ * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
+    // =========================================================================
+    // 1. HARD DEPENDENCY CHECK
+    // =========================================================================
+
+    if (!window.RelationshipCommands) {
+        throw new Error(
+            'professional-commands.js requires relationship-commands.js ' +
+            '(RelationshipCommands) first.'
+        );
+    }
+    if (!window.RelationshipQueries) {
+        throw new Error(
+            'professional-commands.js requires relationship-queries.js ' +
+            '(RelationshipQueries) first.'
+        );
+    }
+    if (!window.ProfessionalRules) {
+        throw new Error(
+            'professional-commands.js requires professional-rules.js ' +
+            '(ProfessionalRules) first.'
+        );
+    }
+    if (!window.ProfessionalQueries) {
+        throw new Error(
+            'professional-commands.js requires professional-queries.js ' +
+            '(ProfessionalQueries) first.'
+        );
+    }
+    if (!window.RELATIONSHIP_ARCHETYPES) {
+        throw new Error(
+            'professional-commands.js requires relationship-types.js ' +
+            '(RELATIONSHIP_ARCHETYPES) first.'
+        );
+    }
+    if (!window.RELATIONSHIP_STATUS) {
+        throw new Error(
+            'professional-commands.js requires relationship-types.js ' +
+            '(RELATIONSHIP_STATUS) first.'
+        );
+    }
+    if (typeof window.getCharacterById !== 'function') {
+        throw new Error(
+            'professional-commands.js requires character-queries.js ' +
+            '(getCharacterById) first.'
+        );
+    }
+    if (typeof window.getCurrentYearSafe !== 'function') {
+        throw new Error(
+            'professional-commands.js requires time.js ' +
+            '(getCurrentYearSafe) first.'
+        );
+    }
+
     var RC = window.RelationshipCommands;
+    var RQ = window.RelationshipQueries;
     var PR = window.ProfessionalRules;
     var PQ = window.ProfessionalQueries;
 
     var A = window.RELATIONSHIP_ARCHETYPES;
     var STATUS = window.RELATIONSHIP_STATUS;
 
-    if (!RC || !PR || !PQ || !A || !STATUS) {
-        throw new Error('professional-commands.js: relationship-commands.js, professional-rules.js, professional-queries.js must load first');
-    }
-
     var APPRENTICESHIP   = A.APPRENTICESHIP;
     var MASTERSHIP       = A.MASTERSHIP;
     var EMPLOYMENT       = A.EMPLOYMENT;
     var GUILD_MEMBERSHIP = A.GUILD_MEMBERSHIP;
 
-    // -------------------------------------------------------------------------
-    // DEPENDENCY WRAPPERS (fail loud, no fallbacks)
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 2. DEPENDENCY WRAPPERS
+    // =========================================================================
 
     function _getCharacter(id) {
-        if (typeof window.getCharacterById !== 'function') {
-            throw new Error('professional-commands.js: getCharacterById required');
-        }
         return window.getCharacterById(id);
     }
 
@@ -86,50 +167,22 @@
     }
 
     function _getCurrentYear() {
-        if (typeof window.getCurrentYearSafe !== 'function') {
-            throw new Error('professional-commands.js: getCurrentYearSafe required');
-        }
         return window.getCurrentYearSafe();
     }
 
     function _calculateAge(birthYear, isDeceased, deathYear) {
-        if (typeof window.calculateAge !== 'function') {
-            throw new Error('professional-commands.js: calculateAge required');
-        }
+        if (typeof window.calculateAge !== 'function') return null;
         return window.calculateAge(birthYear, isDeceased, deathYear);
     }
 
     function _ageAtYear(character, year) {
         if (!character || typeof character.birthYear !== 'number') return null;
-        if (character.isDeceased && typeof character.deathYear === 'number' &&
+        if (character.isDeceased &&
+            typeof character.deathYear === 'number' &&
             character.deathYear <= year) {
             return Math.max(0, character.deathYear - character.birthYear);
         }
         return Math.max(0, year - character.birthYear);
-    }
-
-    function _skillProvider() {
-        if (!window.SkillQueries) {
-            throw new Error('professional-commands.js: SkillQueries required');
-        }
-        return window.SkillQueries;
-    }
-
-    function _skillWriter() {
-        if (!window.SkillCommands || typeof window.SkillCommands.updateSkillLevel !== 'function') {
-            throw new Error('professional-commands.js: SkillCommands.updateSkillLevel required');
-        }
-        return window.SkillCommands;
-    }
-
-    function _getSkillLevel(characterId, roleId) {
-        if (!roleId) return null;
-        var sp = _skillProvider();
-        if (typeof sp.getSkillLevel !== 'function') {
-            throw new Error('professional-commands.js: SkillQueries.getSkillLevel required');
-        }
-        var level = sp.getSkillLevel(characterId, roleId);
-        return (typeof level === 'number') ? level : null;
     }
 
     function _logEvent(category, type, message, subjects) {
@@ -138,243 +191,185 @@
         }
     }
 
-    // -------------------------------------------------------------------------
-    // RESULT HELPERS
-    // -------------------------------------------------------------------------
+    function _archetypeId(name) {
+        if (name === 'apprenticeship')   return APPRENTICESHIP;
+        if (name === 'mastership')       return MASTERSHIP;
+        if (name === 'employment')       return EMPLOYMENT;
+        if (name === 'guild_membership') return GUILD_MEMBERSHIP;
+        return null;
+    }
+
+    // =========================================================================
+    // 3. RESULT HELPERS
+    // =========================================================================
+
+    function _ok(data) {
+        var result = { success: true };
+        if (data) {
+            for (var key in data) {
+                if (Object.prototype.hasOwnProperty.call(data, key)) {
+                    result[key] = data[key];
+                }
+            }
+        }
+        return result;
+    }
 
     function _fail(code, message) {
         return { success: false, code: code, message: message };
     }
 
-    function _ok(data) {
-        return Object.assign({ success: true }, data || {});
-    }
-
-    // -------------------------------------------------------------------------
-    // APPRENTICESHIP
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 4. EDGE PRIMITIVE
+    // =========================================================================
+    //
+    // The only sanctioned write path for a professional edge. Every
+    // archetype-specific command below funnels through here, and so does
+    // ApprenticeshipCommands.
 
     /**
-     * options: {
-     *   roleId (required),
-     *   roleName?,
-     *   startYear?,
-     *   initialSkill?,
-     *   specializations?,
-     *   notes?
-     * }
+     * @param {Object} args
+     * @param {string} args.archetype      'apprenticeship' | 'mastership'
+     *                                     | 'employment' | 'guild_membership'
+     * @param {string} args.participantA
+     * @param {string} args.participantB
+     * @param {number} [args.startYear]
+     * @param {Object} [args.metadata]
+     * @param {string} [args.status]       defaults to STATUS.ONGOING
+     * @returns {{ success: true, relationshipId: string } | { success: false, code: string, message: string }}
      */
-    function createApprenticeship(masterId, apprenticeId, options) {
-        options = options || {};
-
-        if (typeof masterId !== 'string' || typeof apprenticeId !== 'string') {
-            return _fail('MISSING_ID', 'masterId and apprenticeId required');
+    function createEdge(args) {
+        if (!args || typeof args !== 'object') {
+            return _fail('MISSING_ARGS', 'args object is required');
         }
-        if (masterId === apprenticeId) {
-            return _fail('SAME_PERSON', 'cannot apprentice to self');
+        if (typeof args.archetype !== 'string') {
+            return _fail('MISSING_ARCHETYPE', 'archetype is required');
         }
-        if (!_characterExists(masterId) || !_characterExists(apprenticeId)) {
-            return _fail('MISSING_CHARACTER', 'character not found');
+        var type = _archetypeId(args.archetype);
+        if (!type) {
+            return _fail('UNKNOWN_ARCHETYPE',
+                'Unknown professional archetype: ' + args.archetype);
         }
-        if (typeof options.roleId !== 'string' || options.roleId.length === 0) {
-            return _fail('MISSING_ROLE', 'roleId required');
+        if (typeof args.participantA !== 'string' || args.participantA.length === 0) {
+            return _fail('MISSING_PARTICIPANT_A', 'participantA is required');
         }
-
-        var master = _getCharacter(masterId);
-        var apprentice = _getCharacter(apprenticeId);
-
-        var startYear = options.startYear !== undefined
-            ? options.startYear
-            : _getCurrentYear();
-
-        var masterSkill = _getSkillLevel(masterId, options.roleId);
-        var apprenticeSkill = _getSkillLevel(apprenticeId, options.roleId);
-
-        var validation = PR.canCreateApprenticeship({
-            masterId: masterId,
-            apprenticeId: apprenticeId,
-            masterSkillLevel: masterSkill,
-            apprenticeSkillLevel: apprenticeSkill,
-            masterAge: _ageAtYear(master, startYear),
-            apprenticeAge: _ageAtYear(apprentice, startYear),
-            roleId: options.roleId
-        });
-        if (!validation.valid) {
-            return _fail('VALIDATION_FAILED', validation.errors.join('; '));
+        if (typeof args.participantB !== 'string' || args.participantB.length === 0) {
+            return _fail('MISSING_PARTICIPANT_B', 'participantB is required');
+        }
+        if (args.participantA === args.participantB) {
+            return _fail('SAME_PERSON', 'participants must be distinct');
         }
 
-        // Already apprenticed to any master in the same role?
-        var existingMasters = PQ.getMasterRelationships(apprenticeId);
-        for (var i = 0; i < existingMasters.length; i++) {
-            if (existingMasters[i].roleId === options.roleId) {
-                return _fail('ALREADY_APPRENTICED',
-                    'already apprenticed in role ' + options.roleId);
-            }
+        var attrs = PR.validateAttributes(args.metadata && args.metadata.attributes);
+        if (!attrs.valid) {
+            return _fail('INVALID_ATTRIBUTES', attrs.errors.join('; '));
         }
 
         var createResult = RC.create({
-            participantA: masterId,
-            participantB: apprenticeId,
-            type: APPRENTICESHIP,
-            status: STATUS.ONGOING,
-            startYear: startYear,
+            participantA: args.participantA,
+            participantB: args.participantB,
+            type: type,
+            status: typeof args.status === 'string' ? args.status : STATUS.ONGOING,
+            startYear: (typeof args.startYear === 'number') ? args.startYear : null,
             attributes: [],
-            metadata: {
-                roleId: options.roleId,
-                roleName: (typeof options.roleName === 'string') ? options.roleName : null,
-                skillLevel: (typeof apprenticeSkill === 'number') ? apprenticeSkill : 0,
-                specializationsTaught: Array.isArray(options.specializations)
-                    ? options.specializations.slice()
-                    : [],
-                notes: (typeof options.notes === 'string') ? options.notes : ''
-            }
+            metadata: args.metadata && typeof args.metadata === 'object'
+                ? args.metadata
+                : {}
         });
-        if (!createResult.success) return createResult;
 
-        // Initialize apprentice skill if the caller asked for a higher
-        // starting value than the current one.
-        if (typeof options.initialSkill === 'number' &&
-            (apprenticeSkill === null || options.initialSkill > apprenticeSkill)) {
-            var writer = _skillWriter();
-            writer.updateSkillLevel(apprenticeId, options.roleId, PR.clampSkill(options.initialSkill));
+        if (!createResult || !createResult.success) {
+            return _fail(
+                (createResult && createResult.code) || 'EDGE_CREATE_FAILED',
+                (createResult && createResult.message) || 'Failed to create professional edge'
+            );
         }
 
-        _logEvent('professional', 'Apprenticeship Formed',
-            master.name + ' took ' + apprentice.name +
-            ' as apprentice in ' + options.roleId,
-            [master, apprentice]);
-
-        var projection = PQ.getApprenticeshipBetween(masterId, apprenticeId);
-        return _ok({ relationship: projection });
+        return _ok({ relationshipId: createResult.relationshipId });
     }
 
     /**
-     * Progresses apprentice skill in the role by `amount` (default 1).
-     * Syncs relationship metadata. One commit.
+     * Shallow merge into the edge metadata. Never touches status,
+     * startYear, endYear, participants, or type.
+     *
+     * @param {string} relationshipId
+     * @param {Object} patch
      */
-    function progressApprenticeship(masterId, apprenticeId, amount) {
-        if (typeof masterId !== 'string' || typeof apprenticeId !== 'string') {
-            return _fail('MISSING_ID', 'masterId and apprenticeId required');
+    function updateEdgeMetadata(relationshipId, patch) {
+        if (typeof relationshipId !== 'string' || relationshipId.length === 0) {
+            return _fail('MISSING_ID', 'relationshipId is required');
+        }
+        if (!patch || typeof patch !== 'object') {
+            return _fail('MISSING_PATCH', 'patch object is required');
         }
 
-        var rel = PQ.getApprenticeshipBetween(masterId, apprenticeId);
-        if (!rel) return _fail('NOT_FOUND', 'no active apprenticeship');
-        if (rel.status !== STATUS.ONGOING) {
-            return _fail('NOT_ACTIVE', 'apprenticeship not ongoing');
+        var result = RC.update(relationshipId, { metadata: patch });
+        if (!result || !result.success) {
+            return _fail(
+                (result && result.code) || 'EDGE_UPDATE_FAILED',
+                (result && result.message) || 'Failed to update professional edge'
+            );
         }
 
-        var roleId = rel.roleId;
-        if (!roleId) return _fail('MISSING_ROLE', 'apprenticeship has no role');
-
-        var check = PR.canProgressApprenticeship({ status: rel.status });
-        if (!check.valid) {
-            return _fail('INVALID', check.errors.join('; '));
-        }
-
-        var delta = (typeof amount === 'number' && !isNaN(amount)) ? amount : 1;
-        var current = _getSkillLevel(apprenticeId, roleId);
-        if (current === null) current = 0;
-
-        var newSkill = PR.clampSkill(current + delta);
-        var gained = newSkill - current;
-
-        var writer = _skillWriter();
-        writer.updateSkillLevel(apprenticeId, roleId, newSkill);
-
-        RC.update(rel.relationshipId, {
-            metadata: {
-                skillLevel: newSkill,
-                stage: PR.skillTier(newSkill)
-            }
-        });
-
-        return _ok({
-            relationshipId: rel.relationshipId,
-            previousSkill: current,
-            newSkill: newSkill,
-            gained: gained,
-            tier: PR.skillTier(newSkill)
-        });
+        return _ok({ relationshipId: relationshipId });
     }
 
     /**
-     * Completes an apprenticeship: ends the relationship with reason
-     * 'completed'. If finalSkill is provided, sets it first.
+     * Ongoing → ended. Fails if the edge is not ongoing.
      */
-    function completeApprenticeship(masterId, apprenticeId, finalSkill) {
-        if (typeof masterId !== 'string' || typeof apprenticeId !== 'string') {
-            return _fail('MISSING_ID', 'masterId and apprenticeId required');
+    function endEdge(relationshipId, endYear, reason) {
+        if (typeof relationshipId !== 'string' || relationshipId.length === 0) {
+            return _fail('MISSING_ID', 'relationshipId is required');
         }
 
-        var rel = PQ.getApprenticeshipBetween(masterId, apprenticeId);
-        if (!rel) return _fail('NOT_FOUND', 'no active apprenticeship');
-        if (rel.status !== STATUS.ONGOING) {
-            return _fail('NOT_ACTIVE', 'apprenticeship not ongoing');
+        var year = (typeof endYear === 'number') ? endYear : _getCurrentYear();
+        var why = (typeof reason === 'string' && reason.length > 0)
+            ? reason
+            : 'ended';
+
+        var result = RC.end(relationshipId, year, why);
+        if (!result || !result.success) {
+            return _fail(
+                (result && result.code) || 'EDGE_END_FAILED',
+                (result && result.message) || 'Failed to end professional edge'
+            );
         }
 
-        var check = PR.canCompleteApprenticeship({
-            status: rel.status,
-            skillLevel: finalSkill
-        });
-        if (!check.valid) {
-            return _fail('INVALID', check.errors.join('; '));
-        }
-
-        var year = _getCurrentYear();
-
-        if (typeof finalSkill === 'number' && rel.roleId) {
-            var writer = _skillWriter();
-            writer.updateSkillLevel(apprenticeId, rel.roleId, PR.clampSkill(finalSkill));
-        }
-
-        var endResult = RC.end(rel.relationshipId, year, 'completed');
-        if (!endResult.success) return endResult;
-
-        _logEvent('professional', 'Apprenticeship Completed',
-            _getCharacterName(apprenticeId) + ' completed apprenticeship with ' +
-            _getCharacterName(masterId),
-            [_getCharacter(masterId), _getCharacter(apprenticeId)]);
-
-        return _ok({ relationship: window.RelationshipQueries.getById(rel.relationshipId) });
+        return _ok({ relationshipId: relationshipId });
     }
 
     /**
-     * options: { endYear?, reason? }
+     * Hard remove. Used by delete-cleanup; not a normal lifecycle path.
      */
-    function endApprenticeship(masterId, apprenticeId, options) {
-        options = options || {};
-
-        if (typeof masterId !== 'string' || typeof apprenticeId !== 'string') {
-            return _fail('MISSING_ID', 'masterId and apprenticeId required');
+    function removeEdge(relationshipId) {
+        if (typeof relationshipId !== 'string' || relationshipId.length === 0) {
+            return _fail('MISSING_ID', 'relationshipId is required');
         }
 
-        var rel = PQ.getApprenticeshipBetween(masterId, apprenticeId);
-        if (!rel) return _fail('NOT_FOUND', 'no active apprenticeship');
-        if (rel.status !== STATUS.ONGOING) return _fail('NOT_ACTIVE', 'not ongoing');
+        var result = RC.remove(relationshipId);
+        if (!result || !result.success) {
+            return _fail(
+                (result && result.code) || 'EDGE_REMOVE_FAILED',
+                (result && result.message) || 'Failed to remove professional edge'
+            );
+        }
 
-        var year = options.endYear !== undefined ? options.endYear : _getCurrentYear();
-        var reason = (typeof options.reason === 'string' && options.reason.length > 0)
-            ? options.reason
-            : 'apprenticeship ended';
-
-        var result = RC.end(rel.relationshipId, year, reason);
-        if (!result.success) return result;
-
-        return _ok({ relationship: window.RelationshipQueries.getById(rel.relationshipId) });
+        return _ok({ relationshipId: relationshipId });
     }
 
-    // -------------------------------------------------------------------------
-    // MASTERSHIP
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 5. MASTERSHIP
+    // =========================================================================
 
     /**
-     * options: { roleId?, startYear?, notes? }
+     * @param {string} masterId
+     * @param {string} expertId
+     * @param {Object} [options]  { roleId?, startYear?, notes? }
      */
     function createMastership(masterId, expertId, options) {
         options = options || {};
 
         if (typeof masterId !== 'string' || typeof expertId !== 'string') {
-            return _fail('MISSING_ID', 'masterId and expertId required');
+            return _fail('MISSING_ID', 'masterId and expertId are required');
         }
         if (masterId === expertId) {
             return _fail('SAME_PERSON', 'cannot be master of self');
@@ -383,45 +378,51 @@
             return _fail('MISSING_CHARACTER', 'character not found');
         }
 
-        var startYear = options.startYear !== undefined
-            ? options.startYear
-            : _getCurrentYear();
-
-        // Reject duplicate active mastership between the same pair.
-        var existing = RC ? window.RelationshipQueries.getActiveBetweenOfType(masterId, expertId, MASTERSHIP) : [];
+        var existing = RQ.getActiveBetweenOfType(masterId, expertId, MASTERSHIP);
         if (existing.length > 0) {
             return _fail('ALREADY_MASTERED', 'active mastership already exists');
         }
 
-        var createResult = RC.create({
+        var startYear = (typeof options.startYear === 'number')
+            ? options.startYear
+            : _getCurrentYear();
+
+        var result = createEdge({
+            archetype: 'mastership',
             participantA: masterId,
             participantB: expertId,
-            type: MASTERSHIP,
-            status: STATUS.ONGOING,
             startYear: startYear,
-            attributes: [],
             metadata: {
                 roleId: typeof options.roleId === 'string' ? options.roleId : null,
-                notes: (typeof options.notes === 'string') ? options.notes : ''
+                notes: typeof options.notes === 'string' ? options.notes : ''
             }
         });
-        if (!createResult.success) return createResult;
+        if (!result.success) return result;
 
         _logEvent('professional', 'Mastership Formed',
             _getCharacterName(masterId) + ' became master of ' +
             _getCharacterName(expertId),
             [_getCharacter(masterId), _getCharacter(expertId)]);
 
-        return _ok({ relationship: createResult.relationship });
+        return _ok({
+            relationshipId: result.relationshipId,
+            relationship: RQ.getById(result.relationshipId)
+        });
     }
 
+    /**
+     * @param {string} masterId
+     * @param {string} expertId
+     * @param {Object} [options]  { endYear?, reason? }
+     */
     function endMastership(masterId, expertId, options) {
         options = options || {};
+
         if (typeof masterId !== 'string' || typeof expertId !== 'string') {
-            return _fail('MISSING_ID', 'masterId and expertId required');
+            return _fail('MISSING_ID', 'masterId and expertId are required');
         }
 
-        var records = window.RelationshipQueries.getActiveBetweenOfType(masterId, expertId, MASTERSHIP);
+        var records = RQ.getActiveBetweenOfType(masterId, expertId, MASTERSHIP);
         var target = null;
         for (var i = 0; i < records.length; i++) {
             if (records[i].participantA === masterId &&
@@ -432,29 +433,33 @@
         }
         if (!target) return _fail('NOT_FOUND', 'no active mastership');
 
-        var year = options.endYear !== undefined ? options.endYear : _getCurrentYear();
-        var reason = (typeof options.reason === 'string' && options.reason.length > 0)
-            ? options.reason
-            : 'mastership ended';
-
-        var result = RC.end(target.id, year, reason);
+        var result = endEdge(
+            target.id,
+            options.endYear,
+            typeof options.reason === 'string' ? options.reason : 'mastership ended'
+        );
         if (!result.success) return result;
 
-        return _ok({ relationship: window.RelationshipQueries.getById(target.id) });
+        return _ok({
+            relationshipId: target.id,
+            relationship: RQ.getById(target.id)
+        });
     }
 
-    // -------------------------------------------------------------------------
-    // EMPLOYMENT
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 6. EMPLOYMENT
+    // =========================================================================
 
     /**
-     * options: { role?, wages?, startYear?, notes? }
+     * @param {string} employerId
+     * @param {string} employeeId
+     * @param {Object} [options]  { role?, wages?, startYear?, notes? }
      */
     function createEmployment(employerId, employeeId, options) {
         options = options || {};
 
         if (typeof employerId !== 'string' || typeof employeeId !== 'string') {
-            return _fail('MISSING_ID', 'employerId and employeeId required');
+            return _fail('MISSING_ID', 'employerId and employeeId are required');
         }
         if (employerId === employeeId) {
             return _fail('SAME_PERSON', 'cannot employ self');
@@ -463,7 +468,7 @@
             return _fail('MISSING_CHARACTER', 'character not found');
         }
 
-        var startYear = options.startYear !== undefined
+        var startYear = (typeof options.startYear === 'number')
             ? options.startYear
             : _getCurrentYear();
 
@@ -484,69 +489,47 @@
             return _fail('ALREADY_EMPLOYED', 'already employed by this employer');
         }
 
-        var createResult = RC.create({
+        var result = createEdge({
+            archetype: 'employment',
             participantA: employerId,
             participantB: employeeId,
-            type: EMPLOYMENT,
-            status: STATUS.ONGOING,
             startYear: startYear,
-            attributes: [],
             metadata: {
                 role: typeof options.role === 'string' ? options.role : null,
                 wages: (typeof options.wages === 'number') ? options.wages : 0,
-                notes: (typeof options.notes === 'string') ? options.notes : ''
+                notes: typeof options.notes === 'string' ? options.notes : ''
             }
         });
-        if (!createResult.success) return createResult;
+        if (!result.success) return result;
 
         _logEvent('professional', 'Employment Formed',
             _getCharacterName(employeeId) + ' employed by ' +
             _getCharacterName(employerId),
             [employer, employee]);
 
-        return _ok({ relationship: createResult.relationship });
+        return _ok({
+            relationshipId: result.relationshipId,
+            relationship: RQ.getById(result.relationshipId)
+        });
     }
 
     /**
-     * options: { endYear?, reason? }
-     */
-    function endEmployment(employerId, employeeId, options) {
-        options = options || {};
-
-        if (typeof employerId !== 'string' || typeof employeeId !== 'string') {
-            return _fail('MISSING_ID', 'employerId and employeeId required');
-        }
-
-        var rel = PQ.getEmploymentBetween(employerId, employeeId);
-        if (!rel) return _fail('NOT_FOUND', 'no employment found');
-        if (rel.status !== STATUS.ONGOING) return _fail('NOT_ACTIVE', 'not ongoing');
-
-        var year = options.endYear !== undefined ? options.endYear : _getCurrentYear();
-        var reason = (typeof options.reason === 'string' && options.reason.length > 0)
-            ? options.reason
-            : 'employment ended';
-
-        var result = RC.end(rel.relationshipId, year, reason);
-        if (!result.success) return result;
-
-        return _ok({ relationship: window.RelationshipQueries.getById(rel.relationshipId) });
-    }
-
-    /**
-     * options: { role?, wages?, notes? }
+     * @param {string} employerId
+     * @param {string} employeeId
+     * @param {Object} [options]  { role?, wages?, notes? }
      */
     function updateEmployment(employerId, employeeId, options) {
         options = options || {};
 
         if (typeof employerId !== 'string' || typeof employeeId !== 'string') {
-            return _fail('MISSING_ID', 'employerId and employeeId required');
+            return _fail('MISSING_ID', 'employerId and employeeId are required');
         }
 
         var rel = PQ.getEmploymentBetween(employerId, employeeId);
-        if (!rel) return _fail('NOT_FOUND', 'no employment found');
+        if (!rel) return _fail('NOT_FOUND', 'no active employment');
 
         var patch = {};
-        if (typeof options.role === 'string') patch.role = options.role;
+        if (typeof options.role === 'string')  patch.role = options.role;
         if (typeof options.wages === 'number') patch.wages = options.wages;
         if (typeof options.notes === 'string') patch.notes = options.notes;
 
@@ -554,24 +537,57 @@
             return _fail('NO_UPDATES', 'nothing to update');
         }
 
-        var result = RC.update(rel.relationshipId, { metadata: patch });
+        var result = updateEdgeMetadata(rel.relationshipId, patch);
         if (!result.success) return result;
 
-        return _ok({ relationship: window.RelationshipQueries.getById(rel.relationshipId) });
+        return _ok({
+            relationshipId: rel.relationshipId,
+            relationship: RQ.getById(rel.relationshipId)
+        });
     }
 
-    // -------------------------------------------------------------------------
-    // GUILD MEMBERSHIP
-    // -------------------------------------------------------------------------
+    /**
+     * @param {string} employerId
+     * @param {string} employeeId
+     * @param {Object} [options]  { endYear?, reason? }
+     */
+    function endEmployment(employerId, employeeId, options) {
+        options = options || {};
+
+        if (typeof employerId !== 'string' || typeof employeeId !== 'string') {
+            return _fail('MISSING_ID', 'employerId and employeeId are required');
+        }
+
+        var rel = PQ.getEmploymentBetween(employerId, employeeId);
+        if (!rel) return _fail('NOT_FOUND', 'no active employment');
+
+        var result = endEdge(
+            rel.relationshipId,
+            options.endYear,
+            typeof options.reason === 'string' ? options.reason : 'employment ended'
+        );
+        if (!result.success) return result;
+
+        return _ok({
+            relationshipId: rel.relationshipId,
+            relationship: RQ.getById(rel.relationshipId)
+        });
+    }
+
+    // =========================================================================
+    // 7. GUILD MEMBERSHIP
+    // =========================================================================
 
     /**
-     * options: { rank?, startYear?, notes? }
+     * @param {string} guildId
+     * @param {string} memberId
+     * @param {Object} [options]  { rank?, startYear?, notes? }
      */
     function createGuildMembership(guildId, memberId, options) {
         options = options || {};
 
         if (typeof guildId !== 'string' || typeof memberId !== 'string') {
-            return _fail('MISSING_ID', 'guildId and memberId required');
+            return _fail('MISSING_ID', 'guildId and memberId are required');
         }
         if (guildId === memberId) {
             return _fail('SAME_PERSON', 'character cannot be their own guild');
@@ -580,7 +596,7 @@
             return _fail('MISSING_CHARACTER', 'character not found');
         }
 
-        var startYear = options.startYear !== undefined
+        var startYear = (typeof options.startYear === 'number')
             ? options.startYear
             : _getCurrentYear();
 
@@ -600,88 +616,109 @@
             return _fail('ALREADY_MEMBER', 'already a member of this guild');
         }
 
-        var createResult = RC.create({
+        var result = createEdge({
+            archetype: 'guild_membership',
             participantA: guildId,
             participantB: memberId,
-            type: GUILD_MEMBERSHIP,
-            status: STATUS.ONGOING,
             startYear: startYear,
-            attributes: [],
             metadata: {
                 rank: typeof options.rank === 'string' ? options.rank : null,
-                notes: (typeof options.notes === 'string') ? options.notes : ''
+                notes: typeof options.notes === 'string' ? options.notes : ''
             }
         });
-        if (!createResult.success) return createResult;
+        if (!result.success) return result;
 
         _logEvent('professional', 'Guild Membership',
             _getCharacterName(memberId) + ' joined guild ' +
             _getCharacterName(guildId),
             [_getCharacter(guildId), member]);
 
-        return _ok({ relationship: createResult.relationship });
+        return _ok({
+            relationshipId: result.relationshipId,
+            relationship: RQ.getById(result.relationshipId)
+        });
     }
 
     /**
-     * options: { endYear?, reason? }
+     * @param {string} guildId
+     * @param {string} memberId
+     * @param {Object} [options]  { endYear?, reason? }
      */
     function removeGuildMembership(guildId, memberId, options) {
         options = options || {};
 
         if (typeof guildId !== 'string' || typeof memberId !== 'string') {
-            return _fail('MISSING_ID', 'guildId and memberId required');
+            return _fail('MISSING_ID', 'guildId and memberId are required');
         }
 
         var rel = PQ.getGuildMembership(memberId, guildId);
         if (!rel) return _fail('NOT_FOUND', 'no active guild membership');
 
-        var year = options.endYear !== undefined ? options.endYear : _getCurrentYear();
-        var reason = (typeof options.reason === 'string' && options.reason.length > 0)
-            ? options.reason
-            : 'left guild';
-
-        var result = RC.end(rel.relationshipId, year, reason);
+        var result = endEdge(
+            rel.relationshipId,
+            options.endYear,
+            typeof options.reason === 'string' ? options.reason : 'left guild'
+        );
         if (!result.success) return result;
 
-        return _ok({ relationship: window.RelationshipQueries.getById(rel.relationshipId) });
+        return _ok({
+            relationshipId: rel.relationshipId,
+            relationship: RQ.getById(rel.relationshipId)
+        });
     }
 
+    /**
+     * @param {string} guildId
+     * @param {string} memberId
+     * @param {string|null} rank
+     */
     function setGuildRank(guildId, memberId, rank) {
         if (typeof guildId !== 'string' || typeof memberId !== 'string') {
-            return _fail('MISSING_ID', 'guildId and memberId required');
+            return _fail('MISSING_ID', 'guildId and memberId are required');
         }
 
         var rel = PQ.getGuildMembership(memberId, guildId);
         if (!rel) return _fail('NOT_FOUND', 'no active guild membership');
 
-        var result = RC.update(rel.relationshipId, {
-            metadata: { rank: typeof rank === 'string' ? rank : null }
+        var result = updateEdgeMetadata(rel.relationshipId, {
+            rank: typeof rank === 'string' ? rank : null
         });
         if (!result.success) return result;
 
-        return _ok({ relationship: window.RelationshipQueries.getById(rel.relationshipId) });
+        return _ok({
+            relationshipId: rel.relationshipId,
+            relationship: RQ.getById(rel.relationshipId)
+        });
     }
 
-    // -------------------------------------------------------------------------
-    // EXPORTS
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 8. EXPORTS
+    // =========================================================================
 
     window.ProfessionalCommands = {
-        createApprenticeship: createApprenticeship,
-        progressApprenticeship: progressApprenticeship,
-        completeApprenticeship: completeApprenticeship,
-        endApprenticeship: endApprenticeship,
+        // Edge primitive — the write path used by ApprenticeshipCommands
+        // and by every archetype-specific command below.
+        createEdge: createEdge,
+        updateEdgeMetadata: updateEdgeMetadata,
+        endEdge: endEdge,
+        removeEdge: removeEdge,
 
+        // Mastership
         createMastership: createMastership,
         endMastership: endMastership,
 
+        // Employment
         createEmployment: createEmployment,
         updateEmployment: updateEmployment,
         endEmployment: endEmployment,
 
+        // Guild membership
         createGuildMembership: createGuildMembership,
         removeGuildMembership: removeGuildMembership,
         setGuildRank: setGuildRank
     };
 
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.ProfessionalCommands;
+    }
 })();
