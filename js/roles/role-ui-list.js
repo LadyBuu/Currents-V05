@@ -3,7 +3,7 @@
  * STILL WATERS - ROLE UI LIST (role-ui-list.js)
  * =============================================================================
  *
- * LOCATION: js/core/ui/role-ui-list.js
+ * LOCATION: js/roles/role-ui-list.js
  *
  * Renders:
  *   - the role detail panel (view + edit)
@@ -14,8 +14,9 @@
  * Contract:
  *   - Reads via RoleQueries. Writes via RoleCommands.
  *   - Never mutates role or character state directly.
- *   - Never scans every character to answer a role question. Uses RoleQueries
- *     statistics.
+ *   - Never scans every character to answer a role question. Uses
+ *     RoleQueries statistics. (Statistics is itself O(characters); it is
+ *     called at most ONCE per role per render, never twice.)
  *   - Never hardcodes skill thresholds. Uses SkillUtils.
  *   - Never invents its own skill taxonomy, literacy vocabulary, or salary
  *     defaults. Uses SkillUtils and RoleConstants.
@@ -182,7 +183,25 @@
     }
 
     // =========================================================================
-    // 4. SPECIALIZATIONS RENDERING
+    // 4. STATISTICS CACHE (per render)
+    // =========================================================================
+    //
+    // getRoleStatistics is O(characters). For a list of N roles, we do NOT
+    // want to call it twice per row. This cache holds one lookup per role
+    // id for the duration of a single render pass.
+
+    function _createStatsCache() {
+        var cache = Object.create(null);
+        return function (roleId) {
+            if (cache[roleId] === undefined) {
+                cache[roleId] = RQ.getRoleStatistics(roleId);
+            }
+            return cache[roleId];
+        };
+    }
+
+    // =========================================================================
+    // 5. SPECIALIZATIONS RENDERING
     // =========================================================================
 
     function _renderSpecializationsChips(specializations) {
@@ -203,7 +222,7 @@
     }
 
     // =========================================================================
-    // 5. CHARACTERS-WITH-ROLE TABLE
+    // 6. CHARACTERS-WITH-ROLE TABLE
     // =========================================================================
     //
     // Receives already-computed detail entries from RoleQueries. Does not
@@ -267,7 +286,7 @@
     }
 
     // =========================================================================
-    // 6. ROLE DETAIL PANEL
+    // 7. ROLE DETAIL PANEL
     // =========================================================================
 
     function renderRoleDetailPanel(containerId, roleId, onBack, onRefresh, options) {
@@ -539,7 +558,7 @@
     }
 
     // =========================================================================
-    // 7. ROLE LIST
+    // 8. ROLE LIST
     // =========================================================================
 
     function renderRoleList(containerId, options) {
@@ -568,19 +587,18 @@
             return (a.name || '').localeCompare(b.name || '');
         });
 
+        // One statistics lookup per role, for the duration of this render.
+        var statsFor = _createStatsCache();
+
         var html = '<div style="display:flex;flex-direction:column;gap:4px;">';
         for (var i = 0; i < roles.length; i++) {
             var role = roles[i];
             var isSelected = selectedId === role.id;
-
-            // Use RoleQueries for holder count. No character scan here.
-            var stats = showStats ? RQ.getRoleStatistics(role.id) : null;
-            var holderCount = stats
-                ? stats.totalCharacters
-                : RQ.getRoleStatistics(role.id).totalCharacters;
+            var stats = statsFor(role.id);
+            var holderCount = stats.totalCharacters;
 
             var statsHtml = '';
-            if (stats) {
+            if (showStats) {
                 statsHtml =
                     '<div style="font-size:0.55rem;color:var(--dim);display:flex;gap:12px;margin-top:4px;">' +
                         '<span>Avg skill: ' + stats.averageSkill + '</span>' +
@@ -671,7 +689,7 @@
     }
 
     // =========================================================================
-    // 8. ROLE CARD
+    // 9. ROLE CARD
     // =========================================================================
 
     function renderRoleCard(role, options) {
@@ -681,7 +699,6 @@
         var showStats = options.showStats === true;
         var showActions = options.showActions !== false;
 
-        // Holder count from RoleQueries.
         var stats = RQ.getRoleStatistics(role.id);
         var holderCount = stats.totalCharacters;
 
@@ -736,19 +753,21 @@
     }
 
     // =========================================================================
-    // 9. MASTER FILTER TOGGLE
+    // 10. MASTER FILTER TOGGLE
     // =========================================================================
     //
     // The label matches what the filter actually does. If the caller wants
-    // "Expert and above", it should pass label: 'Show Experts and Above' and
-    // the query should use expertsAndUp. This renderer does not decide
+    // "Expert and above", it should pass labelText: 'Show Experts and Above'
+    // and the query should use expertsAndUp. This renderer does not decide
     // semantics; it only displays them.
 
     function renderMasterFilterToggle(containerId, mastersOnly, onChange, labelText) {
         var container = document.getElementById(containerId);
         if (!container) return false;
 
-        var label = labelText || ('Show ' + SU.getTier(SU.getThresholds().MASTER).name + 's only');
+        var label = labelText || (
+            'Show ' + SU.getTier(SU.getThresholds().MASTER).name + 's only'
+        );
 
         container.innerHTML =
             '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">' +
@@ -769,7 +788,7 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 11. EXPORTS
     // =========================================================================
 
     window.RoleUI = {
