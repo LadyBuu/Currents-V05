@@ -2,12 +2,35 @@
  * jealousy-queries.js
  *
  * Semantic reads for jealousy.
- * Discovers jealousy targets by gathering facts for JealousyRules.
- * No policy, no mutation, no persistence.
  *
- * JEALOUSY HISTORY OWNERSHIP:
- *   Stored on the character record as `character.jealousyHistory` for
- *   backward compatibility. Returns defensive projections.
+ * Owns:
+ *   - jealousy evaluation between two characters (subject, target,
+ *     about) — gathering facts and delegating to JealousyRules
+ *   - discovery of jealousy targets for a subject
+ *   - primary jealousy target
+ *   - conflict projections (rivalries and enmities) for a subject
+ *
+ * Does NOT own:
+ *   - state access (goes through RelationshipQueries / RomanceQueries /
+ *     RivalryQueries)
+ *   - mutation
+ *   - persistence
+ *   - randomness
+ *   - jealousy history (v1 does not persist it; see module note)
+ *
+ * JEALOUSY HISTORY (v1):
+ *   Jealousy events are not persisted in v1. The domain derives what it
+ *   needs from current relationship facts and, if needed, from
+ *   JealousyCommands' event log. If historical escalation becomes
+ *   mechanically necessary, it graduates to its own state module. It is
+ *   deliberately NOT stored on character records and NOT stuffed into
+ *   relationship metadata.
+ *
+ * Every returned value is a defensive projection. Never a live record.
+ * Unknown inputs return null or []. No fabrication.
+ *
+ * Load order: after relationship-queries.js, romance-queries.js,
+ * rivalry-queries.js, jealousy-rules.js.
  */
 
 (function() {
@@ -15,13 +38,15 @@
 
     var RQ = window.RelationshipQueries;
     var RoQ = window.RomanceQueries;
+    var RvQ = window.RivalryQueries;
     var JR = window.JealousyRules;
+
     var A = window.RELATIONSHIP_ARCHETYPES;
     var ATTR = window.RELATIONSHIP_ATTRIBUTES;
     var STATUS = window.RELATIONSHIP_STATUS;
 
-    if (!RQ || !RoQ || !JR || !A || !ATTR || !STATUS) {
-        throw new Error('jealousy-queries.js: relationship-queries.js, romance-queries.js, jealousy-rules.js must load first');
+    if (!RQ || !RoQ || !RvQ || !JR || !A || !ATTR || !STATUS) {
+        throw new Error('jealousy-queries.js: relationship-queries.js, romance-queries.js, rivalry-queries.js, jealousy-rules.js must load first');
     }
 
     // -------------------------------------------------------------------------
@@ -51,63 +76,89 @@
 
     // -------------------------------------------------------------------------
     // FACT GATHERING
+    //
+    // Builds the fact bundle JealousyRules.calculateJealousy needs.
+    // All reads go through domain queries; this module never touches
+    // state.
     // -------------------------------------------------------------------------
 
-    /**
-     * Gathers the fact bundle JealousyRules.calculateJealousy needs for
-     * (subject, target, about).
-     */
     function _gatherJealousyFacts(subjectId, targetId, aboutId) {
         var subject = _getCharacter(subjectId);
         var target = _getCharacter(targetId);
         if (!subject || !target) return null;
 
-        // Romantic: subject's relationship with `about` vs target's relationship with `about`
         var romantic = null;
-        if (aboutId) {
-            var subjectWithAbout = RQ.getActiveBetweenOfType(subjectId, aboutId, A.COMMITTED).concat(
-                RQ.getActiveBetweenOfType(subjectId, aboutId, A.CASUAL_DATING)
-            );
-            var targetWithAbout = RQ.getActiveBetweenOfType(targetId, aboutId, A.COMMITTED).concat(
-                RQ.getActiveBetweenOfType(targetId, aboutId, A.CASUAL_DATING)
-            ).concat(
-                RQ.getActiveBetweenOfType(targetId, aboutId, A.ONE_NIGHT_STAND)
-            );
+        if (typeof aboutId === 'string' && aboutId.length > 0) {
+            // Subject's relationship with `about`
+            var subjCommitted = RoQ.getActiveCommittedBetween(subjectId, aboutId);
+            var subjCasual = RoQ.getActiveRomanticRelationshipsBetween(subjectId, aboutId);
+            var subjRel = null;
+            if (subjCommitted.length > 0) subjRel = subjCommitted[0];
+            else if (subjCasual.length > 0) subjRel = subjCasual[0];
+
+            // Target's relationship with `about`
+            var targCommitted = RoQ.getActiveCommittedBetween(targetId, aboutId);
+            var targCasual = RoQ.getActiveRomanticRelationshipsBetween(targetId, aboutId);
+            var targRel = null;
+            if (targCommitted.length > 0) targRel = targCommitted[0];
+            else if (targCasual.length > 0) targRel = targCasual[0];
 
             romantic = {
-                subjectRelationship: subjectWithAbout.length > 0 ? subjectWithAbout[0] : null,
-                targetRelationship:  targetWithAbout.length > 0 ? targetWithAbout[0] : null
+                subjectRelationship: subjRel
+                    ? {
+                        type: subjRel.type,
+                        status: subjRel.status,
+                        attributes: Array.isArray(subjRel.attributes)
+                            ? subjRel.attributes.slice()
+                            : []
+                    }
+                    : null,
+                targetRelationship: targRel
+                    ? {
+                        type: targRel.type,
+                        status: targRel.status,
+                        attributes: Array.isArray(targRel.attributes)
+                            ? targRel.attributes.slice()
+                            : []
+                    }
+                    : null
             };
         }
 
-        // Professional
         var professional = {
             subjectRankPriority: _rankPriority(subject),
             targetRankPriority: _rankPriority(target)
         };
 
-        // Rivalry
         var rivalry = {
-            exists: RQ.hasActiveBetweenOfType(subjectId, targetId, A.RIVALRY)
+            exists: RvQ.areInConflict(subjectId, targetId)
         };
 
         return {
             romantic: romantic,
             professional: professional,
             rivalry: rivalry,
-            traits: (subject.traits || []).slice()
+            traits: Array.isArray(subject.traits) ? subject.traits.slice() : []
         };
     }
 
     // -------------------------------------------------------------------------
-    // CALCULATION ENTRY POINT (uses JealousyRules)
+    // CALCULATION ENTRY POINT
     // -------------------------------------------------------------------------
 
     /**
-     * Returns { level, triggers, type } for a jealousy relationship.
-     * Reads facts then delegates to rules.
+     * Returns { level, triggers, type } for jealousy subject → target
+     * mediated by `aboutId` (the person subject cares about and target
+     * is involved with). `aboutId` may be null for non-romantic jealousy.
      */
     function getJealousyBetween(subjectId, targetId, aboutId) {
+        if (typeof subjectId !== 'string' || typeof targetId !== 'string') {
+            return { level: 0, triggers: [], type: null };
+        }
+        if (subjectId === targetId) {
+            return { level: 0, triggers: [], type: null };
+        }
+
         var facts = _gatherJealousyFacts(subjectId, targetId, aboutId || null);
         if (!facts) return { level: 0, triggers: [], type: null };
         return JR.calculateJealousy(facts);
@@ -115,30 +166,32 @@
 
     // -------------------------------------------------------------------------
     // TARGET DISCOVERY
+    //
+    // For a subject, find every target toward whom the subject feels
+    // jealousy, with the `about` person who mediates it. Results are
+    // sorted by level descending.
     // -------------------------------------------------------------------------
 
     /**
-     * Returns an array of jealousy target projections:
+     * Returns an array of projections:
      *   [{ targetId, aboutId, level, triggers, type }]
-     *
-     * `aboutId` is the person subject cares about that target is involved with.
      */
     function findAllJealousyTargets(subjectId) {
         var subject = _getCharacter(subjectId);
         if (!subject) return [];
 
-        // People subject cares about romantically
+        // People the subject cares about
         var caredAboutIds = [];
         var committed = RoQ.getActiveCommittedPartners(subjectId);
         for (var i = 0; i < committed.length; i++) {
-            caredAboutIds.push(committed[i].partnerId);
+            if (committed[i].partnerId) caredAboutIds.push(committed[i].partnerId);
         }
-        var casual = RoQ.getActiveRomanticPartners(subjectId).filter(function(p) {
-            return p.relationship.type === A.CASUAL_DATING;
-        });
+        var casual = RoQ.getActiveRomanticPartners(subjectId);
         for (var c = 0; c < casual.length; c++) {
-            if (caredAboutIds.indexOf(casual[c].partnerId) === -1) {
-                caredAboutIds.push(casual[c].partnerId);
+            if (casual[c].type === A.CASUAL_DATING && casual[c].partnerId) {
+                if (caredAboutIds.indexOf(casual[c].partnerId) === -1) {
+                    caredAboutIds.push(casual[c].partnerId);
+                }
             }
         }
 
@@ -147,14 +200,14 @@
         var allChars = _getCharacters();
         var results = [];
 
-        for (var i = 0; i < allChars.length; i++) {
-            var target = allChars[i];
+        for (var j = 0; j < allChars.length; j++) {
+            var target = allChars[j];
             if (target.id === subjectId) continue;
             if (target.isDeceased) continue;
 
             var best = null;
-            for (var j = 0; j < caredAboutIds.length; j++) {
-                var aboutId = caredAboutIds[j];
+            for (var k = 0; k < caredAboutIds.length; k++) {
+                var aboutId = caredAboutIds[k];
                 if (target.id === aboutId) continue;
 
                 var jv = getJealousyBetween(subjectId, target.id, aboutId);
@@ -173,7 +226,7 @@
             if (best) results.push(best);
         }
 
-        results.sort(function(a, b) { return b.level - a.level; });
+        results.sort(function(x, y) { return y.level - x.level; });
         return results;
     }
 
@@ -183,59 +236,88 @@
     }
 
     // -------------------------------------------------------------------------
-    // HISTORY
+    // CONFLICT PROJECTIONS
+    //
+    // Aggregates rivalries and enmities from RivalryQueries into a
+    // unified conflict list. Kept here because jealousy and conflict
+    // are conceptually adjacent even though rivalry owns the underlying
+    // records.
     // -------------------------------------------------------------------------
 
-    /**
-     * Returns a copy of the character's jealousy history.
-     */
-    function getJealousyHistory(characterId) {
-        var character = _getCharacter(characterId);
-        if (!character || !Array.isArray(character.jealousyHistory)) return [];
-        return character.jealousyHistory.map(function(entry) {
-            return {
-                year: entry.year,
-                targetId: entry.targetId,
-                aboutId: entry.aboutId || null,
-                jealousyLevel: entry.jealousyLevel,
-                consequence: entry.consequence
-            };
-        });
-    }
-
-    /**
-     * Returns the rivalry relationships for a character, projected.
-     */
     function getConflictHistory(characterId) {
-        var rivals = RQ.getForCharacter(characterId, { type: A.RIVALRY });
-        var result = [];
-        for (var i = 0; i < rivals.length; i++) {
-            var rel = rivals[i];
-            var otherId = rel.participantA === characterId
-                ? rel.participantB
-                : rel.participantA;
-            var meta = rel.metadata || {};
-            result.push({
-                rivalId: otherId,
-                relationshipId: rel.id,
-                startYear: rel.startYear,
-                endYear: rel.endYear,
-                status: rel.status,
-                intensity: (typeof meta.intensity === 'number') ? meta.intensity : null,
-                cause: meta.cause || null
+        if (typeof characterId !== 'string' || characterId.length === 0) return [];
+        var list = RvQ.getConflicts(characterId, { includeEnded: true });
+        var out = [];
+        for (var i = 0; i < list.length; i++) {
+            var c = list[i];
+            out.push({
+                relationshipId: c.relationshipId,
+                type: c.type,
+                otherId: c.otherId,
+                status: c.status,
+                startYear: c.startYear,
+                endYear: c.endYear
             });
         }
-        return result;
+        return out;
     }
 
+    function getActiveConflicts(characterId) {
+        if (typeof characterId !== 'string' || characterId.length === 0) return [];
+        var list = RvQ.getConflicts(characterId);
+        var out = [];
+        for (var i = 0; i < list.length; i++) {
+            var c = list[i];
+            out.push({
+                relationshipId: c.relationshipId,
+                type: c.type,
+                otherId: c.otherId,
+                status: c.status,
+                startYear: c.startYear,
+                endYear: c.endYear
+            });
+        }
+        return out;
+    }
+
+    // -------------------------------------------------------------------------
+    // STATISTICS
+    // -------------------------------------------------------------------------
+
+    function getJealousyStats(characterId) {
+        var targets = findAllJealousyTargets(characterId);
+        var conflicts = getActiveConflicts(characterId);
+        var rivals = 0;
+        var enemies = 0;
+
+        for (var i = 0; i < conflicts.length; i++) {
+            if (conflicts[i].type === A.RIVALRY) rivals++;
+            else if (conflicts[i].type === A.ENMITY) enemies++;
+        }
+
+        var highest = targets.length > 0 ? targets[0].level : 0;
+
+        return {
+            jealousyTargetCount: targets.length,
+            highestJealousyLevel: highest,
+            activeRivals: rivals,
+            activeEnemies: enemies
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // EXPORTS
     // -------------------------------------------------------------------------
 
     window.JealousyQueries = {
         getJealousyBetween: getJealousyBetween,
         findAllJealousyTargets: findAllJealousyTargets,
         getPrimaryJealousyTarget: getPrimaryJealousyTarget,
-        getJealousyHistory: getJealousyHistory,
-        getConflictHistory: getConflictHistory
+
+        getConflictHistory: getConflictHistory,
+        getActiveConflicts: getActiveConflicts,
+
+        getJealousyStats: getJealousyStats
     };
 
 })();
