@@ -10,8 +10,9 @@
  *   - attribute interpretation (the only place in the codebase
  *     permitted to read romance attributes by name)
  *   - marriage status projections (attribute-based, not legal-status-
- *     based; legal consequences read a separate semantic layer)
+ *     based)
  *   - multi-partner facts feeding RomanceRules
+ *   - pre-submit conflict reporting
  *
  * Depends on RelationshipQueries for raw edge reads and on RomanceRules
  * for the affair predicate and multi-partner policy.
@@ -21,11 +22,7 @@
  *   - mutation
  *   - persistence
  *   - randomness
- *   - cultural gating (callers consult CultureRules; this module
- *     never asserts that a marriage is culturally valid)
- *
- * Every returned value is a defensive projection. Never a live record.
- * Unknown inputs return null or []. No fabrication.
+ *   - cultural gating (callers consult CultureRules)
  *
  * Load order: after relationship-queries.js and romance-rules.js.
  */
@@ -47,9 +44,6 @@
     var ONE_NIGHT    = A.ONE_NIGHT_STAND;
     var COMMITTED    = A.COMMITTED;
 
-    // Order of precedence for legal-institution projections. The first
-    // attribute present in this list is the relationship's "institution"
-    // for display purposes. This is presentation only, not legal policy.
     var INSTITUTION_PRECEDENCE = [
         ATTR.MARRIED,
         ATTR.HANDFASTED,
@@ -80,13 +74,6 @@
                 record.type === COMMITTED);
     }
 
-    /**
-     * Projects a romantic relationship record. The projection carries
-     * interpreted semantic fields (institution, isAffair, isCommitted)
-     * alongside the raw attributes array. Callers outside the romance
-     * domain must not interpret `attributes` by name; they should read
-     * `institution` or `isAffair` from this projection.
-     */
     function _project(record, perspectiveId) {
         if (!record) return null;
 
@@ -130,12 +117,6 @@
     // ROMANTIC RELATIONSHIPS FOR A CHARACTER
     // -------------------------------------------------------------------------
 
-    /**
-     * Returns all romantic relationship projections for a character,
-     * active and historical, unless options.activeOnly is set.
-     *
-     * options: { activeOnly?: boolean }
-     */
     function getRomanticRelationships(characterId, options) {
         options = options || {};
         var records = options.activeOnly
@@ -224,10 +205,6 @@
     // PARTNERS
     // -------------------------------------------------------------------------
 
-    /**
-     * Active committed partners for a character. Returns an array of
-     * projections, each with `partnerId` populated.
-     */
     function getActiveCommittedPartners(characterId) {
         var list = getActiveRomanticRelationships(characterId);
         var out = [];
@@ -237,9 +214,6 @@
         return out;
     }
 
-    /**
-     * All active romantic partners regardless of archetype.
-     */
     function getActiveRomanticPartners(characterId) {
         return getActiveRomanticRelationships(characterId);
     }
@@ -259,10 +233,6 @@
 
     // -------------------------------------------------------------------------
     // AFFAIRS
-    //
-    // An affair is a committed relationship carrying the SECRET
-    // attribute. Nothing else defines an affair. Classification is
-    // never stored; it is derived here.
     // -------------------------------------------------------------------------
 
     function getAffairs(characterId, options) {
@@ -308,10 +278,6 @@
 
     // -------------------------------------------------------------------------
     // ATTRIBUTE INTERPRETATION
-    //
-    // The only functions in the codebase that read romance attributes by
-    // name. External domains must call these rather than inspecting
-    // `attributes` directly.
     // -------------------------------------------------------------------------
 
     function hasCommittedAttribute(relationshipId, attribute) {
@@ -335,21 +301,9 @@
     }
 
     // -------------------------------------------------------------------------
-    // MARRIAGE / INSTITUTION PROJECTIONS
-    //
-    // These are attribute-based projections for display and for callers
-    // that need a semantic answer. Legal consequences (succession,
-    // inheritance, custody) MUST NOT consult these directly; they
-    // consult CultureRules.getPartnershipLegalEffects. This module
-    // answers "what institutional marker does this relationship carry",
-    // not "what legal rights does it grant."
+    // INSTITUTION PROJECTIONS
     // -------------------------------------------------------------------------
 
-    /**
-     * The institutional marker on a single committed relationship, or
-     * null if none. Precedence: married > handfasted > civil_union >
-     * engaged > cohabiting.
-     */
     function getInstitution(relationshipId) {
         var record = RQ.getById(relationshipId);
         if (!record || record.type !== COMMITTED) return null;
@@ -369,14 +323,6 @@
         return null;
     }
 
-    /**
-     * Whether a character has any active committed relationship whose
-     * institution is the given attribute. This is a *semantic*
-     * projection, not a legal-status assertion. A culture without
-     * marriage can still have characters whose attributes contain
-     * `married`, but such a state is only reachable if
-     * RomanceRules.validateAttributesForCulture permitted it.
-     */
     function hasActiveInstitution(characterId, institution) {
         var list = getActiveCommittedPartners(characterId);
         for (var i = 0; i < list.length; i++) {
@@ -385,9 +331,6 @@
         return false;
     }
 
-    /**
-     * Returns the primary institution for a character, or null.
-     */
     function getPrimaryInstitution(characterId) {
         var list = getActiveCommittedPartners(characterId);
         for (var i = 0; i < list.length; i++) {
@@ -398,17 +341,8 @@
 
     // -------------------------------------------------------------------------
     // MULTI-PARTNER FACTS
-    //
-    // Feeds RomanceRules.canHaveMultiplePartners. The rank and trait
-    // facts come from outside romance; callers supply them.
     // -------------------------------------------------------------------------
 
-    /**
-     * externalFacts: {
-     *   allowsMultipleByRank?: boolean,
-     *   allowsMultipleByTrait?: boolean
-     * }
-     */
     function getMultiPartnerFacts(characterId, externalFacts) {
         externalFacts = externalFacts || {};
         var committed = getActiveCommittedPartners(characterId);
@@ -427,6 +361,103 @@
             allowsMultipleByRank: !!externalFacts.allowsMultipleByRank,
             allowsMultipleByTrait: !!externalFacts.allowsMultipleByTrait
         };
+    }
+
+    // -------------------------------------------------------------------------
+    // PRE-SUBMIT CONFLICT REPORT
+    //
+    // Structured list of reasons a proposed romance would be blocked or
+    // classified as an affair. Does not decide; reports.
+    //
+    // options: {
+    //   archetype:        'committed' | 'casual_dating' | 'one_night_stand'
+    //   forceAffair?:     boolean
+    //   explicitSecret?:  boolean
+    //   ageA?:            number
+    //   ageB?:            number
+    //   externalFactsA?:  object
+    //   externalFactsB?:  object
+    // }
+    //
+    // Returns {
+    //   blocked:              boolean
+    //   classification:       'legitimate' | 'affair' | 'polyamorous' | 'blocked'
+    //   classificationReason: string
+    //   conflicts:            string[]
+    // }
+    // -------------------------------------------------------------------------
+
+    function getRelationshipConflicts(aId, bId, options) {
+        options = options || {};
+
+        var result = {
+            blocked: false,
+            classification: null,
+            classificationReason: null,
+            conflicts: []
+        };
+
+        if (typeof aId !== 'string' || typeof bId !== 'string') {
+            result.blocked = true;
+            result.conflicts.push('missing_participant');
+            return result;
+        }
+        if (aId === bId) {
+            result.blocked = true;
+            result.conflicts.push('same_participant');
+            return result;
+        }
+
+        var archetype = options.archetype || COMMITTED;
+        if (!RR.isRomanticArchetype(archetype)) {
+            result.blocked = true;
+            result.conflicts.push('not_romantic_archetype');
+            return result;
+        }
+
+        if (archetype === COMMITTED) {
+            if (hasActiveCommittedBetween(aId, bId)) {
+                result.blocked = true;
+                result.conflicts.push('already_committed');
+            }
+        } else if (hasActiveRomanticBetween(aId, bId)) {
+            result.blocked = true;
+            result.conflicts.push('already_romantically_involved');
+        }
+
+        if (typeof options.ageA === 'number' && !RR.isAgeValid(archetype, options.ageA)) {
+            result.blocked = true;
+            result.conflicts.push('participant_a_underage');
+        }
+        if (typeof options.ageB === 'number' && !RR.isAgeValid(archetype, options.ageB)) {
+            result.blocked = true;
+            result.conflicts.push('participant_b_underage');
+        }
+
+        var aFacts = getMultiPartnerFacts(aId, options.externalFactsA || {});
+        if (typeof options.ageA === 'number') aFacts.ageAtStart = options.ageA;
+
+        var bFacts = getMultiPartnerFacts(bId, options.externalFactsB || {});
+        if (typeof options.ageB === 'number') bFacts.ageAtStart = options.ageB;
+
+        var classification = RR.classifyNewRelationship({
+            archetype: archetype,
+            participantAFacts: aFacts,
+            participantBFacts: bFacts,
+            startYear: options.startYear,
+            forceAffair: !!options.forceAffair,
+            explicitSecret: !!options.explicitSecret
+        });
+
+        result.classification = classification.classification;
+        result.classificationReason = classification.reason;
+
+        if (classification.classification === 'blocked') {
+            result.blocked = true;
+            result.conflicts.push(classification.reason);
+        }
+
+        return result;
     }
 
     // -------------------------------------------------------------------------
@@ -475,14 +506,12 @@
     // -------------------------------------------------------------------------
 
     window.RomanceQueries = {
-        // For a character
         getRomanticRelationships: getRomanticRelationships,
         getActiveRomanticRelationships: getActiveRomanticRelationships,
         hasActiveRomanticRelationship: hasActiveRomanticRelationship,
         hasActiveCommittedRelationship: hasActiveCommittedRelationship,
         countActiveRomanticPartners: countActiveRomanticPartners,
 
-        // Between
         getRomanticRelationshipsBetween: getRomanticRelationshipsBetween,
         getActiveRomanticRelationshipsBetween: getActiveRomanticRelationshipsBetween,
         getActiveCommittedBetween: getActiveCommittedBetween,
@@ -490,34 +519,30 @@
         hasActiveRomanticBetween: hasActiveRomanticBetween,
         hasActiveCommittedBetween: hasActiveCommittedBetween,
 
-        // Partners
         getActiveCommittedPartners: getActiveCommittedPartners,
         getActiveRomanticPartners: getActiveRomanticPartners,
         countActiveCommittedPartners: countActiveCommittedPartners,
         getCommittedPartnerIds: getCommittedPartnerIds,
 
-        // Affairs
         getAffairs: getAffairs,
         getActiveAffairs: getActiveAffairs,
         getAffairBetween: getAffairBetween,
         isAffair: isAffair,
         isSecretRelationship: isSecretRelationship,
 
-        // Attribute interpretation
         hasCommittedAttribute: hasCommittedAttribute,
         hasActiveCommittedAttributeBetween: hasActiveCommittedAttributeBetween,
         getCommittedAttributesBetween: getCommittedAttributesBetween,
 
-        // Institution projections
         getInstitution: getInstitution,
         getInstitutionBetween: getInstitutionBetween,
         hasActiveInstitution: hasActiveInstitution,
         getPrimaryInstitution: getPrimaryInstitution,
 
-        // Multi-partner facts
         getMultiPartnerFacts: getMultiPartnerFacts,
 
-        // Statistics
+        getRelationshipConflicts: getRelationshipConflicts,
+
         getRomanceStats: getRomanceStats
     };
 
