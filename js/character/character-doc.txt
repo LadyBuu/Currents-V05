@@ -1,55 +1,10 @@
-# Still Waters — Character, Family, Children, and Mortality System
+# Still Waters — Character Subsystem Documentation
 
-**Version 1.0**
+**Version 2.0**
 
-**Generated: after the full refactor**
+**Covers:** character, family, children, mortality, UI state
 
----
-
-## Table of Contents
-
-1. [System Overview](#1-system-overview)
-2. [Architectural Principles](#2-architectural-principles)
-3. [File Structure](#3-file-structure)
-4. [Load Order](#4-load-order)
-5. [Dependency Graph](#5-dependency-graph)
-6. [Character State](#6-character-state)
-7. [Character Factory](#7-character-factory)
-8. [Character Commands](#8-character-commands)
-9. [Character Queries](#9-character-queries)
-10. [Character Creation Commands](#10-character-creation-commands)
-11. [Character Deletion Commands](#11-character-deletion-commands)
-12. [Character Generator](#12-character-generator)
-13. [Character Statistics](#13-character-statistics)
-14. [Character Lifecycle](#14-character-lifecycle)
-15. [Character UI List](#15-character-ui-list)
-16. [Character Modals](#16-character-modals)
-17. [Family Rules](#17-family-rules)
-18. [Family State](#18-family-state)
-19. [Family Queries](#19-family-queries)
-20. [Family Commands](#20-family-commands)
-21. [Mortality Rules](#21-mortality-rules)
-22. [Mortality Queries](#22-mortality-queries)
-23. [Mortality Statistics](#23-mortality-statistics)
-24. [Children Rules](#24-children-rules)
-25. [Children State](#25-children-state)
-26. [Children Queries](#26-children-queries)
-27. [Children Commands](#27-children-commands)
-28. [Children Statistics](#28-children-statistics)
-29. [Children Generator](#29-children-generator)
-30. [Modals: Children Birth](#30-modals-children-birth)
-31. [Modals: Children Surrogacy](#31-modals-children-surrogacy)
-32. [Modals: Children Adoption](#32-modals-children-adoption)
-33. [Modals: Death](#33-modals-death)
-34. [UI State](#34-ui-state)
-35. [Character System Shim](#35-character-system-shim)
-36. [Data Schemas](#36-data-schemas)
-37. [Ownership Map](#37-ownership-map)
-38. [Semantic Contracts](#38-semantic-contracts)
-39. [Deletion and Lifecycle Semantics](#39-deletion-and-lifecycle-semantics)
-40. [What Was Removed](#40-what-was-removed)
-41. [What Was Not Implemented](#41-what-was-not-implemented)
-42. [Icon Policy](#42-icon-policy)
+**Status:** character subsystem complete. Relationships and professional domains not yet rebuilt.
 
 ---
 
@@ -57,107 +12,75 @@
 
 The character subsystem manages:
 
-- The canonical character record and its lifecycle
-- Family relationships (biological, legal, social parentage)
+- Canonical character records
+- Biological, legal, and social parentage
 - Kinship classification
-- Mortality (death, murder, execution)
-- Children (birth, pregnancy, surrogacy, adoption metadata)
-- Population, family, mortality, and children statistics
-- UI modals for all of the above
+- Pregnancy, birth, surrogacy, and adoption metadata
+- Death, murder, and execution
+- Population, family, children, and mortality statistics
+- Panel UI state persistence
+- UI modals for character CRUD, family view, death, birth, surrogacy, and adoption
 
-The system is designed around four fixed principles:
+Five architectural rules govern the whole system:
 
-1. **One canonical owner per concept.** Character data lives in `CharacterState`. Parent-child edges live in `FamilyState`. Pregnancy, surrogacy, and adoption metadata live in `ChildrenState`. Death fields live on the character record. Nothing is duplicated.
+1. **One owner per concept.** Character record → `CharacterState`. Parent edges → `FamilyState`. Pregnancy, surrogacy, adoption records → `ChildrenState`. Death fields → on the character record, written only by `CharacterCommands.markDeceased`.
 
-2. **Rules are pure.** Modules whose names end in `-rules.js` contain no I/O, no randomness, no mutation, no state access. They receive facts and return decisions.
+2. **Rules are pure.** `-rules.js` modules contain no I/O, no randomness, no mutation, no state access.
 
-3. **Reads and writes are separate.** Modules whose names end in `-queries.js` only read. Modules whose names end in `-commands.js` only write. A query never mutates. A command never computes a projection for presentation.
+3. **Reads and writes are separate.** `-queries.js` reads, `-commands.js` writes. A query never mutates.
 
-4. **Dependencies fail loudly.** Missing modules throw at load. Missing data returns `null` or `[]`. Invalid input throws. Nothing is fabricated.
+4. **Dependencies fail loudly.** Missing modules throw at load. Missing data returns null or []. Invalid input throws.
 
----
-
-## 2. Architectural Principles
-
-### 2.1 Ownership
-
-Every field on the character record is owned by exactly one module. The owner is the only module that may write it. Other modules may read it through the canonical read surface.
-
-### 2.2 Composition over duplication
-
-If a module needs information owned by another module, it calls the owner's query function. It does not reimplement the logic.
-
-### 2.3 Injected randomness
-
-No rules module generates random numbers. All randomness is drawn by the caller and passed in as a roll or a collection of rolls. This makes rules deterministic and testable.
-
-### 2.4 Transactional writes
-
-A single logical mutation has a single transaction owner. In practice this means:
-
-- One command call → one persistence commit → one event.
-- Multi-step operations (birth + parent edges + religion inheritance + pregnancy record) validate everything before any write, and roll back on failure.
-
-### 2.5 No fallbacks
-
-A missing dependency is a broken application, not a feature to degrade around. `_requireDependencies` at the top of every module throws when required modules are absent.
-
-### 2.6 No fabricated data
-
-- Missing character → `null`.
-- Missing collection → `[]`.
-- Invalid explicit input → `throw`.
-- Year 0 is preserved.
-- Empty strings and `0` are legitimate values.
+5. **Randomness is injected.** No rules module generates random numbers. Rolls are passed in by the caller.
 
 ---
 
-## 3. File Structure
+## 2. File Structure
 
 ```
 js/
-├── character/
-│   ├── character-state.js
-│   ├── character-factory.js
-│   ├── character-commands.js
-│   ├── character-queries.js
-│   ├── character-creation-commands.js
-│   ├── character-deletion-commands.js
-│   ├── character-generator.js
-│   ├── character-statistics.js
-│   ├── character-lifecycle.js
-│   ├── character-ui-list.js
-│   ├── character-system.js
-│   │
-│   ├── family-rules.js
-│   ├── family-state.js
-│   ├── family-queries.js
-│   ├── family-commands.js
-│   │
-│   ├── mortality-rules.js
-│   ├── mortality-queries.js
-│   ├── mortality-statistics.js
-│   │
-│   ├── children-rules.js
-│   ├── children-state.js
-│   ├── children-queries.js
-│   ├── children-commands.js
-│   ├── children-statistics.js
-│   ├── children-generator.js
-│   │
-│   ├── modals-character.js
-│   ├── modals-death.js
-│   ├── modals-children-birth.js
-│   ├── modals-children-surrogacy.js
-│   └── modals-children-adoption.js
+├── core/
+│   └── ui-state.js
 │
-└── core/
-    └── ui-state.js
+└── character/
+    ├── character-state.js
+    ├── character-factory.js
+    ├── character-commands.js
+    ├── character-queries.js
+    ├── character-creation-commands.js
+    ├── character-deletion-commands.js
+    ├── character-generator.js
+    ├── character-statistics.js
+    ├── character-lifecycle.js
+    ├── character-ui-list.js
+    ├── character-system.js
+    │
+    ├── family-rules.js
+    ├── family-state.js
+    ├── family-queries.js
+    ├── family-commands.js
+    │
+    ├── mortality-rules.js
+    ├── mortality-queries.js
+    ├── mortality-statistics.js
+    │
+    ├── children-rules.js
+    ├── children-state.js
+    ├── children-queries.js
+    ├── children-commands.js
+    ├── children-statistics.js
+    ├── children-generator.js
+    │
+    ├── modals-character.js
+    ├── modals-death.js
+    ├── modals-children-birth.js
+    ├── modals-children-surrogacy.js
+    └── modals-children-adoption.js
 ```
 
 ---
 
-## 4. Load Order
+## 3. Load Order
 
 ```html
 <!-- Core -->
@@ -180,7 +103,7 @@ js/
 <script src="js/character/character-creation-commands.js"></script>
 <script src="js/character/character-deletion-commands.js"></script>
 
-<!-- Mortality rules and reads -->
+<!-- Mortality -->
 <script src="js/character/mortality-rules.js"></script>
 <script src="js/character/mortality-queries.js"></script>
 <script src="js/character/mortality-statistics.js"></script>
@@ -191,7 +114,7 @@ js/
 <script src="js/character/family-queries.js"></script>
 <script src="js/character/family-commands.js"></script>
 
-<!-- Lifecycle (depends on commands + mortality + family) -->
+<!-- Lifecycle -->
 <script src="js/character/character-lifecycle.js"></script>
 
 <!-- Queries -->
@@ -205,7 +128,7 @@ js/
 <script src="js/character/children-statistics.js"></script>
 <script src="js/character/children-generator.js"></script>
 
-<!-- Statistics, generation, UI -->
+<!-- Statistics and generation -->
 <script src="js/character/character-generator.js"></script>
 <script src="js/character/character-statistics.js"></script>
 <script src="js/character/character-ui-list.js"></script>
@@ -217,1093 +140,367 @@ js/
 <script src="js/character/modals-children-surrogacy.js"></script>
 <script src="js/character/modals-children-adoption.js"></script>
 
-<!-- Compatibility shim, last -->
+<!-- Compatibility shim -->
 <script src="js/character/character-system.js"></script>
 ```
 
 ---
 
-## 5. Dependency Graph
+## 4. Module Reference
 
-```
-core
-  time, storage, ids, formatting, randomness, accessors, world, icons, modals-core, ui-state
-       │
-       ▼
-CharacterState
-       │
-       ├── CharacterCommands ◄──── CharacterCreationCommands
-       │                          CharacterDeletionCommands
-       │
-FamilyRules ── FamilyState ── FamilyQueries ── FamilyCommands
-       │
-MortalityRules ── MortalityQueries ── MortalityStatistics
-       │
-ChildrenRules ── ChildrenState ── ChildrenQueries ── ChildrenCommands
-       │                              │
-       │                              ├── ChildrenStatistics
-       │                              └── ChildrenGenerator
-       │
-CharacterLifecycle
-       │
-CharacterQueries ── CharacterStatistics ── CharacterGenerator
-       │
-UI (modals-character, modals-death, modals-children-*)
-       │
-CharacterSystem (shim)
-```
+### 4.1 `character-state.js`
+
+**Owns:** canonical runtime character collection.
+
+**Provides:** derived indexes, subscriptions, cache rebuild, low-level character-owned mutation primitives, internal live-reference access for authorized code.
+
+**Public reads** (projections only): `getAllCharacters`, `getTotalCharacterCount`, `getCharacter`, `getCharacterId`, `hasCharacter`, `getCharactersByCurrentLocation`, `getCharactersByBirthplace`, `getCharactersByHousehold`, `getCharactersByStatus`, `getLivingCharacters`, `getDeceasedCharacters`, `getCharactersByGender`, `getCharactersByProfession`, `getCharactersByRank`, `getCharactersByBirthDecade`, `getCharactersByReligion`, `getCharactersByCulture`, `searchByName`.
+
+**Public writes:** `updateCharacter`, `updateCharacters`, `applyDomainFieldPatch`, `addCharacter`, `addCharacters`, `removeCharacter`, `removeCharacters`.
+
+**Internal:** `_getLiveCharacterForMutation(id)` — reserved for `CharacterCommands`, `FamilyCommands`, `ChildrenCommands`, `CharacterLifecycle`.
+
+**Events:** dispatches `characterChanged`; listens for `characterChanged` and `masterDataUpdated`.
+
+**Persistence:** `markDataDirty`.
 
 ---
 
-## 6. Character State
+### 4.2 `character-factory.js`
 
-**File:** `js/character/character-state.js`
+**Owns:** canonical character record construction.
 
-**Ownership:** Canonical runtime character data.
+**Public:** `buildCharacter(data, options)` → `{ success, data?, reason? }`.
 
-**Responsibilities:**
-
-- Maintain the in-memory character collection.
-- Provide derived indexes.
-- Offer a subscription mechanism.
-- Rebuild caches on `characterChanged` and `masterDataUpdated`.
-- Expose low-level character-owned write primitives.
-- Expose internal live-reference access for authorized mutation code.
-
-**Public read API** — returns projections, never live objects:
-
-| Function | Returns |
-|---|---|
-| `getAllCharacters()` | Array of character projections |
-| `getTotalCharacterCount()` | Number |
-| `getCharacter(id)` | Projection or null |
-| `getCharacterId(id)` | Id or null |
-| `hasCharacter(id)` | Boolean |
-| `getCharactersByCurrentLocation(locationId)` | Array |
-| `getCharactersByBirthplace(locationId)` | Array |
-| `getCharactersByHousehold(householdId)` | Array |
-| `getCharactersByStatus('living' \| 'deceased')` | Array |
-| `getLivingCharacters()` | Array |
-| `getDeceasedCharacters()` | Array |
-| `getCharactersByGender('male' \| 'female' \| 'unknown')` | Array |
-| `getCharactersByProfession(roleId)` | Array |
-| `getCharactersByRank(rankId)` | Array |
-| `getCharactersByBirthDecade(decadeStartYear)` | Array |
-| `getCharactersByReligion(religionId)` | Array |
-| `getCharactersByCulture(cultureId)` | Array |
-| `searchByName(query)` | Array |
-
-**Public write primitives:**
-
-| Function | Effect |
-|---|---|
-| `updateCharacter(id, patch)` | Character-owned field patch. Shallow merge. |
-| `updateCharacters(changes)` | Batch character-owned patch. Rejects duplicate ids. |
-| `applyDomainFieldPatch(id, patch)` | Domain-owned embedded field write. No field gate. |
-| `addCharacter(character)` | Append a fully-built record. |
-| `addCharacters(characters)` | Batch append. |
-| `removeCharacter(id)` | Remove from collection. |
-| `removeCharacters(ids)` | Batch remove. |
-
-**Internal:**
-
-- `_getLiveCharacterForMutation(id)` — returns the live canonical object. Reserved for `CharacterCommands`, `FamilyCommands`, `ChildrenCommands`, and `CharacterLifecycle`.
-
-**Events:**
-
-- Dispatches `characterChanged` with `{ action, characterIds }` on every write.
-- Listens for `characterChanged` and `masterDataUpdated`.
-
-**Persistence:** Calls `window.markDataDirty()`. Never calls `saveMasterData`. Storage decides when to flush.
+`options.currentYear` is required when `data.birthYear` is omitted. Domain-owned fields are always constructed in their neutral empty state and never accepted from the caller: `professions`, `rankAssignments`, `relationships`, `friends`, `apprentices`. Parent fields are not part of the record.
 
 ---
 
-## 7. Character Factory
+### 4.3 `character-commands.js`
 
-**File:** `js/character/character-factory.js`
+**Owns:** character-owned mutations.
 
-**Ownership:** Construction of the canonical character record.
+**Field updates:** `updateCharacterFields(id, patch)`, `updateCharactersFields(changes)`, `updateCharacter` (alias).
 
-**Public API:**
+`updateCharacterFields` refuses fields owned by other domains: `professions`, `rankAssignments`, `relationships`, `friends`, `apprenticeshipDetails`, `apprentices`, `isDeleted`, `deletedAt`.
 
-```
-buildCharacter(data, options) → { success, data?, reason? }
-```
+**Death:** `markDeceased(id, deathData)` — the single canonical writer of `isDeceased` and associated fields. Validated through `MortalityRules.validateDeath`. Dispatches no family cleanup; the caller does (`CharacterLifecycle.killCharacter`).
 
-**Input validation:**
+**Professions:** `getProfession`, `getProfessions`, `addProfession`, `updateProfession`, `removeProfession`, `removeProfessionFromAll`, `replaceProfessions`, `setPrimaryProfession`, `clearPrimaryProfession`.
 
-- `name` is required, trimmed, ≤ 100 chars.
-- `gender` ∈ `male | female | unknown`.
-- `attraction` ∈ `both | men | women | neither | unknown`.
-- `surnameSource` ∈ `country | cultural | inherited | custom | none`.
-- Year fields validated through `isValidYear`.
-- Unknown input fields are ignored.
+**Surname:** `recordCharacterSurnameChange`, `revertCharacterSurnameChange`.
 
-**Cross-field invariants:**
-
-- A deceased character must have a `deathYear`.
-- A living character must not have a `deathYear`.
-- `deathYear` must not be before `birthYear`.
-
-**Options:**
-
-- `options.currentYear` is required when `data.birthYear` is omitted.
-
-**Defaults:**
-
-- `birthYear` defaults to `options.currentYear`.
-- `surnameSource` defaults to `custom`.
-- `gender` defaults to `unknown`.
-- `attraction` defaults to `both`.
-- `isLegitimate` defaults to `true`.
-
-**Domain-owned fields constructed empty:**
-
-`professions`, `rankAssignments`, `relationships`, `friends`, `apprentices`.
-
-**Removed fields (not part of the record):**
-
-`motherId`, `fatherId`, `children`, `adoptedParents`, `adoptedChildren`.
-
-Parent edges are established after creation through `FamilyCommands.setParent`.
+**Religion:** `assignCharacterReligion`, `removeCharacterReligion` (delegate to `ReligionCommands`).
 
 ---
 
-## 8. Character Commands
+### 4.4 `character-queries.js`
 
-**File:** `js/character/character-commands.js`
+**Owns:** semantic character reads.
 
-**Ownership:** Character-owned mutations.
+**Search and lookup:** `searchCharacters`, `readCharactersByName`, `getAllCharacters`, `getCharacter`, `getCharacterDisplayName`, `getCurrentLocationId`, `getCharactersInLocations`.
 
-**Public API:**
+**Age:** `getCharactersByAgeRange(minAge, maxAge, includeDeceased)`.
 
-| Function | Purpose |
-|---|---|
-| `updateCharacterFields(id, patch)` | Character-owned field updates. Refuses domain-owned fields. |
-| `updateCharactersFields(changes)` | Batch variant. |
-| `updateCharacter(id, patch)` | Alias of `updateCharacterFields`. |
-| `markDeceased(id, deathData)` | The single canonical death writer. |
-| `getProfession(id, professionId)` | Read a single profession record. |
-| `getProfessions(id)` | Defensive copy of the profession array. |
-| `addProfession(id, data)` | Add a profession. |
-| `updateProfession(id, professionId, updates)` | Update fields on a profession. |
-| `removeProfession(id, professionId)` | Remove a profession. |
-| `removeProfessionFromAll(professionId)` | Remove a profession from every character. |
-| `replaceProfessions(id, array)` | Replace the whole profession array. |
-| `setPrimaryProfession(id, professionId)` | Mark one profession primary. |
-| `clearPrimaryProfession(id)` | Clear the primary flag. |
-| `recordCharacterSurnameChange(...)` | Append a surname history entry. |
-| `revertCharacterSurnameChange(id)` | Pop the last surname change. |
-| `assignCharacterReligion(id, religionId, options)` | Orchestrate a religion assignment or conversion. |
-| `removeCharacterReligion(id)` | Orchestrate religion removal. |
+**Projections:** `getCharacterSummary`, `getCharacterFacts`, `getAllCharacterFacts`, `getCharacterIdentityFacts`.
 
-**Domain-owned fields refused by `updateCharacterFields`:**
+**Family delegates:** `getCharacterChildren`, `getCharacterParents`, `getCharacterSiblings`, `getCharacterGrandparents`, `getCharacterGrandchildren`, `getCharacterKinship`, `getCharacterKinshipCloseness`.
 
-`professions`, `rankAssignments`, `relationships`, `friends`, `apprenticeshipDetails`, `apprentices`, `isDeleted`, `deletedAt`.
-
-**`markDeceased` contract:**
-
-`deathData` may contain: `deathYear`, `deathCause` (stable id), `deathCauseDetail` (free text), `deathNotes`, `isMurder`, `killerId`, `murderMotive`, `murderMethod`, `isExecution`, `executionReason`, `executionMethod`, `executionLocation`.
-
-Validated through `MortalityRules.validateDeath`. Writes through `CharacterState.updateCharacter`. Does **not** dispatch family cleanup — that is the caller's responsibility (`CharacterLifecycle.killCharacter` dispatches it).
+**Profession delegates:** `getCharacterProfessions`, `getPrimaryProfession`.
 
 ---
 
-## 9. Character Queries
+### 4.5 `character-creation-commands.js`
 
-**File:** `js/character/character-queries.js`
+**Owns:** creation boundary.
 
-**Ownership:** Semantic character reads.
+**Public:** `createCharacter`, `createCharacterFromData`, `createRandomCharacter`, `bulkCreateCharacters`.
 
-**Public API:**
+Creation sequence: build → `CharacterState.addCharacter` → `FamilyCommands.setParent` for `options.parents` → `ReligionCommands.assignReligionToCharacter` (non-fatal). Rollback on family or religion failure.
 
-| Function | Purpose |
-|---|---|
-| `searchCharacters(query)` | Substring match on full name. |
-| `readCharactersByName(name)` | Alias. |
-| `getAllCharacters()` | All projections. |
-| `getCharacter(id)` | Projection or null. |
-| `getCharacterDisplayName(id)` | Full name or null. |
-| `getCurrentLocationId(id)` | Location id or null. |
-| `getCharactersInLocations(ids)` | Location-scoped lookup. |
-| `getCharactersByAgeRange(min, max, includeDeceased)` | Age-range filter. |
-| `getCharacterSummary(id)` | Composed summary with rank, professions, family. |
-| `getCharacterFacts(id)` | Narrow cross-domain projection. |
-| `getAllCharacterFacts()` | Facts for every character. |
-| `getCharacterIdentityFacts(id)` | Alias of `getCharacterFacts`. |
-| `getCharacterChildren(id)` | Family delegate. |
-| `getCharacterParents(id)` | Family delegate. |
-| `getCharacterSiblings(id)` | Family delegate. |
-| `getCharacterGrandparents(id, gen)` | Family delegate. |
-| `getCharacterGrandchildren(id, gen)` | Family delegate. |
-| `getCharacterKinship(a, b)` | Family delegate. |
-| `getCharacterKinshipCloseness(a, b)` | Family delegate. |
-| `getCharacterProfessions(id)` | Command delegate. |
-| `getPrimaryProfession(id)` | Command delegate. |
-
-**Return contract:** every returned character is a projection. No live canonical object leaves this module.
+Parent edges are passed as `options.parents`: an array of `{ parentId, parentRole?, parentType? }`.
 
 ---
 
-## 10. Character Creation Commands
+### 4.6 `character-deletion-commands.js`
 
-**File:** `js/character/character-creation-commands.js`
+**Owns:** deletion boundary.
 
-**Ownership:** Creation boundary.
+**Public:** `deleteCharacter`, `softDeleteCharacter`, `restoreSoftDeletedCharacter`, `purgeSoftDeletedCharacters`, `bulkDeleteCharacters`, `getSoftDeletedCharacters`.
 
-**Public API:**
-
-| Function | Purpose |
-|---|---|
-| `createCharacter(data, options)` | Build, insert, establish family and religion edges. |
-| `createCharacterFromData(built)` | Insert an already-built record. |
-| `createRandomCharacter(options)` | Generate, build, insert. |
-| `bulkCreateCharacters(array, options)` | Batch variant. |
-
-**Composition:**
-
-1. `buildCharacter(data, { currentYear })`
-2. `CharacterState.addCharacter(built)`
-3. `FamilyCommands.setParent` for every parent in `options.parents`
-4. `ReligionCommands.assignReligionToCharacter` if applicable (non-fatal)
-
-**Parent edges:**
-
-Parents are passed as `options.parents`, an array of `{ parentId, parentRole?, parentType? }`. Defaults: `parentType = 'biological'`, `parentRole` inferred from gender.
-
-**Rollback:** if family or religion establishment fails, the character is removed from `CharacterState` and the operation returns a structured failure.
+Hard delete dispatches cleanup to: `FamilyCommands`, `ChildrenCommands`, `RelationshipCommands`, `HouseholdCommands`, `WorldCommands`, `RankCommands`, `ApprenticeshipCommands` — each called only if the module and method exist.
 
 ---
 
-## 11. Character Deletion Commands
+### 4.7 `character-generator.js`
 
-**File:** `js/character/character-deletion-commands.js`
+**Owns:** random character data proposals.
 
-**Ownership:** Deletion boundary.
-
-**Public API:**
-
-| Function | Purpose |
-|---|---|
-| `deleteCharacter(id)` | Hard delete + cross-domain cleanup. |
-| `softDeleteCharacter(id)` | Mark deleted, keep record. |
-| `restoreSoftDeletedCharacter(id)` | Clear soft-delete flags. |
-| `purgeSoftDeletedCharacters()` | Hard delete every soft-deleted record. |
-| `bulkDeleteCharacters(ids, soft)` | Batch delete. |
-| `getSoftDeletedCharacters()` | Read helper. |
-
-**Cleanup dispatcher:** on hard delete, calls the following if the module and method are present:
-
-- `FamilyCommands.removeAllReferencesTo(id)`
-- `ChildrenCommands.removeAllReferencesTo(id)`
-- `RelationshipCommands.removeAllReferencesTo(id)`
-- `HouseholdCommands.removeCharacterReferences(id)`
-- `WorldCommands.removeLeaderReferences(id)`
-- `RankCommands.removeCharacterReferences(id)`
-- `ApprenticeshipCommands.removeAllReferencesTo(id)`
-
-Missing modules do not block deletion. The response records which domains participated.
+**Public:** `generateRandomCharacterData(options)`. Produces character-owned input fields only. Nothing about family, relationships, or domain records.
 
 ---
 
-## 12. Character Generator
+### 4.8 `character-statistics.js`
 
-**File:** `js/character/character-generator.js`
+**Owns:** population aggregation.
 
-**Ownership:** Random character data proposals.
-
-**Public API:**
-
-```
-generateRandomCharacterData(options) → { success, data?, reason? }
-```
-
-**Options:**
-
-`gender`, `age`, `countryId`, `religionId`, `assignProfession`.
-
-**Output:** character-owned input fields only. No parent edges, no family, no relationship records. The caller passes the proposal to `CharacterCreationCommands.createCharacter`.
-
-**Explicit `countryId` validation:** the place must resolve. If it does not, the function fails.
-
-**Age bands:** explicit `{ min, max, weight }`. No shared boundaries.
-
-**Profession `startYear`:** placed within `[birthYear + MIN_PROFESSION_AGE, currentYear]`.
+**Public:** `getCharacterStatistics`, `getAgeDistribution`, `getGenderDistribution`, `getHouseholdDistribution`, `getProfessionDistribution`, `getRankDistribution`, `getReligionDistribution`, `getCultureDistribution`, `getLiteracyStatistics(predicate)`.
 
 ---
 
-## 13. Character Statistics
+### 4.9 `character-lifecycle.js`
 
-**File:** `js/character/character-statistics.js`
+**Owns:** age classification, time progression, death commands, lifespan estimation.
 
-**Ownership:** Population aggregation.
+**Age classification:** `getLifeStage`, `getLifeStageName`, `getAgeGroup`, `getAllAgeGroups`, `getAgeGroupIndex`, `isElderly`, `groupCharactersByAgeGroup`.
 
-**Public API:**
+**Time:** `advanceMortality(yearsAdvanced, options)`. Evaluates per year. Falls back to `MortalityRules.getDefaultMortalityRate(age)` when `getMortalityRate` is not supplied. Falls back to `MortalityRules.pickRandomCause` when `chooseDeathCause` is not supplied.
 
-| Function | Purpose |
-|---|---|
-| `getCharacterStatistics()` | Total, gender, age band, household, profession, rank, religion, culture distributions, averages. |
-| `getAgeDistribution()` | Age band list. |
-| `getGenderDistribution()` | Gender list. |
-| `getHouseholdDistribution()` | Household list, sorted by count. |
-| `getProfessionDistribution()` | Profession list. |
-| `getRankDistribution()` | Rank list. |
-| `getReligionDistribution()` | Religion list. |
-| `getCultureDistribution()` | Culture list. |
-| `getLiteracyStatistics(predicate)` | Requires an education predicate; throws if absent. |
+**Death:** `killCharacter(id, deathData)`, `killCharacterRandomCause(id, options)`, `triggerNaturalDeath(id, options)`, `triggerAccidentalDeath(id, options)`.
 
-**Age bands:** read from `window.AGE_GROUPS` when present; otherwise default bands match the constants.
+**Lifespan:** `predictLifespan`, `getExpectedRemainingYears`. Deterministic.
 
 ---
 
-## 14. Character Lifecycle
+### 4.10 `character-ui-list.js`
 
-**File:** `js/character/character-lifecycle.js`
+**Owns:** list and card rendering.
 
-**Ownership:** Time progression, age classification, death wrappers, lifespan estimation.
+**Public:** `renderCharacterList(container, options)`, `renderCharacterCard(character)`.
 
-**Public API — age classification:**
-
-| Function | Purpose |
-|---|---|
-| `getLifeStage(charOrAge)` | `{ key, name, min, max, group }` or null. |
-| `getLifeStageName(charOrAge)` | Name or null. |
-| `getAgeGroup(charOrAge)` | Band key or null. |
-| `getAllAgeGroups()` | Copy of `AGE_GROUPS`. |
-| `getAgeGroupIndex(group)` | Index or -1. |
-| `isElderly(charOrAge)` | Boolean or null. |
-| `groupCharactersByAgeGroup(chars, excludeDeceased)` | Object of arrays, each sorted by age ascending. |
-
-**Public API — time progression:**
-
-| Function | Purpose |
-|---|---|
-| `advanceMortality(yearsAdvanced, options)` | Advance by N years, evaluating per-year. |
-
-**Public API — death commands:**
-
-| Function | Purpose |
-|---|---|
-| `killCharacter(id, deathData)` | Explicit death transition. Dispatches family cleanup. |
-| `killCharacterRandomCause(id, options)` | Picks a cause from `MortalityRules`. |
-| `triggerNaturalDeath(id, options)` | Natural cause, detail derived from age. |
-| `triggerAccidentalDeath(id, options)` | Accident cause, detail from options or a default list. |
-
-**Public API — lifespan estimation:**
-
-| Function | Purpose |
-|---|---|
-| `predictLifespan(character)` | Deterministic estimate from identity hash and rank priority. |
-| `getExpectedRemainingYears(character)` | `predictLifespan - age`. |
-
-**Options for `advanceMortality`:** `getMortalityRate(character, age, year)`, `chooseDeathCause(character, age, year)`, `random()`, `maxDeaths`.
-
-When `getMortalityRate` is absent, `MortalityRules.getDefaultMortalityRate(age)` is used.
-
-When `chooseDeathCause` is absent, `MortalityRules.pickRandomCause(facts, roll)` is used.
+One delegated click handler per container, replaced on every render. Rows are native buttons.
 
 ---
 
-## 15. Character UI List
+### 4.11 `modals-character.js`
 
-**File:** `js/character/character-ui-list.js`
+**Owns:** character CRUD, details, family view.
 
-**Ownership:** List and card rendering.
-
-**Public API:**
-
-| Function | Purpose |
-|---|---|
-| `renderCharacterList(container, options)` | Render a list. |
-| `renderCharacterCard(character)` | Render a single card as HTML. |
-
-**Options:** `filteredCharacters`, `onSelect`, `emptyMessage`, `showStatus`, `showLocation`, `showAge`, `showCulture`, `rowClass`.
-
-**Interaction:** one delegated click handler on the container. The handler is replaced on each render via a WeakMap, preventing listener stacking.
-
-**Rows:** native `<button>` elements. Keyboard accessible by default.
+**Public:** `openCreateCharacterModal`, `openEditCharacterModal`, `openDeleteCharacterModal`, `openCharacterDetailsModal`, `openFamilyViewModal`.
 
 ---
 
-## 16. Character Modals
+### 4.12 `family-rules.js`
 
-**File:** `js/character/modals-character.js`
+**Owns:** parentage policy, kinship policy, cycle policy, adoption validation.
 
-**Ownership:** Character CRUD, details, family view.
+**Public:** `normalizeParentRole`, `isBiological`, `isValidParentType`, `isValidParentRole`, `canSetParent`, `deriveSiblingship`, `classifyKinship`, `isBloodRelated`, `wouldCreateBiologicalCycle`, `isOrphan`, `hasAnyParent`, `canCreateAdoption`.
 
-**Public API:**
+**Vocabulary:** parent types `biological | legal | social`; parent roles `father | mother | parent`; sibling types `full | half | step | adoptive`; kinship types `self`, `parent`, `child`, `sibling`, `grandparent`, `grandchild`, `great_grandparent`, `great_grandchild`, `aunt_uncle`, `niece_nephew`, `cousin`, `unrelated`.
 
-| Function | Purpose |
-|---|---|
-| `openCreateCharacterModal(onSuccess)` | Create a character. |
-| `openEditCharacterModal(id, onSuccess)` | Edit a character. |
-| `openDeleteCharacterModal(id, onSuccess)` | Confirm deletion. |
-| `openCharacterDetailsModal(id, onSuccess)` | Show details. |
-| `openFamilyViewModal(id)` | Show family graph. |
+**Cycle detection:** unbounded. **Kinship classification:** bounded to six generations.
 
-**Parent selection:** uses `openCharacterSelector`. Falls back to throwing if the selector is not loaded.
+**Provider contract:** `provider(characterId) → { id, parents: [biologicalParentId] } | null`.
 
-**Family integration:** reads via `FamilyQueries`, writes via `FamilyCommands`.
-
-**Death modal integration:** the Kill button opens `openDeathModal(id, ...)`.
+No legitimization.
 
 ---
 
-## 17. Family Rules
+### 4.13 `family-state.js`
 
-**File:** `js/character/family-rules.js`
-
-**Ownership:** Parentage policy, kinship policy, cycle policy, adoption validation.
-
-**Public API:**
-
-| Function | Purpose |
-|---|---|
-| `normalizeParentRole(requested, gender)` | Returns `{ ok, value }` or `{ ok: false, reason }`. |
-| `isBiological(type)` | Boolean. |
-| `isValidParentType(type)` | Boolean. |
-| `isValidParentRole(role)` | Boolean. |
-| `canSetParent(facts)` | `{ valid, errors }`. |
-| `deriveSiblingship(aParents, bParents)` | Sibling classification or null. |
-| `classifyKinship(aId, bId, provider)` | Kinship classification. |
-| `isBloodRelated(aId, bId, provider)` | Boolean. |
-| `wouldCreateBiologicalCycle(childId, candidateAncestorId, provider)` | Boolean. |
-| `isOrphan(facts)` | `{ valid, value }`. |
-| `hasAnyParent(facts)` | `{ valid, value }`. |
-| `canCreateAdoption(facts)` | `{ valid, errors }`. |
-
-**Vocabulary:**
-
-- Parent types: `biological | legal | social`
-- Parent roles: `father | mother | parent`
-- Sibling types: `full | half | step | adoptive`
-- Kinship types: `self`, `parent`, `child`, `sibling`, `grandparent`, `grandchild`, `great_grandparent`, `great_grandchild`, `aunt_uncle`, `niece_nephew`, `cousin`, `unrelated`
-
-**Cycle detection:** unbounded traversal. Any reachable cycle is invalid.
-
-**Kinship classification:** bounded to six generations. Beyond six, `unrelated`.
-
-**Provider contract:** `provider(characterId) → { id, parents: [biologicalParentId] } | null`. Must be pure. Must not throw. Must not return undefined.
-
-**Deliberately absent:** `canLegitimize` and any legitimization policy.
-
----
-
-## 18. Family State
-
-**File:** `js/character/family-state.js`
-
-**Ownership:** Canonical parent-child edge collection.
+**Owns:** canonical parent-child edge collection.
 
 **Storage key:** `masterData.data.parentChildEdges`.
 
-**Edge shape:**
+**Edge shape:** `{ id, parentId, childId, parentType, parentRole, startYear, endYear, status, notes, createdAt, updatedAt }`.
 
-```
-{
-    id:          string,          unique
-    parentId:    string,          character id
-    childId:     string,          character id
-    parentType:  'biological' | 'legal' | 'social',
-    parentRole:  'father' | 'mother' | 'parent',
-    startYear:   number | null,
-    endYear:     number | null,
-    status:      'ongoing' | 'ended',
-    notes:       string,
-    createdAt:   number,
-    updatedAt:   number
-}
-```
+**Public:** `isInitialized`, `snapshot`, `replaceAll`, `getEdgeCopy`, `idsForParent`, `idsForChild`, `idsForPair`, `allIds`, `size`, `subscribe`.
 
-**Indexes:** by id, by parent, by child, by pair.
-
-**Public API:**
-
-| Function | Purpose |
-|---|---|
-| `isInitialized()` | Boolean. |
-| `snapshot()` | Deep copy of every edge. |
-| `replaceAll(edges)` | Replace the collection. |
-| `getEdgeCopy(id)` | Single projection. |
-| `idsForParent(parentId)` | Edge ids. |
-| `idsForChild(childId)` | Edge ids. |
-| `idsForPair(parentId, childId)` | Edge ids. |
-| `allIds()` | All edge ids. |
-| `size()` | Count. |
-| `subscribe(callback)` | Receive rebuild events. |
-
-**Internal mutation primitives (reserved for `FamilyCommands`):** `_insert`, `_update`, `_remove`, `_getLiveEdge`.
-
-**Reload:** on `masterDataUpdated`, reloads from `masterData.data.parentChildEdges`.
+**Internal:** `_insert`, `_update`, `_remove`, `_getLiveEdge` (reserved for `FamilyCommands`).
 
 ---
 
-## 19. Family Queries
+### 4.14 `family-queries.js`
 
-**File:** `js/character/family-queries.js`
+**Owns:** family graph reads.
 
-**Ownership:** Family graph reads.
+**Edges:** `getEdge`, `getEdgesForParent`, `getEdgesForChild`.
 
-**Public API:**
+**Parents:** `getParents`, `getParentsByRole`, `getBiologicalParentIds`, `getLegalParentIds`, `getSocialParentIds`, `getAllParentIds`.
 
-| Function | Purpose |
-|---|---|
-| `getEdge(id)` | Single edge projection. |
-| `getEdgesForParent(parentId, options)` | Edges where parentId matches. |
-| `getEdgesForChild(childId, options)` | Edges where childId matches. |
-| `getParents(childId, options)` | Active parent edges. |
-| `getParentsByRole(childId)` | `{ fathers, mothers, others }`. |
-| `getBiologicalParentIds(childId)` | Ids. |
-| `getLegalParentIds(childId)` | Ids. |
-| `getSocialParentIds(childId)` | Ids. |
-| `getAllParentIds(childId)` | Ids, deduplicated. |
-| `getChildren(parentId, options)` | Active child edges. |
-| `getChildIds(parentId)` | Ids, deduplicated. |
-| `getBiologicalChildIds(parentId)` | Ids. |
-| `getLegalChildIds(parentId)` | Ids. |
-| `getSiblingFacts(childId)` | `{ biologicalParents, legalParents, socialParents }`. |
-| `getSiblings(childId)` | Sibling projections. |
-| `getGrandparentIds(childId, gen)` | Ids. |
-| `getGrandchildIds(parentId, gen)` | Ids. |
-| `getGrandparents(childId, gen)` | Alias. |
-| `getGrandchildren(parentId, gen)` | Alias. |
-| `getAncestorProvider()` | Provider for `FamilyRules`. |
-| `classifyKinship(aId, bId)` | Kinship classification. |
-| `isBloodRelated(aId, bId)` | Boolean. |
-| `getKinshipCloseness(aId, bId)` | Numeric 0–99. |
-| `getFirstCousinIds(id)` | Ids. |
-| `getCousins(id)` | `{ cousinId, degree, removed }` list. |
-| `getAuntAndUncleIds(id)` | Ids. |
-| `getNieceAndNephewIds(id)` | Ids. |
-| `isFirstCousin(a, b)` | Boolean. |
-| `isAuntOrUncle(a, b)` | Boolean. |
-| `isNieceOrNephew(a, b)` | Boolean. |
-| `isGrandparent(a, b)` | Boolean. |
-| `isGrandchild(a, b)` | Boolean. |
-| `isOrphan(childId, isLiving?)` | Boolean or null. |
-| `hasAnyParent(childId)` | Boolean or null. |
+**Children:** `getChildren`, `getChildIds`, `getBiologicalChildIds`, `getLegalChildIds`.
 
-**Kinship closeness metric:**
+**Siblings:** `getSiblingFacts`, `getSiblings`.
 
-| Value | Meaning |
-|---|---|
-| 0 | Self |
-| 1 | Parent or child |
-| 2 | Sibling, grandparent, grandchild, great-grandparent, great-grandchild |
-| 3 | Aunt/uncle, niece/nephew |
-| 4 | First cousin |
-| 5+ | Distant cousin |
-| 99 | Unrelated |
+**Grand-relations:** `getGrandparentIds`, `getGrandchildIds`, `getGrandparents`, `getGrandchildren`.
 
-The wrappers iterate `CharacterState.getAllCharacters()`. O(n) per call.
+**Kinship:** `getAncestorProvider`, `classifyKinship`, `isBloodRelated`, `getKinshipCloseness`.
+
+**Kinship wrappers:** `getFirstCousinIds`, `getCousins`, `getAuntAndUncleIds`, `getNieceAndNephewIds`.
+
+**Predicates:** `isFirstCousin`, `isAuntOrUncle`, `isNieceOrNephew`, `isGrandparent`, `isGrandchild`.
+
+**Orphan:** `isOrphan`, `hasAnyParent`.
+
+Numeric closeness: 0 self, 1 parent/child, 2 sibling or grand-relation, 3 aunt/uncle or niece/nephew, 4 first cousin, 5+ distant, 99 unrelated.
 
 ---
 
-## 20. Family Commands
+### 4.15 `family-commands.js`
 
-**File:** `js/character/family-commands.js`
+**Owns:** parent-child edge mutations.
 
-**Ownership:** Parent-child edge mutations.
+**Public:** `setParent`, `removeParent`, `removeBiologicalParentAtRole`, `createAdoption`, `removeAdoption`, `changeParentType`, `handleCharacterDeath`, `removeAllReferencesTo`.
 
-**Public API:**
+**`setParent` options:** `parentType`, `parentRole`, `parentGender`, `startYear`, `notes`, `allowReplace`.
 
-| Function | Purpose |
-|---|---|
-| `setParent(childId, parentId, options)` | Create a parent-child edge. |
-| `removeParent(edgeId, options)` | End a specific edge. |
-| `removeBiologicalParentAtRole(childId, role, options)` | End the active biological parent edge for a role. |
-| `createAdoption(childId, adopterId, options)` | Create a legal parent edge. |
-| `removeAdoption(childId, adopterId, options)` | End the legal edge between two characters. |
-| `changeParentType(edgeId, newType, options)` | Reclassify an edge. |
-| `handleCharacterDeath(characterId, year)` | End every active edge referencing the deceased. |
-| `removeAllReferencesTo(characterId)` | Remove every edge referencing the character. |
-
-**`setParent` options:**
-
-`parentType`, `parentRole`, `parentGender`, `startYear`, `notes`, `allowReplace`.
-
-**Idempotency:**
-
-- `setParent` returns `{ unchanged: true }` if an active edge with the same shape exists.
-- `createAdoption` returns `{ unchanged: true }` for an existing active legal edge.
-- `changeParentType` returns `{ unchanged: true }` if the type is unchanged.
-
-**Replace semantics:** replacing a biological or legal parent at the same role requires `allowReplace: true`.
-
-**Cycle detection:** biological edges only, unbounded traversal.
-
-**Events:** dispatches `familyChanged` with `{ action, characterIds }` once per committed mutation.
-
-**Persistence:** writes `masterData.data.parentChildEdges` via snapshot, then `markDataDirty`.
+**Events:** dispatches `familyChanged`. **Persistence:** `markDataDirty`.
 
 ---
 
-## 21. Mortality Rules
+### 4.16 `mortality-rules.js`
 
-**File:** `js/character/mortality-rules.js`
+**Owns:** mortality policy.
 
-**Ownership:** Mortality policy.
+**Cause vocabulary (closed):** `natural`, `disease`, `accident`, `murder`, `execution`, `childbed_fever`, `unknown`.
 
-**Death cause vocabulary (closed set):**
+**Public:** `calculateAgeAtYear`, `validateDeathYear`, `canDie`, `isValidDeathCause`, `classifyDeathCause`, `validateDeath`, `isCauseEligible`, `evaluateMortalityRoll`, `getMortalityRate`, `getDefaultMortalityRate`, `getDefaultCauseCatalogue`, `getEligibleCauses`, `pickRandomCause`, `validateDeathRecord`.
 
-`natural`, `disease`, `accident`, `murder`, `execution`, `childbed_fever`, `unknown`.
+**Exports:** `DEATH_CAUSE`, `MORTALITY_STATUS`, `DEATH_CATEGORY`, `DEFAULT_MORTALITY_RATE_BANDS`.
 
-**Public API:**
-
-| Function | Purpose |
-|---|---|
-| `calculateAgeAtYear(birthYear, year)` | Number or null. |
-| `validateDeathYear(facts)` | `{ valid, errors }`. |
-| `canDie(facts)` | `{ valid, errors }`. |
-| `isValidDeathCause(cause)` | Boolean. |
-| `classifyDeathCause(cause)` | Category id. |
-| `validateDeath(facts)` | `{ valid, errors }`. |
-| `isCauseEligible(facts, policy)` | `{ valid, errors }`. |
-| `evaluateMortalityRoll(facts, roll)` | `{ valid, dies, errors }`. |
-| `getMortalityRate(age, bands?)` | Rate or null. |
-| `getDefaultMortalityRate(age)` | Default rate. |
-| `getDefaultCauseCatalogue()` | Deep copy of the default catalogue. |
-| `getEligibleCauses(facts, catalogue?)` | Filtered list. |
-| `pickRandomCause(facts, roll, catalogue?)` | `{ cause, detail }` or null. |
-| `validateDeathRecord(record)` | `{ valid, errors }`. |
-
-**`DEATH_CAUSE`, `MORTALITY_STATUS`, `DEATH_CATEGORY` constants** are exported.
-
-**`DEFAULT_MORTALITY_RATE_BANDS`** is exported.
-
-**Randomness:** none. All rolls are caller-supplied.
+No randomness.
 
 ---
 
-## 22. Mortality Queries
+### 4.17 `mortality-queries.js`
 
-**File:** `js/character/mortality-queries.js`
+**Owns:** death record projections.
 
-**Ownership:** Death record projections.
-
-**Public API:**
-
-| Function | Purpose |
-|---|---|
-| `getLivingCharacters()` | Array. |
-| `getDeceasedCharacters()` | Array. |
-| `isLiving(id)` | Boolean or null. |
-| `isDeceased(id)` | Boolean or null. |
-| `getDeathRecord(id)` | Projection or null. |
-| `getAllDeathRecords()` | Array. |
-| `getDeathsByYear(year)` | Array. |
-| `getDeathsByCause(cause)` | Array. |
-| `getDeathsByGender(gender)` | Array. |
-| `getMurderRecords()` | Array. |
-| `getExecutionRecords()` | Array. |
-| `getMurderRecord(id)` | Projection or null. |
-| `getExecutionRecord(id)` | Projection or null. |
-
-**Death record projection:**
-
-```
-{
-    characterId, name, surname, gender,
-    birthYear, deathYear,
-    deathCause, deathCauseDetail, deathNotes,
-    ageAtDeath,
-    isMurder, killerId, murderMotive, murderMethod,
-    isExecution, executionReason, executionMethod, executionLocation
-}
-```
+**Public:** `getLivingCharacters`, `getDeceasedCharacters`, `isLiving`, `isDeceased`, `getDeathRecord`, `getAllDeathRecords`, `getDeathsByYear`, `getDeathsByCause`, `getDeathsByGender`, `getMurderRecords`, `getExecutionRecords`, `getMurderRecord`, `getExecutionRecord`.
 
 ---
 
-## 23. Mortality Statistics
+### 4.18 `mortality-statistics.js`
 
-**File:** `js/character/mortality-statistics.js`
+**Owns:** mortality aggregation.
 
-**Ownership:** Mortality aggregation.
-
-**Public API:**
-
-| Function | Purpose |
-|---|---|
-| `getMortalityStatistics()` | Totals, distributions by cause, category, year, age band, gender, murder rate, execution rate. |
-| `getMurderStatistics()` | Totals, by motive, method, year. |
-| `getExecutionStatistics()` | Totals, by reason, method, year. |
-
-**Age bands** are defined in this file (mirrors `character-statistics.js`).
+**Public:** `getMortalityStatistics`, `getMurderStatistics`, `getExecutionStatistics`.
 
 ---
 
-## 24. Children Rules
+### 4.19 `children-rules.js`
 
-**File:** `js/character/children-rules.js`
+**Owns:** fertility, pregnancy, surrogacy, adoption metadata policy, child-count heuristics.
 
-**Ownership:** Fertility, pregnancy, birth, surrogacy, adoption metadata, and child-count policy.
+**Public:** `getFertilityAgeModifier`, `getFatherAgeModifier`, `canConceive`, `getConceptionChance`, `evaluateConception`, `getComplicationChance`, `getMiscarriageChance`, `getStillbirthChance`, `getMaternalDeathChance`, `resolveFetusCount`, `resolvePregnancyOutcome`, `isValidAdoptionType`, `isValidAdoptionStatus`, `validateAdoptionMetadata`, `validateAdoptionMetadataUpdate`, `isValidSurrogacyType`, `isValidSurrogacyStatus`, `validateSurrogacyArrangement`, `validateBirth`, `calculateExpectedChildren`, `getExpectedRemainingChildren`, `calculateChildSpacing`.
 
-**Public API:**
+**Exports:** `FERTILITY_CONSTANTS`, `ADOPTION_TYPE`, `ADOPTION_STATUS`, `SURROGACY_TYPE`, `SURROGACY_STATUS`, `PREGNANCY_OUTCOME`, `DEFAULT_MIN_CHILD_SPACING`, `DEFAULT_MAX_CHILD_SPACING`.
 
-| Function | Purpose |
-|---|---|
-| `getFertilityAgeModifier(age)` | 0–1. |
-| `getFatherAgeModifier(age)` | 0–1. |
-| `canConceive(facts)` | `{ valid, errors }`. |
-| `getConceptionChance(facts)` | 0–1 or null. |
-| `evaluateConception(facts, roll)` | `{ valid, conceived, errors }`. |
-| `getComplicationChance(facts)` | 0–1. |
-| `getMiscarriageChance(facts)` | 0–1. |
-| `getStillbirthChance(facts)` | 0–1. |
-| `getMaternalDeathChance(facts)` | 0–1. |
-| `resolveFetusCount(facts)` | `{ fetusCount, isMultiple }`. |
-| `resolvePregnancyOutcome(fullFacts)` | `{ valid, outcome, fetusCount, isMultiple, hasComplications, maternalDeath }`. |
-| `isValidAdoptionType(type)` | Boolean. |
-| `isValidAdoptionStatus(status)` | Boolean. |
-| `validateAdoptionMetadata(facts)` | `{ valid, errors }`. |
-| `validateAdoptionMetadataUpdate(patch, currentYear)` | `{ valid, errors }`. |
-| `isValidSurrogacyType(type)` | Boolean. |
-| `isValidSurrogacyStatus(status)` | Boolean. |
-| `validateSurrogacyArrangement(facts)` | `{ valid, errors }`. |
-| `validateBirth(facts)` | `{ valid, errors }`. |
-| `calculateExpectedChildren(facts)` | Number. |
-| `getExpectedRemainingChildren(facts)` | Number. |
-| `calculateChildSpacing(facts)` | Integer. |
-
-**Constants:** `FERTILITY_CONSTANTS`, `ADOPTION_TYPE`, `ADOPTION_STATUS`, `SURROGACY_TYPE`, `SURROGACY_STATUS`, `PREGNANCY_OUTCOME`, `DEFAULT_MIN_CHILD_SPACING`, `DEFAULT_MAX_CHILD_SPACING`.
-
-**Randomness:** none. All rolls are caller-supplied.
-
-**Deliberately absent:** any legitimization policy.
+No randomness, no legitimization.
 
 ---
 
-## 25. Children State
+### 4.20 `children-state.js`
 
-**File:** `js/character/children-state.js`
+**Owns:** pregnancy records, surrogacy arrangements, adoption metadata.
 
-**Ownership:** Pregnancy records, surrogacy arrangements, adoption metadata.
+**Storage keys:** `masterData.data.pregnancyRecords`, `masterData.data.surrogacyArrangements`, `masterData.data.adoptionRecords`.
 
-**Storage keys:**
+**Public:** snapshot / replace per collection, copy getters, index lookups, counts, subscribe.
 
-- `masterData.data.pregnancyRecords`
-- `masterData.data.surrogacyArrangements`
-- `masterData.data.adoptionRecords`
-
-**Pregnancy record:**
-
-```
-{
-    id, motherId, fatherId, childIds,
-    conceptionYear, birthYear,
-    outcome,          'live_birth' | 'stillbirth' | 'miscarriage' | 'none'
-    fetusCount, isMultiple, hasComplications, maternalDeath,
-    attemptNumber, notes, createdAt, updatedAt
-}
-```
-
-**Surrogacy arrangement:**
-
-```
-{
-    id, intendedParentId, intendedPartnerId,
-    surrogateId, spermDonorId, eggDonorId,
-    type,             'traditional' | 'gestational'
-    status,           'active' | 'completed' | 'cancelled'
-    arrangementYear, expectedBirthYear, actualBirthYear,
-    childIds, notes, createdAt, updatedAt
-}
-```
-
-**Adoption record:**
-
-```
-{
-    id, childId, adopterId,
-    type,             'legal' | 'guardianship' | 'foster'
-    status,           'active' | 'ended' | 'dissolved'
-    year, endYear, notes, createdAt, updatedAt
-}
-```
-
-**Public API — snapshots and replacement:**
-
-`snapshotPregnancies`, `snapshotSurrogacy`, `snapshotsAdoptions`, `replaceAllPregnancies`, `replaceAllSurrogacy`, `replaceAllAdoptions`.
-
-**Public API — copies:**
-
-`getPregnancyCopy(id)`, `getSurrogacyCopy(id)`, `getAdoptionCopy(id)`.
-
-**Public API — lookups:**
-
-`pregnancyIdsForMother`, `pregnancyIdsForChild`, `surrogacyIdsForIntendedParent`, `surrogacyIdsForSurrogate`, `adoptionIdsForChild`, `adoptionIdsForAdopter`, `allPregnancyIds`, `allSurrogacyIds`, `allAdoptionIds`.
-
-**Counts:** `pregnancyCount`, `surrogacyCount`, `adoptionCount`.
-
-**Internal mutation primitives (reserved for `ChildrenCommands`):** `_getLivePregnancy`, `_getLiveSurrogacy`, `_getLiveAdoption`, `_insertPregnancy`, `_updatePregnancy`, `_removePregnancy`, `_insertSurrogacy`, `_updateSurrogacy`, `_removeSurrogacy`, `_insertAdoption`, `_updateAdoption`, `_removeAdoption`.
-
-**Reload:** on `masterDataUpdated`.
+**Internal:** `_insertX`, `_updateX`, `_removeX`, `_getLiveX` for each collection (reserved for `ChildrenCommands`).
 
 ---
 
-## 26. Children Queries
+### 4.21 `children-queries.js`
 
-**File:** `js/character/children-queries.js`
+**Owns:** children-domain reads.
 
-**Ownership:** Children-domain reads.
+**Pregnancy:** `getPregnancyRecord`, `getPregnanciesForMother`, `getPregnancyForChild`, `getPregnanciesInvolvingCharacter`, `getPregnancyHistoryForMother`.
 
-**Public API:**
+**Surrogacy:** `getSurrogacyArrangement`, `getSurrogacyArrangementsForIntendedParent`, `getSurrogacyArrangementsBySurrogate`, `getChildrenFromSurrogacyArrangement`, `getSurrogacyChildrenForIntendedParent`, `getSurrogacyArrangementForChild`, `isSurrogacyChild`, `getSurrogacyGeneticParents`.
 
-| Function | Purpose |
-|---|---|
-| `getPregnancyRecord(id)` | Projection or null. |
-| `getPregnanciesForMother(motherId)` | Array, sorted by conception year. |
-| `getPregnancyForChild(childId)` | Projection or null. |
-| `getPregnanciesInvolvingCharacter(id)` | Array. |
-| `getPregnancyHistoryForMother(motherId)` | Array of summarised pregnancy records. |
-| `getSurrogacyArrangement(id)` | Projection or null. |
-| `getSurrogacyArrangementsForIntendedParent(id)` | Array. |
-| `getSurrogacyArrangementsBySurrogate(id)` | Array. |
-| `getChildrenFromSurrogacyArrangement(id)` | Child ids. |
-| `getSurrogacyChildrenForIntendedParent(id)` | Child ids, deduplicated. |
-| `getSurrogacyArrangementForChild(childId)` | Projection or null. |
-| `isSurrogacyChild(childId)` | Boolean. |
-| `getSurrogacyGeneticParents(childId)` | `{ geneticMotherId, geneticFatherId, birthMotherId, intendedParentId, intendedPartnerId }` or null. |
-| `getAdoptionRecord(id)` | Projection or null. |
-| `getAdoptionsForChild(childId)` | Array, sorted by year. |
-| `getActiveAdoptionsForChild(childId)` | Filtered array. |
-| `getAdoptionsForAdopter(adopterId)` | Array, sorted by year. |
-| `getActiveAdoptionsForAdopter(adopterId)` | Filtered array. |
-| `getAdoptionRecordForPair(adopterId, childId)` | Projection or null. |
-| `isAdoptedChild(childId)` | Boolean. |
-| `isAdoptiveParent(adopterId)` | Boolean. |
-| `getAllChildIdsForParent(parentId)` | Family edges + surrogacy children. |
-| `getAllParentIdsForChild(childId)` | Family edges + surrogacy intended parents. |
-| `getBirthProjection(childId)` | `{ childId, motherId, pregnancy, surrogacy }`. |
-| `getPregnancyCountForMother(motherId)` | Number. |
-| `getSurrogacyCountForIntendedParent(id)` | Number. |
-| `getSurrogacyCountForSurrogate(id)` | Number. |
-| `getAdoptionCountForChild(childId)` | Number. |
-| `getAdoptionCountForAdopter(id)` | Number. |
+**Adoption:** `getAdoptionRecord`, `getAdoptionsForChild`, `getActiveAdoptionsForChild`, `getAdoptionsForAdopter`, `getActiveAdoptionsForAdopter`, `getAdoptionRecordForPair`, `isAdoptedChild`, `isAdoptiveParent`.
+
+**Composed:** `getAllChildIdsForParent`, `getAllParentIdsForChild`, `getBirthProjection`.
+
+**Counts:** per mother, per intended parent, per surrogate, per child, per adopter.
 
 ---
 
-## 27. Children Commands
+### 4.22 `children-commands.js`
 
-**File:** `js/character/children-commands.js`
+**Owns:** children-domain mutations.
 
-**Ownership:** Children-domain mutations.
+**Public:** `recordBirth`, `recordPregnancyAttempt`, `recordPregnancyAttempts`, `recordSurrogacyArrangement`, `recordSwapSurrogacy`, `completeSurrogacyArrangement`, `cancelSurrogacyArrangement`, `recordAdoptionMetadata`, `updateAdoptionMetadata`, `endAdoptionMetadata`, `removeAllReferencesTo`.
 
-**Public API:**
+**Pregnancy attempt modes:** random, partial rolls (`options.rolls`), explicit outcome (`options.outcome`).
 
-| Function | Purpose |
-|---|---|
-| `recordBirth(motherId, fatherId, birthYear, options)` | Create a child, establish biological parent edges, record the pregnancy event. |
-| `recordPregnancyAttempt(motherId, fatherId, options)` | Roll conception, roll outcome, apply consequences. |
-| `recordPregnancyAttempts(motherId, fatherId, options)` | Loop over a year range. |
-| `recordSurrogacyArrangement(intendedParentId, surrogateId, options)` | Create a surrogacy arrangement and its children. |
-| `recordSwapSurrogacy(coupleA, coupleB, options)` | Two coordinated arrangements in one action. |
-| `completeSurrogacyArrangement(id, options)` | Mark as completed. |
-| `cancelSurrogacyArrangement(id, options)` | Mark as cancelled. |
-| `recordAdoptionMetadata(childId, adopterId, options)` | Create an adoption metadata record. |
-| `updateAdoptionMetadata(adoptionId, patch)` | Update type, status, year, end year, or notes. |
-| `endAdoptionMetadata(adoptionId, options)` | Mark ended with an end year. |
-| `removeAllReferencesTo(characterId)` | Remove every pregnancy, surrogacy, and adoption record referencing the character. |
+**Maternal death:** applied via `CharacterCommands.markDeceased` with cause `childbed_fever`.
 
-**`recordPregnancyAttempt` modes:**
-
-- **Random.** All outcomes rolled from `Math.random`.
-- **Partial rolls.** `options.rolls.{conception, complication, miscarriage, stillbirth, maternalDeath, multipleBirth}` replace individual rolls.
-- **Explicit outcome.** `options.outcome = 'live_birth' | 'stillbirth' | 'miscarriage' | 'no_conception'`. Bypasses all rolling.
-
-**Maternal death.** When `maternalDeath` rolls true (or is set in explicit mode), the mother is marked deceased via `CharacterCommands.markDeceased` with cause `childbed_fever`.
-
-**Religion inheritance.** Non-fatal. Runs after birth when `ReligionCommands` is loaded.
-
-**Persistence.** Writes `masterData.data.{pregnancyRecords, surrogacyArrangements, adoptionRecords}` and `markDataDirty`.
-
-**Events.** Dispatches `childrenChanged` with `{ action, characterIds }`.
+**Persistence:** `markDataDirty`. **Events:** dispatches `childrenChanged`.
 
 ---
 
-## 28. Children Statistics
+### 4.23 `children-statistics.js`
 
-**File:** `js/character/children-statistics.js`
+**Owns:** children-domain aggregation.
 
-**Ownership:** Children-domain aggregation.
-
-**Public API:**
-
-| Function | Purpose |
-|---|---|
-| `getPregnancyStatistics()` | Totals, outcomes, rates. |
-| `getMotherPregnancyStatistics(motherId)` | Per-mother summary. |
-| `getFatherPregnancyStatistics(fatherId)` | Per-father summary. |
-| `getBirthStatistics()` | Births per year, by gender. |
-| `getSurrogacyStatistics()` | Totals, by type, by status, children born. |
-| `getSurrogateStatistics(surrogateId)` | Per-surrogate summary. |
-| `getIntendedParentSurrogacyStatistics(id)` | Per-intended-parent summary. |
-| `getAdoptionStatistics()` | Totals, by type, by status, unique adopters, unique children, average duration. |
-| `getAdopterStatistics(adopterId)` | Per-adopter summary. |
-| `getAdoptedChildStatistics(childId)` | Per-child summary. |
-| `getParentChildStatistics(parentId)` | Composed total, living, biological, adopted, surrogacy children, gender breakdown. |
+**Public:** `getPregnancyStatistics`, `getMotherPregnancyStatistics`, `getFatherPregnancyStatistics`, `getBirthStatistics`, `getSurrogacyStatistics`, `getSurrogateStatistics`, `getIntendedParentSurrogacyStatistics`, `getAdoptionStatistics`, `getAdopterStatistics`, `getAdoptedChildStatistics`, `getParentChildStatistics`.
 
 ---
 
-## 29. Children Generator
+### 4.24 `children-generator.js`
 
-**File:** `js/character/children-generator.js`
+**Owns:** birth proposal generation.
 
-**Ownership:** Random birth proposal generation.
+**Public:** `generateBirthData(motherId, fatherId, options)`, `generateBatchBirthData(motherId, fatherId, count, options)`.
 
-**Public API:**
-
-| Function | Purpose |
-|---|---|
-| `generateBirthData(motherId, fatherId, options)` | Single birth proposal. |
-| `generateBatchBirthData(motherId, fatherId, count, options)` | Spaced batch within a fertile window. |
-
-**Output:** `{ motherId, fatherId, birthYear, gender, isStillborn, birthplaceId, notes }`.
-
-**Does not construct.** The caller passes each proposal to `ChildrenCommands.recordBirth`.
+Output is a proposal only. `ChildrenCommands.recordBirth` commits it.
 
 ---
 
-## 30. Modals: Children Birth
+### 4.25 `modals-children-birth.js`
 
-**File:** `js/character/modals-children-birth.js`
+**Public:** `openBirthModal`, `openSurpriseBirthModal`, `openBatchBirthModal`, `openPregnancyAttemptModal`.
 
-**Ownership:** Birth and pregnancy UIs.
-
-**Public API:**
-
-| Function | Purpose |
-|---|---|
-| `openBirthModal(motherId, fatherId, onSuccess)` | Single birth. |
-| `openSurpriseBirthModal(motherId, fatherId, onSuccess)` | Random batch of 1–4 births. |
-| `openBatchBirthModal(motherId, fatherId, onSuccess)` | Explicit count and window. |
-| `openPregnancyAttemptModal(motherId, fatherId, options, onSuccess)` | Full pregnancy attempt with random and specify modes. |
-
-**`openPregnancyAttemptModal` options:** `year`, `allowMaternalDeath`, `deathFlow`, `defaultOutcome`, `defaultMaternalDeath`.
-
-**Death flow.** When `deathFlow: true`, the modal starts in specify mode with the outcome and maternal death preselected. It is opened by `modals-death.js` when the user chooses Childbed Fever.
+`openPregnancyAttemptModal` options: `year`, `allowMaternalDeath`, `deathFlow`, `defaultOutcome`, `defaultMaternalDeath`. Death flow is used by `modals-death.js`.
 
 ---
 
-## 31. Modals: Children Surrogacy
+### 4.26 `modals-children-surrogacy.js`
 
-**File:** `js/character/modals-children-surrogacy.js`
-
-**Ownership:** Surrogacy UIs.
-
-**Public API:**
-
-| Function | Purpose |
-|---|---|
-| `openSurrogacyArrangementModal(intendedParentId, onSuccess)` | Full arrangement wizard. |
-| `openCompleteSurrogacyModal(arrangementId, onSuccess)` | Mark an arrangement completed. |
-| `openCancelSurrogacyModal(arrangementId, onSuccess)` | Cancel an active arrangement. |
-
-**Character selector.** Required for partner, surrogate, and donor selection.
+**Public:** `openSurrogacyArrangementModal`, `openCompleteSurrogacyModal`, `openCancelSurrogacyModal`.
 
 ---
 
-## 32. Modals: Children Adoption
+### 4.27 `modals-children-adoption.js`
 
-**File:** `js/character/modals-children-adoption.js`
+**Public:** `openCreateAdoptionModal`, `openEditAdoptionModal`, `openEndAdoptionModal`, `openAdoptionSearchModal`, `openSetBirthParentsModal`.
 
-**Ownership:** Adoption UIs.
-
-**Public API:**
-
-| Function | Purpose |
-|---|---|
-| `openCreateAdoptionModal(childId, adopterId, onSuccess)` | Create a legal parent edge + adoption metadata. |
-| `openEditAdoptionModal(adoptionId, onSuccess)` | Edit adoption metadata in place. |
-| `openEndAdoptionModal(adoptionId, onSuccess)` | End the adoption metadata + legal edge. |
-| `openAdoptionSearchModal(onSelect, options)` | Search candidates with filters. |
-| `openSetBirthParentsModal(childId, fatherId, motherId, onSuccess)` | Record biological parent edges. |
-
-**Search filters:** gender, status (`orphan`, `has_living_parents`, `in_foster`), location, min age, max age.
+Search filters: gender, status (`orphan`, `has_living_parents`, `in_foster`), location, age range.
 
 ---
 
-## 33. Modals: Death
+### 4.28 `modals-death.js`
 
-**File:** `js/character/modals-death.js`
+**Public:** `openDeathModal`, `openMurderModal`, `openExecutionModal`.
 
-**Ownership:** Death UIs.
-
-**Public API:**
-
-| Function | Purpose |
-|---|---|
-| `openDeathModal(characterId, onSuccess)` | General death; routes Childbed Fever to `openPregnancyAttemptModal`. |
-| `openMurderModal(victimId, onSuccess)` | Murder record. |
-| `openExecutionModal(condemnedId, onSuccess)` | Execution record. |
-
-**Childbed Fever routing.** When the user selects Childbed Fever, the modal:
-1. Validates that the character is female and inside the fertile window.
-2. Prompts for a father via `openCharacterSelector`.
-3. Closes and calls `openPregnancyAttemptModal(motherId, fatherId, { deathFlow: true, defaultOutcome: 'live_birth', defaultMaternalDeath: true, year })`.
-4. The pregnancy attempt modal owns the full transaction, including the maternal death.
+Childbed Fever routes to `openPregnancyAttemptModal` with death flow hints. The death modal does not record the death itself in that path.
 
 ---
 
-## 34. UI State
+### 4.29 `ui-state.js`
 
-**File:** `js/core/ui-state.js`
-
-**Ownership:** Persistent panel UI state.
+**Owns:** persistent panel UI state.
 
 **Storage key:** `stillwaters_ui_state`.
 
-**Public API — filters:**
+**Public:** filters (`getFilters`, `setFilters`, `patchFilters`, `resetFilters`), sort (`getSort`, `setSort`), collapsed (`getCollapsed`, `setCollapsed`, `toggleCollapsed`), data (`getData`, `setData`, `removeData`), subscriptions (`subscribe`), clear (`clearPanel`, `clearAll`), diagnostics (`isPersistent`, `getStorageKey`, `getPanelIds`, `getParseFailures`).
 
-`getFilters(panelId)`, `setFilters(panelId, filters)`, `patchFilters(panelId, patch)`, `resetFilters(panelId)`.
-
-**Public API — sort:**
-
-`getSort(panelId)`, `setSort(panelId, sort)`.
-
-**Public API — collapsed:**
-
-`getCollapsed(panelId)`, `setCollapsed(panelId, collapsed)`, `toggleCollapsed(panelId)`.
-
-**Public API — arbitrary data:**
-
-`getData(panelId, key, fallback)`, `setData(panelId, key, value)`, `removeData(panelId, key)`.
-
-**Public API — subscriptions:**
-
-`subscribe(panelId, callback)` returns an unsubscribe function.
-
-**Public API — clear:**
-
-`clearPanel(panelId)`, `clearAll()`.
-
-**Public API — diagnostics:**
-
-`isPersistent()`, `getStorageKey()`, `getPanelIds()`, `getParseFailures()`.
-
-**Fallback:** if `localStorage` is unavailable, in-memory only. No throw.
+If `localStorage` is unavailable, in-memory only.
 
 ---
 
-## 35. Character System Shim
+### 4.30 `character-system.js`
 
-**File:** `js/character/character-system.js`
+**Owns:** legacy global aliases.
 
-**Ownership:** Legacy global aliases.
-
-**Purpose:** Expose the pre-refactor global API as one-way aliases onto canonical namespaces. New code calls the namespaces directly.
-
-**Required modules:** all canonical character, family, mortality, and children modules. If any is missing, this file throws at load.
-
-**Exports:** aliases for the state, queries, commands, creation, deletion, lifecycle, family, mortality, and children surfaces.
-
-**Deleted modules are not aliased.** Names like `MortalityState`, `RelationshipQueries`, `ChildrenCommands`, `RomanceCommands` resolve to `undefined`.
-
-**Aliases are removed independently** once every caller migrates. The file is transitional.
+**Loads last.** Throws if any canonical module is missing. Deleted modules are not aliased. Aliases are one-way.
 
 ---
 
-## 36. Data Schemas
+## 5. Data Schemas
 
 ### Character record
 
@@ -1312,24 +509,17 @@ The wrappers iterate `CharacterState.getAllCharacters()`. O(n) per call.
     id, name, surname,
     surnameSource, surnameRules, surnameHistory,
     gender, attraction, birthYear, isLegitimate,
-
     isDeceased, deathYear, deathCause, deathCauseDetail, deathNotes,
     isMurder, killerId, murderMotive, murderMethod,
     isExecution, executionReason, executionMethod, executionLocation,
-
     birthplaceId, currentLocationId, moves,
     household, householdHistory,
-
     religionId, religionHistory, cultureId,
-
     epithet, notes, appearance,
-
     activeRankId, activeRankNumber,
     isMaster, masterId, masterProfessionId, apprenticeshipDetails,
     friendshipDetails,
-
     professions, rankAssignments, relationships, friends, apprentices,
-
     isDeleted, deletedAt,
     createdAt, updatedAt
 }
@@ -1337,19 +527,50 @@ The wrappers iterate `CharacterState.getAllCharacters()`. O(n) per call.
 
 ### Parent-child edge
 
-See section 18.
+```
+{
+    id, parentId, childId,
+    parentType, parentRole,
+    startYear, endYear, status, notes,
+    createdAt, updatedAt
+}
+```
 
 ### Pregnancy record
 
-See section 25.
+```
+{
+    id, motherId, fatherId, childIds,
+    conceptionYear, birthYear, outcome,
+    fetusCount, isMultiple, hasComplications, maternalDeath,
+    attemptNumber, notes,
+    createdAt, updatedAt
+}
+```
 
 ### Surrogacy arrangement
 
-See section 25.
+```
+{
+    id, intendedParentId, intendedPartnerId,
+    surrogateId, spermDonorId, eggDonorId,
+    type, status,
+    arrangementYear, expectedBirthYear, actualBirthYear,
+    childIds, notes,
+    createdAt, updatedAt
+}
+```
 
 ### Adoption record
 
-See section 25.
+```
+{
+    id, childId, adopterId,
+    type, status,
+    year, endYear, notes,
+    createdAt, updatedAt
+}
+```
 
 ### Profession record
 
@@ -1362,241 +583,135 @@ See section 25.
 }
 ```
 
-### Surname history
-
-```
-{
-    birthSurname: string,
-    entries: [{ surname, year, reason, previousSurname, spouseId, notes }],
-    lastUpdated: number
-}
-```
-
 ---
 
-## 37. Ownership Map
+## 6. Ownership Map
 
 | Concept | Owner | Readers |
 |---|---|---|
-| Character record | CharacterState | CharacterQueries, projections |
-| Character death fields | CharacterCommands.markDeceased | MortalityQueries, CharacterQueries |
-| Parent-child edges | FamilyState | FamilyQueries |
-| Parentage meaning | FamilyRules | FamilyCommands, FamilyQueries |
-| Kinship classification | FamilyRules | FamilyQueries |
-| Pregnancy records | ChildrenState | ChildrenQueries |
-| Surrogacy arrangements | ChildrenState | ChildrenQueries |
-| Adoption metadata | ChildrenState | ChildrenQueries |
-| Fertility / pregnancy policy | ChildrenRules | ChildrenCommands |
-| Mortality policy | MortalityRules | CharacterLifecycle, MortalityQueries |
-| Time progression | CharacterLifecycle | callers |
-| Panel UI state | UIState | panels |
+| Character record | `CharacterState` | `CharacterQueries` (projections) |
+| Death fields on the record | `CharacterCommands.markDeceased` | `MortalityQueries`, `CharacterQueries` |
+| Parent-child edges | `FamilyState` | `FamilyQueries` |
+| Parentage meaning | `FamilyRules` | `FamilyCommands`, `FamilyQueries` |
+| Kinship classification | `FamilyRules` | `FamilyQueries` |
+| Pregnancy records | `ChildrenState` | `ChildrenQueries` |
+| Surrogacy arrangements | `ChildrenState` | `ChildrenQueries` |
+| Adoption metadata | `ChildrenState` | `ChildrenQueries` |
+| Fertility and pregnancy policy | `ChildrenRules` | `ChildrenCommands` |
+| Mortality policy | `MortalityRules` | `CharacterLifecycle`, `MortalityQueries` |
+| Panel UI state | `UIState` | panels |
 
-**Character-owned fields:** every field on the character record. `CharacterCommands` is the writer.
-
-**Character writes:** only `CharacterCommands`, `CharacterCreationCommands`, `CharacterDeletionCommands`, `CharacterLifecycle` (via `markDeceased`), and `ChildrenCommands` (via `recordBirth` through `CharacterCreationCommands`).
-
-**Family writes:** only `FamilyCommands` and `FamilyCommands.handleCharacterDeath`.
-
-**Children writes:** only `ChildrenCommands`, and it always routes through `CharacterState.applyDomainFieldPatch` or `CharacterCommands` for character-owned effects.
-
-**Mortality writes:** only `CharacterCommands.markDeceased`. `MortalityRules` is policy; `MortalityQueries` and `MortalityStatistics` are reads.
+Only `CharacterCommands`, `CharacterCreationCommands`, `CharacterDeletionCommands`, and `CharacterLifecycle` write to character state. `FamilyCommands` writes parent-child edges. `ChildrenCommands` writes pregnancy, surrogacy, and adoption records, and reaches into character state only through `CharacterCreationCommands` and `CharacterCommands`.
 
 ---
 
-## 38. Semantic Contracts
+## 7. Semantic Contracts
 
-### Projections
+**Reads** return fresh projections. Callers cannot mutate state through a returned object.
 
-Public reads return fresh objects. Callers cannot mutate state by holding a returned projection.
+**Return values:**
 
-### Return values
-
-- Singular lookups: `T | null`
+- Singular: `T | null`
 - Collections: `T[]`
-- Commands: `{ success: boolean, reason?: string, ... }`
-- Rules: `{ valid: boolean, errors?: string[], value?: T }`
+- Commands: `{ success, reason?, ... }`
+- Rules: `{ valid, errors?, value? }`
 
-### Missing data
+**Missing data:** `null` or `[]`. Invalid explicit input: `throw`. Year 0 is preserved.
 
-- Missing character → `null` or `[]`
-- Missing collection → `[]`
-- Invalid explicit input → `throw`
-- Year 0 is preserved.
+**Randomness:** no rules module draws random numbers.
 
-### Randomness
+**Persistence:** state modules write to `masterData`, then `markDataDirty`. Only storage flushes.
 
-Every rules module is deterministic. Randomness is drawn by the caller and passed as a roll.
-
-### Persistence
-
-`CharacterState`, `FamilyState`, and `ChildrenState` call `window.markDataDirty()` after writing to `masterData`. They do not call `saveMasterData`. Storage decides when to flush.
-
-### Events
-
-- `characterChanged` — `{ action, characterIds }`
-- `familyChanged` — `{ action, characterIds }`
-- `childrenChanged` — `{ action, characterIds }`
-- `masterDataUpdated` — reload signal
+**Events:** `characterChanged`, `familyChanged`, `childrenChanged`, `masterDataUpdated`.
 
 ---
 
-## 39. Deletion and Lifecycle Semantics
+## 8. Deletion and Lifecycle Semantics
 
-### Soft delete
+**Soft delete:** sets `isDeleted` and `deletedAt`. Orthogonal to death. Hidden from normal queries.
 
-Orthogonal to life/death. Sets `isDeleted` and `deletedAt`. Nothing else changes. Soft-deleted characters are hidden from normal queries but remain in the collection.
+**Hard delete:** removes the record, then dispatches cross-domain cleanup.
 
-### Hard delete
+**Restore:** clears `isDeleted`, `deletedAt`.
 
-Removes the record from the collection, then dispatches cleanup to every domain that owns a reference. Failures in cleanup are recorded but do not block removal.
+**Purge:** hard-deletes every soft-deleted character.
 
-### Restore
+**Death via `CharacterLifecycle.killCharacter`:** validates through `MortalityRules`, calls `CharacterCommands.markDeceased`, dispatches `FamilyCommands.handleCharacterDeath`.
 
-Clears `isDeleted` and `deletedAt`. The character becomes visible again.
+**Death via `CharacterCommands.markDeceased`:** validates through `MortalityRules`, writes the record, does not dispatch family cleanup. Reserved for cases where the death is part of a wider transaction, e.g. maternal death inside `ChildrenCommands.recordPregnancyAttempt`.
 
-### Purge
-
-Hard-deletes every soft-deleted character.
-
-### Death
-
-Two paths:
-
-1. **Through `CharacterLifecycle.killCharacter`** — validates through `MortalityRules`, calls `CharacterCommands.markDeceased`, dispatches `FamilyCommands.handleCharacterDeath`.
-2. **Through `CharacterCommands.markDeceased`** — validates through `MortalityRules`, writes the record, does **not** dispatch family cleanup. Reserved for cases where the death is part of a wider transaction (`ChildrenCommands.recordPregnancyAttempt` for maternal death).
-
-### Maternal death
-
-Childbed fever is not offered in the general death modal. It is recorded as part of a pregnancy attempt. The transaction is one command: `ChildrenCommands.recordPregnancyAttempt`. That command records the birth and calls `CharacterCommands.markDeceased` for the mother, in that order.
+**Childbed fever:** not offered by the general death modal. Recorded through the pregnancy attempt transaction. Death modal routes to `openPregnancyAttemptModal` with death flow hints.
 
 ---
 
-## 40. What Was Removed
-
-The following domains and files were deleted during the refactor. Their capabilities are **not** available in the current system.
+## 9. What Was Removed
 
 ### Relationship domain
 
-`relationship-state.js`, `relationship-queries.js`, `relationship-commands.js`, `relationship-rules.js`, `relationship-types.js`, `relationship-ui-metadata.js`, `relationships-bootstrap.js`, `relationship-docs.txt`, `relationship-finder-queries.js`, `relationship-finder.js`, `modals-relationship.js`, `modals-family.js`, `modals-friendship.js`, `romance-rules.js`, `romance-queries.js`, `romance-commands.js`, `friendship-rules.js`, `friendship-queries.js`, `friendship-commands.js`, `jealousy-rules.js`, `jealousy-queries.js`, `jealousy-commands.js`, `affair-rules.js`, `affair-queries.js`, `affair-commands.js`, `matchmaking-rules.js`, `matchmaking-queries.js`, `professional-rules.js`, `professional-queries.js`, `professional-commands.js`.
+Files: `relationship-state.js`, `relationship-queries.js`, `relationship-commands.js`, `relationship-rules.js`, `relationship-types.js`, `relationship-ui-metadata.js`, `relationships-bootstrap.js`, `relationship-docs.txt`, `relationship-finder-queries.js`, `relationship-finder.js`, `modals-relationship.js`, `modals-family.js`, `modals-friendship.js`, `romance-*`, `friendship-*`, `jealousy-*`, `affair-*`, `matchmaking-*`, `professional-*`.
 
-Removed capabilities: romance, friendship, rivalry, enmity, jealousy, affairs, matchmaking, professional relationships (apprenticeship, employment, guild membership), the relationship finder.
+Capabilities removed: romance, friendship, rivalry, enmity, jealousy, affairs, matchmaking, professional relationships, relationship finder.
 
 ### Mortality legacy
 
-`mortality-state.js`, `mortality-commands.js` (old), `mortality-queries.js` (old), `mortality-docs.txt`.
+Files: `mortality-state.js`, `mortality-commands.js` (old), `mortality-queries.js` (old), `mortality-docs.txt`.
 
-Removed behavior: direct mutation of death fields outside `markDeceased`; `1250` year fallback; `deathCause || 'Unknown'` coercion; `_processing` recursion guards.
+Behavior removed: direct death-field writes outside `markDeceased`; `1250` year fallback; `deathCause || 'Unknown'` coercion; `_processing` recursion guards.
 
 ### Children legacy
 
-`children-state.js` (old), `children-commands.js` (old), `children-queries.js` (old), `children-lifecycle.js`, `pregnancy-service.js`, `surrogacy-service.js`, `adoption-service.js`, `modals-adoption.js`, `modals-birth.js`, `modals-surrogacy.js`, `children-docs.txt`.
+Files: `children-state.js` (old), `children-commands.js` (old), `children-queries.js` (old), `children-lifecycle.js`, `pregnancy-service.js`, `surrogacy-service.js`, `adoption-service.js`, `modals-adoption.js`, `modals-birth.js`, `modals-surrogacy.js`, `children-docs.txt`.
 
-Removed behavior: parallel parent-setting logic, parallel family queries, `_processing` guards.
+Behavior removed: parallel parent-setting, parallel family queries, `_processing` guards.
 
 ### Legitimacy
 
-Deliberately removed. `canLegitimize`, `legitimizeChild`, `openLegitimizationModal`, and the character fields `isLegitimate`, `legitimization`, `legitimizedYear`, `inheritanceRights` are not in the current system. If legitimacy is reintroduced, it needs its own state decision and its own rules module.
+Deliberately removed. `canLegitimize`, `legitimizeChild`, `openLegitimizationModal`, and the character fields `isLegitimate`, `legitimization`, `legitimizedYear`, `inheritanceRights` are not present as policy. `isLegitimate` exists as a character field but no command writes it.
 
-### Silent childbirth age correction
+### Other
 
-Removed. A death year chosen by the user is not silently rewritten.
-
-### Murder / execution auto-consequence
-
-Removed. Killing the murderer after a murder is not implemented.
+Silent childbirth age correction: removed. Murder/execution auto-consequence: removed.
 
 ---
 
-## 41. What Was Not Implemented
+## 10. What Is Not Implemented
 
-Capabilities that existed in the pre-refactor code (or were documented) and are not present in the current system.
+### Requires new domains
 
-### Character
+- Relationship domain (romance, friendship, rivalry, jealousy, affairs, matchmaking, professional relationships)
+- Succession and inheritance
+- Justice (auto-execution of murderers)
+- Education (literacy, enrollment, graduation)
+- Groups (dropped by decision unless requested)
+- Legitimacy (dropped by decision)
 
-- `CharacterState.getCharactersByAgeRange` — **now implemented** in `character-queries.js`.
-- `CharacterState.invalidateCache` — replaced by `refresh()`.
-- `CharacterQueries.getMasterCharacters`, `getCharactersByProfessionSkill` — need a professional domain.
-- `CharacterQueries.getCharactersByEducationStatus`, `getCharactersNotInEducation` — need an education domain.
-- `CharacterQueries.getCharacterSpouses`, `getCurrentSpouse`, `getCharacterRelationshipDescription` — need a relationship domain.
-- `CharacterQueries.getCharacterConsanguinityDegree` — replaced by numeric kinship closeness.
-- `CharacterLifecycle.getPrimaryHeir`, `getPotentialHeirs`, `hasPendingInheritance`, `processHouseholdInheritance`, `processAllPendingInheritance` — need a succession domain.
-- `CharacterCommands.updateDeathData` — no post-death edit command. If death data needs correction, `updateCharacterFields` accepts it without mortality validation. A dedicated command would be safer.
+### Small additions when required
 
-### Family
+- Household integration on adoption: `ChildrenCommands` + household domain (deferred)
+- Movement recording on adoption: `ChildrenCommands` + movement domain (deferred)
+- Friendship recommendations: `friendship-queries.js` when friendship exists
+- Master progress queries: `professional-queries.js` when professional exists
+- Matchmaking: rules + queries modules when requested
 
-- Wrappers for cousins, aunts/uncles, nieces/nephews — **now implemented** in `family-queries.js`.
-- Numeric kinship closeness — **now implemented**.
-- Legitimization — deleted by decision.
+### Confirmed drops
 
-### Children
-
-- `calculateExpectedChildren`, `getExpectedRemainingChildren`, `calculateChildSpacing` — **now implemented** in `children-rules.js`.
-- `recordPregnancyAttempts` (batch) — **now implemented** in `children-commands.js`.
-- `recordSwapSurrogacy` — **now implemented**.
-- `updateAdoptionMetadata` — **now implemented**.
-- Adoption search filters — **now implemented** in `modals-children-adoption.js`.
-- Legitimization — deleted by decision.
-
-### Mortality
-
-- `killCharacterRandomCause`, `triggerNaturalDeath`, `triggerAccidentalDeath` — **now implemented** in `character-lifecycle.js`.
-- `applyAgingMortality` — replaced by `advanceMortality` with a default rate table.
-- `predictLifespan`, `getExpectedRemainingYears` — **now implemented**.
-- Default cause catalogue and rate table — **now implemented** in `mortality-rules.js`.
-- Auto-execution of murderers — deleted, needs a justice domain.
-
-### UI state
-
-- Persistent panel state — **now implemented** in `ui-state.js`.
-
-### The remaining gaps
-
-There are two categories of remaining gaps:
-
-**Gaps that require a new domain:**
-
-- **Succession / inheritance** — heir selection, household transfer on death, inheritance rights.
-- **Legitimacy** — if reintroduced.
-- **Justice** — auto-execution of murderers, judicial records.
-- **Relationship domain** — romance, friendship, rivalry, jealousy, affairs, matchmaking, professional relationships.
-- **Education domain** — literacy, enrollment, graduation.
-
-**Gaps in the current modules that could be closed without a new domain:**
-
-- `CharacterCommands.updateDeathData` — a validated post-death edit command.
-
-None of these are needed for the character, family, children, and mortality subsystem to be complete. They are extensions.
+- `getPrimaryPartner`, `getCurrentSpouse`, `getRelationshipTypeBetween` (ambiguous)
+- `fatherId` / `motherId` dual-write (removed second source of truth)
+- `totalFamilyMembers` (was double-counted)
+- `_getCharacterCombatStrength` (never called)
+- Prose advice strings, `1250`, `[]`, `Math.random()` fallbacks (bugs)
 
 ---
 
-## 42. Icon Policy
-
-**Rules:**
+## 11. Icon Policy
 
 1. No emojis in code or UI.
-2. All icons come from `icons.js`, referenced by name.
-3. No icons in confirm or cancel buttons. Plain text only.
-4. No Unicode gender symbols. Gender is rendered as text (`Male`, `Female`, `Unknown`).
+2. Icons come from `icons.js`, referenced by name.
+3. No icons in confirm or cancel buttons.
+4. No Unicode gender symbols. Gender is rendered as text.
 5. No inline SVG literals outside `icons.js`.
 
-**Available icons used by the character system:**
-
-| Usage | Icon name |
-|---|---|
-| Character | `PERSON` |
-| Location | `LOCATION` |
-| Death | `DEATHSTARS`, `X_HEAVY` |
-| Murder | `SWORD` |
-| Execution | `SWORD`, `CROSS` |
-| Warning | `WARNING` |
-| Success | `CHECK_SIMPLE` |
-| Info | `CIRCLE_DOT` |
-| Edit | `EDIT` |
-| Delete | `X_HEAVY` |
-| Add | `PLUS` |
-| Search | `SEARCH` |
-| Household | `HOUSEHOLD` |
-| Rank | `CROWN` |
+Icons used by the character system: `PERSON`, `LOCATION`, `DEATHSTARS`, `X_HEAVY`, `SWORD`, `CROSS`, `WARNING`, `CHECK_SIMPLE`, `CIRCLE_DOT`, `EDIT`, `PLUS`, `SEARCH`, `HOUSEHOLD`, `CROWN`.
 
 ---
 
