@@ -1,7 +1,42 @@
 ```markdown
 # Still Waters — Relationship Domain Documentation
 
-**Version 1.0** | Rebuilt after the character / family / children / mortality refactor
+**Version 1.1** | Rebuilt after the character / family / children / mortality refactor
+
+---
+
+## Table of Contents
+
+1. [Overview](#1-overview)
+2. [Principles](#2-principles)
+3. [Layer Architecture](#3-layer-architecture)
+4. [File Manifest](#4-file-manifest)
+5. [Vocabulary](#5-vocabulary)
+6. [Record Schema](#6-record-schema)
+7. [State](#7-state)
+8. [Queries](#8-queries)
+9. [Commands](#9-commands)
+10. [Romance](#10-romance)
+11. [Friendship](#11-friendship)
+12. [Rivalry and Enmity](#12-rivalry-and-enmity)
+13. [Jealousy](#13-jealousy)
+14. [Affairs](#14-affairs)
+15. [Matchmaking](#15-matchmaking)
+16. [Professional](#16-professional)
+17. [Finder](#17-finder)
+18. [UI](#18-ui)
+19. [Cross-Domain Integrations](#19-cross-domain-integrations)
+20. [Bootstrap](#20-bootstrap)
+21. [Load Order](#21-load-order)
+22. [Ownership Contract](#22-ownership-contract)
+23. [Rules of Use](#23-rules-of-use)
+24. [Semantic Contracts](#24-semantic-contracts)
+25. [What Is Not Implemented](#25-what-is-not-implemented)
+26. [Deletion and Lifecycle](#26-deletion-and-lifecycle)
+27. [Anti-Patterns](#27-anti-patterns)
+28. [Adding a New Archetype](#28-adding-a-new-archetype)
+29. [Adding a New Attribute](#29-adding-a-new-attribute)
+30. [Version History](#30-version-history)
 
 ---
 
@@ -19,7 +54,9 @@ Vocabulary → Utils → State → Queries → Commands → Domain (Rules/Querie
 
 Each layer only depends downward. Rules are pure. Queries return projections. Commands are the only mutation path. Randomness is injected.
 
-### Principles
+---
+
+## 2. Principles
 
 | Principle | Rule |
 |---|---|
@@ -33,10 +70,13 @@ Each layer only depends downward. Rules are pure. Queries return projections. Co
 | **State treats status as opaque** | Per-domain transition tables live in each domain's `-rules.js`. |
 | **Domain commands never bypass domain rules** | `XCommands` → `XRules` → `RelationshipCommands` → `RelationshipState`. |
 | **Historical edges, not current truth** | A pair may have any number of records. `committed #1 ended`, `committed #2 ended`, `committed #3 ongoing` is legitimate. |
+| **No `RelationshipRules`** | Domain rules live in each `*-rules.js`. Structural helpers live in `relationship-utils.js`. |
+| **Cultural gating is explicit** | Cultural attributes require `CultureRules.supportsRelationshipAttribute` for both participants. |
+| **Attribute interpretation is domain-scoped** | No module outside the owning domain's `-queries.js` reads relationship attributes by name. |
 
 ---
 
-## 2. Layer Architecture
+## 3. Layer Architecture
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
@@ -83,17 +123,17 @@ Each layer only depends downward. Rules are pure. Queries return projections. Co
 
 ---
 
-## 3. File Manifest
+## 4. File Manifest
 
 | File | Role |
 |---|---|
 | `relationship-types.js` | Vocabulary: archetypes, attributes (scoped universal/cultural), statuses, categories, directions, roles. Load-time consistency checks. |
 | `relationship-utils.js` | Pure helpers: `pairKey`, `validateStatusTransition`, `validateAttributeSet`, `validateAttributeUniqueness`, `freezeTable`. |
-| `relationship-state.js` | Canonical storage. Indexes by id, participant, type, pair. Batch mutation. Snapshot/replace. Reload on `masterDataUpdated`. |
-| `relationship-queries.js` | Generic edge reads. Defensive projections. Filter options. |
+| `relationship-state.js` | Canonical storage. Indexes by id, participant, type, pair. Batch mutation. Snapshot/replace. Reload on `masterDataUpdated`. `validateIntegrity()` diagnostic. |
+| `relationship-queries.js` | Generic edge reads. Defensive projections. Filter options. `getMostRecentRelationship`. |
 | `relationship-commands.js` | Structural mutation. Create, update, end, setWidowed, remove, attribute add/remove, batch end and remove. |
 | `romance-rules.js` | Romance policy: transition table, attributes, mutual exclusion, requires-rules, multi-partner policy, affair classification, cultural gating hook, breakup/widowing eligibility. |
-| `romance-queries.js` | Romance reads: relationships, committed partners, affairs, institution projections, multi-partner facts. **The only module permitted to interpret romance attributes by name.** |
+| `romance-queries.js` | Romance reads: relationships, committed partners, affairs, institution projections, multi-partner facts, pre-submit conflict check. The only module permitted to interpret romance attributes by name. |
 | `romance-commands.js` | Romance writes: casual dating, one-night stands, committed relationships, attribute changes, breakups, widowhood, bulk end on character event. |
 | `friendship-rules.js` | Friendship policy: transition, empty attribute set, strength bounds, event vocabulary, end reasons, impact application, event-history bound. |
 | `friendship-queries.js` | Friendship reads: friends, sorted friends, best friend, mutual friends, strength, tier, events, stats. |
@@ -102,10 +142,10 @@ Each layer only depends downward. Rules are pure. Queries return projections. Co
 | `rivalry-queries.js` | Rivalry/enmity reads: rivals, enemies, conflicts, shared conflict lists, stats. |
 | `rivalry-commands.js` | Rivalry/enmity writes: create, end, escalate, de-escalate. |
 | `jealousy-rules.js` | Jealousy policy: triggers, calculation, trait modifiers, consequence thresholds, annual roll decision, rivalry predicate. |
-| `jealousy-queries.js` | Jealousy reads: jealousy between, all targets, primary target, conflict projections, stats. |
+| `jealousy-queries.js` | Jealousy reads: jealousy between, all targets, primary target, conflict projections, stats. No persisted history. |
 | `jealousy-commands.js` | Jealousy writes: confrontation trigger, annual processing. |
 | `affair-rules.js` | Affair policy: affair type, discovery risk, annual chance, consequence eligibility, reconciliation, scandal, legitimization. |
-| `affair-queries.js` | Affair reads: projections, discovery risk projections, highest-risk affair, statistics. |
+| `affair-queries.js` | Affair reads: projections, discovery risk projections, highest-risk affair, statistics, named accessors. |
 | `affair-commands.js` | Affair writes: create, discovery, consequences, end, legitimize, reconcile, bulk end. |
 | `matchmaking-rules.js` | Matchmaking policy: eligibility, age gap, gender preference, acceptance chance. |
 | `matchmaking-queries.js` | Matchmaking reads: surprise matches, late-spring match, eligible singles. |
@@ -121,7 +161,7 @@ Each layer only depends downward. Rules are pure. Queries return projections. Co
 
 ---
 
-## 4. Vocabulary (`relationship-types.js`)
+## 5. Vocabulary
 
 ### Archetypes
 
@@ -191,7 +231,7 @@ Any missing entry throws.
 
 ---
 
-## 5. Record Schema
+## 6. Record Schema
 
 ### Canonical record (in `RelationshipState`)
 
@@ -238,7 +278,9 @@ Metadata is not validated by State. Each domain's `-rules.js` file is the author
 
 ---
 
-## 6. State (`relationship-state.js`)
+## 7. State
+
+**File:** `relationship-state.js`
 
 Storage only. No validation beyond structural integrity. No policy. No queries beyond the raw index reads.
 
@@ -259,6 +301,7 @@ Storage only. No validation beyond structural integrity. No policy. No queries b
 | `replaceAll(records)` | Replace state (throws on structural invalid) |
 | `clear()` | Empty state |
 | `subscribe(callback)` | Unsubscribe function |
+| `validateIntegrity()` | `{ valid, errors }` — diagnostic only |
 
 ### Batch mutation (reserved for `RelationshipCommands`)
 
@@ -277,7 +320,9 @@ State never calls `saveMasterData`. It calls `markDataDirty` and reloads on `mas
 
 ---
 
-## 7. Queries (`relationship-queries.js`)
+## 8. Queries
+
+**File:** `relationship-queries.js`
 
 Generic edge reads. Defensive projections. No domain interpretation.
 
@@ -312,6 +357,8 @@ Unknown options are ignored. `0` is preserved. No coercion.
 | `hasActiveBetween(a, b)` | Boolean |
 | `hasActiveBetweenOfType(a, b, type)` | Boolean |
 | `countBetween(a, b, options)` | Number |
+| `getMostRecentRelationship(a, b)` | Projection or null |
+| `getMostRecentRelationshipOfType(a, b, type)` | Projection or null |
 | `getForCharacter(id, options)` | Records referencing a character |
 | `getActiveForCharacter(id)` | Ongoing |
 | `countForCharacter(id, options)` | Number |
@@ -331,7 +378,9 @@ Unknown options are ignored. `0` is preserved. No coercion.
 
 ---
 
-## 8. Commands (`relationship-commands.js`)
+## 9. Commands
+
+**File:** `relationship-commands.js`
 
 Structural mutation. Refuses structurally malformed records. Does not enforce domain policy.
 
@@ -358,9 +407,11 @@ Structural mutation. Refuses structurally malformed records. Does not enforce do
 
 ---
 
-## 9. Romance
+## 10. Romance
 
-### Rules (`romance-rules.js`)
+### Rules
+
+**File:** `romance-rules.js`
 
 | Function | Purpose |
 |---|---|
@@ -382,7 +433,9 @@ Structural mutation. Refuses structurally malformed records. Does not enforce do
 
 Constants: `ROMANCE_TRANSITIONS`, `ROMANCE_ALLOWED_ATTRIBUTES`, `ROMANCE_STATUS_ALLOWLIST`, `EXCLUSIVE_GROUPS`, `REQUIRES`, `MIN_AGE_CASUAL_DATING=12`, `MIN_AGE_ONE_NIGHT_STAND=12`, `MIN_AGE_COMMITTED=14`.
 
-### Queries (`romance-queries.js`)
+### Queries
+
+**File:** `romance-queries.js`
 
 **The only module permitted to interpret romance attributes by name.**
 
@@ -416,11 +469,14 @@ Constants: `ROMANCE_TRANSITIONS`, `ROMANCE_ALLOWED_ATTRIBUTES`, `ROMANCE_STATUS_
 | `hasActiveInstitution(id, institution)` | Boolean |
 | `getPrimaryInstitution(id)` | Institution id or null |
 | `getMultiPartnerFacts(id, externalFacts)` | Fact bundle for `RomanceRules` |
+| `getRelationshipConflicts(a, b, options)` | Pre-submit conflict report |
 | `getRomanceStats(id)` | Statistics |
 
 Romance projections include derived fields: `institution`, `isCommitted`, `isAffair`, `isPolyamorous`, `isSecret`, `isScandalous`, `partnerId`, `notes`.
 
-### Commands (`romance-commands.js`)
+### Commands
+
+**File:** `romance-commands.js`
 
 | Function | Purpose |
 |---|---|
@@ -439,9 +495,11 @@ Romance answers "what institutional marker does this relationship carry" via `ge
 
 ---
 
-## 10. Friendship
+## 11. Friendship
 
-### Rules (`friendship-rules.js`)
+### Rules
+
+**File:** `friendship-rules.js`
 
 | Function | Purpose |
 |---|---|
@@ -463,37 +521,105 @@ Romance answers "what institutional marker does this relationship carry" via `ge
 
 Constants: `STRENGTH_MIN=0`, `STRENGTH_MAX=100`, `STRENGTH_DEFAULT=50`, `INCREASE_DEFAULT=5`, `DECREASE_DEFAULT=10`, `END_THRESHOLD=0`, `TIER_ACQUAINTANCE`, `TIER_FRIEND`, `TIER_CLOSE`, `TIER_BEST`, `THRESHOLD_ACQUAINTANCE=20`, `THRESHOLD_FRIEND=50`, `THRESHOLD_CLOSE=75`, `EVENT_TYPES`, `END_REASONS`, `EVENT_HISTORY_MAX=50`.
 
-### Queries (`friendship-queries.js`)
+### Queries
 
-`areFriends`, `getActiveFriendshipBetween`, `getLatestFriendshipBetween`, `getAllFriendshipsBetween`, `getFriendshipsForCharacter`, `getFriends`, `getFriendsSortedByStrength`, `getFriendCount`, `getBestFriend`, `getFriendshipStrength`, `getFriendshipStrengthById`, `getFriendshipTier`, `getMutualFriends`, `getFriendshipStats`, `getFriendshipEvents`.
+**File:** `friendship-queries.js`
 
-### Commands (`friendship-commands.js`)
+| Function | Purpose |
+|---|---|
+| `areFriends(a, b)` | Boolean |
+| `getActiveFriendshipBetween(a, b)` | Projection or null |
+| `getLatestFriendshipBetween(a, b)` | Projection or null |
+| `getAllFriendshipsBetween(a, b)` | Projection array |
+| `getFriendshipsForCharacter(id, options)` | Projections |
+| `getFriends(id)` | Projections |
+| `getFriendsSortedByStrength(id)` | Sorted projections |
+| `getFriendCount(id)` | Number |
+| `getBestFriend(id)` | Projection or null |
+| `getFriendshipStrength(a, b)` | Number or null |
+| `getFriendshipStrengthById(relationshipId)` | Number or null |
+| `getFriendshipTier(a, b)` | Tier id or null |
+| `getMutualFriends(a, b)` | Id array |
+| `getFriendshipStats(id)` | Statistics |
+| `getFriendshipEvents(relationshipId)` | Event array |
 
-`createFriendship`, `createMutualFriendships`, `increaseFriendshipStrength`, `decreaseFriendshipStrength`, `recordFriendshipEvent`, `removeFriendship`.
+### Commands
+
+**File:** `friendship-commands.js`
+
+| Function | Purpose |
+|---|---|
+| `createFriendship(aId, bId, options?)` | Create |
+| `createMutualFriendships(ids, options?)` | Bulk pairwise |
+| `increaseFriendshipStrength(aId, bId, amount?)` | Increase |
+| `decreaseFriendshipStrength(aId, bId, amount?)` | Decrease |
+| `recordFriendshipEvent(aId, bId, event)` | Append event + apply impact |
+| `removeFriendship(aId, bId, options?)` | End |
 
 ---
 
-## 11. Rivalry and Enmity
+## 12. Rivalry and Enmity
 
-### Rules (`rivalry-rules.js`)
+### Rules
 
-`canCreateRivalry`, `canCreateEnmity`, `canTransition`, `validateRivalryAttributes`, `validateEnmityAttributes`.
+**File:** `rivalry-rules.js`
+
+| Function | Purpose |
+|---|---|
+| `canCreateRivalry(facts)` | `{ valid, errors }` |
+| `canCreateEnmity(facts)` | `{ valid, errors }` |
+| `canTransition({ archetype, from, to })` | `{ valid, errors }` |
+| `validateRivalryAttributes(attributes)` | Rejects non-empty |
+| `validateEnmityAttributes(attributes)` | Rejects non-empty |
 
 Constants: `RIVALRY_TRANSITIONS`, `ENMITY_TRANSITIONS`, `RIVALRY_ALLOWED_ATTRIBUTES`, `ENMITY_ALLOWED_ATTRIBUTES`, `MIN_AGE_RIVALRY=10`, `MIN_AGE_ENMITY=10`.
 
-### Queries (`rivalry-queries.js`)
+### Queries
 
-`areRivals`, `areEnemies`, `areInConflict`, `getActiveRivalryBetween`, `getActiveEnmityBetween`, `getAllRivalriesBetween`, `getAllEnmitiesBetween`, `getRivalries`, `getEnmities`, `getConflicts`, `getRivalIds`, `getEnemyIds`, `getRivalryCount`, `getEnmityCount`, `getSharedRivals`, `getSharedEnemies`, `getSharedConflicts`, `getRivalryStats`, `getEnmityStats`.
+**File:** `rivalry-queries.js`
 
-### Commands (`rivalry-commands.js`)
+| Function | Purpose |
+|---|---|
+| `areRivals(a, b)` | Boolean |
+| `areEnemies(a, b)` | Boolean |
+| `areInConflict(a, b)` | Boolean |
+| `getActiveRivalryBetween(a, b)` | Projection or null |
+| `getActiveEnmityBetween(a, b)` | Projection or null |
+| `getAllRivalriesBetween(a, b)` | Projection array |
+| `getAllEnmitiesBetween(a, b)` | Projection array |
+| `getRivalries(id, options)` | Projections |
+| `getEnmities(id, options)` | Projections |
+| `getConflicts(id, options)` | Combined |
+| `getRivalIds(id, options)` | Id array |
+| `getEnemyIds(id, options)` | Id array |
+| `getRivalryCount(id)` | Number |
+| `getEnmityCount(id)` | Number |
+| `getSharedRivals(a, b)` | Id array |
+| `getSharedEnemies(a, b)` | Id array |
+| `getSharedConflicts(a, b)` | Id array |
+| `getRivalryStats(id)` | Statistics |
+| `getEnmityStats(id)` | Statistics |
 
-`createRivalry`, `createEnmity`, `endRivalry`, `endEnmity`, `escalateRivalryToEnmity`, `deEscalateEnmityToRivalry`.
+### Commands
+
+**File:** `rivalry-commands.js`
+
+| Function | Purpose |
+|---|---|
+| `createRivalry(aId, bId, options?)` | Create |
+| `createEnmity(aId, bId, options?)` | Create |
+| `endRivalry(aId, bId, options?)` | End |
+| `endEnmity(aId, bId, options?)` | End |
+| `escalateRivalryToEnmity(aId, bId, options?)` | Escalate |
+| `deEscalateEnmityToRivalry(aId, bId, options?)` | De-escalate |
 
 ---
 
-## 12. Jealousy
+## 13. Jealousy
 
-### Rules (`jealousy-rules.js`)
+### Rules
+
+**File:** `jealousy-rules.js`
 
 | Function | Purpose |
 |---|---|
@@ -518,13 +644,24 @@ Consequences with thresholds:
 
 Trait modifiers on the jealous character: `violent +0.10`, `hot_headed +0.15`, `cowardly -0.20`, `calculating -0.10`, `jealous +0.05`, `secure -0.10`, `patient -0.10`.
 
-### Queries (`jealousy-queries.js`)
+### Queries
 
-`getJealousyBetween`, `findAllJealousyTargets`, `getPrimaryJealousyTarget`, `getConflictHistory`, `getActiveConflicts`, `getJealousyStats`.
+**File:** `jealousy-queries.js`
+
+| Function | Purpose |
+|---|---|
+| `getJealousyBetween(subjectId, targetId, aboutId?)` | `{ level, triggers, type }` |
+| `findAllJealousyTargets(subjectId)` | Target array |
+| `getPrimaryJealousyTarget(subjectId)` | Target or null |
+| `getConflictHistory(id)` | Conflict projection array |
+| `getActiveConflicts(id)` | Conflict projection array |
+| `getJealousyStats(id)` | Statistics |
 
 **No persisted jealousy history in v1.** The domain is derivable from current relationship facts. If historical escalation later requires storage, it graduates to its own state module, not to character records and not to relationship `metadata`.
 
-### Commands (`jealousy-commands.js`)
+### Commands
+
+**File:** `jealousy-commands.js`
 
 | Function | Purpose |
 |---|---|
@@ -535,9 +672,13 @@ The confrontation decision is the caller's. Annual processing rolls; direct call
 
 ---
 
-## 13. Affairs
+## 14. Affairs
 
-### Rules (`affair-rules.js`)
+An affair is a committed relationship with the SECRET attribute. Classification is never stored. The authoritative predicate is `RomanceRules.isAffair`.
+
+### Rules
+
+**File:** `affair-rules.js`
 
 | Function | Purpose |
 |---|---|
@@ -557,13 +698,29 @@ The confrontation decision is the caller's. Annual processing rolls; direct call
 Affair types: `secret`, `open`, `emotional`, `one_night`.
 Consequences: `discovery`, `scandal`, `breakup`, `murder`, `execution`, `reconciliation`, `legitimization`.
 
-### Queries (`affair-queries.js`)
+### Queries
 
-`getAffairs`, `getActiveAffairs`, `getDiscoveredAffairs`, `isHavingAffair`, `getAffairBetween`, `getAffairById`, `getDiscoveryRisk(relationshipId)`, `getHighestRiskAffair(characterId)`, `getAffairStatistics`.
+**File:** `affair-queries.js`
 
-Discovery risk projection gathers facts (affair type, rank priority, secretive traits, other active affairs, duration, same location, public behaviour, previous discovery) and delegates to `AffairRules.calculateDiscoveryRisk`. Returns `{ risk, annualChance, facts }`.
+| Function | Purpose |
+|---|---|
+| `getAffairs(id, options)` | Projections |
+| `getActiveAffairs(id)` | Active |
+| `getDiscoveredAffairs(id)` | Discovered |
+| `isHavingAffair(id)` | Boolean |
+| `getAffairBetween(a, b)` | Projection or null |
+| `getAffairById(relationshipId)` | Projection or null |
+| `getAffairDuration(relationshipId, referenceYear?)` | Number or null |
+| `getAffairDiscoverer(relationshipId)` | Character id or null |
+| `getAffairDiscoveryCircumstances(relationshipId)` | String or null |
+| `getAffairDiscoveryYear(relationshipId)` | Number or null |
+| `getDiscoveryRisk(relationshipId, options?)` | `{ risk, annualChance, facts }` or null |
+| `getHighestRiskAffair(id, options?)` | `{ affair, risk, annualChance, facts }` or null |
+| `getAffairStatistics(id, options?)` | Statistics |
 
-### Commands (`affair-commands.js`)
+### Commands
+
+**File:** `affair-commands.js`
 
 | Function | Purpose |
 |---|---|
@@ -577,47 +734,128 @@ Discovery risk projection gathers facts (affair type, rank priority, secretive t
 
 ---
 
-## 14. Matchmaking
+## 15. Matchmaking
 
-### Rules (`matchmaking-rules.js`)
+### Rules
 
-`isValidPreference`, `passesGenderPreference`, `passesAgeGap`, `acceptanceChance`, `isEligibleSingle`, `isEligibleLateSpring`.
+**File:** `matchmaking-rules.js`
+
+| Function | Purpose |
+|---|---|
+| `isValidPreference(pref)` | Boolean |
+| `passesGenderPreference(facts)` | Boolean |
+| `passesAgeGap(facts)` | Boolean |
+| `acceptanceChance(facts)` | Number in `[0, 1]` |
+| `isEligibleSingle(facts)` | Boolean |
+| `isEligibleLateSpring(facts)` | Boolean |
 
 Constants: `DEFAULT_MIN_AGE=12`, `DEFAULT_MAX_AGE_GAP=20`, `LATE_SPRING_MIN_AGE=30`, `LATE_SPRING_MAX_AGE_GAP=15`, `PREFERENCE = { ANY, OPPOSITE_SEX, SAME_SEX }`.
 
-### Queries (`matchmaking-queries.js`)
+### Queries
 
-`findSurpriseMatches(options)` — options include `rolls: number[]`; the caller supplies rolls.
-`findLateSpringMatch(options)` — deterministic.
-`getEligibleSingles(options)` — listing helper.
+**File:** `matchmaking-queries.js`
+
+| Function | Purpose |
+|---|---|
+| `findSurpriseMatches(options)` | Matches using caller-supplied rolls |
+| `findLateSpringMatch(options)` | Deterministic late-spring match |
+| `getEligibleSingles(options)` | Candidate listing |
 
 ---
 
-## 15. Professional
+## 16. Professional
 
-### Rules (`professional-rules.js`)
+### Rules
 
-`isProfessionalArchetype`, `getTransitionTable`, `canTransition`, `validateAttributes`, `clampSkill`, `skillTier`, `canTeach`, `canCreateApprenticeship`, `canProgressApprenticeship`, `canCompleteApprenticeship`, `canCreateEmployment`, `canCreateGuildMembership`.
+**File:** `professional-rules.js`
+
+| Function | Purpose |
+|---|---|
+| `isProfessionalArchetype(type)` | Boolean |
+| `getTransitionTable(archetype)` | Transition table or null |
+| `canTransition({ archetype, from, to })` | `{ valid, errors }` |
+| `validateAttributes(attributes)` | Rejects non-empty |
+| `clampSkill(value)` | Number in `[0, 100]` |
+| `skillTier(skill)` | Tier id |
+| `canTeach(skillLevel, minSkill?)` | Boolean |
+| `canCreateApprenticeship(facts)` | `{ valid, errors }` |
+| `canProgressApprenticeship(facts)` | `{ valid, errors }` |
+| `canCompleteApprenticeship(facts)` | `{ valid, errors }` |
+| `canCreateEmployment(facts)` | `{ valid, errors }` |
+| `canCreateGuildMembership(facts)` | `{ valid, errors }` |
 
 Skill constants: `SKILL_MIN=0`, `SKILL_MAX=100`, `SKILL_DEFAULT=0`, `TEACHING_MIN_SKILL=51`, `MASTER_MIN_SKILL=76`. Tiers: `untrained`, `novice`, `apprentice`, `journeyman`, `expert`, `master`.
 
-### Queries (`professional-queries.js`)
+### Queries
 
-`getApprentices`, `getApprenticeIds`, `isMaster`, `getApprenticeCount`, `getMasterRelationships`, `getMasterIds`, `getMaster`, `isApprentice`, `getApprenticeshipBetween`, `getApprenticeshipRoleId`, `getExperts`, `getMasterships`, `getEmployees`, `getEmployeeIds`, `isEmployer`, `getEmployerRelationships`, `getEmployerIds`, `getEmployer`, `isEmployed`, `getEmploymentBetween`, `getGuildMembers`, `getGuildMemberIds`, `getGuildMemberships`, `getGuildIds`, `isInGuild`, `getGuildMembership`, `getGuildRank`, `getProfessionalRelationships`, `getProfessionalRelationshipsBetween`, `getProfessionalStats`.
+**File:** `professional-queries.js`
+
+| Function | Purpose |
+|---|---|
+| `getApprentices(masterId, options)` | Projections |
+| `getApprenticeIds(masterId, options)` | Id array |
+| `isMaster(id)` | Boolean |
+| `getApprenticeCount(id)` | Number |
+| `getMasterRelationships(apprenticeId, options)` | Projections |
+| `getMasterIds(apprenticeId, options)` | Id array |
+| `getMaster(apprenticeId, options)` | Id or null |
+| `isApprentice(id)` | Boolean |
+| `getApprenticeshipBetween(masterId, apprenticeId)` | Projection or null |
+| `getApprenticeshipRoleId(apprenticeId)` | Role id or null |
+| `getExperts(masterId, options)` | Mastership projections |
+| `getMasterships(expertId, options)` | Mastership projections |
+| `getEmployees(employerId, options)` | Projections |
+| `getEmployeeIds(employerId, options)` | Id array |
+| `isEmployer(id)` | Boolean |
+| `getEmployerRelationships(employeeId, options)` | Projections |
+| `getEmployerIds(employeeId, options)` | Id array |
+| `getEmployer(employeeId, options)` | Id or null |
+| `isEmployed(id)` | Boolean |
+| `getEmploymentBetween(employerId, employeeId)` | Projection or null |
+| `getGuildMembers(guildId, options)` | Projections |
+| `getGuildMemberIds(guildId, options)` | Id array |
+| `getGuildMemberships(characterId, options)` | Projections |
+| `getGuildIds(characterId, options)` | Id array |
+| `isInGuild(characterId, guildId?)` | Boolean |
+| `getGuildMembership(characterId, guildId)` | Projection or null |
+| `getGuildRank(characterId, guildId)` | Rank or null |
+| `getProfessionalRelationships(id, options)` | All professional |
+| `getProfessionalRelationshipsBetween(a, b, options)` | Between |
+| `getProfessionalStats(id)` | Statistics |
 
 The skill provider is required: `SkillQueries.getSkillLevel(characterId, roleId)` and `SkillQueries.getRoleName(roleId)`.
 
-### Commands (`professional-commands.js`)
+### Commands
 
-`createApprenticeship`, `progressApprenticeship`, `completeApprenticeship`, `endApprenticeship`, `createMastership`, `endMastership`, `createEmployment`, `updateEmployment`, `endEmployment`, `createGuildMembership`, `removeGuildMembership`, `setGuildRank`.
+**File:** `professional-commands.js`
+
+| Function | Purpose |
+|---|---|
+| `createApprenticeship(masterId, apprenticeId, options?)` | Create |
+| `progressApprenticeship(masterId, apprenticeId, amount?)` | Advance skill |
+| `completeApprenticeship(masterId, apprenticeId, finalSkill?)` | End with reason `completed` |
+| `endApprenticeship(masterId, apprenticeId, options?)` | End |
+| `createMastership(masterId, expertId, options?)` | Create |
+| `endMastership(masterId, expertId, options?)` | End |
+| `createEmployment(employerId, employeeId, options?)` | Create |
+| `updateEmployment(employerId, employeeId, options?)` | Patch role/wages/notes |
+| `endEmployment(employerId, employeeId, options?)` | End |
+| `createGuildMembership(guildId, memberId, options?)` | Create |
+| `removeGuildMembership(guildId, memberId, options?)` | End |
+| `setGuildRank(guildId, memberId, rank)` | Set rank |
 
 Skill writes go through `SkillCommands.updateSkillLevel`. The professional domain never reaches into the character record directly.
 
 ---
 
-## 16. Finder
+## 17. Finder
 
-`relationship-finder-queries.js` performs a BFS over the union of `FamilyState` (parentage) and `RelationshipState` (all non-family edges).
+**File:** `relationship-finder-queries.js`
+
+A two-graph traversal:
+
+1. `FamilyState` (parentage edges) — via `FamilyQueries`
+2. `RelationshipState` (all non-family) — via `RelationshipQueries`
 
 Kinship (sibling, grandparent, aunt/uncle, cousin) is **reported** by classification but **not traversed** as an edge. The graph is parentage + actual relationship records.
 
@@ -631,9 +869,11 @@ Kinship (sibling, grandparent, aunt/uncle, cousin) is **reported** by classifica
 
 ---
 
-## 17. UI
+## 18. UI
 
-### Presentation metadata (`relationship-ui-metadata.js`)
+### Presentation metadata
+
+**File:** `relationship-ui-metadata.js`
 
 Icons, labels, colors, past and present tense phrases for archetypes, attributes, and statuses. Load-time consistency check against the vocabulary tables.
 
@@ -650,15 +890,17 @@ Icons, labels, colors, past and present tense phrases for archetypes, attributes
 
 ### Modals
 
-`modals-relationship.js` — unified creation modal. Archetype picker, optional attribute checkboxes for committed, optional role/employment/guild fields, start year, notes. Dispatches to the appropriate domain command.
+**`modals-relationship.js`** — unified creation modal. Archetype picker, optional attribute checkboxes for committed, optional role/employment/guild fields, start year, notes. Dispatches to the appropriate domain command.
 
-`modals-friendship.js` — bulk friendship creation, view, edit (strength, notes, start year), breakup.
+**`modals-friendship.js`** — bulk friendship creation, view, edit (strength, notes, start year), breakup.
 
 ---
 
-## 18. Cross-Domain Integrations
+## 19. Cross-Domain Integrations
 
-`relationship-integrations.js` is the single place where the relationship domain exposes hooks.
+**File:** `relationship-integrations.js`
+
+The single place where the relationship domain exposes hooks.
 
 | Function | Purpose |
 |---|---|
@@ -675,9 +917,11 @@ Icons, labels, colors, past and present tense phrases for archetypes, attributes
 
 ---
 
-## 19. Bootstrap
+## 20. Bootstrap
 
-`relationships-bootstrap.js` verifies required modules and globals at load time.
+**File:** `relationships-bootstrap.js`
+
+Verifies required modules and globals at load time.
 
 ### Required modules
 
@@ -727,7 +971,7 @@ Individual globals remain on `window` for backward compatibility. New code uses 
 
 ---
 
-## 20. Load Order
+## 21. Load Order
 
 ```html
 <!-- 1. Core (external) -->
@@ -814,7 +1058,7 @@ Individual globals remain on `window` for backward compatibility. New code uses 
 
 ---
 
-## 21. Ownership Contract
+## 22. Ownership Contract
 
 | Concept | Owner | Readers |
 |---|---|---|
@@ -838,7 +1082,7 @@ Individual globals remain on `window` for backward compatibility. New code uses 
 
 ---
 
-## 22. Rules of Use
+## 23. Rules of Use
 
 ### Do
 
@@ -850,6 +1094,7 @@ Individual globals remain on `window` for backward compatibility. New code uses 
 - Return `{ success: false, code, message }` for domain errors.
 - Call `RelationshipCommands` from domain commands, never `RelationshipState` directly.
 - Route cross-domain effects through `RelationshipIntegrations`.
+- Consult `CultureRules` via `RomanceRules.validateAttributesForCulture` before persisting cultural attributes.
 
 ### Don't
 
@@ -863,10 +1108,11 @@ Individual globals remain on `window` for backward compatibility. New code uses 
 - Don't interpret relationship attributes outside the owning domain's `-queries.js`.
 - Don't call `RelationshipState` directly from a domain command; go through `RelationshipCommands`.
 - Don't persist legal consequences by reading `attributes.includes('married')`; read a culture-aware projection.
+- Don't reintroduce `RelationshipRules` as a base module.
 
 ---
 
-## 23. Semantic Contracts
+## 24. Semantic Contracts
 
 ### Return values
 
@@ -902,21 +1148,26 @@ Parentage is not stored here. Sibling, grandparent, aunt/uncle, cousin archetype
 
 ---
 
-## 24. What Is Not Implemented
+## 25. What Is Not Implemented
 
 The following are deliberately outside the relationship domain in v1:
 
-- **Succession and inheritance.** Succession is a separate domain. It reads a culture-aware partnership projection from this domain, but it does not live here.
+- **Succession and inheritance.** Separate domain. Reads a culture-aware partnership projection from this domain, but does not live here.
 - **Justice.** Auto-execution of murderers, judicial records. `AffairCommands.applyConsequences` calls `ExecutionCommands` if present; the justice domain owns the records.
 - **Legitimacy.** `FamilyRules` deliberately omits `canLegitimize`. Legitimization of a child, if reintroduced, is a family-domain decision.
 - **Education.** Literacy, enrollment, graduation. Separate domain.
 - **Groups and households.** Separate domains. The relationship domain stores edges between characters; a group is a distinct entity with its own state.
 - **Persisted jealousy history.** The domain does not store past confrontations. If historical escalation later requires this, a dedicated state module is the correct home.
 - **Event-sourced friendship history beyond the bounded array.** Friendship events live in the record's `metadata.events`, capped at 50. If independent querying over friendship events becomes necessary, it graduates to its own event collection.
+- **Friendship recommendations.** Composable from `FriendshipQueries` output. Not delivered as a separate module.
+- **Master/progress/teachable queries.** Belong in the role/skill domain. `ProfessionalQueries` provides the raw projections; discovery and recommendation over them is a role-domain concern.
+- **Annual processing orchestrator.** `RelationshipIntegrations.processAnnualLifecycle` covers jealousy and affairs. A top-level simulation orchestrator that also advances mortality and aging is outside this domain.
+- **`relationship-finder.js` UI panel.** Queries are ready; the UI panel that renders them is not part of this domain build.
+- **`relationship-system.js` compatibility shim.** `window.Relationships` in bootstrap covers the new entry point.
 
 ---
 
-## 25. Deletion and Lifecycle
+## 26. Deletion and Lifecycle
 
 ### Hard delete of a character
 
@@ -943,7 +1194,7 @@ If `window.registerLifecycleHook` exists, `RelationshipIntegrations` registers `
 
 ---
 
-## 26. Anti-Patterns
+## 27. Anti-Patterns
 
 The following are forbidden in the relationship domain:
 
@@ -962,10 +1213,11 @@ The following are forbidden in the relationship domain:
 - Treating `attributes.includes('married')` as legal status anywhere outside a culture-aware projection.
 - Persisting jealousy history on character records or in relationship `metadata`.
 - Reintroducing sibling/grandparent/aunt-uncle/cousin archetypes as stored edges.
+- Reintroducing `relationship-rules.js` as a base policy module.
 
 ---
 
-## 27. Adding a New Archetype
+## 28. Adding a New Archetype
 
 1. Add the id to `RELATIONSHIP_ARCHETYPES` and its category, direction, and roles (if directional) in `relationship-types.js`.
 2. Add a per-domain status subset if the archetype needs a status vocabulary that differs from the default.
@@ -980,7 +1232,7 @@ If the archetype is a straight symmetric edge with no domain policy beyond valid
 
 ---
 
-## 28. Adding a New Attribute
+## 29. Adding a New Attribute
 
 1. Add the id to `RELATIONSHIP_ATTRIBUTES` in `relationship-types.js`.
 2. Declare its scope (`universal` or `cultural`) in `ATTRIBUTE_SCOPE`.
@@ -994,7 +1246,7 @@ If the archetype is a straight symmetric edge with no domain policy beyond valid
 
 ---
 
-## 29. Version History
+## 30. Version History
 
 **v1.0** — Rebuilt after the character / family / children / mortality refactor.
 
@@ -1003,14 +1255,23 @@ If the archetype is a straight symmetric edge with no domain policy beyond valid
 - Pair cardinality: N records per pair. `byPair` is `Set<relationshipId>`.
 - `RelationshipRules` removed. Transition tables live per-domain; structural helpers live in `relationship-utils.js`.
 - Per-domain attribute interpretation. Only `RomanceQueries` reads romance attributes by name.
-- Cultural attributes are globally representable but culturally enabled. `RomanceRules.validateAttributesForCulture` gates them against `CultureRules`.
-- State treats status as opaque. Each domain owns its transition table.
-- Domain commands never bypass domain rules. `DomainCommands → DomainRules → RelationshipCommands → RelationshipState`.
+- Cultural attributes are globally representable but culturally enabled.
+- State treats status as opaque.
+- Domain commands never bypass domain rules.
 - Randomness injected. `Math.random` is never called in Rules or Commands.
-- Sibling, grandparent, aunt/uncle, cousin archetypes removed. Kinship derived by `FamilyRules.classifyKinship`.
-- Persisted jealousy history removed. If reintroduced, it graduates to its own state module.
+- Sibling, grandparent, aunt/uncle, cousin archetypes removed. Kinship derived.
+- Persisted jealousy history removed.
 - `RelationshipIntegrations` centralises cross-domain hooks.
 - `relationships-bootstrap.js` verifies modules, globals, vocabulary consistency, and domain tables at load time.
+
+**v1.1** — Additions and finalization.
+
+- Added `RelationshipState.validateIntegrity()` — diagnostic consistency check.
+- Added `RelationshipQueries.getMostRecentRelationship(a, b)` and `getMostRecentRelationshipOfType(a, b, type)`.
+- Added `RomanceQueries.getRelationshipConflicts(a, b, options)` — pre-submit conflict report.
+- Added `AffairQueries.getAffairDuration`, `getAffairDiscoverer`, `getAffairDiscoveryCircumstances`, `getAffairDiscoveryYear`.
+- Confirmed that `relationship-rules.js` is not part of the architecture.
+- Confirmed the file manifest and cross-domain integration points.
 
 ---
 
