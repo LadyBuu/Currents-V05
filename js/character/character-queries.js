@@ -11,6 +11,7 @@
  *   - Character facts projection for cross-domain consumers
  *   - Location-scoped character lookups
  *   - Whole-collection defensive projection
+ *   - Age-range filter
  *
  * OUT OF SCOPE:
  *   - Family graph semantics         -> family-queries.js
@@ -29,6 +30,11 @@
  *   so existing callers continue to work. They do not reimplement
  *   family semantics. If FamilyQueries is not loaded, they return
  *   null or [] without fabricating data.
+ *
+ * AGE FILTERING:
+ *   getCharactersByAgeRange filters by current age (or age at death for
+ *   deceased characters). It uses calculateAge when available and falls
+ *   back to a numeric difference when not. It never fabricates an age.
  *
  * SEMANTIC RULES:
  *   - Missing/invalid input returns null (singular) or [] (collection).
@@ -121,6 +127,18 @@
         return { ok: true, value: value };
     }
 
+    function _validateIntegerArgument(value, name, allowMissing) {
+        if (_isMissing(value)) {
+            if (allowMissing) return { ok: true, value: null };
+            return { ok: false, reason: name + ' is required' };
+        }
+        if (typeof value !== 'number' || !Number.isFinite(value)
+            || !Number.isInteger(value)) {
+            return { ok: false, reason: name + ' must be an integer' };
+        }
+        return { ok: true, value: value };
+    }
+
     // =========================================================================
     // 2. SEARCH
     // =========================================================================
@@ -191,7 +209,52 @@
     }
 
     // =========================================================================
-    // 4. CHARACTER SUMMARY
+    // 4. AGE-RANGE FILTER
+    // =========================================================================
+
+    /**
+     * Returns all characters whose age falls in [minAge, maxAge].
+     *
+     * Age is computed from the character's current year (or death year
+     * for deceased characters). Characters whose age cannot be
+     * determined are excluded, not fabricated.
+     *
+     * @param {number} minAge
+     * @param {number} maxAge
+     * @param {boolean} [includeDeceased] default true
+     * @returns {Array}
+     */
+    function getCharactersByAgeRange(minAge, maxAge, includeDeceased) {
+        var minV = _validateIntegerArgument(minAge, 'minAge', false);
+        if (!minV.ok) throw new Error('getCharactersByAgeRange: ' + minV.reason);
+        var maxV = _validateIntegerArgument(maxAge, 'maxAge', false);
+        if (!maxV.ok) throw new Error('getCharactersByAgeRange: ' + maxV.reason);
+
+        if (minV.value < 0) {
+            throw new Error('getCharactersByAgeRange: minAge must not be negative');
+        }
+        if (maxV.value < minV.value) {
+            throw new Error('getCharactersByAgeRange: maxAge must not be less than minAge');
+        }
+
+        if (includeDeceased === undefined) includeDeceased = true;
+
+        var all = _readAll();
+        var out = [];
+        for (var i = 0; i < all.length; i++) {
+            var c = all[i];
+            if (includeDeceased !== true && c.isDeceased === true) continue;
+
+            var age = _age(c);
+            if (typeof age !== 'number' || !Number.isFinite(age)) continue;
+            if (age < minV.value || age > maxV.value) continue;
+            out.push(c);
+        }
+        return out;
+    }
+
+    // =========================================================================
+    // 5. CHARACTER SUMMARY
     // =========================================================================
 
     function getCharacterSummary(id) {
@@ -295,7 +358,7 @@
     }
 
     // =========================================================================
-    // 5. CHARACTER FACTS
+    // 6. CHARACTER FACTS
     // =========================================================================
 
     function getCharacterFacts(id) {
@@ -335,13 +398,8 @@
     }
 
     // =========================================================================
-    // 6. FAMILY COMPATIBILITY DELEGATES
+    // 7. FAMILY COMPATIBILITY DELEGATES
     // =========================================================================
-    //
-    // These preserve the historical call surface. They delegate to
-    // FamilyQueries. They do not reimplement family semantics. If
-    // FamilyQueries is not loaded, they return null or [] without
-    // fabricating data.
 
     function _familyAvailable() {
         return typeof window.FamilyQueries !== 'undefined';
@@ -429,7 +487,7 @@
     }
 
     // =========================================================================
-    // 7. PROFESSION COMPATIBILITY DELEGATES
+    // 8. PROFESSION COMPATIBILITY DELEGATES
     // =========================================================================
 
     function getCharacterProfessions(id) {
@@ -450,7 +508,7 @@
     }
 
     // =========================================================================
-    // 8. EXPORTS
+    // 9. EXPORTS
     // =========================================================================
 
     window.CharacterQueries = {
@@ -463,12 +521,13 @@
         getCurrentLocationId: getCurrentLocationId,
         getCharactersInLocations: getCharactersInLocations,
 
+        getCharactersByAgeRange: getCharactersByAgeRange,
+
         getCharacterSummary: getCharacterSummary,
         getCharacterFacts: getCharacterFacts,
         getAllCharacterFacts: getAllCharacterFacts,
         getCharacterIdentityFacts: getCharacterIdentityFacts,
 
-        // Family delegation
         getCharacterChildren: getCharacterChildren,
         getCharacterParents: getCharacterParents,
         getCharacterSiblings: getCharacterSiblings,
@@ -477,7 +536,6 @@
         getCharacterKinship: getCharacterKinship,
         getCharacterKinshipCloseness: getCharacterKinshipCloseness,
 
-        // Profession delegation
         getCharacterProfessions: getCharacterProfessions,
         getPrimaryProfession: getPrimaryProfession
     };
