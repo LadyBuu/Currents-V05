@@ -3,32 +3,14 @@
  *
  * Semantic reads for affairs.
  *
- * An affair is a committed relationship with the SECRET attribute.
- * Classification is derived, never stored. The authoritative predicate
- * is RomanceRules.isAffair.
- *
  * Owns:
- *   - affair projections for a character
- *   - affair projections between two characters
+ *   - affair projections for a character and between two characters
  *   - discovery-risk projections for a given affair record
  *   - affair statistics
+ *   - named accessors for common affair fields
  *
- * Depends on:
- *   - RelationshipQueries for raw edge reads
- *   - RomanceQueries for committed/affair projections
- *   - RomanceRules for the affair predicate
- *   - AffairRules for discovery-risk computation
- *
- * Does NOT own:
- *   - state access (goes through RelationshipQueries)
- *   - mutation
- *   - persistence
- *   - randomness
- *   - cultural gating
- *   - consequence execution
- *
- * Every returned value is a defensive projection. Never a live record.
- * Unknown inputs return null or []. No fabrication.
+ * Depends on RelationshipQueries, RomanceQueries, RomanceRules,
+ * AffairRules.
  *
  * Load order: after relationship-queries.js, romance-queries.js,
  * romance-rules.js, affair-rules.js.
@@ -109,10 +91,6 @@
 
     // -------------------------------------------------------------------------
     // PROJECTION
-    //
-    // Affair projection extends the romance projection with affair-specific
-    // metadata. The `isAffair` field is derived (RomanceRules.isAffair
-    // over the attributes), never read from storage.
     // -------------------------------------------------------------------------
 
     function _projectAffair(romanceProjection) {
@@ -160,9 +138,6 @@
     // AFFAIR LOOKUPS
     // -------------------------------------------------------------------------
 
-    /**
-     * All affairs for a character. options: { activeOnly?: boolean }
-     */
     function getAffairs(characterId, options) {
         options = options || {};
         var active = RoQ.getRomanticRelationships(characterId, {
@@ -224,12 +199,47 @@
     }
 
     // -------------------------------------------------------------------------
-    // DISCOVERY RISK PROJECTION
-    //
-    // Gathers facts from the graph and delegates to
-    // AffairRules.calculateDiscoveryRisk.
-    //
-    // Returns { risk, annualChance, facts } or null.
+    // NAMED ACCESSORS
+    // -------------------------------------------------------------------------
+
+    function getAffairDuration(relationshipId, referenceYear) {
+        var rec = RQ.getById(relationshipId);
+        if (!rec) return null;
+        if (rec.type !== COMMITTED) return null;
+        if (!RR.isAffair(rec.attributes)) return null;
+        var ref = (typeof referenceYear === 'number') ? referenceYear : _getCurrentYear();
+        return _durationYears(rec, ref);
+    }
+
+    function getAffairDiscoverer(relationshipId) {
+        var rec = RQ.getById(relationshipId);
+        if (!rec || rec.type !== COMMITTED) return null;
+        if (!rec.metadata || !rec.metadata.discovered) return null;
+        return typeof rec.metadata.discovererId === 'string'
+            ? rec.metadata.discovererId
+            : null;
+    }
+
+    function getAffairDiscoveryCircumstances(relationshipId) {
+        var rec = RQ.getById(relationshipId);
+        if (!rec || rec.type !== COMMITTED) return null;
+        if (!rec.metadata || !rec.metadata.discovered) return null;
+        return typeof rec.metadata.discoveryCircumstances === 'string'
+            ? rec.metadata.discoveryCircumstances
+            : null;
+    }
+
+    function getAffairDiscoveryYear(relationshipId) {
+        var rec = RQ.getById(relationshipId);
+        if (!rec || rec.type !== COMMITTED) return null;
+        if (!rec.metadata || !rec.metadata.discovered) return null;
+        return typeof rec.metadata.discoveryYear === 'number'
+            ? rec.metadata.discoveryYear
+            : null;
+    }
+
+    // -------------------------------------------------------------------------
+    // DISCOVERY RISK
     // -------------------------------------------------------------------------
 
     function getDiscoveryRisk(relationshipId, options) {
@@ -325,10 +335,6 @@
 
     // -------------------------------------------------------------------------
     // AGGREGATE DISCOVERY RISK
-    //
-    // For a character, the highest-risk active affair. Useful for annual
-    // processing that only needs to know which affair is most likely to
-    // be discovered.
     // -------------------------------------------------------------------------
 
     function getHighestRiskAffair(characterId, options) {
@@ -361,7 +367,6 @@
     // -------------------------------------------------------------------------
 
     window.AffairQueries = {
-        // Lookups
         getAffairs: getAffairs,
         getActiveAffairs: getActiveAffairs,
         getDiscoveredAffairs: getDiscoveredAffairs,
@@ -369,11 +374,14 @@
         getAffairBetween: getAffairBetween,
         getAffairById: getAffairById,
 
-        // Discovery risk
+        getAffairDuration: getAffairDuration,
+        getAffairDiscoverer: getAffairDiscoverer,
+        getAffairDiscoveryCircumstances: getAffairDiscoveryCircumstances,
+        getAffairDiscoveryYear: getAffairDiscoveryYear,
+
         getDiscoveryRisk: getDiscoveryRisk,
         getHighestRiskAffair: getHighestRiskAffair,
 
-        // Statistics
         getAffairStatistics: getAffairStatistics
     };
 
