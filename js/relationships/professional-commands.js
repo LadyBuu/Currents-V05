@@ -17,9 +17,10 @@
  * OWNERSHIP
  *
  *   ProfessionalCommands owns:
- *       - the edge primitive: createEdge, updateEdgeMetadata, endEdge,
- *         removeEdge — the only sanctioned entry points for writing a
- *         professional edge into RelationshipState
+ *       - the edge primitive: createEdge, updateEdgeMetadata,
+ *         updateEdgeFields, endEdge, removeEdge — the only sanctioned
+ *         entry points for writing a professional edge into
+ *         RelationshipState
  *       - the mastership edge commands (createMastership, endMastership)
  *       - the employment edge commands (createEmployment,
  *         updateEmployment, endEmployment)
@@ -38,35 +39,19 @@
  *       - state
  *             → RelationshipState (via RelationshipCommands)
  *
- * THE APPRENTICESHIP EDGE
+ * EDGE PRIMITIVE — TWO UPDATE PATHS
  *
- *   ApprenticeshipCommands calls ProfessionalCommands.createEdge() with
- *   archetype 'apprenticeship'. This module provides the write primitive;
- *   ApprenticeshipCommands owns the lifecycle that drives it (create,
- *   progress, teach, complete, terminate, annual advancement).
+ *   updateEdgeMetadata(id, patch)  — shallow-merges into record.metadata.
+ *                                    Never touches status, startYear,
+ *                                    endYear, participants, or type.
  *
- * EDGE PRIMITIVE SHAPE
+ *   updateEdgeFields(id, patch)    — patches edge-level fields (startYear,
+ *                                    endYear). Never touches metadata or
+ *                                    participants. Status changes go
+ *                                    through endEdge.
  *
- *   createEdge({
- *       archetype,          // 'apprenticeship' | 'mastership' |
- *                           // 'employment' | 'guild_membership'
- *       participantA,       // role depends on archetype
- *       participantB,       // role depends on archetype
- *       startYear,          // number | null
- *       metadata,           // archetype-specific
- *       status              // optional; defaults to 'ongoing'
- *   })
- *
- *   Returns { success: true, relationshipId } on success, or
- *   { success: false, code, message } on failure.
- *
- * SKILL WRITES
- *
- *   None in this file. Skill is character-owned. Any caller that needs
- *   to write skill calls CharacterCommands.updateProfession directly.
- *   The professional edge never carries a cached skillLevel in its
- *   metadata — the canonical skill is on the character's profession
- *   record, read via CharacterCommands.getProfession.
+ *   Both paths delegate to RelationshipCommands.update, which is the
+ *   single writer for relationship records.
  *
  * DEPENDENCIES (must be loaded first):
  *   - relationship-types.js    (RELATIONSHIP_ARCHETYPES, RELATIONSHIP_STATUS)
@@ -170,11 +155,6 @@
         return window.getCurrentYearSafe();
     }
 
-    function _calculateAge(birthYear, isDeceased, deathYear) {
-        if (typeof window.calculateAge !== 'function') return null;
-        return window.calculateAge(birthYear, isDeceased, deathYear);
-    }
-
     function _ageAtYear(character, year) {
         if (!character || typeof character.birthYear !== 'number') return null;
         if (character.isDeceased &&
@@ -222,21 +202,15 @@
     // =========================================================================
     // 4. EDGE PRIMITIVE
     // =========================================================================
-    //
-    // The only sanctioned write path for a professional edge. Every
-    // archetype-specific command below funnels through here, and so does
-    // ApprenticeshipCommands.
 
     /**
      * @param {Object} args
-     * @param {string} args.archetype      'apprenticeship' | 'mastership'
-     *                                     | 'employment' | 'guild_membership'
+     * @param {string} args.archetype
      * @param {string} args.participantA
      * @param {string} args.participantB
      * @param {number} [args.startYear]
      * @param {Object} [args.metadata]
-     * @param {string} [args.status]       defaults to STATUS.ONGOING
-     * @returns {{ success: true, relationshipId: string } | { success: false, code: string, message: string }}
+     * @param {string} [args.status]
      */
     function createEdge(args) {
         if (!args || typeof args !== 'object') {
@@ -290,9 +264,6 @@
     /**
      * Shallow merge into the edge metadata. Never touches status,
      * startYear, endYear, participants, or type.
-     *
-     * @param {string} relationshipId
-     * @param {Object} patch
      */
     function updateEdgeMetadata(relationshipId, patch) {
         if (typeof relationshipId !== 'string' || relationshipId.length === 0) {
@@ -307,6 +278,88 @@
             return _fail(
                 (result && result.code) || 'EDGE_UPDATE_FAILED',
                 (result && result.message) || 'Failed to update professional edge'
+            );
+        }
+
+        return _ok({ relationshipId: relationshipId });
+    }
+
+    /**
+     * Patch edge-level fields. Permitted keys:
+     *
+     *   startYear   number | null
+     *   endYear     number | null
+     *
+     * Forbidden keys (returned as an error):
+     *
+     *   status         → use endEdge
+     *   metadata       → use updateEdgeMetadata
+     *   participantA   → immutable
+     *   participantB   → immutable
+     *   type           → immutable
+     *   id             → immutable
+     *
+     * Unknown keys are silently ignored to keep the call site terse;
+     * forbidden keys are rejected loudly because silently dropping a
+     * status change would hide a caller bug.
+     */
+    var EDGE_FIELD_ALLOW = {
+        startYear: true,
+        endYear: true
+    };
+
+    var EDGE_FIELD_FORBID = {
+        status: 'status changes go through endEdge',
+        metadata: 'metadata changes go through updateEdgeMetadata',
+        participantA: 'participantA is immutable',
+        participantB: 'participantB is immutable',
+        type: 'type is immutable',
+        id: 'id is immutable'
+    };
+
+    function updateEdgeFields(relationshipId, patch) {
+        if (typeof relationshipId !== 'string' || relationshipId.length === 0) {
+            return _fail('MISSING_ID', 'relationshipId is required');
+        }
+        if (!patch || typeof patch !== 'object') {
+            return _fail('MISSING_PATCH', 'patch object is required');
+        }
+
+        var safe = {};
+        var sawAny = false;
+
+        for (var key in patch) {
+            if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
+
+            if (EDGE_FIELD_FORBID[key]) {
+                return _fail(
+                    'FORBIDDEN_FIELD',
+                    'Cannot patch "' + key + '" on an edge: ' + EDGE_FIELD_FORBID[key]
+                );
+            }
+
+            if (!EDGE_FIELD_ALLOW[key]) continue;
+
+            var v = patch[key];
+            if (v !== null && (typeof v !== 'number' || !isFinite(v))) {
+                return _fail(
+                    'INVALID_FIELD',
+                    '"' + key + '" must be a finite number or null'
+                );
+            }
+            safe[key] = v;
+            sawAny = true;
+        }
+
+        if (!sawAny) {
+            return _fail('NO_UPDATES', 'no permitted edge fields supplied');
+        }
+
+        var result = RC.update(relationshipId, safe);
+        if (!result || !result.success) {
+            return _fail(
+                (result && result.code) || 'EDGE_UPDATE_FAILED',
+                (result && result.message) || 'Failed to update professional edge fields'
             );
         }
 
@@ -360,11 +413,6 @@
     // 5. MASTERSHIP
     // =========================================================================
 
-    /**
-     * @param {string} masterId
-     * @param {string} expertId
-     * @param {Object} [options]  { roleId?, startYear?, notes? }
-     */
     function createMastership(masterId, expertId, options) {
         options = options || {};
 
@@ -410,11 +458,6 @@
         });
     }
 
-    /**
-     * @param {string} masterId
-     * @param {string} expertId
-     * @param {Object} [options]  { endYear?, reason? }
-     */
     function endMastership(masterId, expertId, options) {
         options = options || {};
 
@@ -450,11 +493,6 @@
     // 6. EMPLOYMENT
     // =========================================================================
 
-    /**
-     * @param {string} employerId
-     * @param {string} employeeId
-     * @param {Object} [options]  { role?, wages?, startYear?, notes? }
-     */
     function createEmployment(employerId, employeeId, options) {
         options = options || {};
 
@@ -513,11 +551,6 @@
         });
     }
 
-    /**
-     * @param {string} employerId
-     * @param {string} employeeId
-     * @param {Object} [options]  { role?, wages?, notes? }
-     */
     function updateEmployment(employerId, employeeId, options) {
         options = options || {};
 
@@ -546,11 +579,6 @@
         });
     }
 
-    /**
-     * @param {string} employerId
-     * @param {string} employeeId
-     * @param {Object} [options]  { endYear?, reason? }
-     */
     function endEmployment(employerId, employeeId, options) {
         options = options || {};
 
@@ -578,11 +606,6 @@
     // 7. GUILD MEMBERSHIP
     // =========================================================================
 
-    /**
-     * @param {string} guildId
-     * @param {string} memberId
-     * @param {Object} [options]  { rank?, startYear?, notes? }
-     */
     function createGuildMembership(guildId, memberId, options) {
         options = options || {};
 
@@ -639,11 +662,6 @@
         });
     }
 
-    /**
-     * @param {string} guildId
-     * @param {string} memberId
-     * @param {Object} [options]  { endYear?, reason? }
-     */
     function removeGuildMembership(guildId, memberId, options) {
         options = options || {};
 
@@ -667,11 +685,6 @@
         });
     }
 
-    /**
-     * @param {string} guildId
-     * @param {string} memberId
-     * @param {string|null} rank
-     */
     function setGuildRank(guildId, memberId, rank) {
         if (typeof guildId !== 'string' || typeof memberId !== 'string') {
             return _fail('MISSING_ID', 'guildId and memberId are required');
@@ -696,10 +709,10 @@
     // =========================================================================
 
     window.ProfessionalCommands = {
-        // Edge primitive — the write path used by ApprenticeshipCommands
-        // and by every archetype-specific command below.
+        // Edge primitive
         createEdge: createEdge,
         updateEdgeMetadata: updateEdgeMetadata,
+        updateEdgeFields: updateEdgeFields,
         endEdge: endEdge,
         removeEdge: removeEdge,
 
