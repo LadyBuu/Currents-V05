@@ -12,12 +12,15 @@
  *   - Construction of the biological ancestor provider used by
  *     FamilyRules.classifyKinship, isBloodRelated, and
  *     wouldCreateBiologicalCycle
+ *   - Kinship wrappers (cousins, aunts/uncles, nieces/nephews)
+ *   - Numeric kinship closeness
+ *   - Kinship-based filters (isFirstCousin, isAuntOrUncle, ...)
  *
  * OUT OF SCOPE:
- *   - Edge validity policy        → family-rules.js
- *   - Mutations                   → family-commands.js
- *   - Aggregation                 → family-statistics.js
- *   - Persistence                 → family-state.js + storage.js
+ *   - Edge validity policy        -> family-rules.js
+ *   - Mutations                   -> family-commands.js
+ *   - Aggregation                 -> family-statistics.js
+ *   - Persistence                 -> family-state.js + storage.js
  *
  * READING CONTRACT:
  *   - Every returned object is a fresh projection. No live edge objects
@@ -32,9 +35,31 @@
  *   biological parent edges only. Legal and social parentage does not
  *   participate in blood kinship.
  *
+ * KINSHIP WRAPPERS:
+ *   The wrappers below (cousins, aunts/uncles, nieces/nephews) iterate
+ *   CharacterState's collection and classify each candidate against the
+ *   subject using FamilyRules.classifyKinship. They are O(n) per call.
+ *   Fine for populations in the low thousands. If they become hot,
+ *   reverse indexes belong in FamilyState.
+ *
+ * NUMERIC CLOSENESS:
+ *   getKinshipCloseness returns an integer:
+ *     0   self
+ *     1   parent / child
+ *     2   sibling / grandparent / grandchild
+ *     3   aunt/uncle / niece/nephew
+ *     4   first cousin
+ *     5+  more distant cousins (degree + 1)
+ *     99  unrelated
+ *   The numeric value is a projection of the same classification that
+ *   classifyKinship computes. It is defined here, not in FamilyRules,
+ *   because it is a query-facing convenience metric.
+ *
  * DEPENDENCIES (REQUIRED):
- *   - family-state.js:  FamilyState
- *   - family-rules.js:  FamilyRules
+ *   - family-state.js:    FamilyState
+ *   - family-rules.js:    FamilyRules
+ *   - character-state.js: CharacterState (for candidate iteration and
+ *                         for existence checks)
  *
  * ICON POLICY: No emojis. No icons.
  *
@@ -54,9 +79,15 @@
             'family-queries.js: family-rules.js must load first.'
         );
     }
+    if (!window.CharacterState) {
+        throw new Error(
+            'family-queries.js: character-state.js must load first.'
+        );
+    }
 
     var FS = window.FamilyState;
     var FR = window.FamilyRules;
+    var CS = window.CharacterState;
 
     // =========================================================================
     // 1. HELPERS
@@ -74,22 +105,24 @@
         return FS.getEdgeCopy(id);
     }
 
+    function _allCharacterIds() {
+        var all = CS.getAllCharacters();
+        var out = [];
+        for (var i = 0; i < all.length; i++) {
+            if (all[i] && _hasId(all[i].id)) out.push(all[i].id);
+        }
+        return out;
+    }
+
     // =========================================================================
     // 2. EDGE PROJECTIONS
     // =========================================================================
 
-    /**
-     * Returns a projection of an edge by id, or null.
-     */
     function getEdge(id) {
         if (!_hasId(id)) return null;
         return _readEdge(id);
     }
 
-    /**
-     * Returns every edge where parentId matches.
-     * Options: { status: 'ongoing' | 'ended', parentType, parentRole }
-     */
     function getEdgesForParent(parentId, options) {
         if (!_hasId(parentId)) return [];
         options = options || {};
@@ -106,9 +139,6 @@
         return out;
     }
 
-    /**
-     * Returns every edge where childId matches.
-     */
     function getEdgesForChild(childId, options) {
         if (!_hasId(childId)) return [];
         options = options || {};
@@ -129,10 +159,6 @@
     // 3. PARENT LOOKUPS
     // =========================================================================
 
-    /**
-     * Returns every active parent of a child, as projections.
-     * Options: { parentType, parentRole, includeEnded }
-     */
     function getParents(childId, options) {
         if (!_hasId(childId)) return [];
         options = options || {};
@@ -144,11 +170,6 @@
         });
     }
 
-    /**
-     * Groups parents by role. Each role's list may contain multiple
-     * entries (biological, legal, social). Callers who want a single
-     * biological father or mother read that specific sub-array.
-     */
     function getParentsByRole(childId) {
         var parents = getParents(childId);
         var fathers = [];
@@ -163,11 +184,6 @@
         return { fathers: fathers, mothers: mothers, others: others };
     }
 
-    /**
-     * Returns the ids of the biological parents of a child.
-     * Uses biological edges only. Legal and social parentage does not
-     * appear here.
-     */
     function getBiologicalParentIds(childId) {
         if (!_hasId(childId)) return [];
         var edges = getEdgesForChild(childId, {
@@ -222,9 +238,6 @@
         return out;
     }
 
-    /**
-     * Returns all parent ids across every classification.
-     */
     function getAllParentIds(childId) {
         if (!_hasId(childId)) return [];
         var edges = getEdgesForChild(childId, { status: 'ongoing' });
@@ -244,9 +257,6 @@
     // 4. CHILD LOOKUPS
     // =========================================================================
 
-    /**
-     * Returns every active child of a parent, as projections.
-     */
     function getChildren(parentId, options) {
         if (!_hasId(parentId)) return [];
         options = options || {};
@@ -291,14 +301,28 @@
         return out;
     }
 
+    function getLegalChildIds(parentId) {
+        if (!_hasId(parentId)) return [];
+        var edges = getEdgesForParent(parentId, {
+            status: 'ongoing',
+            parentType: FR.PARENT_TYPE.LEGAL
+        });
+        var out = [];
+        var seen = {};
+        for (var i = 0; i < edges.length; i++) {
+            var id = edges[i].childId;
+            if (!seen[id]) {
+                seen[id] = true;
+                out.push(id);
+            }
+        }
+        return out;
+    }
+
     // =========================================================================
     // 5. SIBLING FACTS AND CLASSIFICATION
     // =========================================================================
 
-    /**
-     * Gathers the parentage facts FamilyRules.deriveSiblingship needs.
-     * Pure projection.
-     */
     function getSiblingFacts(childId) {
         return {
             biologicalParents: getBiologicalParentIds(childId),
@@ -307,21 +331,6 @@
         };
     }
 
-    /**
-     * Returns sibling projections for a child.
-     *
-     * Each entry:
-     *   {
-     *     siblingId,
-     *     primaryType: 'full' | 'half' | 'adoptive' | 'step',
-     *     sharedBiologicalParents: [ids],
-     *     sharedLegalParents: [ids],
-     *     sharedSocialParents: [ids]
-     *   }
-     *
-     * Candidate discovery uses shared parents, then delegates
-     * classification to FamilyRules.deriveSiblingship.
-     */
     function getSiblings(childId) {
         if (!_hasId(childId)) return [];
 
@@ -363,10 +372,6 @@
     // 6. GRANDPARENTS / GRANDCHILDREN
     // =========================================================================
 
-    /**
-     * Returns grandparent ids, or great-grandparent ids for
-     * generation > 1, walking biological parentage only.
-     */
     function getGrandparentIds(childId, generation) {
         if (!_hasId(childId)) return [];
         generation = (generation === undefined || generation === null) ? 1 : generation;
@@ -421,21 +426,6 @@
     // 7. PROVIDER FOR FAMILY RULES
     // =========================================================================
 
-    /**
-     * Returns a pure function suitable for FamilyRules.classifyKinship,
-     * isBloodRelated, and wouldCreateBiologicalCycle.
-     *
-     *   provider(characterId) → { id, parents: [biologicalParentId] } | null
-     *
-     * Biological parentage only. Legal and social parentage does not
-     * participate in blood kinship or cycle detection.
-     *
-     * The provider never throws. If FamilyState returns no edges for an
-     * id, the provider returns null (no such character from the rules'
-     * point of view). If FamilyState returns edges with an id that no
-     * longer resolves, the edges are still returned; this is a self-heal
-     * path and the caller's migration is responsible for cleanup.
-     */
     function getAncestorProvider() {
         return function provider(characterId) {
             if (!_hasId(characterId)) return null;
@@ -460,19 +450,184 @@
         return FR.isBloodRelated(aId, bId, provider);
     }
 
+    /**
+     * Numeric kinship closeness between two characters.
+     *
+     * Returns:
+     *   0   self
+     *   1   parent / child
+     *   2   sibling / grandparent / grandchild
+     *   3   aunt/uncle / niece/nephew
+     *   4   first cousin
+     *   5+  more distant cousins
+     *   99  unrelated
+     *   null for missing ids
+     */
+    function getKinshipCloseness(aId, bId) {
+        if (!_hasId(aId) || !_hasId(bId)) return null;
+        var k = classifyKinship(aId, bId);
+        if (!k) return null;
+
+        switch (k.type) {
+            case FR.KINSHIP.SELF: return 0;
+            case FR.KINSHIP.PARENT: return 1;
+            case FR.KINSHIP.CHILD: return 1;
+            case FR.KINSHIP.SIBLING: return 2;
+            case FR.KINSHIP.GRANDPARENT: return 2;
+            case FR.KINSHIP.GRANDCHILD: return 2;
+            case FR.KINSHIP.GREAT_GRANDPARENT: return 2;
+            case FR.KINSHIP.GREAT_GRANDCHILD: return 2;
+            case FR.KINSHIP.AUNT_UNCLE: return 3;
+            case FR.KINSHIP.NIECE_NEPHEW: return 3;
+            case FR.KINSHIP.COUSIN:
+                if (typeof k.degree === 'number') {
+                    return Math.max(4, k.degree + 3);
+                }
+                return 4;
+            default: return 99;
+        }
+    }
+
     // =========================================================================
-    // 9. ORPHAN / ANY PARENT
+    // 9. KINSHIP WRAPPERS
     // =========================================================================
 
     /**
-     * Facts used by FamilyRules.isOrphan:
-     *   livingBiologicalParents, livingLegalParents
-     *
-     * The "living" filter requires CharacterState. This module does not
-     * reach into CharacterState directly; it expects the caller to pass
-     * a predicate. When no predicate is supplied, all active parents are
-     * treated as living, and the result reflects structural orphanhood.
+     * Returns the ids of every first cousin of the given character.
+     * First cousin: shared grandparent, distance 2 each.
      */
+    function getFirstCousinIds(characterId) {
+        if (!_hasId(characterId)) return [];
+        var out = [];
+        var candidates = _allCharacterIds();
+        for (var i = 0; i < candidates.length; i++) {
+            var cid = candidates[i];
+            if (cid === characterId) continue;
+            var k = classifyKinship(characterId, cid);
+            if (!k) continue;
+            if (k.type !== FR.KINSHIP.COUSIN) continue;
+            if (k.degree === 1 && k.removed === 0) out.push(cid);
+        }
+        return out;
+    }
+
+    /**
+     * Returns the ids of every cousin of the given character, with
+     * their classification.
+     *
+     * Each entry: { cousinId, degree, removed }
+     */
+    function getCousins(characterId) {
+        if (!_hasId(characterId)) return [];
+        var out = [];
+        var candidates = _allCharacterIds();
+        for (var i = 0; i < candidates.length; i++) {
+            var cid = candidates[i];
+            if (cid === characterId) continue;
+            var k = classifyKinship(characterId, cid);
+            if (!k || k.type !== FR.KINSHIP.COUSIN) continue;
+            out.push({
+                cousinId: cid,
+                degree: typeof k.degree === 'number' ? k.degree : null,
+                removed: typeof k.removed === 'number' ? k.removed : null
+            });
+        }
+        return out;
+    }
+
+    /**
+     * Returns the ids of every aunt or uncle of the given character.
+     */
+    function getAuntAndUncleIds(characterId) {
+        if (!_hasId(characterId)) return [];
+        var out = [];
+        var candidates = _allCharacterIds();
+        for (var i = 0; i < candidates.length; i++) {
+            var cid = candidates[i];
+            if (cid === characterId) continue;
+            var k = classifyKinship(characterId, cid);
+            if (!k) continue;
+            if (k.type !== FR.KINSHIP.AUNT_UNCLE) continue;
+            out.push(cid);
+        }
+        return out;
+    }
+
+    /**
+     * Returns the ids of every niece or nephew of the given character.
+     */
+    function getNieceAndNephewIds(characterId) {
+        if (!_hasId(characterId)) return [];
+        var out = [];
+        var candidates = _allCharacterIds();
+        for (var i = 0; i < candidates.length; i++) {
+            var cid = candidates[i];
+            if (cid === characterId) continue;
+            var k = classifyKinship(characterId, cid);
+            if (!k) continue;
+            if (k.type !== FR.KINSHIP.NIECE_NEPHEW) continue;
+            out.push(cid);
+        }
+        return out;
+    }
+
+    /**
+     * Returns the ids of every biological grandparent of a generation.
+     * Generation 1 = grandparents, 2 = great-grandparents.
+     * Alias of getGrandparentIds for readability.
+     */
+    function getGrandparents(characterId, generation) {
+        return getGrandparentIds(characterId, generation);
+    }
+
+    /**
+     * Returns the ids of every biological grandchild of a generation.
+     * Alias of getGrandchildIds for readability.
+     */
+    function getGrandchildren(parentId, generation) {
+        return getGrandchildIds(parentId, generation);
+    }
+
+    /**
+     * Predicates. All take two character ids.
+     */
+    function isFirstCousin(aId, bId) {
+        if (!_hasId(aId) || !_hasId(bId)) return false;
+        var k = classifyKinship(aId, bId);
+        if (!k || k.type !== FR.KINSHIP.COUSIN) return false;
+        return k.degree === 1 && k.removed === 0;
+    }
+
+    function isAuntOrUncle(aId, bId) {
+        if (!_hasId(aId) || !_hasId(bId)) return false;
+        var k = classifyKinship(aId, bId);
+        return k && k.type === FR.KINSHIP.AUNT_UNCLE;
+    }
+
+    function isNieceOrNephew(aId, bId) {
+        if (!_hasId(aId) || !_hasId(bId)) return false;
+        var k = classifyKinship(aId, bId);
+        return k && k.type === FR.KINSHIP.NIECE_NEPHEW;
+    }
+
+    function isGrandparent(aId, bId) {
+        if (!_hasId(aId) || !_hasId(bId)) return false;
+        var k = classifyKinship(aId, bId);
+        return k && (k.type === FR.KINSHIP.GRANDPARENT
+                  || k.type === FR.KINSHIP.GREAT_GRANDPARENT);
+    }
+
+    function isGrandchild(aId, bId) {
+        if (!_hasId(aId) || !_hasId(bId)) return false;
+        var k = classifyKinship(aId, bId);
+        return k && (k.type === FR.KINSHIP.GRANDCHILD
+                  || k.type === FR.KINSHIP.GREAT_GRANDCHILD);
+    }
+
+    // =========================================================================
+    // 10. ORPHAN / ANY PARENT
+    // =========================================================================
+
     function isOrphan(childId, isLiving) {
         if (!_hasId(childId)) return null;
         if (typeof isLiving !== 'function') {
@@ -498,7 +653,7 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 11. EXPORTS
     // =========================================================================
 
     window.FamilyQueries = {
@@ -519,6 +674,7 @@
         getChildren: getChildren,
         getChildIds: getChildIds,
         getBiologicalChildIds: getBiologicalChildIds,
+        getLegalChildIds: getLegalChildIds,
 
         // Siblings
         getSiblingFacts: getSiblingFacts,
@@ -527,6 +683,8 @@
         // Grandparents / grandchildren
         getGrandparentIds: getGrandparentIds,
         getGrandchildIds: getGrandchildIds,
+        getGrandparents: getGrandparents,
+        getGrandchildren: getGrandchildren,
 
         // Provider
         getAncestorProvider: getAncestorProvider,
@@ -534,6 +692,20 @@
         // Kinship
         classifyKinship: classifyKinship,
         isBloodRelated: isBloodRelated,
+        getKinshipCloseness: getKinshipCloseness,
+
+        // Kinship wrappers
+        getFirstCousinIds: getFirstCousinIds,
+        getCousins: getCousins,
+        getAuntAndUncleIds: getAuntAndUncleIds,
+        getNieceAndNephewIds: getNieceAndNephewIds,
+
+        // Predicates
+        isFirstCousin: isFirstCousin,
+        isAuntOrUncle: isAuntOrUncle,
+        isNieceOrNephew: isNieceOrNephew,
+        isGrandparent: isGrandparent,
+        isGrandchild: isGrandchild,
 
         // Orphan
         isOrphan: isOrphan,
