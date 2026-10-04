@@ -14,6 +14,13 @@
  *       Full pregnancy attempt with random mode and specify-outcome
  *       mode. Handles maternal death through the command layer.
  *
+ * DEATH-FLOW HINTS:
+ *   When opened from the death modal (options.deathFlow === true),
+ *   the modal starts in specify mode with defaultOutcome and
+ *   defaultMaternalDeath preselected. The user can still change
+ *   either before confirming. The modal does not enforce them; the
+ *   caller's intent is reflected, not imposed.
+ *
  * OUT OF SCOPE:
  *   - Mortality policy                -> MortalityRules
  *   - Persistence                     -> CharacterState / ChildrenState
@@ -569,11 +576,17 @@
     /**
      * Full pregnancy attempt modal with random and specify-outcome modes.
      *
+     * options:
+     *   year                  default simulation year
+     *   allowMaternalDeath    default true
+     *   deathFlow             true when opened from the death modal
+     *   defaultOutcome        'live_birth' | 'stillbirth' | 'miscarriage' |
+     *                         'no_conception'  (used only when deathFlow)
+     *   defaultMaternalDeath  boolean (used only when deathFlow)
+     *
      * @param {string} motherId
      * @param {string|null} fatherId
      * @param {Object} [options]
-     * @param {number} [options.year]
-     * @param {boolean} [options.allowMaternalDeath]   default true
      * @param {Function} [onSuccess]
      */
     function openPregnancyAttemptModal(motherId, fatherId, options, onSuccess) {
@@ -604,8 +617,16 @@
             ? options.year
             : Math.min(window.getCurrentYear(), window_.maxYear);
 
-        // Mode: 'random' or 'specify'
-        var mode = 'random';
+        // Death-flow hints.
+        var deathFlow = options.deathFlow === true;
+        var defaultOutcome = typeof options.defaultOutcome === 'string'
+            && ['live_birth', 'stillbirth', 'miscarriage', 'no_conception'].indexOf(options.defaultOutcome) !== -1
+            ? options.defaultOutcome
+            : 'live_birth';
+        var defaultMaternalDeath = options.defaultMaternalDeath === true;
+
+        // Mode: 'random' or 'specify'. Death flow starts in specify.
+        var mode = deathFlow ? 'specify' : 'random';
 
         var content = '<div class="character-modal">';
 
@@ -626,16 +647,19 @@
         content += '<div class="character-modal__form-field">'
                  + '<label class="character-modal__form-label">Mode</label>'
                  + '<label style="display:flex; align-items:center; gap:8px;">'
-                 + '<input type="radio" name="preg-mode" value="random" checked>'
+                 + '<input type="radio" name="preg-mode" value="random"' + (mode === 'random' ? ' checked' : '') + '>'
                  + '<span>Simulate (roll the dice)</span>'
                  + '</label>'
                  + '<label style="display:flex; align-items:center; gap:8px;">'
-                 + '<input type="radio" name="preg-mode" value="specify">'
+                 + '<input type="radio" name="preg-mode" value="specify"' + (mode === 'specify' ? ' checked' : '') + '>'
                  + '<span>Specify outcome</span>'
                  + '</label>'
                  + '</div>';
 
-        content += '<div id="preg-random-section">';
+        var randomDisplay = mode === 'random' ? '' : 'display:none;';
+        var specifyDisplay = mode === 'specify' ? '' : 'display:none;';
+
+        content += '<div id="preg-random-section" style="' + randomDisplay + '">';
 
         content += '<div class="character-modal__form-field">'
                  + '<label class="character-modal__form-label" for="preg-attempt">'
@@ -660,15 +684,28 @@
 
         content += '</div>';
 
-        content += '<div id="preg-specify-section" style="display:none;">';
+        content += '<div id="preg-specify-section" style="' + specifyDisplay + '">';
+
+        // Outcome select, with defaultOutcome preselected.
+        var outcomeOptions = [
+            { id: 'live_birth', label: 'Live Birth' },
+            { id: 'stillbirth', label: 'Stillbirth' },
+            { id: 'miscarriage', label: 'Miscarriage' },
+            { id: 'no_conception', label: 'No Conception' }
+        ];
+        var outcomeSelectHtml = '';
+        for (var i = 0; i < outcomeOptions.length; i++) {
+            var sel = outcomeOptions[i].id === defaultOutcome ? ' selected' : '';
+            outcomeSelectHtml += '<option value="' + _esc(outcomeOptions[i].id) + '"'
+                               + sel + '>'
+                               + _esc(outcomeOptions[i].label)
+                               + '</option>';
+        }
 
         content += '<div class="character-modal__form-field">'
                  + '<label class="character-modal__form-label" for="preg-outcome">Outcome</label>'
                  + '<select id="preg-outcome" class="character-modal__form-input">'
-                 + '<option value="live_birth">Live Birth</option>'
-                 + '<option value="stillbirth">Stillbirth</option>'
-                 + '<option value="miscarriage">Miscarriage</option>'
-                 + '<option value="no_conception">No Conception</option>'
+                 + outcomeSelectHtml
                  + '</select>'
                  + '</div>';
 
@@ -687,9 +724,10 @@
                  + '</div>';
 
         if (allowMaternalDeath) {
+            var maternalDeathChecked = defaultMaternalDeath ? ' checked' : '';
             content += '<div class="character-modal__form-field">'
                      + '<label style="display:flex; align-items:center; gap:8px;">'
-                     + '<input type="checkbox" id="preg-maternal-death">'
+                     + '<input type="checkbox" id="preg-maternal-death"' + maternalDeathChecked + '>'
                      + '<span>Mother died in childbirth (childbed fever)</span>'
                      + '</label>'
                      + '</div>';
@@ -705,7 +743,8 @@
         content += '</div>';
 
         var modal = window.openModal({
-            titleHtml: 'Pregnancy Attempt: ' + _esc(mother.name || ''),
+            titleHtml: (deathFlow ? 'Childbed Fever: ' : 'Pregnancy Attempt: ')
+                     + _esc(mother.name || ''),
             contentHtml: content,
             confirmText: 'Attempt',
             cancelText: 'Cancel',
@@ -790,3 +829,25 @@
                 }
             }
         });
+
+        return { success: true, modal: modal };
+    }
+
+    // =========================================================================
+    // 6. EXPORTS
+    // =========================================================================
+
+    window.openBirthModal = openBirthModal;
+    window.openSurpriseBirthModal = openSurpriseBirthModal;
+    window.openBatchBirthModal = openBatchBirthModal;
+    window.openPregnancyAttemptModal = openPregnancyAttemptModal;
+
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = {
+            openBirthModal: openBirthModal,
+            openSurpriseBirthModal: openSurpriseBirthModal,
+            openBatchBirthModal: openBatchBirthModal,
+            openPregnancyAttemptModal: openPregnancyAttemptModal
+        };
+    }
+})();
