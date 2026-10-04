@@ -1865,9 +1865,14 @@
         _state()._indexesRebuild();
 
         _history().addEvent(_state()._getInstitutionCanonical(institutionId), {
-            type: 'institution_demolished',
+            type: window.HISTORY_EVENT_TYPES.INSTITUTION_DEMOLISHED,
             year: demolishYear,
-            details: 'Demolished: ' + demolishReason
+            details: 'Demolished: ' + demolishReason,
+            reason: demolishReason,
+            metadata: {
+                destroyedBy: options.destroyedBy || 'manual',
+                disasterId: options.disasterId || null
+            }
         });
 
         return _ok({
@@ -1899,6 +1904,11 @@
         var maxStudents = options.maxStudents
             || (typeDef ? typeDef.maxStudents : 30);
 
+        var previousReputation = record.previousReputation || 50;
+        var newReputation = options.initialReputation !== undefined
+            ? options.initialReputation
+            : Math.max(20, Math.floor(previousReputation / 2));
+
         _state()._updateInstitution(institutionId, {
             status: 'active',
             demolishedAt: null,
@@ -1906,9 +1916,7 @@
             destroyedBy: null,
             disasterId: null,
             demolishedRecord: null,
-            reputation: options.initialReputation !== undefined
-                ? options.initialReputation
-                : Math.max(20, Math.floor((record.previousReputation || 50) / 2)),
+            reputation: newReputation,
             maxStudents: maxStudents,
             students: [],
             teachers: [],
@@ -1916,6 +1924,18 @@
         });
 
         _state()._indexesRebuild();
+
+        _history().addEvent(_state()._getInstitutionCanonical(institutionId), {
+            type: window.HISTORY_EVENT_TYPES.INSTITUTION_REBUILT,
+            year: y,
+            details: 'Rebuilt',
+            reason: options.reason || '',
+            previousValue: previousReputation,
+            newValue: newReputation,
+            metadata: {
+                maxStudents: maxStudents
+            }
+        });
 
         return _ok({ institutionId: institutionId, rebuiltAt: y });
     }
