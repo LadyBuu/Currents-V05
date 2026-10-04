@@ -1,745 +1,86 @@
-# COMPLETE ROLE SYSTEM DOCUMENTATION
-
-## SYSTEM OVERVIEW
-
-The Role System manages all professions, occupations, and positions that characters can hold in the game world. It provides a complete API for role CRUD operations, category management, role assignment to characters, skill tracking, salary management, and literacy requirements.
-
-**Key Design Principles:**
-- **Single Source of Truth**: `role-state.js` holds all role data
-- **Command-Query Separation**: Commands (writes) vs Queries (reads) separated
-- **Separation of Concerns**: State, commands, queries, UI all separate
-- **Recursion Guards**: All public functions protected from infinite loops
-- **Category Organization**: Roles organized by categories for filtering
-- **Skill Tracking**: Each character has a skill level (0-100) for each role
-- **Salary System**: Roles have base salaries with category defaults
-- **Literacy Requirements**: Roles can require specific literacy levels
-- **Gender Restrictions**: Roles can be restricted by gender
-- **Specializations**: Roles can have specializations for detailed tracking
-- **UI Integration**: Dedicated role selector modals for cross-system use
 
 ---
 
-## FILE STRUCTURE
+## File 2 — `js/systems/roles/roles-doc.md`
 
-```
-js/systems/roles/
-├── role-state.js              # Single source of truth + cache + notifications
-├── role-commands.js           # All write operations (CRUD, assignment, skill updates)
-├── role-queries.js            # All read operations (search, filter, stats)
-├── role-constants.js          # All constants (categories, salary defaults, literacy levels)
-├── role-system.js             # Wrapper for backward compatibility
-├── role-ui-list.js            # UI rendering for roles (lists, cards, detail panels)
-├── modals-roles.js            # UI modals (create, edit, assign, delete, etc.)
-└── modals-role-select.js      # Reusable role selector modals
-```
+Replaces `roles-docs.txt`.
+
+```markdown
+# Still Waters — Role System
+
+**Location:** `js/systems/roles/`
+**Last regenerated from:** the code in this folder after the ownership
+refactor.
 
 ---
 
-# 1. ROLE-STATE.JS
+## 1. Overview
 
-**PURPOSE:** Single source of truth for all role data. Manages caching, subscriptions, and data persistence.
+The role domain owns the **catalogue** of what a character can hold:
+role records, categories, salary policy, literacy requirements, gender
+restrictions, and the set of specializations a role offers.
 
-**DEPENDENCIES:**
-- `accessors.js` - `getCharacters`, `getRoles`
-- `storage.js` - `saveMasterData`
+It does not own:
 
----
+- a character's profession record or skill level
+  → `CharacterCommands`
+- the apprenticeship that trains a character toward a role
+  → `ApprenticeshipCommands`
+- the relationship edge between master and apprentice
+  → `ProfessionalCommands`
+- the skill taxonomy
+  → `SkillUtils`
 
-## Data Access Functions
-
-### `RoleState.subscribe(callback)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Subscribes to state changes |
-| **Parameters** | `callback` (function) - Receives event object |
-| **Returns** | `function` - Unsubscribe function |
-
-### `RoleState.getAllRoles()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all roles |
-| **Returns** | `Array` - Array of role objects |
-
-### `RoleState.getRole(id)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a role by ID |
-| **Parameters** | `id` (string) - Role ID |
-| **Returns** | `Object|null` - Role object or null |
-
-### `RoleState.getRoleByName(name)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets a role by name |
-| **Parameters** | `name` (string) - Role name |
-| **Returns** | `Object|null` - Role object or null |
-
-### `RoleState.getRolesByCategory(categoryId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets roles by category |
-| **Parameters** | `categoryId` (string) |
-| **Returns** | `Array` - Array of role objects |
-
-### `RoleState.getCategories()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all role categories |
-| **Returns** | `Object` - Categories object |
-
-### `RoleState.getUIState()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets UI state |
-| **Returns** | `{ selectedRoleId, searchTerm, filterCategory, filterGender, viewMode, expandedRoleId, filterMasterOnly }` |
-
-### `RoleState.updateUIState(updates)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates UI state |
-| **Parameters** | `updates` (Object) |
+The role catalogue answers "what does a Blacksmith role look like." It
+does not answer "is Bruna a Blacksmith" or "is Bruna being trained by
+João."
 
 ---
 
-## Internal State Mutators (For Commands)
+## 2. Files
 
-| Function | Description |
-|----------|-------------|
-| `_addRole(role)` | Adds a role |
-| `_updateRole(id, updates)` | Updates a role |
-| `_deleteRole(id)` | Deletes a role |
-| `_setRoles(roles)` | Sets all roles |
-| `_rebuildCaches()` | Rebuilds caches |
-| `_persistState()` | Persists state to masterData |
-| `_initializeState()` | Initializes state from masterData |
-| `_ensureRoleInitialized(role)` | Ensures role has all fields |
-
----
-
-# 2. ROLE-CONSTANTS.JS
-
-**PURPOSE:** All role-related constants.
-
-**DEPENDENCIES:** None (pure constants)
+| File | Purpose |
+|------|---------|
+| `role-constants.js` | Categories, salary policy, literacy vocabulary, teaching thresholds (mirrored from `SkillUtils`). Pure constants. |
+| `role-rules.js` | Pure policy: specialization membership validation, and future role-domain validity rules. No state access. |
+| `role-state.js` | The authoritative in-memory role collection. Derived indexes, subscriptions, persistence sync. |
+| `role-queries.js` | Read-only projections: role collections, categories, character-role joins, statistics. |
+| `role-commands.js` | Write operations: role CRUD, category management, specialization catalogue, character assignment, salary, literacy. |
+| `role-system.js` | Compatibility shim. One-way aliases onto the canonical modules for legacy callers. |
+| `role-ui-list.js` | UI: role list, role card, role detail panel, master-filter toggle. |
+| `modals-roles.js` | UI: create/edit/delete role, assign role to character(s), edit skill, list roles, category manager. |
+| `modals-role-select.js` | UI: reusable role picker for cross-system use. Read-only. |
 
 ---
 
-## Constants
-
-### `UNCATEGORIZED_ID`
-
-| Property | Value |
-|----------|-------|
-| **Description** | ID for uncategorized roles |
-| **Value** | `'uncategorized'` |
-
-### `UNCATEGORIZED_NAME`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Display name for uncategorized roles |
-| **Value** | `'Uncategorized'` |
-
-### `UNCATEGORIZED_ICON`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Icon for uncategorized roles |
-| **Value** | `'⌇'` |
-
-### `TEACHING_THRESHOLDS`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Skill level thresholds for teaching tiers |
-| **Values** | `NOVICE: 0`, `APPRENTICE: 26`, `JOURNEYMAN: 51`, `EXPERT: 76`, `MASTER: 91` |
-
-### `DEFAULT_ROLE_CATEGORIES`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Default role categories with icons |
-| **Categories** | combat, craft, trade, agriculture, academic, medical, religious, admin, service, art, government, household, industrial, other |
-
-### Salary Constants
-
-| Constant | Default | Description |
-|----------|---------|-------------|
-| `BASE_SALARY_BY_CATEGORY` | Various | Base salary by category |
-| `DEFAULT_SALARY` | 10 | Default salary |
-| `MIN_SALARY` | 0 | Minimum salary |
-| `MAX_SALARY` | 200 | Maximum salary |
-| `SALARY_SKILL_MULTIPLIER_MIN` | 0.5 | Minimum skill multiplier |
-| `SALARY_SKILL_MULTIPLIER_MAX` | 1.0 | Maximum skill multiplier |
-| `SALARY_EXPERIENCE_BONUS_PER_YEAR` | 0.5 | Experience bonus per year |
-| `SALARY_EXPERIENCE_BONUS_MAX` | 15 | Maximum experience bonus |
-| `SALARY_EXPERIENCE_CAP` | 30 | Experience cap |
-| `SALARY_URBAN_MODIFIER` | 1.3 | Urban salary modifier |
-| `SALARY_RURAL_MODIFIER` | 0.9 | Rural salary modifier |
-
-### Literacy Constants
-
-| Constant | Value | Description |
-|----------|-------|-------------|
-| `LITERACY_LEVELS` | { NONE, BASIC, LITERATE, EDUCATED, SCHOLAR } | Literacy level IDs |
-| `LITERACY_LEVEL_NAMES` | { basic, literate, educated, scholar } | Display names |
-| `LITERACY_LEVEL_THRESHOLDS` | { basic: 30, literate: 60, educated: 80, scholar: 95 } | Literacy thresholds |
-
----
-
-# 3. ROLE-COMMANDS.JS
-
-**PURPOSE:** All write operations for role management.
-
-**DEPENDENCIES:**
-- `role-state.js` - `RoleState`
-- `role-constants.js` - `UNCATEGORIZED_ID`, `BASE_SALARY_BY_CATEGORY`, `DEFAULT_SALARY`
-- `accessors.js` - `getCharacterById`, `getCharacters`, `getRoleById`
-- `ids.js` - `generateId`
-- `storage.js` - `saveMasterData`
-
----
-
-## Role CRUD
-
-### `RoleCommands.createRole(data)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Creates a new role |
-| **Parameters** | `data.name` (string, required), `data.category` (string), `data.icon` (string), `data.specializations` (Array), `data.notes` (string), `data.genderRestriction` (string - 'both', 'male', 'female'), `data.baseSalary` (number), `data.requiresLiteracy` (boolean), `data.literacyLevel` (string) |
-| **Returns** | `Object|null` - Created role or null |
-
-### `RoleCommands.updateRole(roleId, updates)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates a role |
-| **Parameters** | `roleId` (string), `updates` (Object) |
-| **Returns** | `Object|null` - Updated role or null |
-
-### `RoleCommands.deleteRole(roleId, removeFromCharacters)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Deletes a role |
-| **Parameters** | `roleId` (string), `removeFromCharacters` (boolean) |
-| **Returns** | `boolean` - True if deleted |
-
-### `RoleCommands.setRoles(roles)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Sets all roles (bulk update) |
-| **Parameters** | `roles` (Array) |
-| **Returns** | `boolean` - True if set |
-
----
-
-## Category Management
-
-### `RoleCommands.addCategory(id, name, icon)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Adds a category |
-| **Parameters** | `id` (string), `name` (string), `icon` (string) |
-| **Returns** | `boolean` - True if added |
-
-### `RoleCommands.updateCategory(id, updates)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates a category |
-| **Parameters** | `id` (string), `updates.name` (string), `updates.icon` (string) |
-| **Returns** | `boolean` - True if updated |
-
-### `RoleCommands.deleteCategory(id, reassignTo)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Deletes a category |
-| **Parameters** | `id` (string), `reassignTo` (string) |
-| **Returns** | `boolean` - True if deleted |
-
----
-
-## Salary Management
-
-### `RoleCommands.updateRoleSalary(roleId, newSalary, reason)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates a role's base salary |
-| **Parameters** | `roleId` (string), `newSalary` (number), `reason` (string) |
-| **Returns** | `Object|null` - Updated role or null |
-
-### `RoleCommands.updateRoleLiteracyRequirement(roleId, requiresLiteracy, literacyLevel, reason)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates a role's literacy requirement |
-| **Parameters** | `roleId` (string), `requiresLiteracy` (boolean), `literacyLevel` (string - 'basic', 'literate', 'educated', 'scholar'), `reason` (string) |
-| **Returns** | `Object|null` - Updated role or null |
-
----
-
-## Role Assignment
-
-### `RoleCommands.assignRoleToCharacter(characterId, roleId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Assigns a role to a character |
-| **Parameters** | `characterId` (string), `roleId` (string), `options.skillLevel` (number), `options.startYear` (number), `options.primary` (boolean), `options.notes` (string) |
-| **Returns** | `{ success: boolean, reason: string, character: Object, role: Object }` |
-
-### `RoleCommands.removeRoleFromCharacter(characterId, roleId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Removes a role from a character |
-| **Parameters** | `characterId` (string), `roleId` (string) |
-| **Returns** | `{ success: boolean, reason: string, character: Object, role: Object }` |
-
-### `RoleCommands.updateCharacterSkill(characterId, roleId, skillLevel)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Updates a character's skill in a role |
-| **Parameters** | `characterId` (string), `roleId` (string), `skillLevel` (number) |
-| **Returns** | `{ success: boolean, reason: string, character: Object, role: Object, newLevel: number }` |
-
-### `RoleCommands.bulkAssignRole(characterIds, roleId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Assigns a role to multiple characters |
-| **Parameters** | `characterIds` (Array), `roleId` (string), `options.skillLevel` (number), `options.startYear` (number), `options.notes` (string) |
-| **Returns** | `{ success: number, failed: number, errors: Array }` |
-
----
-
-# 4. ROLE-QUERIES.JS
-
-**PURPOSE:** All read-only operations for roles.
-
-**DEPENDENCIES:**
-- `role-state.js` - `RoleState`
-- `role-constants.js` - `TEACHING_THRESHOLDS`
-- `accessors.js` - `getCharacterById`, `getCharacters`, `getRoleById`
-
----
-
-## Role Queries
-
-### `RoleQueries.getRoles(filters)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all roles with optional filtering |
-| **Parameters** | `filters.category` (string), `filters.gender` (string), `filters.search` (string) |
-| **Returns** | `Array` - Role objects |
-
-### `RoleQueries.getCharactersWithRoleDetails(roleId, mastersOnly)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets characters with a specific role including skill details |
-| **Parameters** | `roleId` (string), `mastersOnly` (boolean) |
-| **Returns** | `Array` - Characters with skill info |
-
-### `RoleQueries.getCharactersWithRole(roleId, mastersOnly)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets characters with a specific role (just the character objects) |
-| **Parameters** | `roleId` (string), `mastersOnly` (boolean) |
-| **Returns** | `Array` - Character objects |
-
-### `RoleQueries.getRoleStatistics(roleId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets comprehensive statistics for a role |
-| **Parameters** | `roleId` (string) |
-| **Returns** | `{ totalCharacters, averageSkill, masterCount, expertCount, journeymanCount, apprenticeCount, noviceCount, canTeachCount, specializations, totalSpecializations }` |
-
-### `RoleQueries.getRoleCategories()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets role categories |
-| **Returns** | `Object` - Categories object |
-
-### `RoleQueries.getRoleCategoryList()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all role categories as an array |
-| **Returns** | `Array` - Category objects |
-
-### `RoleQueries.searchRoles(searchTerm, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Searches roles by name |
-| **Parameters** | `searchTerm` (string), `options.category` (string), `options.gender` (string), `options.limit` (number) |
-| **Returns** | `Array` - Matching roles |
-
-### `RoleQueries.getRoleCategoriesWithCounts()`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets all categories with role counts |
-| **Returns** | `Array` - Category objects with counts |
-
-### `RoleQueries.getTeachingThresholdName(level)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Gets teaching threshold name for a skill level |
-| **Parameters** | `level` (number) |
-| **Returns** | `string` - 'Novice', 'Apprentice', 'Journeyman', 'Expert', 'Master' |
-
----
-
-# 5. ROLE-UI-LIST.JS
-
-**PURPOSE:** UI rendering for roles.
-
-**DEPENDENCIES:**
-- `role-queries.js` - `RoleQueries`
-- `role-commands.js` - `RoleCommands`
-- `role-state.js` - `RoleState`
-- `modals-core.js` - `_escapeHtml`, `_getIcon`, `_showToast`
-
----
-
-## UI Functions
-
-### `RoleUI.renderRoleDetailPanel(containerId, roleId, onBack, onRefresh, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Renders a role detail edit panel |
-| **Parameters** | `containerId` (string), `roleId` (string), `onBack` (function), `onRefresh` (function), `options.mastersOnly` (boolean) |
-| **Returns** | `boolean` - True if rendered |
-
-### `RoleUI.renderRoleList(containerId, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Renders a list of roles |
-| **Parameters** | `containerId` (string), `options.filteredRoles` (Array), `options.onSelect` (function), `options.onEdit` (function), `options.onDelete` (function), `options.emptyMessage` (string), `options.rowClass` (string), `options.showStats` (boolean), `options.showActions` (boolean), `options.selectedId` (string) |
-| **Returns** | `boolean` - True if rendered |
-
-### `RoleUI.renderRoleCard(role, options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Renders a single role as a card |
-| **Parameters** | `role` (Object), `options.showStats` (boolean), `options.showActions` (boolean), `options.onSelect` (function), `options.onEdit` (function), `options.onDelete` (function) |
-| **Returns** | `string` - HTML for the card |
-
-### `RoleUI.renderMasterFilterToggle(containerId, mastersOnly, onToggle, onRefresh, roleId)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Renders a filter toggle for master-only view |
-| **Parameters** | `containerId` (string), `mastersOnly` (boolean), `onToggle` (function), `onRefresh` (function), `roleId` (string) |
-| **Returns** | `boolean` - True if rendered |
-
----
-
-# 6. MODALS-ROLES.JS
-
-**PURPOSE:** UI modals for role management.
-
-**DEPENDENCIES:**
-- `modals-core.js` - `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon`
-- `role-state.js` - `RoleState`
-- `role-commands.js` - `RoleCommands`
-- `role-queries.js` - `RoleQueries`
-
----
-
-## Modal Functions
-
-| Function | Description |
-|----------|-------------|
-| `openCreateRoleModal(onSuccess)` | Creates a new role |
-| `openEditRoleModal(roleId, onSuccess)` | Edits a role |
-| `openDeleteRoleModal(roleId, onSuccess)` | Deletes a role |
-| `openAssignRoleModal(roleId, onSuccess)` | Assigns a role to a character |
-| `openBulkAssignRoleModal(roleId, onSuccess)` | Assigns a role to multiple characters |
-| `openViewCharactersWithRoleModal(roleId)` | Views characters with a role |
-| `openEditRoleSkillModal(roleId, characterId, onSuccess)` | Edits character skill |
-| `openListRolesModal(onSelect)` | Lists all roles |
-| `openCategoryManagerModal(onSuccess)` | Manages categories |
-
----
-
-# 7. MODALS-ROLE-SELECT.JS
-
-**PURPOSE:** Reusable role selector modals for cross-system use.
-
-**DEPENDENCIES:**
-- `modals-core.js` - `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon`
-- `role-state.js` - `RoleState`
-- `role-queries.js` - `RoleQueries`
-- `role-commands.js` - `RoleCommands`
-
----
-
-## Role Selector Functions
-
-### `openRoleSelector(options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens a role selector modal |
-| **Parameters** | `options.title` (string), `options.preselectedId` (string), `options.categoryFilter` (string), `options.searchPlaceholder` (string), `options.onSelect` (function), `options.onCancel` (function), `options.showStats` (boolean), `options.emptyMessage` (string), `options.excludeIds` (Array), `options.context` (string) |
-| **Returns** | `Object|null` - Modal reference or null |
-
-### `openRolePickerForPosition(options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens a role picker specifically for position creation |
-| **Parameters** | `options.title` (string), `options.context` (string), `options.categoryFilter` (string), `options.onSelect` (function), `options.onCancel` (function), `options.allowNone` (boolean), `options.preselectedId` (string) |
-| **Returns** | `Object|null` - Modal reference or null |
-
-### `openRoleManagementModal(options)`
-
-| Property | Value |
-|----------|-------|
-| **Description** | Opens a full role management modal (view only, no create) |
-| **Parameters** | `options.onSelect` (function), `options.onComplete` (function), `options.context` (string) |
-| **Returns** | `Object|null` - Modal reference or null |
-
----
-
-# 8. ROLE DATA SCHEMA
-
-## Role Object Schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Unique identifier |
-| `name` | string | Role display name |
-| `category` | string | Category ID |
-| `icon` | string | Monochrome icon |
-| `specializations` | Array | Specialization strings |
-| `notes` | string | Notes |
-| `genderRestriction` | string | 'both', 'male', 'female' |
-| `baseSalary` | number | Base salary (gold/year) |
-| `requiresLiteracy` | boolean | Literacy requirement flag |
-| `literacyLevel` | string | 'basic', 'literate', 'educated', 'scholar' |
-
----
-
-## Character Profession Schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Role ID |
-| `name` | string | Role name |
-| `skillLevel` | number | 0-100 skill level |
-| `startYear` | number | Year started |
-| `primary` | boolean | Is primary profession |
-| `notes` | string | Notes |
-| `specs` | Array | Specializations |
-| `baseSalary` | number | Base salary from role |
-| `customSalary` | number | Manual salary override |
-| `salaryHistory` | Array | Salary change history |
-| `salaryLastCalculated` | number | Last salary calculation year |
-| `paysSalary` | boolean | Salary payment flag |
-
----
-
-# 9. DEPENDENCY MAP
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    ROLE SYSTEM DEPENDENCIES                                 │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  role-state.js ──────────────────────────────────────────────────────────┐ │
-│  ├── accessors.js (getCharacters, getRoles)                               │ │
-│  └── storage.js (saveMasterData)                                          │ │
-│                                                                             │
-│  role-commands.js ──────────────────────────────────────────────────────┐ │
-│  ├── role-state.js                                                        │ │
-│  ├── role-constants.js                                                    │ │
-│  ├── accessors.js (getCharacterById, getCharacters)                      │ │
-│  ├── ids.js (generateId)                                                  │ │
-│  └── storage.js (saveMasterData)                                          │ │
-│                                                                             │
-│  role-queries.js ───────────────────────────────────────────────────────┐ │
-│  ├── role-state.js                                                        │ │
-│  ├── role-constants.js                                                    │ │
-│  └── accessors.js (getCharacterById, getCharacters, getRoleById)         │ │
-│                                                                             │
-│  role-ui-list.js ──────────────────────────────────────────────────────┐ │
-│  ├── role-queries.js                                                      │ │
-│  ├── role-commands.js                                                     │ │
-│  ├── role-state.js                                                        │ │
-│  └── modals-core.js (escapeHtml, getIcon, showToast)                     │ │
-│                                                                             │
-│  modals-roles.js ──────────────────────────────────────────────────────┐ │
-│  ├── modals-core.js (openModal, escapeHtml, getIcon, showToast)          │ │
-│  ├── role-state.js                                                        │ │
-│  ├── role-commands.js                                                     │ │
-│  └── role-queries.js                                                      │ │
-│                                                                             │
-│  modals-role-select.js ────────────────────────────────────────────────┐ │
-│  ├── modals-core.js (openModal, escapeHtml, getIcon, showToast)          │ │
-│  ├── role-state.js                                                        │ │
-│  ├── role-queries.js                                                      │ │
-│  └── role-commands.js                                                     │ │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-# 10. RECURSION GUARDS
-
-| Guard Name | Location | Purpose |
-|------------|----------|---------|
-| `_processingCommand` | role-commands.js | Prevent command re-entry |
-| `_processingQuery` | role-queries.js | Prevent query re-entry |
-| `_processingRender` | role-ui-list.js | Prevent render re-entry |
-| `_processingModal` | modals-roles.js | Prevent modal re-entry |
-| `_roleSelectorOpen` | modals-role-select.js | Prevent multiple selectors |
-| `_processingStateUpdate` | role-state.js | Prevent state update re-entry |
-
----
-
-# 11. ICON POLICY
-
-All icons must come from `icons.js` via the `_getIcon()` function.
-
-| Rule | Description |
-|------|-------------|
-| **Rule 1** | NO emojis in code or UI |
-| **Rule 2** | All icons from icons.js via `_getIcon()` |
-| **Rule 3** | NO icons in confirm/cancel buttons (plain text only) |
-
-## Available Icons for Role System
-
-| Usage | Icon |
-|-------|------|
-| Role | PERSON / CIRCLE |
-| Category | CIRCLE |
-| Edit | EDIT |
-| Delete | X_HEAVY |
-| Add | PLUS |
-| Search | SEARCH |
-| Warning | WARNING |
-| Check | CHECK_SIMPLE |
-| Location | LOCATION |
-
----
-
-# 12. INTEGRATION WITH OTHER SYSTEMS
-
-## Role ↔ Education System
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Role → Education | Institutions teach roles | ✅ Complete |
-| Role → Education | Curriculum includes role subjects | ✅ Complete |
-| Education → Role | Graduation grants roles | ✅ Complete |
-| Education → Role | Teachers require roles | ✅ Complete |
-| Role → Education | Roles filtered by specialization category | ✅ Complete |
-
-## Role ↔ Settlement System
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Role → Settlement | Role distribution tracking | ✅ Complete |
-| Role → Settlement | Specialization affects prosperity | ✅ Complete |
-| Role → Settlement | Master concentration tracking | ✅ Complete |
-| Settlement → Role | Assigns roles to characters | ✅ Complete |
-
-## Role ↔ Character System
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Role → Character | Professions array on character | ✅ Complete |
-| Role → Character | Skill level tracking | ✅ Complete |
-| Role → Character | Gender restriction validation | ✅ Complete |
-| Role → Character | Literacy requirement validation | ✅ Complete |
-| Character → Role | Multiple roles per character | ✅ Complete |
-
-## Role ↔ Government System
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Role → Government | Government positions require roles | ✅ Complete |
-| Role → Government | Role-based salaries | ✅ Complete |
-| Government → Role | Assigns roles to government officials | ✅ Complete |
-
-## Role ↔ Household System
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Role → Household | Household positions require roles | ✅ Complete |
-| Role → Household | Role-based salaries | ✅ Complete |
-| Household → Role | Assigns roles to household members | ✅ Complete |
-
----
-
-# 13. QUICK TEST COMMANDS
-
-```javascript
-// Get all roles
-var roles = RoleState.getAllRoles();
-console.log('Total roles:', roles.length);
-
-// Get role categories
-var categories = RoleState.getCategories();
-console.log('Categories:', Object.keys(categories));
-
-// Get role statistics
-var stats = RoleQueries.getRoleStatistics('role_blacksmith');
-console.log('Blacksmith stats:', stats);
-
-// Get characters with a role
-var chars = RoleQueries.getCharactersWithRole('role_blacksmith');
-console.log('Blacksmiths:', chars.length);
-
-// Assign role to character
-var result = RoleCommands.assignRoleToCharacter('char_123', 'role_blacksmith', {
-    skillLevel: 50,
-    startYear: 1250,
-    primary: true
-});
-console.log('Assignment result:', result);
-
-// Update role salary
-var updated = RoleCommands.updateRoleSalary('role_blacksmith', 25, 'Market adjustment');
-console.log('Updated salary:', updated.baseSalary);
-
-// Search roles
-var found = RoleQueries.searchRoles('smith', { limit: 5 });
-console.log('Found:', found.map(r => r.name));
-```
-
----
-
-# END OF DOCUMENTATION
-
-**Generated:** 2026-07-13
-**Version:** 4.0
-**File Count:** 8 core modules
+## 3. Load Order
+
+```html
+<!-- Core -->
+<script src="js/core/formatting.js"></script>
+<script src="js/core/ui.js"></script>
+<script src="js/core/icons.js"></script>
+<script src="js/core/ids.js"></script>
+<script src="js/core/time.js"></script>
+<script src="js/core/accessors.js"></script>
+<script src="js/core/storage.js"></script>
+
+<!-- Skill taxonomy -->
+<script src="js/skill/skill-utils.js"></script>
+
+<!-- Character (role commands delegate profession writes here) -->
+<script src="js/character/character-state.js"></script>
+<script src="js/character/character-commands.js"></script>
+
+<!-- Roles -->
+<script src="js/systems/roles/role-constants.js"></script>
+<script src="js/systems/roles/role-rules.js"></script>
+<script src="js/systems/roles/role-state.js"></script>
+<script src="js/systems/roles/role-queries.js"></script>
+<script src="js/systems/roles/role-commands.js"></script>
+<script src="js/systems/roles/role-system.js"></script>
+
+<!-- UI -->
+<script src="js/core/ui/role-ui-list.js"></script>
+<script src="js/systems/roles/modals-roles.js"></script>
+<script src="js/core/modals/modals-role-select.js"></script>
